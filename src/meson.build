@@ -1,0 +1,60 @@
+blueprint_compiler = find_program('blueprint-compiler', required: false)
+if not blueprint_compiler.found()
+  # Fall back to the wrap. Its configured wrapper can't run uninstalled
+  # (it can't find its own module), so run the source tree's script instead.
+  subproject('blueprint-compiler')
+  blueprint_compiler = find_program(
+    meson.project_source_root() / 'subprojects' / 'blueprint-compiler' / 'blueprint-compiler.py',
+  )
+endif
+
+blueprints = custom_target(
+  'blueprints',
+  input: files(
+    'player_bar.blp',
+    'window.blp',
+  ),
+  output: '.',
+  command: [
+    blueprint_compiler,
+    'batch-compile',
+    '@OUTPUT@',
+    '@CURRENT_SOURCE_DIR@',
+    '@INPUT@',
+  ],
+)
+
+gnome.compile_resources(
+  'applemusic',
+  'applemusic.gresource.xml',
+  gresource_bundle: true,
+  install: true,
+  install_dir: pkgdatadir,
+  dependencies: blueprints,
+)
+
+configure_file(
+  input: 'apple-music.in',
+  output: 'apple-music',
+  configuration: {
+    'PYTHON': python.find_installation('python3').full_path(),
+    'VERSION': version,
+    'APP_ID': application_id,
+    'BASE_ID': base_id,
+    'PROFILE': get_option('profile'),
+    'localedir': get_option('prefix') / get_option('localedir'),
+    'pkgdatadir': pkgdatadir,
+  },
+  install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'r-xr-xr-x',
+)
+
+install_data(
+  '__init__.py',
+  'main.py',
+  'player_bar.py',
+  'sections.py',
+  'window.py',
+  install_dir: moduledir,
+)

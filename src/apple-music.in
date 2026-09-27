@@ -1,0 +1,30 @@
+#!@PYTHON@
+
+import gettext
+import locale
+import os
+import signal
+import sys
+
+VERSION = '@VERSION@'
+APP_ID = '@APP_ID@'
+BASE_ID = '@BASE_ID@'
+PROFILE = '@PROFILE@'
+pkgdatadir = '@pkgdatadir@'
+localedir = '@localedir@'
+
+sys.path.insert(1, pkgdatadir)
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+locale.bindtextdomain('apple-music', localedir)
+locale.textdomain('apple-music')
+gettext.install('apple-music', localedir)
+
+if __name__ == '__main__':
+    from gi.repository import Gio
+
+    resource = Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))
+    resource._register()
+
+    from applemusic import main
+
+    sys.exit(main.main(VERSION, APP_ID, BASE_ID, PROFILE))

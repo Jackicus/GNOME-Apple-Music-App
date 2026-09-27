@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="apple-music">
+  <schema id="io.github.jackicus.AppleMusic" path="/io/github/jackicus/AppleMusic/">
+    <key name="window-width" type="i">
+      <default>1100</default>
+      <summary>Window width</summary>
+    </key>
+    <key name="window-height" type="i">
+      <default>760</default>
+      <summary>Window height</summary>
+    </key>
+    <key name="window-maximized" type="b">
+      <default>false</default>
+      <summary>Whether the window is maximized</summary>
+    </key>
+    <key name="last-page" type="s">
+      <default>'home'</default>
+      <summary>Last page shown</summary>
+      <description>The key of the sidebar destination that was selected when the window closed.</description>
+    </key>
+  </schema>
+</schemalist>

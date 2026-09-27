@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>@APP_ID@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+
+  <name>Apple Music</name>
+  <summary>Listen to your Apple Music library</summary>
+  <description>
+    <p>
+      A GNOME app for Apple Music: your library, playlists, radio and
+      recommendations in a native interface, played through Apple's own web
+      player. Requires an Apple Music subscription.
+    </p>
+    <p>
+      Not affiliated with Apple. Apple Music is a trademark of Apple Inc.
+    </p>
+  </description>
+
+  <developer id="io.github.jackicus">
+    <name translate="no">Jack Tully</name>
+  </developer>
+
+  <launchable type="desktop-id">@APP_ID@.desktop</launchable>
+  <url type="homepage">https://github.com/Jackicus/GNOME-Apple-Music-App</url>
+  <url type="bugtracker">https://github.com/Jackicus/GNOME-Apple-Music-App/issues</url>
+  <url type="vcs-browser">https://github.com/Jackicus/GNOME-Apple-Music-App</url>
+
+  <content_rating type="oars-1.1" />
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </supports>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#ffc2cb</color>
+    <color type="primary" scheme_preference="dark">#7a1325</color>
+  </branding>
+
+  <releases>
+    <release version="0.1.0" date="2026-09-27">
+      <description>
+        <p>First scaffold: the window, the sidebar and the build.</p>
+      </description>
+    </release>
+  </releases>
+</component>

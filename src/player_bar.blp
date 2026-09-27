@@ -1,0 +1,97 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicPlayerBar: Adw.Bin {
+  child: Box {
+    spacing: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-top: 6;
+    margin-bottom: 6;
+
+    styles [
+      "player-bar",
+    ]
+
+    Box {
+      spacing: 4;
+      valign: center;
+
+      Button {
+        icon-name: "media-skip-backward-symbolic";
+        tooltip-text: _("Previous");
+        sensitive: false;
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      Button {
+        icon-name: "media-playback-start-symbolic";
+        tooltip-text: _("Play");
+        sensitive: false;
+
+        styles [
+          "circular",
+          "suggested-action",
+        ]
+      }
+
+      Button {
+        icon-name: "media-skip-forward-symbolic";
+        tooltip-text: _("Next");
+        sensitive: false;
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+    }
+
+    Box {
+      spacing: 10;
+      hexpand: true;
+
+      Image artwork {
+        icon-name: "music-note-symbolic";
+        pixel-size: 20;
+        width-request: 40;
+        height-request: 40;
+
+        styles [
+          "card",
+          "player-artwork",
+        ]
+      }
+
+      Box {
+        orientation: vertical;
+        valign: center;
+
+        Label title_label {
+          label: _("Not Playing");
+          xalign: 0;
+          ellipsize: end;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        Label subtitle_label {
+          xalign: 0;
+          ellipsize: end;
+          visible: false;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
+      }
+    }
+  };
+}

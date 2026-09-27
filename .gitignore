@@ -1,0 +1,11 @@
+/build/
+/_build/
+/.flatpak/
+/.flatpak-builder/
+/repo/
+/subprojects/*/
+__pycache__/
+*.pyc
+/subprojects/.wraplock
+/subprojects/packagecache/
+.ruff_cache/

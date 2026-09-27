@@ -1,0 +1,12 @@
+/* Apple Music's red as the app's accent; libadwaita derives --accent-color from it. */
+:root {
+  --accent-bg-color: #fa2d48;
+}
+
+.player-bar {
+  min-height: 48px;
+}
+
+.player-artwork {
+  border-radius: 6px;
+}

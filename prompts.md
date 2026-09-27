@@ -1,0 +1,1210 @@
+# Plan: Apple Music for GNOME
+
+One phase per Claude Code session. Paste the phase's prompt; `CLAUDE.md` is loaded automatically.
+When a phase is done, tick it in the list below (`[x]`, with the date) and note anything the next
+phase must know under that phase's heading. If a phase turns out to be more than one session, split
+it here before continuing rather than leaving it half done. Every phase leaves the app building,
+running and better than before.
+
+## Phases at a glance
+
+- [ ] 1. Foundations: git, tests, lint, logging, asyncio on GLib
+- [ ] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests)
+- [ ] 3. Library model and demo mode
+- [ ] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork
+- [ ] 5. Songs page (GtkColumnView)
+- [ ] 6. Detail pages: album, playlist, artist
+- [ ] 7. Shelves: Home and Radio from the cache
+- [ ] 8. Sidebar: playlists and folders
+- [ ] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI
+- [ ] 10. Engine in the app: lifecycle, sign-in, account
+- [ ] 11. Library sync and artwork cache
+- [ ] 12. Playback: Player state and the player bar
+- [ ] 13. MPRIS
+- [ ] 14. Now Playing sheet, queue, lyrics
+- [ ] 15. Search
+- [ ] 16. Context menus and actions (play next, love, add, drag to playlist)
+- [ ] 17. Preferences
+- [ ] 18. Keyboard navigation and accessibility
+- [ ] 19. Performance pass
+- [ ] 20. Packaging and release
+
+## Settled questions (Jack agreed to all four recommendations, 2026-09-27)
+
+1. **Distribution.** Recommendation: native install is the release path (`meson install`, plus an
+   AUR PKGBUILD since this is an Arch-family machine). The Flatpak manifest stays for development
+   only, with `--talk-name=org.freedesktop.Flatpak` so the sandboxed app can `flatpak-spawn --host`
+   the host's Chrome. Flathub is out of scope: it would refuse both the host-Chrome dependency and
+   the trademark in the name/ID. The ID `io.github.jackicus.AppleMusic` stays.
+2. **Chrome profile.** Recommendation: the app gets its own profile and port (`$XDG_DATA_HOME/
+   apple-music/chrome`, 9228; the `.Devel` build `chrome-devel`, 9229), so it never fights the
+   extension's Chrome over a profile lock. Cost: signing in again, once per profile, and two Chromes
+   if both run. Alternative: `APPLE_MUSIC_PROFILE` pointed at the extension's profile, which reuses
+   its sign-in but means only one of the two can run at a time.
+3. **Player placement.** Recommendation: a full-width bar at the bottom of the window (GNOME Music,
+   Decibels) with Now Playing as an `AdwBottomSheet` sheet that slides up over the content, with
+   Lyrics and Up Next as tabs inside it. Apple's web player puts the player at the top; the bottom
+   keeps the header bar for page titles and back buttons and is what GNOME users expect.
+4. **Playlist folders.** Recommendation: folders are sidebar items with a `folder-symbolic` icon and
+   a disclosure arrow as the suffix; activating one toggles its playlists (hidden via
+   `AdwSidebarItem:visible`) and opens the folder's page in the content. `AdwSidebar` cannot indent,
+   so nested items rely on order and the arrow. Alternative: one titled `AdwSidebarSection` per
+   folder, always expanded, no nesting.
+
+## Decisions already taken (change here if you disagree)
+
+- **Concurrency: asyncio on the GLib main loop**, via `gi.events.GLibEventLoopPolicy` (PyGObject
+  3.50+, which `meson.build` already requires). Verified on this machine: tasks created from GTK
+  signal handlers run under `Gtk.Application.run()`, Gio async methods are awaitable
+  (`await file.load_contents_async()`), `asyncio.to_thread` and `asyncio.open_connection` work.
+  Why not threads: CDP is request/response plus events, which coroutines model directly with no
+  locks, no `GLib.idle_add` hops and no shared-state bugs; UI code awaits the engine in place. Blocking
+  work (JSON parse, image decode, artwork HTTP) goes through `asyncio.to_thread`. Chrome is spawned
+  with `Gio.Subprocess` (GLib-native, awaitable `wait_async`). Python 3.14's DeprecationWarning for
+  `set_event_loop_policy` is filtered; if PyGObject changes the entry point before 3.16, only
+  `main.py` changes.
+- **MPRIS: the app owns the service** (`org.mpris.MediaPlayer2.<app-id>`) reflecting the Player
+  state, and Chrome is started with `--disable-features=HardwareMediaKeyHandling` so its own
+  `org.mpris.MediaPlayer2.chromium.instance<pid>` never appears. Tradeoff: ~200 lines of D-Bus code
+  and we relay every command, but the shell shows this app's name and icon, Raise focuses this
+  window, media keys reach us, and the service survives engine restarts. Following Chrome's player
+  would be free but shows "Chromium" in the shell and disappears whenever the engine restarts.
+- **Navigation: one `AdwNavigationView` in the content pane.** Selecting a sidebar item replaces the
+  stack with that destination's root page (created on first visit and kept); tiles push detail pages;
+  the header bar's back button and Alt+Left pop. Root pages show a big in-content title (`title-1`,
+  as on the web) and hide the header-bar title; detail pages show their title in the header bar.
+- **Engine lifecycle.** Chrome starts headless on launch when signed in and `engine-autostart` is
+  on, is reclaimed from `$XDG_RUNTIME_DIR/apple-music/engine.json` if it survived an app crash, and is
+  stopped on quit (SIGTERM, 5 s, SIGKILL). Background playback with the window closed is a preference
+  (phase 17), off by default.
+- **Now-playing state comes from MusicKit events** forwarded through a CDP binding
+  (`Runtime.addBinding` → `Runtime.bindingCalled`), never polled. Polling is allowed only while
+  waiting for sign-in.
+- **Cache and data flow.** `$XDG_CACHE_HOME/apple-music/library.json` is the single library
+  snapshot (the extension's format, plus `folders`, `sections.songs`, `sections.videos`). Thumbnails
+  are 320 px (tiles are ≤ 160 logical px at 2× scale) and fetched for every library item at sync;
+  covers are 640 px and fetched on demand for detail pages. Decoded textures live in an LRU of ~200
+  entries (~80 MB at 320 px). The library is parsed off the main thread; GObjects are wrapped lazily
+  per section and spliced into `Gio.ListStore`s in batches. Pages show a placeholder state
+  (`AdwSpinner` or empty `AdwStatusPage`) and fill when models arrive; tiles show a placeholder icon
+  until their texture is decoded. Targets: content visible within 1 s of launch for 2,000 albums,
+  page switch under 100 ms, no dropped frames while scrolling grids.
+- **Songs** come from the albums' track groups immediately and from `/v1/me/library/songs` after a
+  sync (loose songs), merged by id.
+- **Demo mode** (`--demo`, phase 3) runs the app from a generated, fictional library so UI work and
+  screenshots never need Chrome or a real account.
+- **Tests** are stdlib `unittest` (nothing to install), run by `scripts/check.sh`; UI is verified by
+  screenshots, not widget tests.
+
+## Reference layout (music.apple.com, from Jack's screenshot; not in the repo)
+
+Sidebar: Apple Music wordmark; Search, Home, New, Radio; "Library" heading: Recently Added,
+Artists, Albums, Songs, Music Videos, Made for You; "Playlists" heading: All Playlists, Favourite
+Songs, then the user's folders (folder icon, disclosure arrow, collapsed) and playlists (playlist
+icon) in the user's order; footer: "Open in Music ↗" and the account (round avatar and name).
+Content: a large bold page title ("Home"); shelves with bold titles: "Top Picks for You" (large
+landscape cards with a coloured caption band: "Made for You", names), "Recently Played" (square
+tiles, title and dim subtitle), decade and genre shelves; a scrollbar on the sidebar. The player
+sits at the top full width in the web player; here it goes at the bottom (settled question 3).
+
+---
+
+## Phase 1: Foundations
+
+**Goal.** Turn the scaffold into a repo future sessions can trust: first commits, a test runner in
+`check.sh`, optional lint, logging, the asyncio-on-GLib bootstrap, and one HIG fix.
+
+**Not in this phase.** No backend, no data, no new pages.
+
+**Files.** `.gitignore`, `scripts/check.sh`, `pyproject.toml` (new, ruff config only),
+`tests/__init__.py`, `tests/test_sections.py` (new), `src/main.py`, `src/window.blp`, `README.md`.
+
+**Done when.** `git log` shows a "Scaffold" commit followed by this phase's commit;
+`scripts/check.sh` runs unittest and prints `check: ok`; `scripts/run.sh --debug` logs the asyncio
+loop class at startup; `scripts/screenshot.py --size 400x700` shows the sidebar as boxed lists.
+
+```text
+Phase 1 of prompts.md: Foundations. Read CLAUDE.md first.
+
+1. Commit the untouched scaffold as the first commit ("Scaffold: window, sidebar, build") so the
+   history starts from what exists. Before that, add `subprojects/.wraplock`,
+   `subprojects/packagecache/` and `.ruff_cache/` to .gitignore (build/ and subprojects/*/ are
+   already ignored; check with `git status --short --untracked-files=all`).
+2. Tests. Create tests/__init__.py that registers src/ as the `applemusic` package without an
+   install, using importlib.util.spec_from_file_location('applemusic', src/'__init__.py',
+   submodule_search_locations=[str(src)]) and sys.modules. Add tests/test_sections.py: destination
+   keys are unique and non-empty, 'home' exists, every icon name is either bundled in src/icons/ or
+   present under /usr/share/icons/Adwaita/symbolic/. Run with
+   `python3 -m unittest discover -s tests -v`.
+3. scripts/check.sh: `python3 -m compileall -q src scripts tests`; `ruff check .` if `command -v
+   ruff` succeeds (print one line saying it was skipped otherwise; ruff is not installed here);
+   the unittest discovery; then the existing meson compile and meson tests. Add pyproject.toml with
+   only `[tool.ruff]` (line-length = 100, target-version = "py312") and `[tool.ruff.lint]`
+   select = ["E", "F", "W"]. Keep check.sh under ten seconds.
+4. Logging in src/main.py: `logging.basicConfig(level=INFO, format='%(levelname)s %(name)s:
+   %(message)s')`, DEBUG when `--debug` is passed (Gio.Application.add_main_option + 
+   do_handle_local_options, returning -1 to continue) or APPLE_MUSIC_DEBUG is set. Replace nothing
+   else; there are no prints to remove.
+5. asyncio on GLib in main(): filter the DeprecationWarning for asyncio policies, then
+   `asyncio.set_event_loop_policy(gi.events.GLibEventLoopPolicy())` before app.run(). Add
+   `Application.spawn(coro)` that creates a task on `asyncio.get_event_loop()` and logs any exception
+   from a done-callback. In do_activate, spawn a trivial coroutine that awaits asyncio.sleep(0) and
+   logs `asyncio: <loop class name>` at DEBUG. This is the pattern every later phase uses; do not
+   introduce threads for GTK work.
+6. window.blp: in the breakpoint setters add `sidebar.mode: page;` next to `split_view.collapsed:
+   true;` (the libadwaita-documented pairing).
+7. README.md: keep it accurate (mention check.sh now runs tests).
+
+Verify: scripts/check.sh passes; scripts/run.sh --debug shows the loop line; scripts/screenshot.py
+build/narrow.png --size 400x700 shows the boxed-list sidebar, and build/wide.png the normal one.
+Look at both PNGs. Update CLAUDE.md where this changed a convention (logging, spawn, tests).
+Tick phase 1 in prompts.md and commit.
+```
+
+## Phase 2: Vendor the backend
+
+**Goal.** Bring the proven backend into this repo unchanged in behaviour, with its tests passing
+here, and the demo-library generator. No process is started.
+
+**Not in this phase.** No async client, no engine lifecycle, no UI changes.
+
+**Files.** New `src/backend/{__init__.py,cdp.py,bridge.js,sync.py,config.py,am.py}`,
+`tests/{test_cdp.py,test_sync.py,test_demo_schema.py}`, `tests/fixtures/`,
+`scripts/demo_library.py`, `src/meson.build`, `pyproject.toml` (ruff excludes), `po/POTFILES.in`
+unchanged (backend has no UI strings).
+
+**Done when.** `scripts/check.sh` passes with the vendored tests;
+`scripts/demo_library.py --cache build/demo` writes `build/demo/library.json` and artwork;
+`src/backend/__init__.py` records provenance (source path, date, list of edits); nothing in
+`src/backend/` imports GTK or reads the extension's schema.
+
+```text
+Phase 2 of prompts.md: Vendor the backend. Read CLAUDE.md first.
+
+Source: /home/jackt/Projects/GNOME-Extensions/GNOME-Apple-Music-Library. Read its
+src/backend/README.md fully (the command table, error codes, library.json/Item/Track shapes, the
+environment overrides). Copy: src/backend/{cdp.py,bridge.js,sync.py,am.py} to src/backend/;
+tests/{test_cdp.py,test_sync.py,test_demo_schema.py} and tests/fixtures/ to tests/;
+scripts/demo_library.py to scripts/. Do not copy or read the extension's shell UI (src/*.js,
+src/lib/) or its other scripts.
+
+Adapt, minimally and listing every edit in the src/backend/__init__.py docstring:
+- Package imports (`from . import sync`); tests import `applemusic.backend.<mod>` through the
+  tests/__init__.py shim from phase 1.
+- Settings: the backend read the extension's compiled GSettings schema. Replace with
+  src/backend/config.py: cache_dir() = $APPLE_MUSIC_CACHE or $XDG_CACHE_HOME/apple-music;
+  profile_dir() = $APPLE_MUSIC_PROFILE or $XDG_DATA_HOME/apple-music/chrome; port() =
+  $APPLE_MUSIC_PORT or 9228; THUMB_SIZE = 320, COVER_SIZE = 640; the engine state file at
+  $XDG_RUNTIME_DIR/apple-music/engine.json. The old names (APPLE_MUSIC_LIBRARY_*, port 9227, the
+  apple-music-library directories) must not survive anywhere. If tests hard-code 256/512, make the
+  sizes parameters of the functions rather than editing fixtures. The `.sizes` mechanism stays.
+- am.py is kept only as a reference for later phases (its sync orchestration and command bodies
+  get ported in phases 9 to 11): add a header comment saying so, exclude it from install and from
+  ruff (pyproject `[tool.ruff] exclude`), and make sure importing the package does not import it.
+- bridge.js is installed as data beside the Python (install_data into moduledir / 'backend') and
+  located with Path(__file__).with_name('bridge.js'). Update src/meson.build to install the
+  backend package. Nothing in src/backend/ may import gi.
+- scripts/demo_library.py: it must write a complete library.json plus generated artwork into a
+  directory given by --cache (default build/demo), using the config sizes. Read it and confirm every
+  name, title and image in it is invented; if anything looks like real account data, replace it.
+  test_demo_schema.py must pass against its output.
+
+Verify: python3 -m unittest discover -s tests -v passes; scripts/check.sh passes;
+scripts/demo_library.py --cache build/demo produces library.json with albums, artists, playlists,
+radio and shelves; grep -r "apple-music-library\|9227" src tests scripts returns nothing. No Chrome
+is started by anything in this phase. Update CLAUDE.md's layout section for src/backend/ and
+scripts/demo_library.py. Tick phase 2 in prompts.md and commit.
+```
+
+## Phase 3: Library model and demo mode
+
+**Goal.** An in-memory model the UI can bind to, loaded off the main thread from `library.json`,
+and a `--demo` mode so every later UI phase runs without Chrome.
+
+**Not in this phase.** No grids yet; pages only show counts. No sync.
+
+**Files.** New `src/library.py`, `tests/test_library.py`, `scripts/demo.sh`; edit `src/main.py`,
+`src/window.py`, `scripts/screenshot.py`, `src/meson.build`.
+
+**Done when.** `scripts/demo.sh` runs the app on the demo library and the Albums placeholder page
+reads "1,234 albums" (whatever the count is) once loaded; `scripts/screenshot.py --demo --page albums`
+shows it; `tests/test_library.py` loads a generated library and checks counts and `by_id`.
+
+```text
+Phase 3 of prompts.md: Library model and demo mode. Read CLAUDE.md first, then
+src/backend/sync.py's docstrings and the Item/Track shapes in the vendored README.
+
+1. src/library.py:
+   - Item(GObject.Object) with GObject properties mirroring the Item shape (id, kind, title,
+     subtitle, year, genre, summary, art, thumb, art_color, count_label, explicit, catalog_id, url)
+     plus `play` (dict) and `raw` (the source dict); `groups` wraps Track objects lazily on first
+     access. Track(GObject.Object) mirrors the Track shape (id, catalog_id, title, artist, album,
+     track_number, disc_number, duration_ms, duration_label, explicit, index, thumb, raw).
+     Shelf(GObject.Object): key, title, items (Gio.ListStore of Item).
+   - Library(GObject.Object): properties `state` ('empty', 'loading', 'ready'), `generated`,
+     `storefront`; Gio.ListStores albums, artists, playlists, radio, videos (empty if the section is
+     absent); `shelves` (list of Shelf); `songs` built lazily from every album's groups (a
+     Gio.ListStore of Track, deduplicated by id); by_id(kind, id); signal 'changed'.
+   - async load(): read and json-parse the file in asyncio.to_thread; wrap and splice into the
+     stores on the main thread in batches of 500 with an `await asyncio.sleep(0)` between batches so
+     frames keep painting; set state; emit changed. A missing file is state 'empty', not an error.
+     Paths come from applemusic.backend.config.
+2. Demo mode: a `--demo` main option that points config at build/demo (set APPLE_MUSIC_CACHE
+   before the backend reads it) and marks app.demo = True; scripts/demo.sh generates build/demo
+   with scripts/demo_library.py when missing and execs scripts/run.sh --demo "$@";
+   scripts/screenshot.py gains --demo doing the same. Later phases treat app.demo as "no engine".
+3. Wire it: Application creates app.library in do_startup and spawns load() in do_activate. The
+   placeholder pages' descriptions become live: "Loading…" while loading, then a count from the
+   matching store ("%d albums", with ngettext) for albums, artists, all-playlists, songs,
+   music-videos, radio; others keep "Nothing here yet".
+4. tests/test_library.py: generate a demo library into a temp dir with scripts/demo_library.py
+   (import it or subprocess), point config at it, run Library.load() under asyncio.run (no GTK
+   needed: GObject creation works without a display), assert counts match library.json, by_id works,
+   songs are deduplicated and `groups` wraps lazily.
+
+Verify: scripts/check.sh passes; scripts/demo.sh runs and the sidebar pages show counts;
+scripts/screenshot.py build/albums.png --demo --page albums and look at it. Update CLAUDE.md
+(architecture: Library exists; commands: demo.sh and --demo). Tick phase 3 in prompts.md and commit.
+```
+
+## Phase 4: Grid pages and artwork
+
+**Goal.** The first real pages: recycled `Gtk.GridView` grids over the model, with asynchronous
+artwork, and the content pane becomes an `AdwNavigationView` ready for drill-down.
+
+**Not in this phase.** No detail pages (activation shows a toast), no folders, no Songs table.
+
+**Files.** New `src/widgets/{artwork.py,tile.py,tile.blp}`, `src/pages/{grid.py,grid.blp}`,
+`src/pages/__init__.py` (registry); edit `src/window.py`, `src/window.blp`, `src/style.css`,
+`src/meson.build`, `src/applemusic.gresource.xml`, `po/POTFILES.in`.
+
+**Done when.** Albums, Artists, Recently Added, All Playlists and Music Videos are grids of tiles
+with artwork; scrolling 2,000 demo albums drops no frames; the header bar still shows the sidebar
+toggle when collapsed; screenshots in both themes and at 400 px wide look right.
+
+```text
+Phase 4 of prompts.md: Grid pages and artwork. Read CLAUDE.md first, then src/library.py and
+src/window.py.
+
+1. src/widgets/artwork.py: a process-wide Artwork loader. get(path) returns a Gdk.Texture from an
+   OrderedDict LRU (200 entries) or None; request(path, callback) decodes with
+   asyncio.to_thread(Gdk.Texture.new_from_filename, path) (texture creation is thread-safe),
+   deduplicates in-flight requests, and calls back on the main loop. Callers pass a token and
+   cancel on unbind so recycled tiles never show a stale cover. A path that is missing on disk
+   counts as no artwork (the README's rule).
+2. src/widgets/tile.py + tile.blp: AppleMusicTile, a vertical Gtk.Box: a 160×160 Gtk.Picture
+   (content-fit: cover, overflow: hidden, CSS class tile-art with border-radius 8px in style.css)
+   showing a placeholder icon (music-note-symbolic on a card background) until the texture
+   arrives; title label (ellipsize end, xalign 0, two lines max) and subtitle (dim-label, caption).
+   An `artist` variant uses Adw.Avatar (size 160, custom-image) with a centred title. bind(item) /
+   unbind() handle the artwork token. Set the Gtk.ListItem's accessible-label to "title, subtitle"
+   in bind.
+3. src/pages/grid.py + grid.blp: AppleMusicGridPage(Adw.NavigationPage) = Adw.ToolbarView with an
+   Adw.HeaderBar (show-title: false; the sidebar toggle and back button still appear) and a
+   Gtk.ScrolledWindow containing: a title label (title-1, xalign 0, margins 24) and a Gtk.GridView
+   (min-columns 2, max-columns 12, single-click-activate true, tab-behavior item) over a
+   Gtk.SingleSelection or Gtk.NoSelection of the page's model, plus a Gtk.Stack for
+   loading (Adw.Spinner) and empty (Adw.StatusPage) states driven by library.state and the
+   model's item count. Sorting: a Gtk.DropDown in the header (Title / Artist / Year) driving a
+   Gtk.SortListModel with Gtk.StringSorter/Gtk.NumericSorter over Gtk.PropertyExpression (they run
+   in C; do not use Python CustomSorter for big models). The factory is a Gtk.SignalListItemFactory
+   creating AppleMusicTile in setup and binding in bind/unbind.
+4. Pages: albums (library.albums), artists (library.artists, avatar tiles), recently-added (the
+   shelf whose key is "recently-added", unsorted), all-playlists (library.playlists),
+   music-videos (library.videos; the demo may lack it, so the empty state must look right).
+   src/pages/__init__.py maps destination keys to page factories; unknown keys keep the
+   placeholder.
+5. Window: replace the GtkStack with an Adw.NavigationView; the content Adw.NavigationPage loses
+   its own header bar (each page carries one). Root pages are created on first visit and kept;
+   selecting a sidebar item calls navigation_view.replace([root]). Keep last-page behaviour.
+   Activating a tile shows a toast with the item's title for now, through a single
+   window.open_item(item) that phase 6 will implement.
+6. Add the new .blp files to src/meson.build and the gresource, the .py files to install_data, and
+   every file with strings to po/POTFILES.in.
+
+Verify: scripts/check.sh; scripts/demo.sh; screenshots with --demo for --page albums, artists,
+all-playlists in dark, one in --light, and albums at --size 400x700; look at each. Scroll the
+Albums page with the demo library and confirm no jank (if the demo has fewer than 1,000 albums,
+generate a bigger one: check demo_library.py's options). Update CLAUDE.md (architecture:
+NavigationView, widgets/, pages/; the Artwork rule). Tick phase 4 in prompts.md and commit.
+```
+
+## Phase 5: Songs page
+
+**Goal.** A sortable, filterable table of every song, as on music.apple.com's Songs page, built on
+`Gtk.ColumnView`.
+
+**Not in this phase.** Playback (activation toasts), Favourite Songs (phase 6).
+
+**Files.** New `src/pages/{songs.py,songs.blp}`; edit `src/pages/__init__.py`, `src/library.py`
+(if `songs` needs fields), meson/gresource/POTFILES.
+
+**Done when.** 30,000 demo tracks sort by any column in under 300 ms, filtering as you type
+works, the page shows a count, and screenshots look right in both themes.
+
+```text
+Phase 5 of prompts.md: Songs page. Read CLAUDE.md first, then src/pages/grid.py to match its
+structure.
+
+Build src/pages/songs.py + songs.blp: AppleMusicSongsPage(Adw.NavigationPage) with the same
+header-bar arrangement as the grid pages, the in-content title "Songs" and a dim count label, a
+Gtk.SearchEntry in the header (placeholder "Filter"), and a Gtk.ColumnView (show-row-separators,
+tab-behavior item, single-click-activate false) with columns: Title (32 px thumb through the
+Artwork loader + title, an "E" caption badge for explicit), Artist, Album, Time (right-aligned,
+CSS class numeric). Each column gets a sorter (Gtk.StringSorter over a Gtk.PropertyExpression;
+Gtk.NumericSorter for duration_ms); the model chain is library.songs → Gtk.FilterListModel
+(Gtk.AnyFilter of Gtk.StringFilters on title, artist, album, ignore-case, substring) →
+Gtk.SortListModel(sorter=column_view.get_sorter()) → Gtk.SingleSelection. Filtering is
+incremental (set-filter with the entry text; the FilterListModel handles the rest). Row
+activation (Enter or double-click) calls window.play_request(track) which for now toasts the
+title; phase 12 makes it play.
+
+Performance: generate a demo library with at least 30,000 tracks (check demo_library.py's
+options; add one if needed) and confirm sorting by Artist and filtering feel instant; no Python
+per-row work beyond bind. Bind must not decode images on the main thread.
+
+Verify: scripts/check.sh; scripts/screenshot.py build/songs.png --demo --page songs (dark and
+--light); look at them. Update CLAUDE.md if a convention changed. Tick phase 5 in prompts.md and
+commit.
+```
+
+## Phase 6: Detail pages
+
+**Goal.** Album, playlist and artist pages pushed onto the navigation view from any tile, with the
+hero, metadata, Play/Shuffle buttons and track lists, plus Favourite Songs.
+
+**Not in this phase.** Actual playback (the seam `window.play_request` toasts), context menus,
+shelf items without `groups` (they show a "Sign in to load" state until phase 10).
+
+**Files.** New `src/pages/{detail.py,detail.blp,artist.py,artist.blp}`,
+`src/widgets/{track_row.py,track_row.blp}`; edit `src/window.py`, `scripts/screenshot.py`
+(`--open`), `scripts/demo_library.py` (a flagged favourites playlist), meson/gresource/POTFILES.
+
+**Done when.** Clicking an album, playlist or artist tile opens its page; back works with the
+header button and Alt+Left; discs show as groups; Favourite Songs opens the flagged playlist;
+`scripts/screenshot.py --demo --open album:first` renders an album page.
+
+```text
+Phase 6 of prompts.md: Detail pages. Read CLAUDE.md first, then src/library.py (Item.groups,
+Track), src/pages/grid.py and src/window.py.
+
+1. src/widgets/track_row.py + .blp: AppleMusicTrackRow for Gtk.ListView rows: a leading slot
+   (track number for albums, 40 px thumb for playlists), title with an explicit badge, artist
+   (playlists only), duration_label right-aligned (numeric). Rows are activatable (Enter or
+   double-click; single-click-activate false) and call window.play_request(group.play,
+   start_with=track.index).
+2. src/pages/detail.py + detail.blp: AppleMusicDetailPage(Adw.NavigationPage) for album and
+   playlist Items. Adw.ToolbarView with an Adw.HeaderBar showing the item title; content in a
+   Gtk.ScrolledWindow: a hero row (Gtk.Picture 260 px from item.art, falling back to thumb, then
+   the placeholder; title title-1; subtitle title-3; a caption line "Genre · Year · count_label";
+   Play and Shuffle Gtk.Buttons with icons, Play styled suggested-action, both calling
+   window.play_request(item.play, shuffle=…)), the summary as a wrapping dim label when present,
+   then one Gtk.ListView per group with a heading label when there is more than one group ("Disc
+   1"). Below 600sp (Adw.Breakpoint on the page) the hero stacks vertically and centres. Items
+   without groups (shelf hits) show an Adw.StatusPage "Sign in to load this" in place of the list
+   (phase 10 replaces it with a fetch).
+3. src/pages/artist.py + artist.blp: AppleMusicArtistPage: circular hero (Adw.Avatar 200 px with
+   custom-image) and name, then an "Albums" heading and a Gtk.FlowBox bound to the artist's albums
+   (each group of an artist Item is one album per the README; resolve through library.by_id and
+   reuse AppleMusicTile). A FlowBox is fine here because an artist has tens of albums, not
+   thousands; grids of unbounded size stay GridView.
+4. window.open_item(item): push the right page (kind album/playlist → detail, artist → artist,
+   station → toast for now). AdwNavigationView provides the back button; confirm Alt+Left and the
+   mouse back button pop (test it; if not, add a win.back action with <alt>Left).
+5. Favourite Songs: demo_library.py marks one playlist in its raw attributes as the favourites
+   playlist (pick a key like attributes.isFavourites and keep it in the fixture only; phase 11
+   maps Apple's real attribute onto the same key). The sidebar destination favourite-songs opens
+   that playlist's detail page as a root page, or an empty state if none.
+6. scripts/screenshot.py: add --open KIND:ID (ID may be "first") that calls window.open_item after
+   the library loads, and raise the render delay when --open is used so artwork has arrived.
+
+Verify: scripts/check.sh; screenshots with --demo: --open album:first, --open playlist:first,
+--open artist:first, plus album at --size 400x700 and one --light; look at each. Update CLAUDE.md
+(pages list, open_item and play_request seams). Tick phase 6 in prompts.md and commit.
+```
+
+## Phase 7: Shelves, Home and Radio
+
+**Goal.** The shelf widget (a horizontal recycled row of tiles under a title) and the Home and
+Radio pages built from the cached shelves and stations.
+
+**Not in this phase.** New and Made for You (engine data, phase 15), fetching `groups` for shelf
+items (phase 10).
+
+**Files.** New `src/widgets/{shelf.py,shelf.blp}`, `src/pages/{home.py,home.blp,radio.py,radio.blp}`;
+edit registry, meson/gresource/POTFILES, `src/style.css`.
+
+**Done when.** Home shows the demo shelves as horizontal rows with a larger hero row first; Radio
+shows stations; vertical mouse-wheel over a shelf scrolls the page; screenshots look right.
+
+```text
+Phase 7 of prompts.md: Shelves, Home and Radio. Read CLAUDE.md first, then src/widgets/tile.py
+and src/library.py (Shelf).
+
+1. src/widgets/shelf.py + shelf.blp: AppleMusicShelf: a title row (title-2 label, optional
+   subtitle, optional "See All" flat button) above a Gtk.ScrolledWindow (vscrollbar-policy never,
+   hscrollbar-policy automatic with overlay scrolling) containing a horizontal Gtk.ListView
+   (orientation horizontal, single-click-activate true, tab-behavior item) whose factory makes
+   AppleMusicTile; bind_shelf(shelf). A `hero` property makes tiles 260 px wide with a two-line
+   caption for the first Home shelf ("Top Picks"-style cards). Activation calls
+   window.open_item(item). Confirm a vertical wheel over the shelf scrolls the page and a
+   horizontal gesture scrolls the shelf; fix event propagation if not.
+2. src/pages/home.py + home.blp: title "Home", a vertical Gtk.Box of AppleMusicShelf inside a
+   Gtk.ScrolledWindow (a Box is fine: shelves are few; the tiles inside are recycled), one per
+   library.shelves in order, the first as hero. Loading/empty states like the grid pages.
+3. src/pages/radio.py + radio.blp: title "Radio", a hero shelf of the first stations and a grid
+   (reuse AppleMusicGridPage's grid or a shelf per subtitle group, whichever the data supports;
+   read what sync.py puts in sections.radio). Station activation toasts until playback exists.
+4. "See All" on a shelf pushes an AppleMusicGridPage built from that shelf's store (make the grid
+   page accept an arbitrary model and title).
+
+Verify: scripts/check.sh; screenshots with --demo for --page home (dark, --light, and --size
+400x700) and --page radio; look at them. Update CLAUDE.md if conventions changed. Tick phase 7 in
+prompts.md and commit.
+```
+
+## Phase 8: Sidebar playlists and folders
+
+**Goal.** The user's playlists and folders in the Playlists section of the sidebar, in Apple's
+order, with collapsible folders, folder pages, and All Playlists showing the tree.
+
+**Not in this phase.** Fetching folders from Apple (phase 11 adds it to sync; here the demo
+generator and the model define the shape), context menus, drag and drop.
+
+**Files.** Edit `scripts/demo_library.py`, `src/library.py`, `src/window.py`, `src/window.blp`,
+`src/pages/grid.py`, `data/…gschema.xml` (`expanded-folders`), `tests/test_library.py`.
+
+**Done when.** The sidebar lists All Playlists, Favourite Songs, then folders and playlists from
+the demo; a folder collapses and expands with its arrow and opens its page; expansion survives a
+restart; selecting a playlist shows its detail page as a root page; `last-page` remembers
+`playlist:<id>`.
+
+```text
+Phase 8 of prompts.md: Sidebar playlists and folders. Read CLAUDE.md first (the AdwSidebar notes),
+then src/window.py and src/library.py.
+
+1. Shape: library.json gains "folders": a list of {id, title, parent (folder id or null),
+   children: [{kind: "folder"|"playlist", id}]} in Apple's order, and playlists not in any folder
+   are listed in a root entry with id "root". Extend scripts/demo_library.py to emit three folders
+   (one nested) and loose playlists, keep test_demo_schema.py green, and add
+   Library.playlist_tree() returning nested entries plus a flat depth-first list with depth.
+2. Sidebar: the Playlists section becomes model-driven. Build a Gio.ListStore of SidebarEntry
+   GObjects (kind: fixed/folder/playlist, key, title, icon, depth, item) starting with All
+   Playlists and Favourite Songs, then the flat tree; call section.bind_model(store, create_func)
+   where create_func returns a subclass of Adw.SidebarItem holding the entry. Folders use
+   icon-name folder-symbolic and a Gtk.Image suffix (pan-end-symbolic collapsed, pan-down-symbolic
+   expanded); their descendants get visible=False when any ancestor is collapsed. Playlists use
+   the bundled playlist-symbolic. Expansion state is a GSettings key expanded-folders (type as,
+   folder ids); add it to the gschema with a summary.
+3. Selection: on notify::selected-item, a playlist entry replaces the navigation stack with its
+   AppleMusicDetailPage (a root page, cached per playlist); a folder entry toggles its expansion
+   and shows a folder page: AppleMusicGridPage over the folder's children where folder children
+   are tiles with a big folder-symbolic icon that push the sub-folder's page. All Playlists shows
+   the root entry the same way. Store last-page as "playlist:<id>" or "folder:<id>" and restore
+   it, falling back to home if the id is gone. Re-select the right item after the library reloads
+   (bind_model rebuilds items and loses selection).
+4. Keep the fixed sections untouched. Check that ~150 playlists in the sidebar still scroll and
+   render fine (AdwSidebar rows are real widgets, not recycled; note the number in CLAUDE.md).
+
+Verify: scripts/check.sh (add a tests/test_library.py case for playlist_tree); screenshots with
+--demo of the sidebar with a folder expanded and collapsed (add --expand FOLDER_ID or expand the
+first folder when --demo is set) and of a folder page; restart and confirm the expansion persists
+(GSettings memory backend in screenshots won't; test with scripts/demo.sh). Update CLAUDE.md.
+Tick phase 8 in prompts.md and commit.
+```
+
+## Phase 9: Backend layer, engine process and async CDP client
+
+**Goal.** The pure-Python (no gi) layer that finds and describes Chrome, keeps one asynchronous CDP
+connection, injects the bridge, forwards MusicKit events, and a debug CLI to drive it without the
+GUI. Nothing in the GTK app changes yet.
+
+**Not in this phase.** The GObject `Engine` façade, sign-in UI, sync (phases 10 and 11).
+
+**Files.** New `src/backend/{chrome.py,client.py,errors.py}`, `scripts/am.py`,
+`tests/{test_chrome.py,test_client.py}`; edit `src/backend/bridge.js`, `src/backend/am.py`
+(reference only), `src/meson.build`.
+
+**Done when.** `tests/test_client.py` drives `CDPClient` against the fake WebSocket server from the
+vendored `test_cdp.py` (calls, evaluate with promise, binding events, timeout); `scripts/am.py start
+--visible` opens Chrome on music.apple.com with the app's own profile and port, `scripts/am.py eval
+'MusicKit.getInstance().isAuthorized'` prints a JSON false, `scripts/am.py events` prints bridge
+events, `scripts/am.py stop` ends it; `busctl --user list | grep mpris` shows no chromium player
+while it runs.
+
+```text
+Phase 9 of prompts.md: Backend layer, engine process and async CDP client. Read CLAUDE.md first,
+then src/backend/cdp.py, bridge.js, the vendored README, tests/test_cdp.py, and the engine and
+command parts of src/backend/am.py (engine_start/stop/status, how commands call the bridge).
+Nothing in src/backend may import gi; keep it asyncio and stdlib.
+
+1. src/backend/errors.py: EngineError(code, message) with the README's codes engine-down,
+   not-signed-in, api, timeout, plus usage.
+2. src/backend/chrome.py: find_chrome(command) tries the configured command, then
+   google-chrome-stable, google-chrome, /opt/google/chrome/chrome on PATH (return None if absent);
+   chrome_args(binary, profile, port, headless) builds the argv: --user-data-dir, 
+   --remote-debugging-port, --remote-debugging-address=127.0.0.1,
+   --autoplay-policy=no-user-gesture-required, --disable-features=HardwareMediaKeyHandling,
+   --no-first-run, --no-default-browser-check, --headless=new when headless, and
+   https://music.apple.com/ as the URL (copy any other flag am.py used and say why in a comment);
+   EngineState read/write of $XDG_RUNTIME_DIR/apple-music/engine.json {pid, port, headless,
+   profile, started} with pid liveness checks; async wait_for_devtools(port, timeout) polling
+   http://127.0.0.1:port/json/version every 200 ms; async list_targets(port) returning the page
+   whose url starts with https://music.apple.com. HTTP through urllib in asyncio.to_thread.
+3. src/backend/client.py: CDPClient over asyncio.open_connection, reusing cdp.py's handshake and
+   frame codec where they are separable (refactor cdp.py into pure functions if needed, keeping
+   test_cdp.py green). API: await connect(ws_url); await call(method, params=None, timeout=30)
+   correlated by id; await evaluate(js, await_promise=True, timeout=30) using Runtime.evaluate
+   with returnByValue, raising EngineError('api', …) on exceptionDetails; on(event, callback) for
+   CDP events and for bridge events under names like 'am:playbackStateDidChange'; await
+   ensure_bridge() reads bridge.js, hashes it, sets window.__appleMusicLibraryWanted and injects
+   when the page's __version differs (the existing idempotent scheme), and re-runs after
+   Runtime.executionContextCreated for the page's default context; await close(). Enable Runtime
+   and Page domains and register Runtime.addBinding('__amEvent') before injecting. Timeouts and a
+   closed socket raise EngineError('timeout'/'engine-down').
+4. bridge.js: add subscribe() that attaches MusicKit listeners once for
+   authorizationStatusDidChange, playbackStateDidChange, nowPlayingItemDidChange,
+   playbackTimeDidChange, playbackDurationDidChange, queueItemsDidChange, queuePositionDidChange,
+   shuffleModeDidChange, repeatModeDidChange, playbackVolumeDidChange, mediaPlaybackError, and
+   posts window.__amEvent(JSON.stringify({name, data})) with plain-data payloads (the same shapes
+   the bridge's now-playing/queue answers use; state as the PlaybackStates name). Verify the event
+   names against Object.keys(MusicKit.Events) in the live page and fix any that differ.
+5. scripts/am.py: a debug CLI on plain asyncio (asyncio.run; spawn Chrome with
+   asyncio.create_subprocess_exec here): status, start [--visible], stop, eval <js>, now-playing,
+   events (prints bridge events until Ctrl+C). It uses the same config as the app (port 9228 and
+   $XDG_DATA_HOME/apple-music/chrome by default, env overrides respected). It must never touch the
+   extension's profile.
+6. tests: test_chrome.py (argv builder, state file round-trip, find_chrome with a fake PATH
+   directory, target selection from a /json/list sample); test_client.py with
+   unittest.IsolatedAsyncioTestCase against the fake server from test_cdp.py (adapt it to asyncio
+   if it is thread-based): call/response, evaluate returning a promise value, an exception
+   becoming EngineError('api'), a binding event dispatched to on(), a timeout.
+
+Verify: scripts/check.sh; then the manual run: scripts/am.py start --visible (Chrome opens on
+music.apple.com, not signed in; do not sign in in this phase), scripts/am.py eval
+'MusicKit.getInstance().isAuthorized', scripts/am.py events in another terminal while clicking a
+preview in Chrome shows playbackStateDidChange events, busctl --user list | grep -i mpris shows no
+chromium entry, scripts/am.py stop. Report in prompts.md under this phase if any event name or
+flag needed changing. Update CLAUDE.md (backend layout, the debug CLI). Tick phase 9 and commit.
+```
+
+## Phase 10: Engine in the app, sign-in and account
+
+**Goal.** The GObject `Engine` façade that owns Chrome's lifecycle inside the app, the sign-in flow
+with a visible Chrome, the account button, and clean shutdown.
+
+**Not in this phase.** Sync (phase 11), playback (phase 12), preferences UI (phase 17; the keys are
+added now).
+
+**Files.** New `src/engine.py`, `src/dialogs/signin.py` + `.blp` (or in `src/widgets/`); edit
+`src/main.py`, `src/window.py`, `src/window.blp`, `data/…gschema.xml`, `src/pages/detail.py`
+(fetch `groups`), meson/gresource/POTFILES.
+
+**Done when.** Sign In opens a dialog and a visible Chrome; after signing in, Chrome restarts headless,
+the account button shows the name (best effort) and the app remembers `signed-in`; next launch starts
+the engine headless automatically; Quit stops Chrome (no stray process); Sign Out wipes the profile
+and cache; a shelf item without `groups` now loads on demand when the engine is up.
+
+```text
+Phase 10 of prompts.md: Engine in the app, sign-in and account. Read CLAUDE.md first, then
+src/backend/{chrome.py,client.py,errors.py}, scripts/am.py, and the signin/status/item command
+bodies in src/backend/am.py (reference).
+
+1. GSettings keys (add to data/io.github.jackicus.AppleMusic.gschema.xml with summaries):
+   browser-command (s, 'google-chrome-stable'), engine-port (i, 9228), engine-headless (b, true),
+   engine-autostart (b, true), signed-in (b, false), account-name (s, ''). The .Devel profile uses
+   profile directory chrome-devel and port 9229 by default so it can run beside a release build
+   (derive from app.profile; the env overrides still win).
+2. src/engine.py: Engine(GObject.Object) with properties state ('down', 'starting', 'up',
+   'signing-in'), authorized (bool), headless (bool); signal event(name, data) re-emitting bridge
+   events. Coroutines: start(visible=False) reclaims a live Chrome from engine.json when its
+   headless mode matches, otherwise spawns Gio.Subprocess (stdout/stderr silenced, or piped to the
+   log at DEBUG) with chrome_args, waits for DevTools, connects CDPClient, ensure_bridge,
+   subscribe, reads isAuthorized; stop() closes the client, SIGTERM, waits up to 5 s
+   (subprocess.wait_async is awaitable), then force_exit; restart(visible); and command
+   coroutines ported from am.py for this phase: status(), item(kind, id) (fills groups and caches
+   under <cache>/items/), signin(). Every command raises EngineError; nothing here blocks. In demo
+   mode every command raises EngineError('engine-down') immediately and start() is a no-op.
+3. Lifecycle: app.engine is created in do_startup; do_activate spawns engine.start() when
+   signed-in and engine-autostart are set and not in demo mode. app.quit becomes: spawn a
+   coroutine that awaits engine.stop() (bounded by 6 s) then calls Gio.Application.quit. Closing
+   the last window quits (background playback is a later preference).
+4. Sign-in: app.sign-in shows an Adw.Dialog (Adw.StatusPage with an Adw.Spinner, "Sign in with
+   your Apple ID in the Chrome window", a Cancel button) and runs: engine.restart(visible=True),
+   the bridge's authorize call, then waits for the am:authorizationStatusDidChange event or polls
+   isAuthorized every 2 s for up to 10 minutes (the one place polling is allowed); on success set
+   signed-in, try to read a display name (inspect the visible page for a stable element holding
+   the account name in the sidebar footer; if none is reliable leave account-name empty and do not
+   guess), restart headless when engine-headless is set, close the dialog, toast "Signed in".
+   Cancel stops the engine. app.sign-out asks with Adw.AlertDialog, then stops the engine, deletes
+   the profile directory and the cache (asyncio.to_thread(shutil.rmtree)), clears the keys and the
+   Library.
+5. Account button (window.blp): signed out → "Sign In" runs app.sign-in; signed in → the label is
+   account-name or "Signed In", Adw.Avatar shows initials from the name (show-initials), and the
+   button opens a popover menu with Sign Out. An Adw.Banner above the content, revealed when
+   signed out and not in demo mode: "Sign in to see your library" with a Sign In button.
+6. Detail pages: an Item without groups now calls engine.item(kind, id) (spinner while waiting),
+   merges the answer into the Item (raw and groups) and shows the list; engine-down shows the
+   status page with a "Start Engine" button; not-signed-in shows "Sign In".
+
+Verify: scripts/check.sh; scripts/run.sh (not demo): sign in for real, watch `ps -ef | grep
+remote-debugging-port=9229` show one Chrome that goes headless after sign-in, quit the app and
+confirm the Chrome is gone; relaunch and confirm autostart. Never commit anything containing the
+account name or profile contents; screenshots of the account button use --demo (which shows the
+signed-out state) only. Update CLAUDE.md (Engine façade, lifecycle, keys). Tick phase 10 and
+commit.
+```
+
+## Phase 11: Library sync and artwork cache
+
+**Goal.** The app fetches the whole library through the engine, normalises it with `sync.py`,
+fetches thumbnails, writes `library.json` atomically and updates the live models in place.
+
+**Not in this phase.** Playback (12), search and the New and Made for You pages (15).
+
+**Files.** New `src/sync.py` (app-level orchestration) or extend `src/library.py`; edit
+`src/engine.py` (fetch commands), `src/backend/bridge.js` (folders, songs, videos, recently added if
+missing), `src/main.py` (app.sync, `<primary>r`), `src/window.blp` (progress banner),
+`data/…gschema.xml` (`last-sync`, `sync-interval`), `tests/test_sync_app.py`, fixtures.
+
+**Done when.** After sign-in the library syncs with visible progress and the grids fill with real
+data; a second sync updates in place without resetting scroll; folders appear in the sidebar;
+Songs includes loose songs; Favourite Songs resolves; artwork sizes are 320/640 and `.sizes` says
+so; `<primary>r` re-syncs; sync runs on launch when `last-sync` is older than `sync-interval`.
+
+```text
+Phase 11 of prompts.md: Library sync and artwork cache. Read CLAUDE.md first, then the sync
+command in src/backend/am.py (reference), src/backend/sync.py, the vendored README's sync and
+library.json sections, src/library.py and src/engine.py.
+
+1. Port am.py's sync orchestration into src/sync.py as async def sync_library(engine, library,
+   progress): per section (albums, artists, playlists, radio, shelves) await the engine's paged
+   fetches (bridge calls over mk.api.music, as am.py did), normalise with sync.py's pure
+   functions, then await asyncio.to_thread(<sync.py's artwork fetcher>) for missing thumbnails at
+   THUMB_SIZE (covers at COVER_SIZE are fetched lazily by detail pages through a new
+   engine-independent Artwork.fetch_cover(item) that downloads into <cache>/art/ in a thread),
+   write library.json atomically (temp file + os.replace, under the existing flock), prune as
+   before, then library.reload() which diffs by id: updates existing Items' properties, splices
+   additions and removals, and keeps object identity so open pages and scroll positions survive.
+   Progress is reported as (section, done, total).
+2. New data, added to the bridge and to the shape: folders from the playlist-folders endpoint
+   (confirm the exact request the web player makes for its sidebar in the visible engine's
+   DevTools Network panel; the root folder id is expected to be p.playlistsroot), sections.songs
+   from /v1/me/library/songs paginated (limit 100, offset), sections.videos from
+   /v1/me/library/music-videos, the recently-added shelf from /v1/me/library/recently-added, and
+   the favourites playlist identified by whatever attribute Apple sets (inspect a
+   /v1/me/library/playlists answer; map it onto the same raw key phase 6 used in the demo). Keep
+   library.json version 1 with these as optional keys, and keep test_demo_schema.py and the demo
+   generator consistent.
+3. Triggers: app.sync ("Refresh Library" in the primary menu, <primary>r, in the shortcuts
+   dialog); automatically after sign-in; on activate when last-sync (s, ISO 8601) is older than
+   sync-interval (i, hours, default 6). Add both keys. Only one sync runs at a time.
+4. Progress: reveal an Adw.Banner over the content ("Syncing your library: albums 3 of 12") and
+   finish with an Adw.Toast giving the counts; errors become a toast with the EngineError message
+   and a Retry button.
+5. Tests: tests/test_sync_app.py with a fake engine object whose fetch coroutines return
+   fictional fixture pages; assert the written library.json, that reload keeps Item identity for
+   unchanged ids, and that removed ids leave the stores. No network.
+
+Verify: scripts/check.sh; scripts/run.sh signed in: sync completes, `ls ~/.cache/apple-music`
+shows library.json, art/, thumb/ and .sizes with 320/640; pages fill; sync again and confirm the
+Albums page keeps its scroll position. Nothing from the real library goes into the repo. Update
+CLAUDE.md (sync flow, keys). Tick phase 11 and commit.
+```
+
+## Phase 12: Playback, Player state and the player bar
+
+**Goal.** Real playback from every place that has a play affordance, a Player object fed by
+MusicKit events, and a proper player bar at the bottom of the window inside an `AdwBottomSheet`.
+
+**Not in this phase.** MPRIS (13), the Now Playing sheet contents (14), love/queue actions (16).
+
+**Files.** New `src/player.py`; edit `src/engine.py` (play, control, seek, volume, shuffle, repeat,
+now_playing, queue), `src/player_bar.py` + `.blp`, `src/window.blp`, `src/window.py`, `src/main.py`
+(actions), `src/style.css`, `src/widgets/artwork.py` (remote art), `tests/test_player.py`.
+
+**Done when.** Play on an album, a track row, a Songs row, a shelf tile and a station all play through
+Chrome; the bar shows artwork, title, artist, a working seek slider updated from events, transport,
+shuffle, repeat and volume; Space toggles play when no entry has focus; the bar never polls.
+
+```text
+Phase 12 of prompts.md: Playback, Player state and the player bar. Read CLAUDE.md first, then
+src/engine.py, src/backend/bridge.js (the events added in phase 9), the play/control/seek/volume/
+shuffle/repeat/now-playing/queue bodies in src/backend/am.py (reference), src/player_bar.blp and
+src/window.blp.
+
+1. Engine: port play(kind, id, start_with=None, shuffle=False), play_next, play_later, control
+   (play/pause/toggle/next/previous/stop), seek(seconds), volume(level), shuffle(on/off/toggle),
+   repeat(none/one/all/cycle), now_playing(), queue() from am.py as coroutines.
+2. src/player.py: Player(GObject.Object) with properties state (MusicKit PlaybackStates names as
+   strings), track (a NowPlaying GObject: id, catalog_id, title, artist, album, duration_ms,
+   artwork_url, or None), position (float s), duration (float s), shuffle (bool), repeat
+   ('none'/'one'/'all'), volume (float), and a position_updated_at monotonic stamp. State changes
+   only from engine events (am:playbackStateDidChange, nowPlayingItemDidChange,
+   playbackTimeDidChange, playbackDurationDidChange, shuffleModeDidChange, repeatModeDidChange,
+   playbackVolumeDidChange) plus one now_playing() when the engine comes up. Commands are thin
+   coroutines over the engine; a play request while the engine is down and signed in starts the
+   engine first (toast "Starting playback engine…"); signed out runs app.sign-in. window.play_request
+   from phases 5 and 6 now calls player.play. tests/test_player.py feeds synthetic events and
+   checks the properties (no GTK needed).
+3. Window: wrap the split view in an Adw.BottomSheet (content: split view; bottom-bar:
+   $AppleMusicPlayerBar; sheet: a placeholder Adw.StatusPage "Now Playing", filled in phase 14).
+   The bar is always revealed. Try full-width false first and keep whichever looks right at 1100
+   px and at 400 px.
+4. Player bar: previous, play/pause (icon follows state, suggested-action circular), next;
+   shuffle and repeat Gtk.ToggleButtons (media-playlist-shuffle-symbolic,
+   media-playlist-repeat-symbolic, -repeat-song-symbolic for "one"); artwork Gtk.Picture 44 px
+   fetched from track.artwork_url through a new Artwork.fetch_remote(url, size) into
+   <cache>/remote-art/ (thread; sized 640 so phase 14 reuses it); title and artist labels
+   (ellipsize); a Gtk.Scale seek bar with elapsed and remaining labels, driven by position and
+   duration, seeking on change-value and ignoring incoming updates while the user drags; a
+   Gtk.ScaleButton for volume with the audio-volume-*-symbolic icons. Below 600sp hide the volume
+   and the labels around the slider (Adw.Breakpoint on the window). Everything disabled with
+   "Not Playing" when track is None.
+5. Actions with accelerators, listed in the shortcuts dialog: app.play-pause (space; GTK gives
+   focused entries the key first, confirm), app.next (<primary>Right), app.previous
+   (<primary>Left), app.shuffle, app.repeat.
+
+Verify: scripts/check.sh; scripts/run.sh signed in: play an album from its page, a track from
+row 3 (starts at track 3), a Songs row, a station; pause, seek, next; watch the bar follow with
+--debug logs showing events, not polling; scripts/screenshot.py --demo of the bar at 1100 and
+400 px wide (Not Playing state). Update CLAUDE.md (Player, BottomSheet structure, actions). Tick
+phase 12 and commit.
+```
+
+## Phase 13: MPRIS
+
+**Goal.** The app appears in GNOME Shell's media controls and answers media keys, as itself.
+
+**Not in this phase.** Anything visual.
+
+**Files.** New `src/mpris.py`; edit `src/main.py`, `src/player.py` (if it needs a monotonic position
+helper), `build-aux/flatpak/*.json` (`--own-name`), `tests/test_mpris.py` (metadata/variant
+construction only).
+
+**Done when.** `gdbus introspect --session --dest org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel
+--object-path /org/mpris/MediaPlayer2` lists both interfaces; the shell shows the app with artwork
+and the play/pause/next keys work; `busctl --user list | grep mpris` shows exactly one entry for this
+app and none for chromium while the engine runs.
+
+```text
+Phase 13 of prompts.md: MPRIS. Read CLAUDE.md first, then src/player.py and src/engine.py.
+
+Implement src/mpris.py: own the bus name org.mpris.MediaPlayer2.<application id> with
+Gio.bus_own_name on the session bus, register /org/mpris/MediaPlayer2 with
+Gio.DBusConnection.register_object using Gio.DBusNodeInfo.new_for_xml for the interfaces
+org.mpris.MediaPlayer2 (Identity "Apple Music", DesktopEntry = the app id, CanRaise true → present
+the window, CanQuit true → app.quit, Fullscreen/HasTrackList false, SupportedUriSchemes and
+SupportedMimeTypes empty) and org.mpris.MediaPlayer2.Player (PlaybackStatus Playing/Paused/
+Stopped mapped from Player.state, LoopStatus None/Track/Playlist, Shuffle, Volume, Position as
+int64 microseconds computed from position plus the time since the last event while playing,
+Rate 1.0, MinimumRate/MaximumRate 1.0, Metadata with mpris:trackid as an object path derived from
+the track id, mpris:length, mpris:artUrl as a file:// URL of the cached remote art, xesam:title,
+xesam:artist as a string array, xesam:album; CanGoNext/CanGoPrevious/CanPlay/CanPause/CanSeek/
+CanControl true when a track exists; methods Next, Previous, Pause, PlayPause, Stop, Play, Seek,
+SetPosition, OpenUri (no-op); signal Seeked). Emit org.freedesktop.DBus.Properties.PropertiesChanged
+on the Player's notify signals with only the changed keys, and Seeked after a seek. Start it in
+do_startup after the Player exists, release it in do_shutdown. Handle the name being lost
+(log, keep running).
+
+Confirm Chrome's own player is absent: with the engine playing, busctl --user list | grep -i
+mpris must show only this app. If a chromium.instance entry appears despite
+--disable-features=HardwareMediaKeyHandling, try adding MediaSessionService to the disabled
+features in src/backend/chrome.py and confirm playback still works; record the outcome under
+this phase in prompts.md.
+
+Add --own-name=org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel to the Flatpak
+manifest's finish-args. tests/test_mpris.py checks the metadata dict and variant types for a
+sample track and for None.
+
+Verify: scripts/check.sh; scripts/run.sh signed in and playing: gdbus introspect as in the phase's
+"done when"; gdbus call --session --dest <name> --object-path /org/mpris/MediaPlayer2 --method
+org.mpris.MediaPlayer2.Player.PlayPause toggles; GNOME Shell's calendar media section shows the
+app's icon, title and artwork; keyboard media keys work; playerctl if installed. Update CLAUDE.md.
+Tick phase 13 and commit.
+```
+
+## Phase 14: Now Playing sheet, queue and lyrics
+
+**Goal.** The bottom sheet: big artwork, transport, and Lyrics / Up Next tabs, driven by events.
+
+**Not in this phase.** Queue editing beyond jumping (MusicKit offers little), love (16).
+
+**Files.** New `src/widgets/{now_playing.py,now_playing.blp,lyrics.py,queue.py}`; edit
+`src/engine.py` (lyrics, queue_jump), `src/backend/bridge.js` (queueJump), `src/window.blp`,
+`src/main.py` (`app.now-playing`), `src/player.py` (queue store), `scripts/screenshot.py`
+(`--now-playing` demo state), `tests/test_lyrics.py`.
+
+**Done when.** Clicking the bar opens the sheet; synced lyrics highlight and scroll with playback and
+click-to-seek works; Up Next lists the queue with the current item marked and jumps on activation;
+Escape and the close button close the sheet; `scripts/screenshot.py --demo --now-playing` renders it.
+
+```text
+Phase 14 of prompts.md: Now Playing sheet, queue and lyrics. Read CLAUDE.md first, then
+src/player.py, src/player_bar.blp, src/window.blp, and the lyrics and queue bodies in
+src/backend/am.py (reference).
+
+1. Engine: lyrics(catalog_song_id) (cached under <cache>/lyrics/ as before) and queue_jump(index)
+   (add queueJump to bridge.js using mk.changeToMediaAtIndex). Player gains a queue Gio.ListStore
+   of NowPlaying-like entries and queue_index, updated from queue() on track change and from
+   am:queueItemsDidChange / am:queuePositionDidChange.
+2. src/widgets/now_playing.py + .blp: the AdwBottomSheet's sheet: an Adw.ToolbarView whose
+   header has no title buttons and a close button (go-down-symbolic) that sets bottom_sheet.open
+   false; content in an Adw.Clamp (maximum-size 900): artwork Gtk.Picture 320 px (from the 640 px
+   remote art), title (title-2) and artist (dim), a transport row reusing the player's actions
+   with larger buttons, the seek Gtk.Scale, then an Adw.ToggleGroup (Lyrics / Up Next) switching a
+   Gtk.Stack. On wide layouts (>= 900sp) show artwork and controls on the left and the tabs on the
+   right with an Adw.Breakpoint; single column below.
+3. Lyrics: on track change request lyrics for track.catalog_id; synced lines become a Gio.ListStore
+   of LyricLine(start_ms, end_ms, text) shown in a Gtk.ListView; the current line (by
+   Player.position) gets a `current` CSS class (full opacity, bold; others dim-label) and the view
+   calls scroll_to(index, Gtk.ListScrollFlags.NONE, None) only when the index changes; clicking a
+   line seeks to its start. Unsynced lyrics are a wrapping Gtk.Label in a ScrolledWindow. No
+   lyrics or engine-down: a compact Adw.StatusPage ("No Lyrics"). Never fetch lyrics on a timer.
+4. Up Next: a Gtk.ListView of the queue with AppleMusicTrackRow-like rows, the current entry
+   marked with an icon and bold, activation calling player.queue_jump(i).
+5. app.now-playing (<primary>n) toggles the sheet; Escape closes it (bottom sheet handles it;
+   confirm). scripts/screenshot.py --demo --now-playing sets a fictional NowPlaying with a lyrics
+   fixture on the Player and opens the sheet.
+
+Verify: scripts/check.sh (tests/test_lyrics.py: current-line lookup by position); real run: play
+a song with synced lyrics, open the sheet, watch the line move, click a line, jump in Up Next;
+screenshots: --demo --now-playing at 1100x760 and 400x700, dark and --light. Update CLAUDE.md.
+Tick phase 14 and commit.
+```
+
+## Phase 15: Search, New and Made for You
+
+**Goal.** Search with suggestions, results shelves and the browse landing page, plus the two remaining
+engine-driven pages.
+
+**Not in this phase.** Context menus on results (16).
+
+**Files.** New `src/pages/{search.py,search.blp,new.py,made_for_you.py}`; edit `src/engine.py`
+(search, suggest, landing, category, browse, made_for_you), `src/backend/bridge.js`, `src/main.py`
+(`win.search`, `<primary>f`), registry, meson/gresource/POTFILES.
+
+**Done when.** Typing shows suggestions after 250 ms, Enter shows shelves in Apple's order, the
+Library toggle searches the cached models offline, the empty state shows browse categories that open
+category pages, `<primary>f` jumps to search, and New and Made for You show shelves.
+
+```text
+Phase 15 of prompts.md: Search, New and Made for You. Read CLAUDE.md first, then the search,
+suggest, landing and category bodies in src/backend/am.py (reference), src/widgets/shelf.py,
+src/pages/grid.py.
+
+1. Engine: search(term, library=False, limit=…, suggest=…), suggest(term), landing(),
+   category(id) ported from am.py (the caches under <cache>/landing.json and <cache>/categories/
+   stay). New: browse() for the New page: the web player's "New" page comes from an editorial
+   groupings request (expected shape: /v1/editorial/{storefront}/groupings with name=music and
+   platform=web); confirm the exact request in the visible engine's DevTools Network panel and
+   shape the answer into shelves of Items as search does; and made_for_you() from
+   /v1/me/recommendations, keeping the recommendation groups whose items are the personal mixes
+   and stations. Both are cached for a day like landing.
+2. src/pages/search.py + .blp: title "Search"; a Gtk.SearchEntry in an Adw.Clamp (600) with an
+   Adw.ToggleGroup (Apple Music / Your Library) beside it; a Gtk.Stack: landing (a grid of
+   category tiles: a Gtk.Picture from the category art through Artwork.fetch_remote with the title
+   overlaid; activation pushes a category page of shelves), suggestions (a Gtk.ListBox of terms
+   and top hits, shown while typing with a 250 ms GLib.timeout_add debounce, results discarded if a
+   newer request is in flight), results (one AppleMusicShelf per returned shelf, in Apple's order;
+   "See All" pushes a grid page for that kind). Your Library mode searches the cached models
+   offline through Gtk.FilterListModel + Gtk.StringFilter over albums, artists, playlists and
+   songs, shown as shelves and a song list, and works with the engine down. Engine-down or signed
+   out in Apple Music mode shows an Adw.StatusPage with the fitting button. Result tiles call
+   window.open_item (which fetches groups on demand since phase 10).
+3. win.search (<primary>f, in the shortcuts dialog) selects the Search sidebar item and focuses the
+   entry.
+4. src/pages/new.py and made_for_you.py: shelf pages like Home over browse() and made_for_you(),
+   with spinner, engine-down and signed-out states, and a pull-to-refresh equivalent: a refresh
+   button in the header bar.
+
+Verify: scripts/check.sh; real run: type, see suggestions, Enter, open a result, open a category,
+toggle Your Library with the engine stopped (Preferences do not exist yet; use scripts/am.py stop)
+and confirm it still searches; New and Made for You render. Screenshots with --demo: search
+landing (empty state, engine-down) and Your Library results. Update CLAUDE.md. Tick phase 15 and
+commit.
+```
+
+## Phase 16: Context menus and actions
+
+**Goal.** Right-click, long-press and keyboard context menus on tiles, rows and sidebar playlists with
+Play, Play Next, Play Later, Love, Add to Library, Add to Playlist, Open in Browser, Copy Link; a heart
+in the player bar; drag tracks onto sidebar playlists.
+
+**Not in this phase.** Playlist editing beyond adding, deleting playlists.
+
+**Files.** New `src/actions.py`, `src/icons/heart-outline-symbolic.svg`, `heart-filled-symbolic.svg`
+(bundled; Adwaita has no favourite icon now); edit `src/widgets/{tile.py,track_row.py}`,
+`src/pages/songs.py`, `src/window.py`, `src/window.blp` (sidebar `menu-model`), `src/player_bar.*`,
+`src/engine.py` (love, unlove, add_to_library, playlists, add_to_playlist), gresource, POTFILES.
+
+**Done when.** Every tile and row has a context menu whose actions work against the real account (on
+items Jack names during the session), the sidebar playlists have a menu, a track can be dragged onto
+a sidebar playlist, and every action confirms with a toast or reports the error.
+
+```text
+Phase 16 of prompts.md: Context menus and actions. Read CLAUDE.md first, then the love/
+add-to-library/playlists/add-to-playlist bodies in src/backend/am.py (reference),
+src/widgets/tile.py, src/widgets/track_row.py, src/window.py and the AdwSidebar notes.
+
+1. Engine: love(kind, id), unlove, add_to_library(kind, id), playlists(), add_to_playlist(
+   playlist_id, song_id) ported from am.py.
+2. src/actions.py: win.* Gio.SimpleActions with a GLib.Variant target "(ss)" (kind, id):
+   item-play, item-play-next, item-play-later, item-love, item-unlove, item-add-to-library,
+   item-open-in-browser (Gtk.UriLauncher on item.url), item-copy-link (window.get_clipboard().set);
+   item-add-to-playlist with target "(sss)" (playlist id, kind, id). Each awaits the engine and
+   toasts ("Playing next", "Added to Favourite Songs", …) or toasts the EngineError message.
+   Build the Gio.Menu per item kind in code with Gio.MenuItem.set_action_and_target_value; the Add
+   to Playlist submenu lists library.playlists (folders flattened).
+3. Triggers: a Gtk.PopoverMenu created from the model, parented to the tile or row, has-arrow
+   false, positioned with set_pointing_to at the pointer, on Gtk.GestureClick (button 3),
+   Gtk.GestureLongPress (touch), and a Gtk.ShortcutController for the Menu key and Shift+F10 on
+   the focused item. Sidebar playlist items: set the section's menu-model to a menu with Play,
+   Play Next, Open in Browser and use the sidebar's setup-menu signal to point the actions at the
+   right playlist.
+4. Player bar: a heart Gtk.ToggleButton (bundle heart-outline-symbolic and heart-filled-symbolic
+   in src/icons/, 16 px, #222 fill, drawn to match Adwaita's stroke weight) calling love/unlove on
+   the current track's catalog id; if now_playing() reports a loved state use it, otherwise reset
+   to unloved on each track change.
+5. Drag and drop: track rows are Gtk.DragSources providing a TrackRef GObject (song id, title) via
+   Gdk.ContentProvider.new_for_value; sidebar.setup_drop_target(Gdk.DragAction.COPY, [TrackRef])
+   and the sidebar's drop signal call add_to_playlist for the target playlist item (ignore drops on
+   folders and fixed items).
+
+Verify: scripts/check.sh; real run: before any write to the real account (add to library,
+add to playlist, love), ask Jack in the session which playlist or track to use; if none is
+offered, test only love then unlove on one track. Confirm Play Next inserts after the current
+track, Open in Browser launches the page, drag onto a playlist adds. Screenshot --demo with a
+context menu open (add --context-menu to screenshot.py that pops it on the first tile).
+Update CLAUDE.md (actions.py, the DnD types, bundled icons). Tick phase 16 and commit.
+```
+
+## Phase 17: Preferences
+
+**Goal.** An `AdwPreferencesDialog` for playback, library and engine settings, and background
+playback.
+
+**Not in this phase.** Appearance settings (none planned).
+
+**Files.** New `src/dialogs/preferences.py` + `.blp`; edit `data/…gschema.xml`
+(`background-playback`, and whatever phase 11 named for the interval), `src/main.py`,
+`src/window.py` (close behaviour), `src/engine.py` (cache size, restart), POTFILES.
+
+**Done when.** `<primary>comma` opens the dialog; every row is bound to its key; "Refresh Now",
+"Clear Cache", Start/Stop Engine and Sign Out work; with background playback on, closing the window
+keeps playing and MPRIS Raise brings it back; with it off, closing stops the engine.
+
+```text
+Phase 17 of prompts.md: Preferences. Read CLAUDE.md first, then data/…gschema.xml, src/main.py,
+src/engine.py and src/sync.py.
+
+Build src/dialogs/preferences.py + .blp as an Adw.PreferencesDialog opened by app.preferences
+(<primary>comma, primary menu, shortcuts dialog):
+- Page "General". Group "Playback": Adw.SwitchRow "Keep playing when the window is closed"
+  (new key background-playback, b, false). Group "Library": Adw.ComboRow "Refresh library"
+  (Every hour / Every 6 hours / Every day / Manually → sync-interval, with 0 meaning manually),
+  Adw.ButtonRow "Refresh Now" (app.sync), Adw.ActionRow "Cache" whose subtitle is the cache size
+  computed in a thread with a "Clear" button (Adw.AlertDialog confirm; clears art, thumb,
+  remote-art, items, lyrics and library.json, then re-syncs if signed in).
+- Page "Engine". Adw.EntryRow "Browser command" (browser-command), Adw.SpinRow "DevTools port"
+  (engine-port, 1024–65535), Adw.SwitchRow "Run the browser hidden" (engine-headless; the
+  subtitle says a visible browser helps debugging), Adw.SwitchRow "Start the engine with the app"
+  (engine-autostart), Adw.ActionRow "Engine" with the state as subtitle and a Start/Stop button
+  bound to engine.state, and a destructive Adw.ButtonRow "Sign Out" (app.sign-out). Browser and
+  port changes apply at the next engine start; say so in the subtitles.
+Bind rows with Gio.Settings.bind. Background playback: when on and something is playing,
+closing the window hides it and calls app.hold() (release when playback stops or on quit);
+app.quit and MPRIS Quit still stop the engine; MPRIS Raise re-presents the window. When off,
+closing the window quits as today.
+
+Verify: scripts/check.sh; scripts/screenshot.py --demo --preferences (add the flag: opens the
+dialog) in dark and --light; real run: toggle background playback, close the window while playing,
+raise it from the shell's media controls, quit. Update CLAUDE.md (keys, dialogs/). Tick phase 17
+and commit.
+```
+
+## Phase 18: Keyboard navigation and accessibility
+
+**Goal.** The whole app usable from the keyboard and readable by a screen reader, correct at 360 px
+wide and in both colour schemes.
+
+**Not in this phase.** New features.
+
+**Files.** Touches most `.blp` files and `src/main.py` (shortcuts dialog).
+
+**Done when.** A written walkthrough (sidebar → grid → detail → play → sheet → search → preferences)
+works with keyboard only; the GTK inspector's accessibility panel shows names on every interactive
+widget; `--size 360x640` screenshots of Home, Albums, a detail page and the sheet look right; the
+shortcuts dialog lists every accelerator that exists.
+
+```text
+Phase 18 of prompts.md: Keyboard navigation and accessibility. Read CLAUDE.md first, then every
+.blp file and src/main.py's shortcuts dialog.
+
+1. Keyboard: Tab order sidebar → content → player bar; grids and lists use
+   Gtk.ListTabBehavior.ITEM so Tab leaves them and arrows move inside; Enter activates tiles and
+   rows; Alt+Left pops pages; Escape closes the sheet and dialogs; F10 opens the primary menu;
+   Space play/pause outside entries; <primary>f search; <primary>r refresh; <primary>n Now
+   Playing; <primary>comma preferences; add <primary>1..3 to focus the sidebar, content and
+   player bar (win.focus-*). Every accelerator appears in the Adw.ShortcutsDialog, grouped.
+   Dialog buttons get mnemonics.
+2. Accessibility: every icon-only button has tooltip-text (it becomes the accessible name); tiles
+   and rows set accessible-label in bind; decorative images use accessible-role presentation;
+   the seek Gtk.Scale and volume button get accessible labels via update_property; the player bar
+   announces the track change (Gtk.Widget.announce if available in this GTK, otherwise skip);
+   check everything in the GTK inspector (GTK_DEBUG=interactive scripts/run.sh --demo,
+   Accessibility tab). If orca is installed, run it briefly against the demo and note gaps.
+3. Adaptive: at 360 px the sidebar is a page, grids show two columns, the player bar drops the
+   volume and time labels, detail heroes stack, the sheet is single-column; fix anything that
+   overflows. Both colour schemes: no hard-coded colours outside the accent; contrast of the
+   dim captions on the card tiles.
+4. Write the keyboard walkthrough as a short checklist in prompts.md under this phase for future
+   regressions (not a separate file).
+
+Verify: scripts/check.sh; screenshots at --size 360x640 for --page home, --page albums,
+--open album:first and --now-playing, in both schemes; walk the checklist for real. Update
+CLAUDE.md (shortcut list, a11y rules). Tick phase 18 and commit.
+```
+
+## Phase 19: Performance pass
+
+**Goal.** Measure against the targets with a large fictional library and fix what misses.
+
+**Not in this phase.** New features; SQLite unless JSON parsing alone breaks the target.
+
+**Files.** `scripts/demo_library.py` (sizes), `scripts/bench.py` (new), `src/library.py`,
+`src/widgets/artwork.py`, pages as needed, `src/main.py` (timing logs).
+
+**Done when.** With 3,000 albums, 300 playlists and 40,000 tracks: content visible under 1 s from
+launch, page switches under 100 ms, no frame over 16 ms while scrolling Albums and Songs, RSS under
+250 MB after browsing every page; the numbers are recorded under this phase in prompts.md.
+
+```text
+Phase 19 of prompts.md: Performance pass. Read CLAUDE.md first, then src/library.py,
+src/widgets/artwork.py, src/pages/grid.py and songs.py.
+
+1. Generate a big fictional library: scripts/demo_library.py --cache build/demo-big with options
+   for 3,000 albums, 300 playlists, 40,000 tracks (add options if missing). Add
+   scripts/bench.py that launches the app with APPLE_MUSIC_CACHE=build/demo-big and --debug and
+   reports: process start → window mapped, → library ready, → Albums page bound (log timestamps
+   with GLib.get_monotonic_time at those points), then page-switch times across all root pages,
+   and RSS from /proc/self/status. Scroll tests are manual with GDK_DEBUG=frames or the
+   inspector's statistics.
+2. Fix in this order, measuring after each: python3 -X importtime scripts/... to defer imports of
+   pages and backend until needed; GObject wrapping per section on first access, splice batches;
+   sorters as Gtk.PropertyExpression (C) everywhere; artwork requests cancelled on unbind and
+   the LRU sized so a full screen of tiles plus one page ahead fits; Gtk.Picture fixed sizes to
+   avoid relayout; GSettings writes debounced (last-page written on close, not each click);
+   Gio.ListStore.find replaced by dict lookups. If json parsing of library.json alone exceeds 1 s
+   on this machine, write the plan for a SQLite cache under this phase in prompts.md instead of
+   doing it now.
+3. Record the before and after numbers under this phase in prompts.md.
+
+Verify: scripts/check.sh; scripts/bench.py output meets the targets; the demo and real libraries
+still work. Update CLAUDE.md with any new rule. Tick phase 19 and commit.
+```
+
+## Phase 20: Packaging and release
+
+**Goal.** A version people can install: native Meson install and an AUR PKGBUILD, accurate metainfo
+with fictional screenshots, README, a tag; the Flatpak manifest kept working for development.
+
+**Not in this phase.** Flathub.
+
+**Files.** `meson.build` (version), `data/…metainfo.xml.in`, `data/screenshots/` (new),
+`build-aux/aur/PKGBUILD` (new), `build-aux/flatpak/*.json`, `src/backend/chrome.py`
+(`flatpak-spawn --host`), `README.md`.
+
+**Done when.** `meson dist -C build` produces a tarball that builds from scratch; `appstreamcli
+validate` passes with screenshots; `makepkg` in `build-aux/aur/` (if available) builds and installs;
+the Flatpak build runs against the host Chrome; the tag exists.
+
+```text
+Phase 20 of prompts.md: Packaging and release. Read CLAUDE.md first, then meson.build,
+data/*.metainfo.xml.in, build-aux/flatpak/*.json, src/backend/chrome.py and README.md.
+
+1. Version: bump meson.build and add a <release> to the metainfo with a short description of what
+   works. Screenshots: scripts/screenshot.py --demo for Home, Albums, an album page and Now Playing
+   at 1100x760 in both schemes into data/screenshots/ (fictional data only; check the PNGs
+   contain nothing real), referenced from <screenshots> with captions by their raw GitHub URL on
+   the main branch. appstreamcli validate --no-net --explain must pass.
+2. Native: build-aux/aur/PKGBUILD (pkgname gnome-apple-music or as Jack prefers; depends gtk4,
+   libadwaita, python-gobject, glib2; makedepends meson, blueprint-compiler; optdepends
+   google-chrome: playback engine). Verify it with makepkg -si if that is acceptable on this
+   machine, otherwise with makepkg --nobuild plus a manual build of the dist tarball. Run
+   meson dist -C build and build the tarball in a temp dir with its own --prefix.
+3. Flatpak, development only: add --talk-name=org.freedesktop.Flatpak and the MPRIS --own-name
+   for the release id; in chrome.py, when /.flatpak-info exists, run Chrome through
+   flatpak-spawn --host and resolve the binary on the host; document in the manifest's comments
+   (JSON allows none; use a "x-comment" key) that Flathub is out of scope because of the host
+   Chrome dependency and the trademark. Build with flatpak-builder if the GNOME 50 runtime is
+   available; otherwise note it was not tested.
+4. README: what it is, requirements (Google Chrome for playback, why), install (meson, AUR),
+   first run and sign-in, where data lives and how to remove it, development commands, license.
+5. Tag: git tag -a v<version>.
+
+Verify: scripts/check.sh; the dist tarball builds and runs; the .desktop, metainfo and schema
+validate; screenshots contain only fictional data. Update CLAUDE.md (distribution facts). Tick
+phase 20 and commit.
+```
+
+---
+
+## Reusable prompts
+
+### Review pass
+
+```text
+Review pass. Read CLAUDE.md first. Review the code changed since the last tag (or the last N
+commits I name) for: blocking calls on the main loop (time.sleep, sync sockets, json.load of the
+library, image decoding, Gio sync calls), GTK touched off the main thread, Box-of-widgets where a
+model view belongs, strings missing _() or files missing from po/POTFILES.in, new .py/.blp files
+missing from src/meson.build or the gresource, exceptions that would reach the user as a traceback
+instead of a toast, real account data in fixtures or screenshots, and libadwaita widgets replaced
+by custom CSS. Fix what is clear-cut, list what needs a decision, run scripts/check.sh and the
+demo screenshots for any page you touched, and commit.
+```
+
+### Performance pass
+
+```text
+Performance pass on <page or feature>. Read CLAUDE.md first. Measure before touching anything:
+scripts/bench.py (if present) with the big demo library, GDK_DEBUG=frames for scrolling,
+python3 -X importtime for startup. State the numbers, then fix the biggest cost first: work moved
+off the main loop, sorters and filters as Gtk expressions, artwork cancelled on unbind, models
+spliced in batches, imports deferred. Re-measure, record before/after in prompts.md under the
+phase or a "Performance log" heading, run scripts/check.sh, and commit.
+```
+
+### HIG and polish pass
+
+```text
+HIG and polish pass on <page or dialog>. Read CLAUDE.md first. Take screenshots with
+scripts/screenshot.py --demo in dark, --light and at --size 360x640, and compare against the
+GNOME HIG (spacing in multiples of 6, title styles, boxed lists, header bar contents, empty and
+loading states, tooltips on icon buttons, ellipsizing) and the layout of music.apple.com described
+in prompts.md. Prefer libadwaita widgets and style classes to CSS; remove CSS that a style class
+covers. Fix, re-screenshot, look at every PNG, run scripts/check.sh, and commit.
+```
+
+### Fix this bug
+
+```text
+Bug: <what happens>. Expected: <what should happen>. Steps: <how to reproduce; demo or real
+engine>. Logs: <paste from scripts/run.sh --debug, or "none">. Read CLAUDE.md first. Reproduce it
+(with --demo if possible, otherwise the real engine), find the cause rather than the symptom,
+add a unit test in tests/ when the bug is in the model, backend or sync layers, fix it, run
+scripts/check.sh and a screenshot if the fix is visual, and commit with a message that names
+the cause.
+```
+
+### Refresh the vendored backend
+
+```text
+Refresh the vendored backend from
+/home/jackt/Projects/GNOME-Extensions/GNOME-Apple-Music-Library/src/backend. Read CLAUDE.md and
+the provenance list in src/backend/__init__.py first. Diff each vendored file against upstream,
+port upstream fixes that apply (cdp.py codec, sync.py normalisation, bridge.js calls) while
+keeping this app's edits (config.py, the event subscription, queueJump, the async client),
+update the provenance list, run scripts/check.sh and scripts/am.py status, and commit.
+```

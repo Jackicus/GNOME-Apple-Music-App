@@ -1,0 +1,8 @@
+data/io.github.jackicus.AppleMusic.desktop.in
+data/io.github.jackicus.AppleMusic.metainfo.xml.in
+data/io.github.jackicus.AppleMusic.gschema.xml
+src/main.py
+src/window.py
+src/window.blp
+src/player_bar.blp
+src/sections.py
