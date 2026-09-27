@@ -1,0 +1,133 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicArtistPage: Adw.NavigationPage {
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Narrow: the portrait goes above the name, and the hero centres.
+    Adw.Breakpoint {
+      condition ("max-width: 600sp")
+
+      setters {
+        hero_row.orientation: vertical;
+        avatar.halign: center;
+        name_label.xalign: 0.5;
+        name_label.justify: center;
+        caption_label.xalign: 0.5;
+        caption_label.justify: center;
+        summary_label.xalign: 0.5;
+        summary_label.justify: center;
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {}
+
+      // A box of a few tens of tiles, not a Gtk.GridView: an artist has tens of albums, and a
+      // flow box can sit under the hero in one scrolled window.
+      content: ScrolledWindow {
+        hscrollbar-policy: never;
+
+        child: Box {
+          orientation: vertical;
+          spacing: 18;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+          margin-bottom: 24;
+
+          Box hero_row {
+            spacing: 24;
+
+            Adw.Avatar avatar {
+              size: 200;
+              show-initials: true;
+            }
+
+            Box {
+              orientation: vertical;
+              valign: center;
+              hexpand: true;
+              spacing: 6;
+
+              Label name_label {
+                xalign: 0;
+                wrap: true;
+                wrap-mode: word_char;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label caption_label {
+                xalign: 0;
+                wrap: true;
+
+                styles [
+                  "caption",
+                  "dim-label",
+                ]
+              }
+            }
+          }
+
+          Label summary_label {
+            xalign: 0;
+            wrap: true;
+            visible: false;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          Label albums_label {
+            label: _("Albums");
+            xalign: 0;
+            margin-top: 12;
+
+            styles [
+              "title-2",
+            ]
+          }
+
+          FlowBox flow_box {
+            homogeneous: true;
+            selection-mode: none;
+            activate-on-single-click: true;
+            min-children-per-line: 2;
+            max-children-per-line: 12;
+            valign: start;
+            child-activated => $on_album_activated();
+          }
+
+          // In place of the albums: an artist that came without them (a shelf's).
+          Adw.StatusPage status_page {
+            icon-name: "media-optical-cd-audio-symbolic";
+            title: _("Sign In to Load This");
+            description: _("The albums appear once you sign in to Apple Music");
+            visible: false;
+
+            child: Button {
+              label: _("Sign In");
+              action-name: "win.sign-in";
+              halign: center;
+
+              styles [
+                "pill",
+              ]
+            };
+
+            styles [
+              "compact",
+            ]
+          }
+        };
+      };
+    };
+  };
+}

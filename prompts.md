@@ -13,7 +13,7 @@ running and better than before.
 - [x] 3. Library model and demo mode (2026-09-27)
 - [x] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork (2026-09-27)
 - [x] 5. Songs page (GtkColumnView) (2026-09-27)
-- [ ] 6. Detail pages: album, playlist, artist
+- [x] 6. Detail pages: album, playlist, artist (2026-09-27)
 - [ ] 7. Shelves: Home and Radio from the cache
 - [ ] 8. Sidebar: playlists and folders
 - [ ] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI
@@ -651,6 +651,81 @@ Verify: scripts/check.sh; screenshots with --demo: --open album:first, --open pl
 --open artist:first, plus album at --size 400x700 and one --light; look at each. Update CLAUDE.md
 (pages list, open_item and play_request seams). Tick phase 6 in prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- The detail page is not "a hero, then a Gtk.ListView per group" in a box: a `Gtk.ListView` in
+  a viewport builds a row for every item up to about 200 and leaves the rest blank (phase 4's
+  finding), and a playlist can hold thousands of songs. Nor is the hero a list header: Tab never
+  reached the Play button in a `header-factory` header (checked). What it is: one
+  `Gtk.ListView` as the scrolled window's child, over a `Gtk.FlattenListModel` of sections: a
+  store holding one marker item, whose row the factory fills with the page's hero (a top-level
+  `Box hero` in `detail.blp`, reparented into whichever row is bound to the marker), then each
+  non-empty group's `entries`. A `Gtk.FlattenListModel` is a `Gtk.SectionModel`, so with more
+  than one group a `header-factory` heads each with "Disc N" (albums; the disc number comes
+  from the tracks and is translated, whatever the group is called) or the group's name. The
+  hero row is neither activatable nor focusable; Tab goes Play → Shuffle → out, Down from
+  Shuffle into the tracks, and a push puts the focus on Play. 3,000 songs run on about 205 row
+  widgets; `scripts/scroll_test.py --page favourite-songs` on an invented 3,000-song Favourite
+  Songs: mean 4.2 ms of work a frame, p90 5.2 ms, 2 of 3,836 frames over 16.7 ms.
+- A `Gtk.ListView` row gets its *minimum* height. An `Adw.StatusPage` in the hero (min 58 px,
+  natural 292: a scrolled window inside) was cut to a sliver, so "Sign In to Load This" (no
+  groups: phase 10 replaces it with a fetch) and "No Songs" (empty groups) are a box laid out
+  like a compact status page, with a Sign In pill (`win.sign-in`). Nothing in the demo lacks
+  groups; both states were checked with an invented library outside the repo. Phase 7's shelf
+  hits will be the first real ones.
+- `DetailPage(library, item)` is a pushed page; `DetailPage(library, find=callable, root=True,
+  title=…, icon_name=…, empty_title=…, empty_description=…)` is a root page that shows `find()`,
+  asked again on every `changed`/`notify::state` while mapped (spinner while loading, the empty
+  state when it returns None). Favourite Songs uses `find=library.favourite_songs`; phase 8's
+  playlist root pages can use `find=lambda: library.by_id('playlist', id)`, which follows the
+  new Item objects each load makes. A pushed page keeps the Item it was given (stale after a
+  reload until phase 11 keeps identity). Pages keep what they show in `page.item`; `open_item`
+  compares it to skip pushing the same item twice.
+- `window.play_request(play, start_with=None, shuffle=False)` replaced `play_request(track)`;
+  the Songs page passes `track.play, start_with=track.index`, the detail rows the same, Play and
+  Shuffle `item.play` (shuffle for the latter). For now it toasts "Playing “title” is not
+  available yet" (or "Shuffling…"), the title from `library.track_at(play, index)` (the album or
+  playlist by kind and id, then the entry with that index among its groups sharing that play)
+  or the item's. Phase 12 replaces the body with the engine call; the signature matches
+  `am.py play <kind> <id> [--start-with N] [--shuffle]`.
+- `window.open_item`: album/playlist → `DetailPage`, artist → `ArtistPage`, anything else
+  (stations, videos) toasts its title; phase 7 decides what a station tile does.
+- Back: `Adw.NavigationView` already pops on `<Alt>Left`, Back, Escape (class shortcuts, local
+  scope) and the mouse back button (its click gesture listens to every button: button 0),
+  listed from its controllers. The focus is inside it after a push, so the keys work there;
+  `win.back` (`<alt>Left`, set in `main.py`, "Go Back" in the shortcuts dialog) pops, or in the
+  collapsed layout goes back to the sidebar, from anywhere else in the window, and is disabled
+  when there is nowhere to go so the keys fall through. Real key and button presses could not be
+  synthesised on this Wayland session (no ydotool or wtype, and uinput would type into the live
+  desktop), so the tests activated the actions, the header back button and the list's
+  `activate`, and read the controllers. Alt+Left with a dialog open pops the page behind it
+  (phase 18).
+- Favourite Songs: `library.FAVOURITES = 'isFavourites'`, read from a playlist's raw
+  `attributes` dict (`Item.favourites`, `Library.favourite_songs()`); not in the README's Item
+  shape. Phase 11's sync must write `attributes: {isFavourites: true}` onto Apple's favourites
+  playlist. The demo's is the 13th playlist, `l.pl013` "Favourite Songs" (36 songs, no genre,
+  year, catalogId or url), after the other twelve so their ids and tracks are unchanged; it also
+  shows in All Playlists, and phase 8's sidebar should not list it twice (it is the fixed
+  "Favourite Songs" entry). `test_demo_schema.py` now expects 13 playlists and one flag.
+  `build/demo` was regenerated; `build/demo-2000`/`-2500` predate the flag.
+- New widgets: `$AppleMusicCover` (`widgets/cover.py`: `size` property, `set_paths(*paths)` shows
+  the first that decodes, a cached later one at once while a better one decodes; loads on map,
+  releases on unmap; `hexpand: false` in its template, since the placeholder icon's expand
+  otherwise stretched a cover with no artwork; corners by `cover` + `small`/`large` in
+  style.css) and `$AppleMusicTrackRow` (Inscriptions for number, artist and duration; a
+  one-line Label for the title so the badge follows it). The tiles and the Songs title cell
+  still carry their own copy of the load-on-map logic; phase 19 could fold them into Cover if a
+  measurement says the extra overlay costs nothing. Album rows are 40 px, playlist rows 56
+  (`listview.track-list > row`, inset 12 px with rounded corners, contents on the page's 24 px).
+- The artist page is a `Gtk.FlowBox` of `AppleMusicTile`s (children made in `bind_model`'s
+  create function, each `Gtk.FlowBoxChild` given an accessible label), albums newest first; a
+  group whose album the library lacks becomes a stand-in Item made from the group, so its page
+  still lists the tracks. The tiles centre in their cells as the grid pages' do. The album
+  subtitle on a detail page is not a link to the artist yet.
+- `scripts/screenshot.py` gained `--open KIND:ID` and now turns GTK animations off: one shot
+  caught the push transition 13 px short of done (the compositor starves an unfocused window of
+  frames).
 
 ## Phase 7: Shelves, Home and Radio
 

@@ -220,7 +220,7 @@ class SongsPage(Adw.NavigationPage):
     def on_activate(self, _column_view, position):
         track = self._rows.get_item(position)
         if track is not None:
-            self.get_root().play_request(track)
+            self.get_root().play_request(track.play, start_with=track.index)
 
     # Cells. Text columns are Gtk.Inscriptions: their size comes from their line count, not
     # their text, so rebinding a row redraws it without laying it out again.

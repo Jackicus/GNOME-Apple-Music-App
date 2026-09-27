@@ -1,0 +1,39 @@
+using Gtk 4.0;
+
+// Artwork over a placeholder card, which it is drawn over once decoded. The overlay takes the
+// placeholder's size (the `size` property), whatever the artwork decodes to. Corners come from
+// style.css: `cover`, with `small` or `large` added by whoever uses it.
+template $AppleMusicCover: Overlay {
+  // Its size is its own: the centred placeholder icon expands, which would otherwise spread
+  // to the cover while the icon shows.
+  hexpand: false;
+  vexpand: false;
+  accessible-role: presentation;
+
+  styles [
+    "cover",
+  ]
+
+  child: Box placeholder {
+    styles [
+      "card",
+    ]
+
+    Image placeholder_icon {
+      icon-name: "music-note-symbolic";
+      hexpand: true;
+      accessible-role: presentation;
+
+      styles [
+        "dim-label",
+      ]
+    }
+  };
+
+  [overlay]
+  Picture picture {
+    content-fit: cover;
+    overflow: hidden;
+    accessible-role: presentation;
+  }
+}

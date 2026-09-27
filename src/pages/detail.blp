@@ -1,0 +1,220 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicDetailPage: Adw.NavigationPage {
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Narrow: the cover goes above the text, and the hero centres.
+    Adw.Breakpoint {
+      condition ("max-width: 600sp")
+
+      setters {
+        hero_row.orientation: vertical;
+        cover.halign: center;
+        info_box.valign: start;
+        title_label.xalign: 0.5;
+        title_label.justify: center;
+        subtitle_label.xalign: 0.5;
+        subtitle_label.justify: center;
+        caption_label.xalign: 0.5;
+        caption_label.justify: center;
+        buttons_box.halign: center;
+        summary_label.xalign: 0.5;
+        summary_label.justify: center;
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar header_bar {}
+
+      content: Stack stack {
+        StackPage {
+          name: "loading";
+
+          child: Adw.Spinner {
+            width-request: 32;
+            height-request: 32;
+            halign: center;
+            valign: center;
+          };
+        }
+
+        StackPage {
+          name: "empty";
+          child: Adw.StatusPage empty_page {};
+        }
+
+        StackPage {
+          name: "item";
+
+          // The hero and every track in one list, the hero its first row (see detail.py).
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
+
+            child: ListView list_view {
+              single-click-activate: false;
+              tab-behavior: item;
+              activate => $on_activate();
+
+              styles [
+                "track-list",
+              ]
+            };
+          };
+        }
+      };
+    };
+  };
+}
+
+// The list's first row: cover, title, subtitle, details, Play and Shuffle, the summary, and a
+// status page when there are no tracks to follow.
+Box hero {
+  orientation: vertical;
+  spacing: 18;
+  margin-top: 18;
+  margin-bottom: 12;
+
+  Box hero_row {
+    spacing: 24;
+
+    $AppleMusicCover cover {
+      size: 260;
+      valign: start;
+
+      styles [
+        "large",
+      ]
+    }
+
+    Box info_box {
+      orientation: vertical;
+      valign: end;
+      hexpand: true;
+      spacing: 6;
+
+      Label title_label {
+        xalign: 0;
+        wrap: true;
+        wrap-mode: word_char;
+
+        styles [
+          "title-1",
+        ]
+      }
+
+      Label subtitle_label {
+        xalign: 0;
+        wrap: true;
+        wrap-mode: word_char;
+
+        styles [
+          "title-3",
+          "accent",
+        ]
+      }
+
+      Label caption_label {
+        xalign: 0;
+        wrap: true;
+
+        styles [
+          "caption",
+          "dim-label",
+        ]
+      }
+
+      Box buttons_box {
+        spacing: 12;
+        margin-top: 12;
+
+        Button play_button {
+          clicked => $on_play_clicked();
+
+          child: Adw.ButtonContent {
+            icon-name: "media-playback-start-symbolic";
+            label: _("Play");
+          };
+
+          styles [
+            "pill",
+            "suggested-action",
+          ]
+        }
+
+        Button shuffle_button {
+          clicked => $on_shuffle_clicked();
+
+          child: Adw.ButtonContent {
+            icon-name: "media-playlist-shuffle-symbolic";
+            label: _("Shuffle");
+          };
+
+          styles [
+            "pill",
+          ]
+        }
+      }
+    }
+  }
+
+  Label summary_label {
+    xalign: 0;
+    wrap: true;
+    visible: false;
+
+    styles [
+      "dim-label",
+    ]
+  }
+
+  // In place of the tracks: an item that came without them (a shelf's), or an empty playlist.
+  // A compact status page's look, but not an Adw.StatusPage: a list row gets its minimum height,
+  // and a status page, a scrolled window inside, asks for a fifth of what it shows.
+  Box status_box {
+    orientation: vertical;
+    spacing: 12;
+    margin-top: 24;
+    margin-bottom: 24;
+    visible: false;
+
+    Image {
+      icon-name: "music-note-symbolic";
+      pixel-size: 64;
+      margin-bottom: 12;
+      accessible-role: presentation;
+
+      styles [
+        "dim-label",
+      ]
+    }
+
+    Label status_title {
+      wrap: true;
+      justify: center;
+
+      styles [
+        "title-2",
+      ]
+    }
+
+    Label status_description {
+      wrap: true;
+      justify: center;
+    }
+
+    Button sign_in_button {
+      label: _("Sign In");
+      action-name: "win.sign-in";
+      halign: center;
+      margin-top: 12;
+
+      styles [
+        "pill",
+      ]
+    }
+  }
+}

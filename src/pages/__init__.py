@@ -7,6 +7,7 @@ visit and keeps it.
 
 from gettext import gettext as _
 
+from .detail import DetailPage
 from .grid import GridPage
 from .songs import SongsPage
 
@@ -47,6 +48,14 @@ def _all_playlists(destination, library):
                     empty_description=_('Playlists in your library appear here'))
 
 
+def _favourite_songs(destination, library):
+    # The flagged playlist's page, as a root page that follows the library.
+    return DetailPage(library, find=library.favourite_songs, root=True, title=destination.title,
+                      icon_name=destination.icon_name,
+                      empty_title=_('No Favourite Songs'),
+                      empty_description=_('Songs you mark as favourites appear here'))
+
+
 def _music_videos(destination, library):
     return GridPage(library, destination.title, lambda: library.videos,
                     sorts=('title', 'artist', 'year'), icon_name=destination.icon_name,
@@ -60,6 +69,7 @@ PAGES = {
     'recently-added': _recently_added,
     'songs': _songs,
     'all-playlists': _all_playlists,
+    'favourite-songs': _favourite_songs,
     'music-videos': _music_videos,
 }
 

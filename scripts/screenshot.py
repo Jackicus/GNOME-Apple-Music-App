@@ -2,15 +2,21 @@
 """Render the app's window to a PNG, for checking UI changes without a human.
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
+                          [--open KIND:ID]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
-a tiling window manager may choose its own. Settings go to a memory backend.
+a tiling window manager may choose its own. Settings go to a memory backend,
+and animations are off, so transitions finish at once.
 In the narrow (collapsed) layout the shot shows the sidebar, or the page when
 --page is given.
 --demo shows the invented library in build/demo (generated first if missing)
 or in $APPLE_MUSIC_CACHE when that is set, as scripts/demo.sh does. The shot
 waits for the library to finish loading.
+--open KIND:ID opens an item once the library has loaded, as activating its
+tile does (window.open_item), over the --page (default home): KIND is album,
+artist, playlist, station or video, and ID an item id or "first", the first
+of that section. The shot then waits longer, for the artwork.
 """
 
 import argparse
@@ -29,6 +35,8 @@ parser.add_argument('--light', action='store_true')
 parser.add_argument('--size', default='1100x760')
 parser.add_argument('--page')
 parser.add_argument('--demo', action='store_true', help='show the demo library in build/demo')
+parser.add_argument('--open', metavar='KIND:ID',
+                    help='open an item (ID an item id or "first") over the page')
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
 
@@ -60,6 +68,9 @@ app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
 def on_startup(_app):
     Adw.StyleManager.get_default().set_color_scheme(
         Adw.ColorScheme.FORCE_LIGHT if args.light else Adw.ColorScheme.FORCE_DARK)
+    # Pages arrive at once: a transition the compositor starves of frames (an unfocused window)
+    # can still be sliding when the shot is taken.
+    Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
 
 
 def on_window_added(_app, window):
@@ -74,14 +85,40 @@ def on_activate(_app):
     GLib.timeout_add(1200, shoot)
 
 
+# The library's store for each kind --open takes.
+SECTIONS = {'album': 'albums', 'artist': 'artists', 'playlist': 'playlists', 'station': 'radio',
+            'video': 'videos'}
+opened = False
+
+
+def open_item(window):
+    """--open: the item it names, opened as its tile would be."""
+    kind, _sep, item_id = args.open.partition(':')
+    if item_id == 'first' and kind in SECTIONS:
+        item = getattr(app.library, SECTIONS[kind]).get_item(0)
+    else:
+        item = app.library.by_id(kind, item_id)
+    if item is None:
+        sys.exit(f'screenshot: no {args.open} in the library')
+    window.open_item(item)
+
+
 def shoot():
+    global opened
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
     window = app.get_active_window()
-    if args.page and window.split_view.get_collapsed() and not window.split_view.get_show_content():
-        window.split_view.set_show_content(True)  # the page, not the sidebar
+    split_view = window.split_view
+    showing_sidebar = split_view.get_collapsed() and not split_view.get_show_content()
+    if (args.page or args.open) and showing_sidebar:
+        split_view.set_show_content(True)  # the page, not the sidebar
         GLib.timeout_add(600, shoot)  # after the transition
+        return GLib.SOURCE_REMOVE
+    if args.open and not opened:
+        opened = True
+        open_item(window)
+        GLib.timeout_add(1500, shoot)  # after the push, with the artwork decoded
         return GLib.SOURCE_REMOVE
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()

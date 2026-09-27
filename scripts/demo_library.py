@@ -11,6 +11,7 @@ GNOME Shell extension with the backend (see src/backend/__init__.py).
 `--albums N` (N > 40) adds generated albums, by generated artists, to the 40
 hand-written ones, for measuring big libraries: about 12 songs an album, so
 2,500 albums make 30,000 songs. The covers are drawn in parallel.
+The last playlist is Favourite Songs, flagged by attributes.isFavourites.
 Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
 """
 import argparse
@@ -1185,6 +1186,17 @@ PLAYLISTS_DATA = [
     },
 ]
 
+# The Favourite Songs playlist, the songs the listener loves. Apple keeps it as an ordinary
+# library playlist with a flag of its own; here the flag is attributes.isFavourites
+# (applemusic.library.FAVOURITES), which the app's sync maps Apple's onto. No genre or year, as
+# Apple's has none.
+FAVOURITES_DATA = {
+    "title": "Favourite Songs",
+    "subtitle": "Apple Music",
+    "summary": "The songs you love, newest first.",
+    "size": 36,
+}
+
 STATIONS_DATA = [
     {
         "title": "Lighthouse One",
@@ -1632,6 +1644,58 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             ],
         }
         playlists.append(playlist_item)
+
+    # The Favourite Songs playlist, after the others so they stay as they were. Its own random
+    # source, so nothing drawn from rnd afterwards changes either.
+    favourites_id = f"l.pl{len(playlists) + 1:03d}"
+    art_path = os.path.join(art_dir, f"{hashlib.sha1(favourites_id.encode('utf-8')).hexdigest()}.jpg")
+    draw_cover(
+        out_path=art_path,
+        title=FAVOURITES_DATA["title"],
+        subtitle=FAVOURITES_DATA["subtitle"],
+        badge="PLAYLIST",
+        palette=("#2b0914", "#d90429", "#ffb4a2"),
+        motif="concentric_rings",
+        is_artist=False,
+        size=cover_size,
+    )
+    loved = random.Random(7).sample(all_tracks_catalog, min(len(all_tracks_catalog), FAVOURITES_DATA["size"]))
+    favourite_tracks = []
+    for i, (_genre, raw_trk, raw_thumb) in enumerate(loved):
+        favourite_tracks.append({
+            "id": f"i.fav_{i:03d}",
+            "catalogId": raw_trk["catalogId"],
+            "title": raw_trk["title"],
+            "artist": raw_trk["artist"],
+            "album": raw_trk["album"],
+            "trackNumber": i + 1,
+            "discNumber": 1,
+            "durationMs": raw_trk["durationMs"],
+            "durationLabel": raw_trk["durationLabel"],
+            "explicit": raw_trk["explicit"],
+            "index": i,
+            "thumb": raw_thumb,
+        })
+    favourites_play = {"kind": "playlist", "id": favourites_id}
+    playlists.append({
+        "id": favourites_id,
+        "kind": "playlist",
+        "title": FAVOURITES_DATA["title"],
+        "subtitle": FAVOURITES_DATA["subtitle"],
+        "year": None,
+        "genre": None,
+        "summary": FAVOURITES_DATA["summary"],
+        "art": art_path,
+        "thumb": thumb_for(art_path),
+        "artColor": "#d90429",
+        "countLabel": format_count_label(len(favourite_tracks), sum(t["durationMs"] for t in favourite_tracks)),
+        "explicit": any(t["explicit"] for t in favourite_tracks),
+        "catalogId": None,
+        "url": None,
+        "play": favourites_play,
+        "attributes": {"isFavourites": True},
+        "groups": [{"name": "Tracks", "play": favourites_play, "entries": favourite_tracks}],
+    })
 
     # 4. Build Radio Stations
     radio_stations = []

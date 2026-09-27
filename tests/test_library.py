@@ -143,6 +143,28 @@ class TestDemoLibrary(unittest.TestCase):
         first_album = self.library.albums.get_item(0)
         self.assertIs(songs.get_item(0), first_album.groups[0].entries.get_item(0))
 
+    def test_favourite_songs(self):
+        flagged = [raw['id'] for raw in self.data['sections']['playlists']
+                   if raw.get('attributes', {}).get('isFavourites')]
+        self.assertEqual(len(flagged), 1)
+        favourites = self.library.favourite_songs()
+        self.assertIs(favourites, self.library.by_id('playlist', flagged[0]))
+        self.assertTrue(favourites.favourites)
+        self.assertEqual([item.id for item in self.library.playlists if item.favourites],
+                         flagged)
+
+    def test_track_at(self):
+        two_discs = next(item for item in self.library.albums if len(item.groups) > 1)
+        last = two_discs.groups[1].entries.get_item(0)  # counted on from disc 1
+        self.assertGreater(last.index, 0)
+        self.assertIs(self.library.track_at(two_discs.play, last.index), last)
+        playlist = self.library.playlists.get_item(0)
+        entry = playlist.groups[0].entries.get_item(2)
+        self.assertIs(self.library.track_at(entry.play, 2), entry)
+        self.assertIsNone(self.library.track_at(playlist.play, 10_000))
+        self.assertIsNone(self.library.track_at({'kind': 'album', 'id': 'l.nothing'}, 0))
+        self.assertIsNone(self.library.track_at(None, 0))
+
 
 class TestLaziness(unittest.TestCase):
     def setUp(self):
@@ -187,6 +209,15 @@ class TestLaziness(unittest.TestCase):
         self.assertEqual([t.id for t in build_songs(library)], ['i.1', 'i.2', 'i.3'])
         self.assertEqual([t.album for t in library.songs], ['Test Album'] * 3)
         self.assertEqual(library.songs.get_item(0).search_key, 'song i.1\ntest artist\ntest album')
+
+    def test_favourites_flag(self):
+        self.assertTrue(Item({'kind': 'playlist', 'attributes': {'isFavourites': True}}).favourites)
+        for raw in ({'kind': 'playlist'}, {'attributes': None}, {'attributes': ['isFavourites']},
+                    {'attributes': {'isFavourites': 'yes'}}, {'attributes': {}}):
+            with self.subTest(raw=raw):
+                self.assertFalse(Item(raw).favourites)
+        write_library(self.cache, [album('l.a1', 'One', ['i.1'])])
+        self.assertIsNone(load(self.cache).favourite_songs())
 
     def test_properties_notify(self):
         item = Item({'id': 'l.x', 'kind': 'album', 'title': 'Before'})

@@ -47,3 +47,37 @@ columnview.songs-table > listview > row > cell:last-child {
   background-color: alpha(currentColor, 0.15);
   font-weight: bold;
 }
+
+/* Artwork over its placeholder (widgets/cover.blp): Apple Music's corners, by size. */
+.cover > .card,
+.cover > picture {
+  border-radius: 8px;
+}
+
+.cover.small > .card,
+.cover.small > picture {
+  border-radius: 4px;
+}
+
+.cover.large > .card,
+.cover.large > picture {
+  border-radius: 12px;
+}
+
+/* A detail page's list (pages/detail.blp): rows inset from the edges with rounded highlights,
+   their contents on the page's 24px margins; the first row holds the hero. The headings
+   ("Disc 2") carry their own margins, so the hero's empty header takes no room. */
+listview.track-list {
+  padding-bottom: 24px;
+}
+
+listview.track-list > row {
+  margin: 0 12px;
+  padding: 8px 12px;
+  min-height: 24px;
+  border-radius: 8px;
+}
+
+listview.track-list > header {
+  padding: 0;
+}

@@ -32,14 +32,16 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   content: AdwNavigationView; a sidebar item replaces its stack with that        │
 │            destination's root page (pages/, built on first visit and kept, each  │
 │            with its own header bar): GridPages, the SongsPage (ColumnView),      │
-│            placeholders for the rest; tiles → window.open_item(), Songs rows →   │
-│            window.play_request() (toasts until phases 6* and 12*)                │
+│            Favourite Songs (a DetailPage), placeholders for the rest; tiles →    │
+│            window.open_item() pushes a DetailPage (album, playlist) or an        │
+│            ArtistPage; track rows, Play, Shuffle → window.play_request(play,     │
+│            start_with, shuffle) (a toast until phase 12*)                        │
 │   PlayerBar stub at the bottom of the content (→ AdwBottomSheet bottom bar*)     │
 │ app.library: Item/Track GObjects in Gio.ListStores, loaded from library.json     │
 │   (parsed in a thread, wrapped in batches; the Songs store on request);          │
 │   --demo reads build/demo instead                                                │
 │ Artwork (widgets/artwork.py): thumbnails decoded in threads into a 200-texture   │
-│   LRU, asked for by tiles while they are on screen                               │
+│   LRU, asked for by tiles, rows and covers while they are on screen              │
 │ Engine*: Chrome (Gio.Subprocess) + async CDP client ─► bridge.js ─► MusicKit     │
 │   MusicKit events ─► Player* state ─► PlayerBar / Now Playing* / MPRIS* service  │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
@@ -58,13 +60,15 @@ src/main.py                    Application: app.* actions (quit, about, shortcut
                                do_startup, loaded in do_activate), spawn(coro),
                                use_glib_event_loop()
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
-                               albums artists playlists radio videos, shelves, by_id, shelf, async
-                               load; songs filled by async build_songs(), songs-ready), Item,
-                               Group, Track (search_key), Shelf; SongOrder (the Songs table's
-                               orders), fold(), collation_key(); GObject/Gio only
+                               albums artists playlists radio videos, shelves, by_id, shelf,
+                               favourite_songs(), track_at(play, index), async load; songs filled
+                               by async build_songs(), songs-ready), Item (favourites), Group,
+                               Track (search_key), Shelf; SongOrder (the Songs table's orders),
+                               fold(), collation_key(); GObject/Gio only
 src/window.py + window.blp     Window: split view, sidebar, the content's AdwNavigationView and its root
-                               pages (pages.create, or a placeholder), open_item(),
-                               play_request(track), toasts, window-state memory
+                               pages (pages.create, or a placeholder), open_item(item),
+                               play_request(play, start_with=None, shuffle=False), win.back,
+                               toasts, window-state memory
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
 src/pages/__init__.py          PAGES: destination key → factory; create(destination, library)
@@ -74,14 +78,26 @@ src/pages/grid.py + .blp       $AppleMusicGridPage: title over a Gtk.GridView of
 src/pages/songs.py + .blp      $AppleMusicSongsPage: title and count over a Gtk.ColumnView (Title,
                                Artist, Album, Time), a filter entry in the header; sorted and
                                filtered in Python (see its docstring), rows replaced by _show()
+src/pages/detail.py + .blp     $AppleMusicDetailPage: an album or playlist, one Gtk.ListView whose
+                               first row is the hero (cover, titles, Play/Shuffle, summary) and
+                               then a section per group ("Disc 2" headers); pushed with an item,
+                               or a root page following find() (Favourite Songs)
+src/pages/artist.py + .blp     $AppleMusicArtistPage: round portrait, name, bio, a Gtk.FlowBox of
+                               album tiles (the artist's groups, resolved through by_id)
 src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel)
 src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait) and one Gtk.Inscription
 src/widgets/song_title.py + .blp  $AppleMusicSongTitle: the Songs title cell, 32 px thumbnail,
                                title, explicit badge
+src/widgets/cover.py + .blp    $AppleMusicCover: artwork `size` px square over a placeholder card,
+                               set_paths(*paths) (the first that decodes), loaded while mapped;
+                               CSS classes `small`/`large` for the corners
+src/widgets/track_row.py + .blp  $AppleMusicTrackRow: number (albums) or 40 px thumbnail
+                               (playlists), title + badge, artist, duration
 src/style.css                  auto-loaded app CSS: accent colour and a few small classes
 src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/actions/ by the gresource
 src/applemusic.gresource.xml   compiled .ui files (subdirectories' aliased to the root: grid.ui,
-                               songs.ui, tile.ui, song_title.ui), style.css, icons
+                               songs.ui, detail.ui, artist.ui, tile.ui, song_title.ui, cover.ui,
+                               track_row.ui), style.css, icons
 src/meson.build                blueprint list, gresource, install_data lists (app .py; pages/,
                                widgets/, backend/ each their own)
 src/backend/                   vendored from the extension, no gi; __init__.py records provenance
@@ -100,7 +116,8 @@ data/                          desktop, metainfo, gschema, app icons; Meson test
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
-                               --albums N adds generated albums and artists
+                               --albums N adds generated albums and artists; the last playlist is
+                               Favourite Songs (attributes.isFavourites)
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
                                fixtures/ holds invented API answers
 pyproject.toml                 ruff config only (line length 100, E/F/W; am.py excluded, vendored
@@ -124,11 +141,14 @@ scripts/check.sh          compileall, ruff (skipped if not installed), unit test
                           meson tests (desktop/metainfo/schema validation); prints `check: ok`
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
                           first when missing); no Chrome, no account. Use it for all UI work
-scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
+scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
-                          dark by default; GSettings go to a memory backend; --demo as demo.sh
-                          (without it the real cache is read); waits for the library to load;
-                          in the narrow layout shows the page when --page is given, else the sidebar
+                          dark by default; GSettings go to a memory backend; animations off;
+                          --demo as demo.sh (without it the real cache is read); waits for the
+                          library to load; in the narrow layout shows the page when --page or
+                          --open is given, else the sidebar. --open album:first (or
+                          artist/playlist/station/video, ID an id or "first") calls
+                          window.open_item over the page and waits 1.5 s more for artwork
 scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH]
                           scrolls a page of the demo library top to bottom (or PX pixels) and
                           reports the app's work per frame (mean, 90th percentile, frames over the
@@ -201,7 +221,10 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - Artwork: widgets draw covers through `widgets.artwork.get_default()`: `get(path)` (cache hit,
   sync) or `request(path, callback)` (decoded in a thread, called back on the main loop; shared
   per path) and `cancel(token)` when recycled or unmapped. None means no artwork, including a
-  path not on disk; tiles draw `thumb` (320 px), falling back to `art`.
+  path not on disk; tiles draw `thumb` (320 px), falling back to `art`; a detail page's hero
+  draws `art` (640 px), falling back to `thumb` (shown at once when its tile left it cached).
+  `widgets.cover.Cover` does this for any square artwork; the tiles and Songs cells keep their
+  own copies of the same logic.
 - Main-thread work in chunks yields with `library.yield_to_frames()`, not a bare
   `await asyncio.sleep(0)`: asyncio runs at `G_PRIORITY_DEFAULT`, above GTK's redraw, so sleep(0)
   alone paints nothing until the task ends (measured: 0 frames against 5 in the same load).
@@ -224,8 +247,16 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - Pages: a destination's root page is an `Adw.NavigationPage` with its own `Adw.ToolbarView` and
   `Adw.HeaderBar` (`show-title: false`; the header bar still shows the back button to the sidebar
   when collapsed), registered in `pages.PAGES`. Pages listen to `app.library` only while mapped
-  (connect in `do_map`, disconnect in `do_unmap`): the library outlives the window. Activating an
-  item calls `window.open_item(item)`, a track `window.play_request(track)`.
+  (connect in `do_map`, disconnect in `do_unmap`): the library outlives the window. Pushed pages
+  (detail, artist) show their title in the header bar and keep what they show in `page.item`.
+  Breakpoints need an `Adw.BreakpointBin` inside the page (a navigation page takes none).
+- The two seams to the rest of the app, both on the window (`self.get_root()` from a page):
+  `open_item(item)` pushes the item's page (album/playlist → `DetailPage`, artist →
+  `ArtistPage`; stations and videos toast for now; the same item twice in a row is pushed once);
+  `play_request(play, start_with=None, shuffle=False)` is every "play this": a track row passes
+  `track.play, start_with=track.index` (its group's target and its place in that queue), Play and
+  Shuffle `item.play` (with `shuffle=True`). It toasts until phase 12 hands it to the engine;
+  `library.track_at(play, index)` finds the track a request starts with.
 - Tests: `tests/test_<module>.py`, stdlib `unittest`, each starting with `from tests import …`
   (e.g. `SRC`, `ROOT`) before any `from applemusic import …`: discovery with `-s tests` imports test
   modules as top-level modules and never runs `tests/__init__.py` on its own. No GTK widgets in
@@ -296,6 +327,18 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   with the content in GTK 4.22) and moved up by `get-child-position` as the grid scrolls. Row
   heights come from the tiles' minimum heights. After a sort change the grid would follow its old
   top item; `grid_view.scroll_to(0, …)` puts it back at the top.
+- A `Gtk.ListView` gives each row its *minimum* height: a widget whose minimum is below its
+  natural size is squashed in a row (an `Adw.StatusPage`, a scrolled window inside, got 58 px of
+  292). Tab never reaches focusable widgets in a list *header* (`header-factory`), only in items
+  (with `tab-behavior: item`, Tab goes through the focused item's widgets, then leaves; arrows
+  move between items). Hence the detail page's hero is its list's first item, not a header, and
+  a box that looks like a compact status page. A `Gtk.FlattenListModel` is a `Gtk.SectionModel`
+  (one section per child model), which is what the "Disc 2" headers hang on.
+- `Adw.NavigationView` pops on Escape, Back, `<Alt>Left` (class shortcuts, *local* scope: only
+  with the focus inside it) and the mouse back button (a click gesture on every button). A push
+  moves the focus into the new page (the detail page's Play button), so the keys work there;
+  `win.back` (`<alt>Left`, in the shortcuts dialog) does the same from the sidebar or the player
+  bar, and is disabled when there is nowhere to go back to, so the keys pass through.
 - `Gtk.ColumnView.sort_by_column()` does not tell the previous primary column to drop its sort
   arrow (GTK 4.22's `gtk_column_view_sorter_set_column`); clicking a header does. Use it only
   for the initial order, or call `sort_by_column(None, …)` first.

@@ -11,11 +11,15 @@ endif
 blueprints = custom_target(
   'blueprints',
   input: files(
+    'pages/artist.blp',
+    'pages/detail.blp',
     'pages/grid.blp',
     'pages/songs.blp',
     'player_bar.blp',
+    'widgets/cover.blp',
     'widgets/song_title.blp',
     'widgets/tile.blp',
+    'widgets/track_row.blp',
     'window.blp',
   ),
   output: '.',
@@ -68,6 +72,8 @@ install_data(
 
 install_data(
   'pages/__init__.py',
+  'pages/artist.py',
+  'pages/detail.py',
   'pages/grid.py',
   'pages/songs.py',
   install_dir: moduledir / 'pages',
@@ -76,8 +82,10 @@ install_data(
 install_data(
   'widgets/__init__.py',
   'widgets/artwork.py',
+  'widgets/cover.py',
   'widgets/song_title.py',
   'widgets/tile.py',
+  'widgets/track_row.py',
   install_dir: moduledir / 'widgets',
 )
 

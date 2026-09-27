@@ -53,10 +53,10 @@ class TestDemoLibrarySchema(unittest.TestCase):
         sections = self.data["sections"]
         self.assertSetEqual(set(sections.keys()), {"albums", "artists", "playlists", "radio"})
 
-        # Around 40 albums, 15 artists, 12 playlists, 8 radio stations
+        # Around 40 albums, 15 artists, 13 playlists (Favourite Songs the last), 8 radio stations
         self.assertEqual(len(sections["albums"]), 40)
         self.assertEqual(len(sections["artists"]), 15)
-        self.assertEqual(len(sections["playlists"]), 12)
+        self.assertEqual(len(sections["playlists"]), 13)
         self.assertEqual(len(sections["radio"]), 8)
 
     def test_shelves_schema(self):
@@ -211,6 +211,18 @@ class TestDemoLibrarySchema(unittest.TestCase):
             self.assertGreater(len(group["entries"]), 0)
             for idx, track in enumerate(group["entries"]):
                 self.assertEqual(track["index"], idx)
+
+    def test_one_favourites_playlist(self):
+        # The flag the app looks for (applemusic.library.FAVOURITES) is on one playlist only, and
+        # no other item carries attributes.
+        flagged = [pl for pl in self.data["sections"]["playlists"]
+                   if pl.get("attributes", {}).get("isFavourites") is True]
+        self.assertEqual([pl["title"] for pl in flagged], ["Favourite Songs"])
+        self.assertEqual(flagged[0]["attributes"], {"isFavourites": True})
+        self.assertGreater(len(flagged[0]["groups"][0]["entries"]), 20)
+        others = [item for section in self.data["sections"].values() for item in section
+                  if item is not flagged[0]]
+        self.assertFalse([item["id"] for item in others if "attributes" in item])
 
     def test_radio_stations_detail(self):
         radio = self.data["sections"]["radio"]

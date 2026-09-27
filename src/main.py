@@ -47,6 +47,7 @@ class Application(Adw.Application):
         self._add_action('about', self._on_about)
         self._add_action('shortcuts', self._on_shortcuts, ['<primary>question'])
         self.set_accels_for_action('window.close', ['<primary>w'])
+        self.set_accels_for_action('win.back', ['<alt>Left'])
 
         self.add_main_option('debug', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
                              _('Log debug messages'), None)
@@ -131,6 +132,7 @@ class Application(Adw.Application):
     def _on_shortcuts(self, *_args):
         section = Adw.ShortcutsSection(title=_('General'))
         section.add(Adw.ShortcutsItem.new(_('Keyboard Shortcuts'), '<primary>question'))
+        section.add(Adw.ShortcutsItem.new(_('Go Back'), '<alt>Left'))
         section.add(Adw.ShortcutsItem.new(_('Close Window'), '<primary>w'))
         section.add(Adw.ShortcutsItem.new(_('Quit'), '<primary>q'))
         dialog = Adw.ShortcutsDialog()

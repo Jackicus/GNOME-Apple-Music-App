@@ -28,6 +28,11 @@ BATCH_SIZE = 500
 # How long wrapping the Songs store runs before it lets GTK paint a frame, in seconds.
 FRAME_BUDGET = 0.008
 
+# The key in a playlist's raw `attributes` that marks it as Favourite Songs, the playlist of the
+# songs the user loves. Not part of the README's Item shape: the demo library sets it, and the
+# sync maps Apple's own flag onto it.
+FAVOURITES = 'isFavourites'
+
 
 def _text(value):
     """A string property's value: None stays None (JSON null), anything else becomes a str."""
@@ -173,6 +178,12 @@ class Item(GObject.Object):
         self._groups = None
 
     @property
+    def favourites(self):
+        """Whether this is the Favourite Songs playlist: attributes.isFavourites in the raw Item."""
+        attributes = self.raw.get('attributes')
+        return isinstance(attributes, dict) and attributes.get(FAVOURITES) is True
+
+    @property
     def groups(self):
         if self._groups is None:
             # An album's tracks draw the album's cover; an artist's groups are albums, whose
@@ -275,6 +286,27 @@ class Library(GObject.Object):
     def shelf(self, key):
         """The shelf with that key ('recently-added', 'heavy-rotation'…), or None."""
         return next((shelf for shelf in self.shelves if shelf.key == key), None)
+
+    def favourite_songs(self):
+        """The Favourite Songs playlist (Item.favourites), or None when the library has none."""
+        return next((item for item in self.playlists if item.favourites), None)
+
+    def track_at(self, play, index):
+        """The Track at queue position index of what play ({kind, id}) names, or None.
+
+        play is an Item's or a Group's play target, as track rows and Play buttons pass it: the
+        album or playlist is looked up by kind and id, and its groups sharing that target are
+        searched for the entry whose `index` it is (an album's discs count on from each other).
+        """
+        item = self.by_id(play.get('kind'), play.get('id')) if isinstance(play, dict) else None
+        if item is None:
+            return None
+        for group in item.groups:
+            if group.play == play:
+                for track in group.entries:
+                    if track.index == index:
+                        return track
+        return None
 
     async def load(self):
         """Read library.json from the cache directory and fill the models from it.

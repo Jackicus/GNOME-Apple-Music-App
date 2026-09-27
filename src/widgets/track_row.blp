@@ -1,0 +1,91 @@
+using Gtk 4.0;
+
+// One track of an album or playlist (widgets/track_row.py). Everything but the title is a
+// Gtk.Inscription, sized by its characters or lines rather than its text, so a recycled row
+// is rebound without being measured again; the title is a one-line label, so the explicit
+// badge follows its text.
+template $AppleMusicTrackRow: Box {
+  spacing: 12;
+
+  // Albums: the track number, in a column as wide as two digits.
+  Inscription number_label {
+    min-chars: 2;
+    nat-chars: 2;
+    xalign: 1;
+    valign: center;
+    visible: false;
+
+    styles [
+      "numeric",
+      "dim-label",
+    ]
+  }
+
+  // Playlists: the track's own thumbnail.
+  $AppleMusicCover cover {
+    size: 40;
+    valign: center;
+    visible: false;
+
+    styles [
+      "small",
+    ]
+  }
+
+  Box {
+    orientation: vertical;
+    valign: center;
+    hexpand: true;
+
+    Box {
+      spacing: 6;
+
+      Label title_label {
+        xalign: 0;
+        ellipsize: end;
+        single-line-mode: true;
+      }
+
+      Label explicit_badge {
+        // Translators: the badge marking a song with explicit lyrics, as Apple Music shows it
+        label: C_("explicit badge", "E");
+        tooltip-text: _("Explicit");
+        valign: center;
+        visible: false;
+
+        accessibility {
+          label: _("Explicit");
+        }
+
+        styles [
+          "caption",
+          "explicit-badge",
+        ]
+      }
+    }
+
+    // Playlists, and album tracks by someone other than the album's artist.
+    Inscription artist_label {
+      xalign: 0;
+      text-overflow: ellipsize_end;
+      visible: false;
+
+      styles [
+        "caption",
+        "dim-label",
+      ]
+    }
+  }
+
+  Inscription duration_label {
+    min-chars: 5;
+    nat-chars: 5;
+    xalign: 1;
+    valign: center;
+
+    styles [
+      "numeric",
+      "dim-label",
+    ]
+  }
+}
