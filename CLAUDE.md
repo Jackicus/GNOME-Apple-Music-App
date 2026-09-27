@@ -29,11 +29,15 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ Window: AdwToastOverlay > AdwNavigationSplitView                                 │
 │   sidebar: AdwSidebar built from sections.py (+ playlists and folders*)          │
-│   content: GtkStack of placeholder AdwStatusPages counting the library's stores  │
-│            (→ AdwNavigationView*)                                                │
+│   content: AdwNavigationView; a sidebar item replaces its stack with that        │
+│            destination's root page (pages/, built on first visit and kept, each  │
+│            with its own header bar): GridPages, placeholders for the rest;       │
+│            tiles → window.open_item() (a toast; detail pages are phase 6*)       │
 │   PlayerBar stub at the bottom of the content (→ AdwBottomSheet bottom bar*)     │
 │ app.library: Item/Track GObjects in Gio.ListStores, loaded from library.json     │
 │   (parsed in a thread, wrapped in batches); --demo reads build/demo instead      │
+│ Artwork (widgets/artwork.py): thumbnails decoded in threads into a 200-texture   │
+│   LRU, asked for by tiles while they are on screen                               │
 │ Engine*: Chrome (Gio.Subprocess) + async CDP client ─► bridge.js ─► MusicKit     │
 │   MusicKit events ─► Player* state ─► PlayerBar / Now Playing* / MPRIS* service  │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
@@ -54,13 +58,23 @@ src/main.py                    Application: app.* actions (quit, about, shortcut
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, lazy songs, by_id,
                                shelf, async load), Item, Group, Track, Shelf; GObject/Gio only
-src/window.py + window.blp     Window: split view, sidebar, content stack, toasts, window-state memory
+src/window.py + window.blp     Window: split view, sidebar, the content's AdwNavigationView and its root
+                               pages (pages.create, or a placeholder), open_item(), toasts,
+                               window-state memory
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
+src/pages/__init__.py          PAGES: destination key → factory; create(destination, library)
+src/pages/grid.py + .blp       $AppleMusicGridPage: title over a Gtk.GridView of tiles, sort drop-down,
+                               loading/empty states (albums, artists, recently-added,
+                               all-playlists, music-videos)
+src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel)
+src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait) and one Gtk.Inscription
 src/style.css                  auto-loaded app CSS: accent colour and a few small classes
 src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/actions/ by the gresource
-src/applemusic.gresource.xml   compiled .ui files, style.css, icons
-src/meson.build                blueprint list, gresource, install_data lists (app .py; backend/)
+src/applemusic.gresource.xml   compiled .ui files (subdirectories' aliased to the root: grid.ui,
+                               tile.ui), style.css, icons
+src/meson.build                blueprint list, gresource, install_data lists (app .py; pages/,
+                               widgets/, backend/ each their own)
 src/backend/                   vendored from the extension, no gi; __init__.py records provenance
                                and every edit, README.md the command table, error codes and the
                                library.json/Item/Track shapes
@@ -75,8 +89,9 @@ src/backend/                   vendored from the extension, no gi; __init__.py r
                                linted; phases 9-11 port it, then delete it
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
-scripts/run.sh check.sh screenshot.py demo.sh
-scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR
+scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
+scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
+                               --albums N adds generated albums and artists
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
                                fixtures/ holds invented API answers
 pyproject.toml                 ruff config only (line length 100, E/F/W; am.py excluded, vendored
@@ -103,10 +118,18 @@ scripts/demo.sh [args]    run.sh --demo: the app on the invented library in buil
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; --demo as demo.sh
-                          (without it the real cache is read); waits for the library to load
+                          (without it the real cache is read); waits for the library to load;
+                          in the narrow layout shows the page when --page is given, else the sidebar
+scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--size WxH]
+                          scrolls a page of the demo library top to bottom and reports the app's
+                          work per frame (mean, 90th percentile, frames over the refresh interval
+                          and over 16.7 ms); run it on a big library:
+                          APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
 python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
-scripts/demo_library.py [--cache DIR]         writes an invented library (library.json, art/, thumb/,
-                                              art/.sizes) into DIR, default build/demo; no Chrome
+scripts/demo_library.py [--cache DIR] [--albums N]
+                          writes an invented library (library.json, art/, thumb/, art/.sizes) into
+                          DIR, default build/demo; no Chrome. --albums 2000 (about 24,000 songs,
+                          10 s: covers drawn in parallel) into build/demo-2000 for measuring
 meson setup build --prefix=/usr && meson install -C build      system install, release profile
 ```
 
@@ -134,6 +157,23 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   `library.song_count()` counts without building. Model GObjects declare properties with
   `library.model_property` (kept in `_<name>` attributes, assigned directly when wrapping):
   passing properties to `GObject.Object.__init__` costs about 4 µs each, 5-10x slower wrapping.
+- Sorting: `Gtk.StringSorter`/`Gtk.NumericSorter` (combined with `Gtk.MultiSorter`) over
+  `Gtk.PropertyExpression`s of the model properties. `model_property` makes real GObject
+  properties whose getter reads the plain attribute, so expressions work as they are; key-based
+  sorters read each item once and sort in C. Measured on 2,000 albums: 10 ms (title), 25 ms
+  (artist, year, title); a Python `Gtk.CustomSorter` 23 ms, and on 24,000 songs 115 ms against
+  570 ms. A `Gtk.ClosureExpression` over the attribute halves the read cost if it ever matters.
+- Recycled rows and tiles (`Gtk.GridView`, and phase 5's `Gtk.ColumnView`): GTK 4.22's grid
+  rebinds each item many times as it scrolls past (2,000 items, 52,000 binds top to bottom), so
+  bind must be cheap. Text goes in `Gtk.Inscription`, whose size comes from its line count and
+  not its text, so a rebind is a redraw; a wrapping `Gtk.Label` re-measured on every rebind cost
+  7 ms a frame at 4,000 px/s against 1 ms. No `_()` in bind (gettext searches the disk on every
+  call: look strings up once), no label-backed widgets (`Adw.Avatar` initials) in tiles. Artwork
+  is requested on map and released on unmap: the grid binds a few hundred tiles, ~20 on screen.
+- Artwork: widgets draw covers through `widgets.artwork.get_default()`: `get(path)` (cache hit,
+  sync) or `request(path, callback)` (decoded in a thread, called back on the main loop; shared
+  per path) and `cancel(token)` when recycled or unmapped. None means no artwork, including a
+  path not on disk; tiles draw `thumb` (320 px), falling back to `art`.
 - Main-thread work in chunks yields with `library.yield_to_frames()`, not a bare
   `await asyncio.sleep(0)`: asyncio runs at `G_PRIORITY_DEFAULT`, above GTK's redraw, so sleep(0)
   alone paints nothing until the task ends (measured: 0 frames against 5 in the same load).
@@ -153,6 +193,11 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   reference until it finishes, logs its exception (cancellation is silent) and returns the task for
   cancelling. Use it from signal handlers instead of threads or `GLib.idle_add`; blocking work
   inside the coroutine goes through `asyncio.to_thread`.
+- Pages: a destination's root page is an `Adw.NavigationPage` with its own `Adw.ToolbarView` and
+  `Adw.HeaderBar` (`show-title: false`; the header bar still shows the back button to the sidebar
+  when collapsed), registered in `pages.PAGES`. Pages listen to `app.library` only while mapped
+  (connect in `do_map`, disconnect in `do_unmap`): the library outlives the window. Activating an
+  item calls `window.open_item(item)`.
 - Tests: `tests/test_<module>.py`, stdlib `unittest`, each starting with `from tests import …`
   (e.g. `SRC`, `ROOT`) before any `from applemusic import …`: discovery with `-s tests` imports test
   modules as top-level modules and never runs `tests/__init__.py` on its own. No GTK widgets in
@@ -190,7 +235,7 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   on click (the scaffold uses it to show the content pane when collapsed).
   `AdwSidebarSection.bind_model(model, create_func)` mirrors a `Gio.ListModel`; `menu-model` plus
   the `setup-menu` signal give per-item context menus; `setup_drop_target()` accepts drops;
-  `mode: page` turns it into boxed lists for the collapsed layout (not yet set in the scaffold).
+  `mode: page` turns it into boxed lists for the collapsed layout (the window's breakpoint sets it).
 - Blueprint 0.22: `template $AppleMusicWindow: Adw.ApplicationWindow {}`; a custom widget used in a
   template (`$AppleMusicPlayerBar`) needs its Python class imported before the template is built
   (hence `from .player_bar import PlayerBar  # noqa: F401` in `window.py`); `[top]`/`[bottom]`/`[end]`
@@ -216,7 +261,17 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   the window non-resizable so the desktop's tiling extension (Tiling Shell) honours `--size`; so
   shots have no maximize button.
   It calls `main.use_glib_event_loop()` itself, since it builds the Application without `main()`.
-  In the collapsed (narrow) layout the sidebar is shown, whatever `--page` says.
+  In the collapsed (narrow) layout it shows the page when `--page` is given, the sidebar otherwise.
+- A `Gtk.GridView` recycles only as the direct scrollable child of a `Gtk.ScrolledWindow`: in a
+  box inside a viewport it creates a few hundred tiles and leaves the rest blank. So the grid
+  page's `title-1` title is an overlay child, laid over the grid's CSS top padding (which scrolls
+  with the content in GTK 4.22) and moved up by `get-child-position` as the grid scrolls. Row
+  heights come from the tiles' minimum heights. After a sort change the grid would follow its old
+  top item; `grid_view.scroll_to(0, …)` puts it back at the top.
+- Frame timing on this desktop varies with the compositor and the other load (the monitor is
+  240 Hz; unfocused windows may get 60), so `scroll_test.py` reports the app's own work per frame,
+  which is what the app controls. The desktop's tiling extension resizes windows that are
+  resizable when mapped: test scripts make theirs non-resizable in `window-added`.
 - The dev build shares the release schema and resource path; only the app ID, desktop file and icons
   differ. `run.sh` sets `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS` to `build/install`.
 - Chrome: `google-chrome-stable` 154 is installed. Its MPRIS player is

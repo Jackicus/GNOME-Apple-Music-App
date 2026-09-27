@@ -6,6 +6,8 @@
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
 a tiling window manager may choose its own. Settings go to a memory backend.
+In the narrow (collapsed) layout the shot shows the sidebar, or the page when
+--page is given.
 --demo shows the invented library in build/demo (generated first if missing)
 or in $APPLE_MUSIC_CACHE when that is set, as scripts/demo.sh does. The shot
 waits for the library to finish loading.
@@ -25,7 +27,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('out', nargs='?', default=os.path.join(root, 'build', 'screenshot.png'))
 parser.add_argument('--light', action='store_true')
 parser.add_argument('--size', default='1100x760')
-parser.add_argument('--page', default='home')
+parser.add_argument('--page')
 parser.add_argument('--demo', action='store_true', help='show the demo library in build/demo')
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
@@ -66,7 +68,7 @@ def on_window_added(_app, window):
 
 
 def on_activate(_app):
-    app.settings.set_string('last-page', args.page)
+    app.settings.set_string('last-page', args.page or 'home')
     app.settings.set_int('window-width', width)
     app.settings.set_int('window-height', height)
     GLib.timeout_add(1200, shoot)
@@ -77,6 +79,10 @@ def shoot():
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
     window = app.get_active_window()
+    if args.page and window.split_view.get_collapsed() and not window.split_view.get_show_content():
+        window.split_view.set_show_content(True)  # the page, not the sidebar
+        GLib.timeout_add(600, shoot)  # after the transition
+        return GLib.SOURCE_REMOVE
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()
     paintable.snapshot(snapshot, window.get_width(), window.get_height())

@@ -11,7 +11,7 @@ running and better than before.
 - [x] 1. Foundations: git, tests, lint, logging, asyncio on GLib (2026-09-27)
 - [x] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests) (2026-09-27)
 - [x] 3. Library model and demo mode (2026-09-27)
-- [ ] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork
+- [x] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork (2026-09-27)
 - [ ] 5. Songs page (GtkColumnView)
 - [ ] 6. Detail pages: album, playlist, artist
 - [ ] 7. Shelves: Home and Radio from the cache
@@ -428,6 +428,72 @@ Albums page with the demo library and confirm no jank (if the demo has fewer tha
 generate a bigger one: check demo_library.py's options). Update CLAUDE.md (architecture:
 NavigationView, widgets/, pages/; the Artwork rule). Tick phase 4 in prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- Navigation: `window._root(destination)` builds a root page on first visit (`pages.create`, or a
+  placeholder `Adw.NavigationPage` with its own header bar and the old counted status page),
+  tags it with the destination key, `navigation_view.add()`s it (so it survives being popped or
+  replaced) and the sidebar calls `navigation_view.replace([root])`. `COUNTED` now covers only
+  songs and radio. `window.open_item(item)` toasts the title: phase 6 pushes detail pages there.
+- `GridPage(library, title, model, sorts=(), artist=False, icon_name, empty_title,
+  empty_description)`: `model` is a function (called again on the library's `changed`, so a
+  shelf's store, which each load replaces, is followed; None shows nothing), `sorts` are keys of
+  `grid.SORTS` (`title`, `artist` = subtitle→year→title, `year` = newest first→title); with more
+  than one, a header `Gtk.DropDown` offers them, hidden outside the grid state. Albums and Music
+  Videos offer Title/Artist/Year; Artists and All Playlists are sorted by title with no
+  drop-down; Recently Added keeps Apple's order. The choice is not remembered (no settings key).
+  The chain is store → `Gtk.SortListModel` → `Gtk.NoSelection` → `Gtk.GridView`
+  (single-click-activate, tab-behavior item). A sort change calls `grid_view.scroll_to(0, …)`: the
+  grid otherwise follows its old top item to its new place. Pages connect to the library in
+  `do_map` and disconnect in `do_unmap`. Loading shows an `Adw.Spinner`, an empty model after
+  loading an `Adw.StatusPage` (both screenshotted).
+- The in-content title cannot share a box with the grid in the scrolled window (a
+  `Gtk.GridView` in a viewport stops recycling and leaves most of itself blank, checked), so it is
+  an overlay child over `gridview.tile-grid`'s top padding (`style.css`, `calc(36px + 2.4em)`,
+  sized for the label's 24+12 px margins and a `title-1` line; change both together) and
+  `get-child-position` moves it up as the grid scrolls. Phase 5's page can use a
+  `Gtk.ColumnView` header or the same overlay.
+- Sorting uses `Gtk.PropertyExpression` over the existing `model_property` properties, unchanged:
+  they are real GObject properties with a Python getter, and key-based sorters read each item
+  once. Measured with 2,000 albums: title 10 ms, artist chain 25 ms, a Python `CustomSorter` 23
+  ms; 24,000 songs: title 115 ms, `CustomSorter` 570 ms. A `Gtk.ClosureExpression` reading the
+  attribute was twice as fast as the property if phase 5 needs it. A sort change in the app,
+  rebinding included, takes about 40 ms.
+- GTK 4.22's `Gtk.GridView` rebinds each item ~25 times while it scrolls past (plain GridView of
+  2,000 strings: 52,000 binds top to bottom), so per-bind cost is what makes or breaks scrolling.
+  Tiles show title and subtitle as markup in one `Gtk.Inscription` (3 lines: the title wraps to
+  two, the dim smaller subtitle follows) instead of two `Gtk.Label`s: a wrapping label is
+  re-measured on every rebind (layout 7 ms a frame, p90 15 ms, at 4,000 px/s), an inscription
+  only redraws (under 1 ms). The price: a title longer than two lines takes the third and the
+  subtitle is not shown (the list item's accessible label still has both). Artist tiles use
+  `Adw.Avatar` without initials, which are a label too (p90 12.5 ms → 4 ms). `_()` in bind cost
+  65 µs a call; strings are looked up once per page.
+- Measured with `scripts/scroll_test.py` on `--albums 2000` (1100×760, four columns, whole grid
+  top to bottom at 4,000 px/s): main-thread work per frame mean 2.1 to 3.5 ms, 90th percentile
+  3.1 to 8.5 ms depending on the run and on which monitor the window lands, longest 13 ms, none
+  over 16.7 ms in four runs; at 2,000 px/s mean 1.8 ms, one frame of 12,587 at 39 ms.
+  Artists (585): mean 1.5 ms, p90 4.1 ms, none over 16.7 ms. The monitor is 240 Hz: about 7% of
+  frames exceed its 4.2 ms, which phase 19 can look at. The machine was loaded (Chrome) and
+  frame-to-frame gaps vary with the compositor, hence the work-per-frame measure.
+- Artwork: `widgets.artwork.get_default()`; tiles `get()` on map, else `request()`, and
+  `cancel()`/drop the texture on unmap, so live textures are the ~20 on screen plus the 200 in the
+  LRU. Tiles draw `thumb`, else `art`. A missing file calls back None and is not remembered, so it
+  is tried again at the next map (cheap: a failed open in a thread). A sync that rewrites covers
+  under the same names (a new thumbnail size) should call `artwork.get_default().clear()` (phase
+  11). Phase 5's rows and phase 6's heroes use the same loader (heroes with `art`).
+- `scripts/demo_library.py --albums N` adds generated albums by generated artists (1 to 6 albums
+  each, 8 to 16 songs an album) after the 40 hand-written ones, which stay byte-identical; the
+  covers are drawn at the end, by a forked process pool from 200 up. `--albums 2000` → 585
+  artists, 24,000 songs, a 27 MB library.json (indented; artist groups repeat their albums'
+  tracks), about 10 s; it loads in ~200 ms. Phase 5 wants `--albums 2500` for 30,000 songs.
+  `test_demo_schema.py` tests `generated_albums()` without drawing.
+- `scripts/scroll_test.py` (new) and `screenshot.py` make their window non-resizable in
+  `window-added`: without it the tiling extension resized the window and the grid had two
+  columns. `screenshot.py --page KEY` now shows that page in the narrow layout too (no `--page`:
+  the sidebar, as phase 1 had it).
+- `test_library.test_a_newer_load_wins` failed about one run in ten (the first load's thread
+  could finish before the second load started); its read now waits for the second to start.
 
 ## Phase 5: Songs page
 

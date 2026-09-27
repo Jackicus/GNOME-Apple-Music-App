@@ -93,13 +93,9 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
         title: _("Home");
         tag: "content";
 
+        // Each page in the navigation view carries its own header bar.
         child: Adw.ToolbarView {
-          [top]
-          Adw.HeaderBar {}
-
-          content: Stack stack {
-            transition-type: crossfade;
-          };
+          content: Adw.NavigationView navigation_view {};
 
           [bottom]
           $AppleMusicPlayerBar player_bar {}

@@ -67,4 +67,7 @@ scripts/demo_library.py
 - Names that were not invented are replaced: a band named after a real person, curators named
   after the extension and a real product, and Apple's own three radio stations. Apple's curator
   labels ("Apple Music Chill", "Apple Music Radio") stay, as the service's own wording.
+- (Phase 4) `--albums N` adds generated albums and artists (generated_albums) after the
+  hand-written ones, which stay as they were; covers are queued while building and drawn at the
+  end (draw_covers), by a forked process pool from 200 up.
 """

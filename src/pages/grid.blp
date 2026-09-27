@@ -1,0 +1,81 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicGridPage: Adw.NavigationPage {
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-title: false;
+
+      [end]
+      DropDown sort_dropdown {
+        tooltip-text: _("Sort By");
+        visible: false;
+        notify::selected => $on_sort_selected();
+      }
+    }
+
+    content: Stack stack {
+      StackPage {
+        name: "loading";
+
+        child: Adw.Spinner {
+          width-request: 32;
+          height-request: 32;
+          halign: center;
+          valign: center;
+        };
+      }
+
+      StackPage {
+        name: "empty";
+        child: Adw.StatusPage empty_page {};
+      }
+
+      StackPage {
+        name: "items";
+
+        // The title scrolls with the grid. A Gtk.GridView only recycles its tiles as the
+        // scrollable child of a Gtk.ScrolledWindow, so the title cannot sit above it in a box
+        // in the same scrolled window: it is laid over the grid's top padding (style.css) and
+        // moved up as the grid scrolls (on_title_position).
+        child: Overlay overlay {
+          overflow: hidden;
+          get-child-position => $on_title_position();
+
+          child: ScrolledWindow scrolled_window {
+            hscrollbar-policy: never;
+
+            child: GridView grid_view {
+              min-columns: 2;
+              max-columns: 12;
+              single-click-activate: true;
+              tab-behavior: item;
+              activate => $on_activate();
+
+              styles [
+                "tile-grid",
+              ]
+            };
+          };
+
+          [overlay]
+          Label title_label {
+            xalign: 0;
+            valign: start;
+            ellipsize: end;
+            can-target: false;
+            margin-start: 24;
+            margin-end: 24;
+            margin-top: 24;
+            margin-bottom: 12;
+
+            styles [
+              "title-1",
+            ]
+          }
+        };
+      }
+    };
+  };
+}

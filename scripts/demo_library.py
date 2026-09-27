@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""A made-up Apple Music library for demo and screenshots: `demo_library.py [--cache DIR]`.
+"""A made-up Apple Music library for demo and screenshots:
+`demo_library.py [--cache DIR] [--albums N]`.
 
 Writes library.json in the shape src/backend/README.md describes, the covers
 and thumbnails it names (drawn here, at config's COVER_SIZE and THUMB_SIZE)
@@ -7,13 +8,18 @@ and the art/.sizes marker, into DIR (default build/demo). Every artist, album,
 song, playlist, station and person in it is invented; only the curator labels
 mimic Apple's own ("Apple Music Chill", "Apple Music Radio"). Vendored from the
 GNOME Shell extension with the backend (see src/backend/__init__.py).
+`--albums N` (N > 40) adds generated albums, by generated artists, to the 40
+hand-written ones, for measuring big libraries: about 12 songs an album, so
+2,500 albums make 30,000 songs. The covers are drawn in parallel.
 Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
 """
 import argparse
+import concurrent.futures
 import hashlib
 import importlib.util
 import json
 import math
+import multiprocessing
 import os
 import pathlib
 import random
@@ -1262,13 +1268,116 @@ def format_count_label(track_count, total_ms):
 
 
 # ---------------------------------------------------------------------------
+# Generated albums for big libraries (--albums)
+# ---------------------------------------------------------------------------
+
+GEN_WORDS = [
+    "Amber", "Silver", "Hollow", "Quiet", "Electric", "Paper", "Velvet", "Distant",
+    "Northern", "Golden", "Crystal", "Scarlet", "Faded", "Wandering", "Bright",
+    "Tidal", "Frozen", "Hidden", "Lunar", "Copper", "Glass", "Slow", "Pale",
+    "Silent", "Burning", "Winter", "Coastal", "Borrowed", "Open", "Last",
+]
+GEN_NOUNS = [
+    "Harbours", "Satellites", "Gardens", "Rivers", "Lanterns", "Signals",
+    "Horizons", "Orchards", "Tides", "Mirrors", "Valleys", "Engines", "Letters",
+    "Islands", "Wires", "Meadows", "Comets", "Streets", "Kites", "Waves",
+    "Embers", "Canyons", "Clouds", "Parades", "Circuits", "Forests", "Bridges",
+    "Maps", "Rooms", "Stations",
+]
+GEN_FIRST = ["Ada", "Bram", "Cleo", "Dario", "Elin", "Fenna", "Gus", "Hana", "Ivo", "Juno",
+             "Kaito", "Lior", "Mina", "Nils", "Oona", "Pim", "Rhea", "Sol", "Tove", "Wren"]
+GEN_LAST = ["Aldane", "Brisk", "Corran", "Dunmore", "Elsworth", "Falkner", "Greaves", "Hollin",
+            "Ivers", "Jessop", "Kettle", "Lowry", "Marchetti", "Norland", "Oakes", "Pellow",
+            "Quill", "Rowan", "Sable", "Thorne"]
+
+
+def generated_albums(count):
+    """(artists, albums) in ARTISTS_DATA's and ALBUMS_DATA's shapes: the hand-written
+    ones, then enough invented ones to make `count` albums, by invented artists of one
+    to six albums each. Seeded, so a count always gives the same library."""
+    artists = list(ARTISTS_DATA)
+    albums = list(ALBUMS_DATA)
+    rnd = random.Random(7)  # not the builder's: the hand-written part stays as it was
+    genres = sorted({artist["genre"] for artist in ARTISTS_DATA})
+    seen_artists = {artist["name"] for artist in artists}
+    seen_titles = {album["title"] for album in albums}
+    remaining = 0
+
+    def unique(make, seen):
+        for _ in range(20):
+            name = make()
+            if name not in seen:
+                break
+        else:
+            name = f"{make()} {len(seen) + 1}"
+        seen.add(name)
+        return name
+
+    while len(albums) < count:
+        if remaining == 0:
+            remaining = rnd.randint(1, 6)
+            name = unique(lambda: rnd.choice([
+                f"The {rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
+                f"{rnd.choice(GEN_FIRST)} {rnd.choice(GEN_LAST)}",
+                f"{rnd.choice(GEN_NOUNS)} & {rnd.choice(GEN_NOUNS)}",
+            ]), seen_artists)
+            genre = rnd.choice(genres)
+            artists.append({"name": name, "genre": genre,
+                            "bio": f"An invented {genre.lower()} act, generated for big demo libraries."})
+        remaining -= 1
+        artist = artists[-1]
+        title = unique(lambda: rnd.choice([
+            f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
+            f"{rnd.choice(GEN_NOUNS)} of {rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
+            f"The {rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
+        ]), seen_titles)
+        songs = [f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}" for _ in range(rnd.randint(8, 16))]
+        albums.append({
+            "artist_idx": len(artists) - 1,
+            "title": title,
+            "year": rnd.randint(1968, 2026),
+            "genre": artist["genre"],
+            "summary": f"A generated {artist['genre'].lower()} album by {artist['name']}.",
+            "discs": [songs],
+        })
+    return artists, albums
+
+
+def _draw_one(job):
+    out_path, kwargs, thumb_path, thumb_size = job
+    draw_cover(out_path, **kwargs)
+    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(out_path, thumb_size, thumb_size, True)
+    pixbuf.savev(thumb_path, "jpeg", ["quality"], ["90"])
+
+
+def draw_covers(covers, thumb_dir, thumb_size):
+    """Draw each queued cover (draw_cover arguments) and its thumbnail under the same name in
+    thumb_dir: in this process for the usual few dozen, in a pool of processes (forked:
+    there are no threads here) for a big generated library."""
+    jobs = [(out_path, kwargs,
+             os.path.join(thumb_dir, os.path.basename(out_path)), thumb_size)
+            for out_path, kwargs in covers]
+    if len(jobs) < 200:
+        for job in jobs:
+            _draw_one(job)
+        return
+    context = multiprocessing.get_context("fork")
+    with concurrent.futures.ProcessPoolExecutor(mp_context=context) as pool:
+        for _ in pool.map(_draw_one, jobs, chunksize=16):
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Main library builder
 # ---------------------------------------------------------------------------
 
-def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.THUMB_SIZE):
+def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.THUMB_SIZE,
+                       album_count=None):
     """Generate library.json, cover_size artwork and the thumb_size thumbnails the
-    tiles draw, and record both sizes in art/.sizes as a sync does."""
+    tiles draw, and record both sizes in art/.sizes as a sync does. An album_count
+    above the hand-written albums' adds generated ones (generated_albums)."""
     rnd = random.Random(42)
+    artists_data, albums_data = generated_albums(album_count or len(ALBUMS_DATA))
 
     art_dir = os.path.join(out_dir, "art")
     thumb_dir = os.path.join(out_dir, "thumb")
@@ -1277,12 +1386,16 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
     # Before drawing: a changed thumbnail size wipes thumb/.
     sync.apply_art_sizes(out_dir, cover_size, thumb_size)
 
+    # The covers are drawn together at the end (draw_covers), in parallel when
+    # there are many; each draw_cover call below only queues one.
+    covers = []
+
+    def draw_cover(out_path, **kwargs):
+        covers.append((out_path, kwargs))
+
     def thumb_for(art_path):
-        """The thumbnail of a cover just drawn, under the same name in thumb/."""
-        thumb_path = os.path.join(thumb_dir, os.path.basename(art_path))
-        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(art_path, thumb_size, thumb_size, True)
-        pixbuf.savev(thumb_path, "jpeg", ["quality"], ["90"])
-        return thumb_path
+        """The thumbnail of a cover, under the same name in thumb/."""
+        return os.path.join(thumb_dir, os.path.basename(art_path))
 
     catalog_id_base = 1724040000
     global_trk_counter = 1
@@ -1290,11 +1403,11 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
     # 1. Build Albums and Tracks
     albums = []
     # Map artist_idx -> list of album objects for this artist
-    artist_albums_map = {i: [] for i in range(len(ARTISTS_DATA))}
+    artist_albums_map = {i: [] for i in range(len(artists_data))}
     all_tracks_catalog = []
 
-    for alb_idx, alb_data in enumerate(ALBUMS_DATA, 1):
-        artist_info = ARTISTS_DATA[alb_data["artist_idx"]]
+    for alb_idx, alb_data in enumerate(albums_data, 1):
+        artist_info = artists_data[alb_data["artist_idx"]]
         artist_name = artist_info["name"]
         album_id = f"l.alb{alb_idx:03d}"
         album_cat_id = str(catalog_id_base + alb_idx * 10)
@@ -1384,7 +1497,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
 
     # 2. Build Artists
     artists = []
-    for art_idx, art_data in enumerate(ARTISTS_DATA, 1):
+    for art_idx, art_data in enumerate(artists_data, 1):
         artist_id = f"l.art{art_idx:03d}"
         artist_cat_id = str(catalog_id_base + 1000 + art_idx)
         artist_url = f"https://music.apple.com/us/artist/{slug(art_data['name'])}/{artist_cat_id}"
@@ -1638,6 +1751,8 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         "shelves": shelves,
     }
 
+    draw_covers(covers, thumb_dir, thumb_size)
+
     out_file = os.path.join(out_dir, "library.json")
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(library, f, indent=2)
@@ -1661,13 +1776,20 @@ def parse_args():
         default=str(ROOT / "build" / "demo"),
         help="Cache directory to write library.json, art/ and thumb/ into (default: build/demo)",
     )
+    parser.add_argument(
+        "--albums",
+        type=int,
+        default=len(ALBUMS_DATA),
+        help=f"How many albums (default and minimum {len(ALBUMS_DATA)}); more are generated, "
+             "by generated artists, for measuring big libraries",
+    )
     args = parser.parse_args()
-    return os.path.abspath(args.cache)
+    return os.path.abspath(args.cache), args.albums
 
 
 def main():
-    out_dir = parse_args()
-    build_demo_library(out_dir)
+    out_dir, album_count = parse_args()
+    build_demo_library(out_dir, album_count=album_count)
 
 
 if __name__ == "__main__":

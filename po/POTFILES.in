@@ -6,3 +6,6 @@ src/window.py
 src/window.blp
 src/player_bar.blp
 src/sections.py
+src/pages/__init__.py
+src/pages/grid.py
+src/pages/grid.blp

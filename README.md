@@ -1,7 +1,8 @@
 # Apple Music for GNOME
 
-> **Early work in progress.** Right now this is the app's shell: the window,
-> the sidebar and the build. Nothing plays yet.
+> **Early work in progress.** Right now the app shows a library as grids of
+> albums, artists and playlists: an invented one with `scripts/demo.sh`, since
+> it cannot sign in or sync yet. Nothing plays yet.
 
 A native GNOME app for Apple Music, built with GTK 4 and libadwaita. Its
 layout follows the Apple Music web player: Home, New and Radio, your library,

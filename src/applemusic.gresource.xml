@@ -3,6 +3,8 @@
   <gresource prefix="/io/github/jackicus/AppleMusic">
     <file preprocess="xml-stripblanks">window.ui</file>
     <file preprocess="xml-stripblanks">player_bar.ui</file>
+    <file preprocess="xml-stripblanks" alias="grid.ui">pages/grid.ui</file>
+    <file preprocess="xml-stripblanks" alias="tile.ui">widgets/tile.ui</file>
     <file>style.css</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/music-note-symbolic.svg">icons/music-note-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/playlist-symbolic.svg">icons/playlist-symbolic.svg</file>

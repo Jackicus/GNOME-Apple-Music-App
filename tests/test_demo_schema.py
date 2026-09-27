@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import subprocess
@@ -235,6 +236,36 @@ class TestDemoLibrarySchema(unittest.TestCase):
         self.assertIn("demo library: 40 albums", self.cli.stdout)
         self.assertTrue(os.path.exists(os.path.join(self.out_dir, "library.json")))
         self.assertTrue(os.path.isdir(os.path.join(self.out_dir, "art")))
+
+
+class TestGeneratedAlbums(unittest.TestCase):
+    """--albums N: the hand-written albums, then generated ones (no drawing here)."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "demo_library", os.path.join(REPO_DIR, "scripts", "demo_library.py"))
+        cls.demo = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.demo)
+
+    def test_default_is_the_hand_written_library(self):
+        artists, albums = self.demo.generated_albums(len(self.demo.ALBUMS_DATA))
+        self.assertEqual(artists, self.demo.ARTISTS_DATA)
+        self.assertEqual(albums, self.demo.ALBUMS_DATA)
+
+    def test_generated_albums(self):
+        artists, albums = self.demo.generated_albums(300)
+        self.assertEqual(len(albums), 300)
+        self.assertEqual(albums[:40], self.demo.ALBUMS_DATA)
+        self.assertEqual(artists[:15], self.demo.ARTISTS_DATA)
+        self.assertEqual(len({album["title"] for album in albums}), 300)
+        self.assertEqual(len({artist["name"] for artist in artists}), len(artists))
+        for album in albums:
+            self.assertLess(album["artist_idx"], len(artists))
+            self.assertTrue(album["discs"] and all(album["discs"]))
+        # Every generated artist has an album, and the same count gives the same library.
+        self.assertEqual({album["artist_idx"] for album in albums}, set(range(len(artists))))
+        self.assertEqual(self.demo.generated_albums(300), (artists, albums))
 
 
 if __name__ == "__main__":

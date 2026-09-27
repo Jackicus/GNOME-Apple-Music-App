@@ -1,0 +1,66 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicTile: Box {
+  orientation: vertical;
+  spacing: 6;
+  halign: center;
+  valign: start;
+  margin-top: 6;
+  margin-bottom: 6;
+
+  // The artwork: a placeholder card under the cover, which is drawn over it when decoded.
+  // The overlay takes the placeholder's size, so the cover is 160×160 whatever it decodes to.
+  Overlay cover {
+    child: Box {
+      width-request: 160;
+      height-request: 160;
+
+      styles [
+        "card",
+        "tile-art",
+      ]
+
+      Image placeholder_icon {
+        icon-name: "music-note-symbolic";
+        pixel-size: 48;
+        hexpand: true;
+        accessible-role: presentation;
+
+        styles [
+          "dim-label",
+        ]
+      }
+    };
+
+    [overlay]
+    Picture picture {
+      content-fit: cover;
+      overflow: hidden;
+      accessible-role: presentation;
+
+      styles [
+        "tile-art",
+      ]
+    }
+  }
+
+  // The artist variant's round portrait, a silhouette until the picture arrives. Not
+  // initials: they are a label that would be laid out again at every rebind.
+  Adw.Avatar avatar {
+    size: 160;
+    visible: false;
+  }
+
+  // Title and subtitle in one Gtk.Inscription (bind() writes markup): unlike a Gtk.Label, its
+  // size comes from its line count, not its text, so rebinding a tile to another item redraws
+  // it without laying the grid out again, which is what keeps scrolling smooth (a Gtk.GridView
+  // rebinds an item many times as it scrolls past). Three lines: the title wraps to a second
+  // line and the subtitle follows it; only a title too long for two lines pushes it out.
+  Inscription label {
+    xalign: 0;
+    yalign: 0;
+    min-lines: 3;
+    text-overflow: ellipsize_end;
+  }
+}

@@ -10,3 +10,15 @@
 .player-artwork {
   border-radius: 6px;
 }
+
+/* Grid pages (pages/grid.blp). The top padding scrolls with the tiles and leaves room for the
+   page title laid over it: the title's 24px + 12px margins and a title-1 line, which grows with
+   the text size as em does. Narrow sides keep two 160px tiles within a 360px window. */
+gridview.tile-grid {
+  padding: calc(36px + 2.4em) 6px 24px 6px;
+}
+
+/* A tile's cover and its placeholder: the corners Apple Music gives its artwork. */
+.tile-art {
+  border-radius: 8px;
+}

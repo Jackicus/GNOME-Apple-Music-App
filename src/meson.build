@@ -11,7 +11,9 @@ endif
 blueprints = custom_target(
   'blueprints',
   input: files(
+    'pages/grid.blp',
     'player_bar.blp',
+    'widgets/tile.blp',
     'window.blp',
   ),
   output: '.',
@@ -60,6 +62,19 @@ install_data(
   'sections.py',
   'window.py',
   install_dir: moduledir,
+)
+
+install_data(
+  'pages/__init__.py',
+  'pages/grid.py',
+  install_dir: moduledir / 'pages',
+)
+
+install_data(
+  'widgets/__init__.py',
+  'widgets/artwork.py',
+  'widgets/tile.py',
+  install_dir: moduledir / 'widgets',
 )
 
 # The backend package. am.py stays out: it is a reference for porting, never run or imported.

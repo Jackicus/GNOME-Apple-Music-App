@@ -9,12 +9,14 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests import ROOT
 
+from applemusic import library as library_module
 from applemusic.library import SECTIONS, Group, Item, Library, Track
 
 
@@ -258,6 +260,15 @@ class TestLoading(unittest.TestCase):
         write_library(other.name, [album('l.new', 'New', [])])
         library = Library()
         states, changed = self.watch(library)
+        # The first load's read waits in its thread until the second load has started: without
+        # that, a quick thread could finish the first load before the second began.
+        second_started = threading.Event()
+        read = library_module._read_library
+
+        def read_after_second_starts(path):
+            if Path(path).parent == Path(self.cache):
+                second_started.wait(5)
+            return read(path)
 
         async def two_loads():
             with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
@@ -266,9 +277,11 @@ class TestLoading(unittest.TestCase):
             with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': other.name}):
                 second = asyncio.ensure_future(library.load())
                 await asyncio.sleep(0)
+            second_started.set()
             await asyncio.gather(first, second)
 
-        asyncio.run(two_loads())
+        with mock.patch.object(library_module, '_read_library', read_after_second_starts):
+            asyncio.run(two_loads())
         self.assertEqual([item.id for item in library.albums], ['l.new'])
         self.assertEqual(library.state, 'ready')
         self.assertEqual(len(changed), 1)  # the overtaken load gave up without a word
