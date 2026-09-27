@@ -1,0 +1,67 @@
+{
+  "data": [
+    {
+      "id": "i.pltrack1",
+      "type": "library-songs",
+      "href": "/v1/me/library/songs/i.pltrack1",
+      "attributes": {
+        "name": "Adrift",
+        "artistName": "Echoes of Orion",
+        "albumName": "Adrift (Ambient)",
+        "trackNumber": 1,
+        "discNumber": 1,
+        "durationInMillis": 485000,
+        "contentRating": "clean",
+        "playParams": {
+          "id": "i.pltrack1",
+          "kind": "song",
+          "isLibrary": true,
+          "catalogId": "987654321"
+        }
+      }
+    },
+    {
+      "id": "i.pltrack2",
+      "type": "library-songs",
+      "href": "/v1/me/library/songs/i.pltrack2",
+      "attributes": {
+        "name": "Night Signal",
+        "artistName": "Neon Boulevard",
+        "albumName": "Waiting for Sunrise",
+        "trackNumber": 2,
+        "discNumber": 1,
+        "durationInMillis": 243000,
+        "contentRating": "clean",
+        "playParams": {
+          "id": "i.pltrack2",
+          "kind": "song",
+          "isLibrary": true,
+          "catalogId": "987654322"
+        }
+      }
+    },
+    {
+      "id": "i.pltrack3",
+      "type": "library-songs",
+      "href": "/v1/me/library/songs/i.pltrack3",
+      "attributes": {
+        "name": "Voltage",
+        "artistName": "Solaris Circuit",
+        "albumName": "Frequency Shift",
+        "trackNumber": 3,
+        "discNumber": 1,
+        "durationInMillis": 229000,
+        "contentRating": "clean",
+        "playParams": {
+          "id": "i.pltrack3",
+          "kind": "song",
+          "isLibrary": true,
+          "catalogId": "987654323"
+        }
+      }
+    }
+  ],
+  "meta": {
+    "total": 3
+  }
+}

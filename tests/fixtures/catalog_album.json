@@ -1,0 +1,75 @@
+{
+  "data": [
+    {
+      "id": "1724040700",
+      "type": "albums",
+      "href": "/v1/catalog/us/albums/1724040700",
+      "attributes": {
+        "name": "Static Skyline (Deluxe Edition)",
+        "artistName": "Paper Parachutes",
+        "releaseDate": "2007-09-18",
+        "trackCount": 3,
+        "genreNames": ["Rock", "Alternative"],
+        "editorialNotes": {
+          "standard": "<p>A breakout melodic hardcore album from Massachusetts.</p>",
+          "short": "Melodic hardcore classic."
+        },
+        "contentRating": "explicit",
+        "url": "https://music.apple.com/us/album/static-skyline/1724040700",
+        "artwork": {
+          "width": 1400,
+          "height": 1400,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/dd/ee/ff/{w}x{h}bb.jpg",
+          "bgColor": "1a1a1a"
+        },
+        "playParams": {
+          "id": "1724040700",
+          "kind": "album"
+        }
+      },
+      "relationships": {
+        "tracks": {
+          "data": [
+            {
+              "id": "1724040701",
+              "type": "songs",
+              "attributes": {
+                "name": "Overpass",
+                "artistName": "Paper Parachutes",
+                "albumName": "Static Skyline (Deluxe Edition)",
+                "trackNumber": 1,
+                "discNumber": 1,
+                "durationInMillis": 104000,
+                "contentRating": "explicit"
+              }
+            },
+            {
+              "id": "1724040702",
+              "type": "songs",
+              "attributes": {
+                "name": "Wires and Static",
+                "artistName": "Paper Parachutes",
+                "albumName": "Static Skyline (Deluxe Edition)",
+                "trackNumber": 2,
+                "discNumber": 1,
+                "durationInMillis": 187000
+              }
+            },
+            {
+              "id": "1724040703",
+              "type": "songs",
+              "attributes": {
+                "name": "Backseat Weather (Bonus Track)",
+                "artistName": "Paper Parachutes",
+                "albumName": "Static Skyline (Deluxe Edition)",
+                "trackNumber": 1,
+                "discNumber": 2,
+                "durationInMillis": 202000
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,241 @@
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+import gi
+
+from tests import ROOT
+
+from applemusic.backend import config
+
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf  # noqa: E402
+
+REPO_DIR = str(ROOT)
+
+
+class TestDemoLibrarySchema(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Built once, through the command line as the scripts run it: drawing
+        # the covers is most of this suite's time.
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.out_dir = cls.temp_dir.name
+        cls.cli = subprocess.run(
+            [sys.executable, os.path.join(REPO_DIR, "scripts", "demo_library.py"), "--cache", cls.out_dir],
+            capture_output=True,
+            text=True,
+        )
+        if cls.cli.returncode != 0:
+            cls.temp_dir.cleanup()
+            raise AssertionError(f"CLI failed: {cls.cli.stderr}")
+        cls.lib_path = os.path.join(cls.out_dir, "library.json")
+        with open(cls.lib_path, "r", encoding="utf-8") as f:
+            cls.data = json.load(f)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp_dir.cleanup()
+
+    def test_top_level_schema(self):
+        self.assertEqual(self.data.get("version"), 1)
+        self.assertEqual(self.data.get("storefront"), "us")
+        self.assertIn("generated", self.data)
+        self.assertTrue(isinstance(self.data["generated"], str))
+        self.assertIn("sections", self.data)
+        self.assertIn("shelves", self.data)
+
+    def test_sections_presence_and_counts(self):
+        sections = self.data["sections"]
+        self.assertSetEqual(set(sections.keys()), {"albums", "artists", "playlists", "radio"})
+
+        # Around 40 albums, 15 artists, 12 playlists, 8 radio stations
+        self.assertEqual(len(sections["albums"]), 40)
+        self.assertEqual(len(sections["artists"]), 15)
+        self.assertEqual(len(sections["playlists"]), 12)
+        self.assertEqual(len(sections["radio"]), 8)
+
+    def test_shelves_schema(self):
+        shelves = self.data["shelves"]
+        self.assertEqual(len(shelves), 4)
+        shelf_keys = [s.get("key") for s in shelves]
+        self.assertEqual(
+            shelf_keys,
+            ["heavy-rotation", "recently-added", "recently-played", "made-for-you"],
+        )
+        for shelf in shelves:
+            self.assertIn("title", shelf)
+            self.assertIn("items", shelf)
+            self.assertGreater(len(shelf["items"]), 0)
+            for item in shelf["items"]:
+                self._validate_item(item)
+
+    def _validate_track(self, track, expected_album=None, expected_artist=None):
+        self.assertIsInstance(track, dict)
+        for field in (
+            "id", "catalogId", "title", "artist", "album",
+            "trackNumber", "discNumber", "durationMs", "durationLabel",
+            "explicit", "index"
+        ):
+            self.assertIn(field, track, f"Track missing field: {field}")
+
+        self.assertTrue(isinstance(track["id"], str) and track["id"])
+        self.assertTrue(isinstance(track["title"], str) and track["title"])
+        self.assertTrue(isinstance(track["artist"], str) and track["artist"])
+        self.assertTrue(isinstance(track["album"], str) and track["album"])
+        self.assertIsInstance(track["trackNumber"], int)
+        self.assertGreaterEqual(track["trackNumber"], 1)
+        self.assertIsInstance(track["discNumber"], int)
+        self.assertGreaterEqual(track["discNumber"], 1)
+        self.assertIsInstance(track["durationMs"], int)
+        self.assertGreater(track["durationMs"], 0)
+        self.assertIsInstance(track["durationLabel"], str)
+        self.assertRegex(track["durationLabel"], r"^\d+:\d{2}$")
+        self.assertIsInstance(track["explicit"], bool)
+        self.assertIsInstance(track["index"], int)
+        self.assertGreaterEqual(track["index"], 0)
+
+        if expected_album:
+            self.assertEqual(track["album"], expected_album)
+        if expected_artist:
+            self.assertEqual(track["artist"], expected_artist)
+
+    def _validate_item(self, item):
+        self.assertIsInstance(item, dict)
+        for field in (
+            "id", "kind", "title", "subtitle", "year", "genre",
+            "summary", "art", "thumb", "artColor", "countLabel", "explicit",
+            "catalogId", "url", "play", "groups"
+        ):
+            self.assertIn(field, item, f"Item missing field: {field}")
+
+        self.assertIn(item["kind"], {"album", "playlist", "artist", "station"})
+        self.assertTrue(isinstance(item["id"], str) and item["id"])
+        self.assertTrue(isinstance(item["title"], str) and item["title"])
+        self.assertIsInstance(item["subtitle"], str)
+        self.assertIsInstance(item["explicit"], bool)
+
+        # art path exists on disk
+        if item["art"] is not None:
+            self.assertTrue(os.path.isabs(item["art"]), f"Art path not absolute: {item['art']}")
+            self.assertTrue(os.path.exists(item["art"]), f"Art file does not exist: {item['art']}")
+            self.assertGreater(os.path.getsize(item["art"]), 1000)
+            # And its thumbnail beside it, under the same name.
+            self.assertTrue(os.path.exists(item["thumb"]), f"Thumb file does not exist: {item['thumb']}")
+            self.assertEqual(os.path.basename(item["thumb"]), os.path.basename(item["art"]))
+            self.assertLess(os.path.getsize(item["thumb"]), os.path.getsize(item["art"]))
+
+        # artColor is a hex string
+        if item["artColor"] is not None:
+            self.assertRegex(item["artColor"], r"^#[0-9a-fA-F]{6}$")
+
+        # play object
+        self.assertIsInstance(item["play"], dict)
+        self.assertIn("kind", item["play"])
+        self.assertIn("id", item["play"])
+
+        # groups
+        self.assertIsInstance(item["groups"], list)
+        for group in item["groups"]:
+            self.assertIn("name", group)
+            self.assertIn("play", group)
+            self.assertIn("entries", group)
+            self.assertIsInstance(group["entries"], list)
+            for track in group["entries"]:
+                self._validate_track(track)
+
+    def test_albums_detail(self):
+        albums = self.data["sections"]["albums"]
+        two_disc_found = False
+
+        for alb in albums:
+            self._validate_item(alb)
+            self.assertEqual(alb["kind"], "album")
+            self.assertEqual(alb["play"]["kind"], "album")
+            self.assertEqual(alb["play"]["id"], alb["id"])
+            self.assertIsInstance(alb["year"], int)
+            self.assertGreaterEqual(alb["year"], 2000)
+            self.assertIsInstance(alb["genre"], str)
+
+            # Check groups and track indexing
+            groups = alb["groups"]
+            self.assertIn(len(groups), (1, 2))
+            if len(groups) == 2:
+                two_disc_found = True
+                self.assertEqual(groups[0]["name"], "Disc 1")
+                self.assertEqual(groups[1]["name"], "Disc 2")
+
+            # Check 0-based sequential indexing across all tracks in the album
+            total_tracks = []
+            for g in groups:
+                total_tracks.extend(g["entries"])
+            self.assertGreaterEqual(len(total_tracks), 8)
+            self.assertLessEqual(len(total_tracks), 25)
+            for expected_idx, track in enumerate(total_tracks):
+                self.assertEqual(track["index"], expected_idx)
+                self.assertEqual(track["album"], alb["title"])
+
+        self.assertTrue(two_disc_found, "Expected at least one 2-disc album")
+
+    def test_artists_detail(self):
+        artists = self.data["sections"]["artists"]
+        for artist in artists:
+            self._validate_item(artist)
+            self.assertEqual(artist["kind"], "artist")
+            self.assertEqual(artist["play"]["kind"], "artist")
+            self.assertEqual(artist["play"]["id"], artist["id"])
+
+            # Groups represent albums
+            self.assertGreater(len(artist["groups"]), 0)
+            for group in artist["groups"]:
+                self.assertTrue(group["name"])
+                self.assertEqual(group["play"]["kind"], "album")
+                self.assertGreater(len(group["entries"]), 0)
+                for track in group["entries"]:
+                    self.assertEqual(track["artist"], artist["title"])
+
+    def test_playlists_detail(self):
+        playlists = self.data["sections"]["playlists"]
+        for pl in playlists:
+            self._validate_item(pl)
+            self.assertEqual(pl["kind"], "playlist")
+            self.assertEqual(pl["play"]["kind"], "playlist")
+            self.assertEqual(pl["play"]["id"], pl["id"])
+            self.assertEqual(len(pl["groups"]), 1)
+            group = pl["groups"][0]
+            self.assertEqual(group["name"], "Tracks")
+            self.assertGreater(len(group["entries"]), 0)
+            for idx, track in enumerate(group["entries"]):
+                self.assertEqual(track["index"], idx)
+
+    def test_radio_stations_detail(self):
+        radio = self.data["sections"]["radio"]
+        for st in radio:
+            self._validate_item(st)
+            self.assertEqual(st["kind"], "station")
+            self.assertEqual(st["play"]["kind"], "station")
+            self.assertEqual(st["play"]["id"], st["id"])
+            self.assertEqual(st["groups"], [])
+            self.assertEqual(st["countLabel"], "Radio Station")
+
+    def test_artwork_at_config_sizes(self):
+        with open(os.path.join(self.out_dir, "art", ".sizes"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"cover": config.COVER_SIZE, "thumb": config.THUMB_SIZE})
+        album = self.data["sections"]["albums"][0]
+        _fmt, width, height = GdkPixbuf.Pixbuf.get_file_info(album["art"])
+        self.assertEqual((width, height), (config.COVER_SIZE, config.COVER_SIZE))
+        _fmt, width, height = GdkPixbuf.Pixbuf.get_file_info(album["thumb"])
+        self.assertEqual((width, height), (config.THUMB_SIZE, config.THUMB_SIZE))
+
+    def test_cli_execution(self):
+        self.assertEqual(self.cli.returncode, 0, f"CLI failed: {self.cli.stderr}")
+        self.assertIn("demo library: 40 albums", self.cli.stdout)
+        self.assertTrue(os.path.exists(os.path.join(self.out_dir, "library.json")))
+        self.assertTrue(os.path.isdir(os.path.join(self.out_dir, "art")))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,48 @@
+{
+  "data": [
+    {
+      "id": "ra.98563721",
+      "type": "stations",
+      "href": "/v1/catalog/us/stations/ra.98563721",
+      "attributes": {
+        "name": "Apple Music 1",
+        "stationProviderName": "Apple Music",
+        "url": "https://music.apple.com/us/station/apple-music-1/ra.98563721",
+        "genreNames": ["Pop", "Top 40"],
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/radio/{w}x{h}bb.jpg",
+          "bgColor": "d32f2f"
+        },
+        "editorialNotes": {
+          "standard": "The new music that matters today."
+        },
+        "playParams": {
+          "id": "ra.98563721",
+          "kind": "station"
+        }
+      }
+    },
+    {
+      "id": "ra.rock101",
+      "type": "stations",
+      "href": "/v1/catalog/us/stations/ra.rock101",
+      "attributes": {
+        "name": "Classic Rock Station",
+        "stationProviderName": "Apple Music Radio",
+        "genreNames": ["Classic Rock"],
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/classicrock/{w}x{h}bb.jpg",
+          "bgColor": "222222"
+        },
+        "playParams": {
+          "id": "ra.rock101",
+          "kind": "station"
+        }
+      }
+    }
+  ]
+}

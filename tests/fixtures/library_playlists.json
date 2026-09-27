@@ -1,0 +1,59 @@
+{
+  "data": [
+    {
+      "id": "p.pl123",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.pl123",
+      "attributes": {
+        "name": "Chill Mix",
+        "description": {
+          "standard": "Relax and unwind with smooth beats."
+        },
+        "curatorName": "Jordan",
+        "canEdit": true,
+        "isPublic": false,
+        "hasCatalog": false,
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/aa/bb/cc/{w}x{h}bb.jpg",
+          "bgColor": "0b2545"
+        },
+        "playParams": {
+          "id": "p.pl123",
+          "kind": "playlist",
+          "isLibrary": true
+        }
+      }
+    },
+    {
+      "id": "p.pl456",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.pl456",
+      "attributes": {
+        "name": "Rock Workout",
+        "description": {
+          "standard": "High energy rock for the gym."
+        },
+        "curatorName": "Jordan",
+        "canEdit": true,
+        "isPublic": true,
+        "hasCatalog": false,
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/11/22/33/{w}x{h}bb.jpg",
+          "bgColor": "e84855"
+        },
+        "playParams": {
+          "id": "p.pl456",
+          "kind": "playlist",
+          "isLibrary": true
+        }
+      }
+    }
+  ],
+  "meta": {
+    "total": 2
+  }
+}

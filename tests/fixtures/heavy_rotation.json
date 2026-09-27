@@ -1,0 +1,66 @@
+{
+  "data": [
+    {
+      "id": "l.rot1",
+      "type": "library-albums",
+      "href": "/v1/me/library/albums/l.rot1",
+      "attributes": {
+        "name": "Borrowed Time",
+        "artistName": "Paper Parachutes",
+        "releaseDate": "2010-03-09",
+        "trackCount": 11,
+        "genreNames": ["Punk", "Rock"],
+        "artwork": {
+          "width": 1200,
+          "height": 1200,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/enemy/{w}x{h}bb.jpg",
+          "bgColor": "10002b"
+        },
+        "playParams": {
+          "id": "l.rot1",
+          "kind": "album",
+          "isLibrary": true
+        }
+      }
+    },
+    {
+      "id": "pl.rot2",
+      "type": "playlists",
+      "href": "/v1/catalog/us/playlists/pl.rot2",
+      "attributes": {
+        "name": "Today's Hits",
+        "curatorName": "Apple Music",
+        "genreNames": ["Pop"],
+        "artwork": {
+          "width": 1200,
+          "height": 1200,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/hits/{w}x{h}bb.jpg",
+          "bgColor": "e84855"
+        },
+        "playParams": {
+          "id": "pl.rot2",
+          "kind": "playlist"
+        }
+      }
+    },
+    {
+      "id": "ra.rot3",
+      "type": "stations",
+      "href": "/v1/catalog/us/stations/ra.rot3",
+      "attributes": {
+        "name": "Pop Hits Radio",
+        "stationProviderName": "Apple Music Radio",
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/pophits/{w}x{h}bb.jpg",
+          "bgColor": "00b4d8"
+        },
+        "playParams": {
+          "id": "ra.rot3",
+          "kind": "station"
+        }
+      }
+    }
+  ]
+}

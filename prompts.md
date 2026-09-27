@@ -9,7 +9,7 @@ running and better than before.
 ## Phases at a glance
 
 - [x] 1. Foundations: git, tests, lint, logging, asyncio on GLib (2026-09-27)
-- [ ] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests)
+- [x] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests) (2026-09-27)
 - [ ] 3. Library model and demo mode
 - [ ] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork
 - [ ] 5. Songs page (GtkColumnView)
@@ -231,6 +231,43 @@ radio and shelves; grep -r "apple-music-library\|9227" src tests scripts returns
 is started by anything in this phase. Update CLAUDE.md's layout section for src/backend/ and
 scripts/demo_library.py. Tick phase 2 in prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- Upstream was the extension at commit 906bfa9. `src/backend/__init__.py` lists every edit;
+  keep it current. `src/backend/README.md` was vendored too (later phases cite "the vendored
+  README"). It still describes am.py's one-process-per-command model, but its command table,
+  error codes and library.json/Item/Track shapes apply as they are.
+- `config` functions return `Path`s and read the environment on every call, so demo mode (phase 3)
+  only has to set `APPLE_MUSIC_CACHE` before the Library loads. They know nothing of the `.Devel`
+  profile: phase 10 derives `chrome-devel`/9229 from `app.profile` itself (env overrides still
+  win). `state_file()` keeps upstream's rule that an `APPLE_MUSIC_PROFILE` override moves
+  engine.json into that profile. Without one, a release and a `.Devel` build would share
+  `$XDG_RUNTIME_DIR/apple-music/engine.json`, so phase 9/10 should key the file by profile.
+- `sync.ART_SIZES` is module-global, set by `apply_art_sizes()` (sync, demo) or `load_art_sizes()`;
+  the defaults are config's 640/320. Tests that depend on sizes pin them in `setUp`. Phase 11
+  calls `sync.apply_art_sizes(cache, config.COVER_SIZE, config.THUMB_SIZE)` and can install
+  `sync.scale_image = f(src, dest, size)` (GdkPixbuf, run from a thread) to scale cached covers
+  into thumbnails. Without it, thumbnails are fetched at their own size, which is what happens
+  anyway when covers are fetched lazily.
+- `am.py` no longer runs (package-relative imports); read it, do not execute it. `cdp.py` is
+  blocking (sockets and threading locks). `test_cdp.py`'s `MockWebSocketServer` is thread-based,
+  so phase 9's asyncio tests can drive it from a thread or adapt it. `bridge.js` is unchanged: its
+  globals are still `window.__appleMusicLibrary`/`__appleMusicLibraryWanted`, and `formatTrack`'s
+  `artUrl` hard-codes 256 px.
+- The demo library: 40 albums, 15 artists, 12 playlists, 8 stations; shelves heavy-rotation,
+  recently-added, recently-played, made-for-you; `generated` fixed; ids like `l.alb001`,
+  `l.art001`, `l.pl001`, `ra.st001`. It has no `songs`, `videos` or `folders` sections and no
+  favourites playlist yet. `test_demo_schema.py` asserts exactly the four section keys, so the
+  generator and that test grow together (phases 6, 8, 11). Art paths are absolute into `--cache`,
+  so regenerate rather than move a demo directory. A build costs about 1.5 s of CPU;
+  `test_demo_schema.py` builds once, through the CLI.
+- Names in the demo generator that were not invented were replaced (see the provenance list), and
+  so were real artists and songs in `test_sync.py`'s inputs. The fixtures were already invented
+  apart from Apple's own labels ("Apple Music", "Today's Hits") and stay as they were.
+- ruff: `am.py` is left out through `extend-exclude` (plain `exclude` would drop ruff's default
+  excludes), and the vendored files have per-file E501 ignores. `uvx ruff check --no-cache .` passes.
+  check.sh runs 81 unit tests and takes about 3 s of CPU (5 s wall on a loaded machine).
 
 ## Phase 3: Library model and demo mode
 

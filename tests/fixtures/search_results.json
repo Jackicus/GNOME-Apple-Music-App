@@ -1,0 +1,95 @@
+{
+  "results": {
+    "albums": {
+      "data": [
+        {
+          "id": "1724040700",
+          "type": "albums",
+          "href": "/v1/catalog/us/albums/1724040700",
+          "attributes": {
+            "name": "Static Skyline",
+            "artistName": "Paper Parachutes",
+            "releaseDate": "2007-09-18",
+            "trackCount": 12,
+            "genreNames": ["Rock"],
+            "artwork": {
+              "width": 1400,
+              "height": 1400,
+              "url": "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/12/34/56/{w}x{h}bb.jpg",
+              "bgColor": "1a1a1a"
+            },
+            "playParams": {
+              "id": "1724040700",
+              "kind": "album"
+            }
+          }
+        }
+      ]
+    },
+    "artists": {
+      "data": [
+        {
+          "id": "123456",
+          "type": "artists",
+          "href": "/v1/catalog/us/artists/123456",
+          "attributes": {
+            "name": "Paper Parachutes",
+            "genreNames": ["Rock"],
+            "url": "https://music.apple.com/us/artist/paper-parachutes/123456",
+            "artwork": {
+              "width": 1000,
+              "height": 1000,
+              "url": "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/pp/{w}x{h}bb.jpg",
+              "bgColor": "444444"
+            }
+          }
+        }
+      ]
+    },
+    "songs": {
+      "data": [
+        {
+          "id": "1724040711",
+          "type": "songs",
+          "href": "/v1/catalog/us/songs/1724040711",
+          "attributes": {
+            "name": "Where the Light Gets In",
+            "artistName": "Paper Parachutes",
+            "albumName": "Static Skyline",
+            "trackNumber": 3,
+            "discNumber": 1,
+            "durationInMillis": 216000,
+            "contentRating": "explicit",
+            "playParams": {
+              "id": "1724040711",
+              "kind": "song"
+            }
+          }
+        }
+      ]
+    },
+    "playlists": {
+      "data": [
+        {
+          "id": "pl.rock-essentials",
+          "type": "playlists",
+          "href": "/v1/catalog/us/playlists/pl.rock-essentials",
+          "attributes": {
+            "name": "Paper Parachutes Essentials",
+            "curatorName": "Apple Music Rock",
+            "artwork": {
+              "width": 1000,
+              "height": 1000,
+              "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/pp_ess/{w}x{h}bb.jpg",
+              "bgColor": "333333"
+            },
+            "playParams": {
+              "id": "pl.rock-essentials",
+              "kind": "playlist"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

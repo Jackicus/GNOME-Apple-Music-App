@@ -1,0 +1,56 @@
+{
+  "data": [
+    {
+      "id": "rec.made-for-you",
+      "type": "personal-recommendation",
+      "attributes": {
+        "title": {
+          "stringForDisplay": "Made for You"
+        },
+        "kind": "music-recommendations"
+      },
+      "relationships": {
+        "contents": {
+          "data": [
+            {
+              "id": "pl.u-get-up",
+              "type": "playlists",
+              "attributes": {
+                "name": "Get Up! Mix",
+                "curatorName": "Apple Music",
+                "artwork": {
+                  "width": 1080,
+                  "height": 1080,
+                  "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/getup/{w}x{h}bb.jpg",
+                  "bgColor": "ff9e00"
+                },
+                "playParams": {
+                  "id": "pl.u-get-up",
+                  "kind": "playlist"
+                }
+              }
+            },
+            {
+              "id": "pl.u-favorites",
+              "type": "playlists",
+              "attributes": {
+                "name": "Favorites Mix",
+                "curatorName": "Apple Music",
+                "artwork": {
+                  "width": 1080,
+                  "height": 1080,
+                  "url": "https://is1-ssl.mzstatic.com/image/thumb/Features/v4/fav/{w}x{h}bb.jpg",
+                  "bgColor": "7b2cbf"
+                },
+                "playParams": {
+                  "id": "pl.u-favorites",
+                  "kind": "playlist"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

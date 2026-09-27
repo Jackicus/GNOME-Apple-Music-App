@@ -53,12 +53,27 @@ src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
 src/style.css                  auto-loaded app CSS: accent colour and a few small classes
 src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/actions/ by the gresource
 src/applemusic.gresource.xml   compiled .ui files, style.css, icons
-src/meson.build                blueprint list, gresource, install_data list of .py files
+src/meson.build                blueprint list, gresource, install_data lists (app .py; backend/)
+src/backend/                   vendored from the extension, no gi; __init__.py records provenance
+                               and every edit, README.md the command table, error codes and the
+                               library.json/Item/Track shapes
+  config.py                    cache_dir() profile_dir() port() state_file(), APPLE_MUSIC_CACHE/
+                               _PROFILE/_PORT overrides, THUMB_SIZE 320, COVER_SIZE 640, BRIDGE_JS
+  cdp.py                       blocking CDP client, own WebSocket framing (stdlib)
+  bridge.js                    injected into music.apple.com (window.__appleMusicLibrary); installed
+                               as data beside the Python
+  sync.py                      API answers → Item/Track, artwork cache (.sizes, scale_image hook),
+                               library.json writing
+  am.py                        REFERENCE ONLY (the extension's CLI): not installed, imported or
+                               linted; phases 9-11 port it, then delete it
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py
-tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`
-pyproject.toml                 ruff config only (line length 100, E/F/W)
+scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR
+tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
+                               fixtures/ holds invented API answers
+pyproject.toml                 ruff config only (line length 100, E/F/W; am.py excluded, vendored
+                               files exempt from E501)
 build-aux/flatpak/*.Devel.json Flatpak manifest, GNOME 50 runtime (not installed locally)
 subprojects/blueprint-compiler.wrap   fallback when blueprint-compiler is not on PATH
 ```
@@ -80,6 +95,8 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend
 python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
+scripts/demo_library.py [--cache DIR]         writes an invented library (library.json, art/, thumb/,
+                                              art/.sizes) into DIR, default build/demo; no Chrome
 meson setup build --prefix=/usr && meson install -C build      system install, release profile
 ```
 
@@ -159,7 +176,13 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `applemusic.gresource.xml` as `.ui`.
 - The source tree is not importable as `applemusic`; the launcher imports it from
   `build/install/share/apple-music/applemusic`, where the gresource also lives. `tests/__init__.py`
-  registers `src/` under that name (spec_from_file_location + sys.modules) for the tests.
+  registers `src/` under that name (spec_from_file_location + sys.modules) for the tests;
+  `scripts/demo_library.py` does the same to reach `applemusic.backend`.
+- The vendored backend and its tests keep upstream's style (double quotes, annotations, long
+  lines, which pyproject exempts from E501) so a refresh from the extension diffs cleanly (see the
+  "Refresh the vendored backend" prompt); new backend modules follow this file's style. Nothing in
+  `src/backend/` imports gi (a test checks); `sync.scale_image` is the hook through which the app
+  lends GdkPixbuf for scaling covers into thumbnails (unset, thumbnails are fetched).
 - Icons in `src/icons/` resolve by `icon-name` through the resource alias; symbolic SVGs use a `#222`
   fill and are recoloured. Adwaita no longer ships some legacy names (`emblem-favorite-symbolic` is
   gone); bundle anything not in `/usr/share/icons/Adwaita/symbolic/`.

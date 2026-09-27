@@ -1,6 +1,19 @@
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# A reference for porting, not code that runs (see src/backend/__init__.py). extend-exclude keeps
+# ruff's default excludes.
+extend-exclude = ["src/backend/am.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored from the GNOME Shell extension and kept close to it so refreshes diff cleanly, long
+# lines included.
+"src/backend/cdp.py" = ["E501"]
+"src/backend/sync.py" = ["E501"]
+"tests/test_cdp.py" = ["E501"]
+"tests/test_sync.py" = ["E501"]
+"tests/test_demo_schema.py" = ["E501"]
+"scripts/demo_library.py" = ["E501"]

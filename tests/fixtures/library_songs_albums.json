@@ -1,0 +1,86 @@
+{
+  "data": [
+    {
+      "id": "i.abc123",
+      "type": "library-songs",
+      "href": "/v1/me/library/songs/i.abc123",
+      "attributes": {
+        "name": "Where the Light Gets In",
+        "artistName": "Paper Parachutes",
+        "albumName": "Static Skyline",
+        "trackNumber": 3,
+        "discNumber": 1,
+        "durationInMillis": 216000,
+        "contentRating": "explicit",
+        "playParams": {
+          "id": "i.abc123",
+          "kind": "song",
+          "isLibrary": true,
+          "catalogId": "1724040711"
+        }
+      },
+      "relationships": {
+        "albums": {
+          "data": [
+            {
+              "id": "l.alb123",
+              "type": "library-albums",
+              "href": "/v1/me/library/albums/l.alb123",
+              "attributes": {
+                "name": "Static Skyline",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2007-09-18",
+                "trackCount": 12,
+                "genreNames": ["Rock", "Punk"],
+                "artwork": {
+                  "width": 1400,
+                  "height": 1400,
+                  "url": "https://is1-ssl.mzstatic.com/image/thumb/Music/v4/12/34/56/{w}x{h}bb.jpg",
+                  "bgColor": "1a1a1a",
+                  "textColor1": "ffffff"
+                },
+                "playParams": {
+                  "id": "l.alb123",
+                  "kind": "album",
+                  "isLibrary": true
+                }
+              }
+            }
+          ]
+        },
+        "catalog": {
+          "data": [
+            {
+              "id": "1724040711",
+              "type": "songs",
+              "href": "/v1/catalog/us/songs/1724040711"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "i.def456",
+      "type": "library-songs",
+      "href": "/v1/me/library/songs/i.def456",
+      "attributes": {
+        "name": "Long Way Down (Eternal Summer)",
+        "artistName": "Paper Parachutes",
+        "albumName": "Borrowed Time",
+        "trackNumber": 2,
+        "discNumber": 1,
+        "durationInMillis": 198000,
+        "contentRating": "clean",
+        "playParams": {
+          "id": "i.def456",
+          "kind": "song",
+          "isLibrary": true,
+          "catalogId": "1724040712"
+        }
+      }
+    }
+  ],
+  "meta": {
+    "total": 2
+  }
+}

@@ -58,3 +58,13 @@ install_data(
   'window.py',
   install_dir: moduledir,
 )
+
+# The backend package. am.py stays out: it is a reference for porting, never run or imported.
+install_data(
+  'backend/__init__.py',
+  'backend/bridge.js',
+  'backend/cdp.py',
+  'backend/config.py',
+  'backend/sync.py',
+  install_dir: moduledir / 'backend',
+)
