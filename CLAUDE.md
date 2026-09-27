@@ -31,11 +31,13 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   sidebar: AdwSidebar built from sections.py (+ playlists and folders*)          │
 │   content: AdwNavigationView; a sidebar item replaces its stack with that        │
 │            destination's root page (pages/, built on first visit and kept, each  │
-│            with its own header bar): GridPages, the SongsPage (ColumnView),      │
-│            Favourite Songs (a DetailPage), placeholders for the rest; tiles →    │
-│            window.open_item() pushes a DetailPage (album, playlist) or an        │
-│            ArtistPage; track rows, Play, Shuffle → window.play_request(play,     │
-│            start_with, shuffle) (a toast until phase 12*)                        │
+│            with its own header bar): Home and Radio (shelves), GridPages, the    │
+│            SongsPage (ColumnView), Favourite Songs (a DetailPage), placeholders  │
+│            for the rest; tiles → window.open_item() pushes a DetailPage (album,  │
+│            playlist) or an ArtistPage, or plays a station; a shelf's See All →   │
+│            window.open_shelf() pushes a GridPage; track rows, Play, Shuffle,     │
+│            stations → window.play_request(play, start_with, shuffle) (a toast    │
+│            until phase 12*)                                                      │
 │   PlayerBar stub at the bottom of the content (→ AdwBottomSheet bottom bar*)     │
 │ app.library: Item/Track GObjects in Gio.ListStores, loaded from library.json     │
 │   (parsed in a thread, wrapped in batches; the Songs store on request);          │
@@ -63,18 +65,24 @@ src/library.py                 the model: Library (state empty/loading/ready, 'c
                                albums artists playlists radio videos, shelves, by_id, shelf,
                                favourite_songs(), track_at(play, index), async load; songs filled
                                by async build_songs(), songs-ready), Item (favourites), Group,
-                               Track (search_key), Shelf; SongOrder (the Songs table's orders),
-                               fold(), collation_key(); GObject/Gio only
+                               Track (search_key), Shelf (GType AppleMusicShelfModel: the widget
+                               is AppleMusicShelf); SongOrder (the Songs table's orders), fold(),
+                               collation_key(); GObject/Gio only
 src/window.py + window.blp     Window: split view, sidebar, the content's AdwNavigationView and its root
                                pages (pages.create, or a placeholder), open_item(item),
-                               play_request(play, start_with=None, shuffle=False), win.back,
-                               toasts, window-state memory
+                               open_shelf(shelf), play_request(play, start_with=None,
+                               shuffle=False), win.back, toasts, window-state memory
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
 src/pages/__init__.py          PAGES: destination key → factory; create(destination, library)
 src/pages/grid.py + .blp       $AppleMusicGridPage: title over a Gtk.GridView of tiles, sort drop-down,
                                loading/empty states (albums, artists, recently-added,
-                               all-playlists, music-videos)
+                               all-playlists, music-videos; pushed with root=False for See All);
+                               `model` a Gio.ListModel or a function returning one
+src/pages/home.py + .blp       $AppleMusicHomePage: title over a Gtk.Box of AppleMusicShelf, one per
+                               non-empty library.shelves, the first as hero cards, all with See All
+src/pages/radio.py + .blp      $AppleMusicRadioPage: the first HERO_COUNT (4) of library.radio as a
+                               hero shelf ("Recently Played"), the rest in a Gtk.FlowBox of tiles
 src/pages/songs.py + .blp      $AppleMusicSongsPage: title and count over a Gtk.ColumnView (Title,
                                Artist, Album, Time), a filter entry in the header; sorted and
                                filtered in Python (see its docstring), rows replaced by _show()
@@ -84,8 +92,15 @@ src/pages/detail.py + .blp     $AppleMusicDetailPage: an album or playlist, one 
                                or a root page following find() (Favourite Songs)
 src/pages/artist.py + .blp     $AppleMusicArtistPage: round portrait, name, bio, a Gtk.FlowBox of
                                album tiles (the artist's groups, resolved through by_id)
-src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel)
-src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait) and one Gtk.Inscription
+src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel);
+                               art_colour(item.art_color) → Gdk.RGBA, is_dark(rgba)
+src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist()) and one
+                               Gtk.Inscription
+src/widgets/hero_tile.py + .blp  $AppleMusicHeroTile: a 260 px AppleMusicCover over a two-line
+                               caption band in the item's art colour (drawn in do_snapshot)
+src/widgets/shelf.py + .blp    $AppleMusicShelf: title row (title-2, subtitle, See All) over a
+                               horizontal Gtk.ListView of tiles in its own scrolled window;
+                               bind_shelf(shelf), `hero`, `see-all`
 src/widgets/song_title.py + .blp  $AppleMusicSongTitle: the Songs title cell, 32 px thumbnail,
                                title, explicit badge
 src/widgets/cover.py + .blp    $AppleMusicCover: artwork `size` px square over a placeholder card,
@@ -96,8 +111,9 @@ src/widgets/track_row.py + .blp  $AppleMusicTrackRow: number (albums) or 40 px t
 src/style.css                  auto-loaded app CSS: accent colour and a few small classes
 src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/actions/ by the gresource
 src/applemusic.gresource.xml   compiled .ui files (subdirectories' aliased to the root: grid.ui,
-                               songs.ui, detail.ui, artist.ui, tile.ui, song_title.ui, cover.ui,
-                               track_row.ui), style.css, icons
+                               songs.ui, detail.ui, artist.ui, home.ui, radio.ui, tile.ui,
+                               song_title.ui, cover.ui, track_row.ui, shelf.ui, hero_tile.ui),
+                               style.css, icons
 src/meson.build                blueprint list, gresource, install_data lists (app .py; pages/,
                                widgets/, backend/ each their own)
 src/backend/                   vendored from the extension, no gi; __init__.py records provenance
@@ -250,9 +266,27 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   (connect in `do_map`, disconnect in `do_unmap`): the library outlives the window. Pushed pages
   (detail, artist) show their title in the header bar and keep what they show in `page.item`.
   Breakpoints need an `Adw.BreakpointBin` inside the page (a navigation page takes none).
-- The two seams to the rest of the app, both on the window (`self.get_root()` from a page):
+  A pushed `GridPage` (`root=False`, See All) shows its title in the header bar as well as in
+  the content, as a detail page's hero repeats its header's.
+- Shelves: a page of shelves (Home, Radio; phase 15's Search, New, Made for You) is a vertical
+  `Gtk.Box` of `AppleMusicShelf` in a `Gtk.ScrolledWindow` with the `view` style class (the
+  lists' background): a handful of shelves, each a horizontal `Gtk.ListView` that recycles its
+  tiles in its own scrolled window. Keep the shelf widgets and `bind_shelf()` new Shelf objects
+  into them on a reload (`HomePage._show()`). A grid under a shelf in the same scrolled window
+  cannot be a `Gtk.GridView` (see below), so Radio's is a `Gtk.FlowBox` of tiles (recent
+  stations are tens); anything unbounded belongs on its own page (See All). Tiles sit 18 px
+  apart with the first cover on the titles' 24 px margin (`listview.shelf-list` in style.css).
+  A shelf item that is also in a section is the section's Item object (`library._fill`).
+- Per-item colours (the hero cards' band in `art_color`) are drawn in the widget's own
+  `do_snapshot` (`snapshot.append_color`, then chain up), inside its rounded `overflow: hidden`
+  clip; CSS cannot take a value per item, and a per-widget CSS provider is out (CSS lives in
+  style.css). Keep such Python snapshots off the grid tiles: the hero card is its own class.
+- The seams to the rest of the app, on the window (`self.get_root()` from a page):
   `open_item(item)` pushes the item's page (album/playlist → `DetailPage`, artist →
-  `ArtistPage`; stations and videos toast for now; the same item twice in a row is pushed once);
+  `ArtistPage`; a station has no page and goes to `play_request(item.play)`; videos toast for
+  now; the same item twice in a row is pushed once); `open_shelf(shelf)` pushes a `GridPage` of
+  the shelf's items (See All; a library shelf is followed by key across loads, any other shown
+  as it is);
   `play_request(play, start_with=None, shuffle=False)` is every "play this": a track row passes
   `track.play, start_with=track.index` (its group's target and its place in that queue), Play and
   Shuffle `item.play` (with `shuffle=True`). It toasts until phase 12 hands it to the engine;
@@ -334,6 +368,20 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   move between items). Hence the detail page's hero is its list's first item, not a header, and
   a box that looks like a compact status page. A `Gtk.FlattenListModel` is a `Gtk.SectionModel`
   (one section per child model), which is what the "Disc 2" headers hang on.
+- Nested scrolling (GTK 4.22, `gtkscrolledwindow.c`): a scrolled window handles a scroll event
+  only along an axis it can scroll (its scrollbar is visible), and returns PROPAGATE for one
+  wholly along the other, so a vertical wheel over a shelf (`vscrollbar-policy: never`) scrolls
+  the page and a horizontal one the shelf, with no code (checked by emitting `scroll` on both
+  bubble-phase `Gtk.EventControllerScroll`s: the shelf's declines (0, 1), the page's then
+  scrolls 75 px). An event with any horizontal part (a diagonal touchpad swipe) is kept by the
+  shelf; libinput locks two-finger scrolling to one axis, and once the page has started a
+  touchpad scroll its capture-phase controller keeps the gesture even over a shelf. Emitting
+  `scroll` on a controller from Python runs GTK's handler without an event (no modifiers, wheel
+  units); pick the bubble-phase one, the capture-phase one only continues a scroll in progress.
+- libadwaita's `.card` sets its own `color` (`--card-fg-color`, dark in the light theme), so a
+  `card` placeholder on a coloured background needs `color: inherit`; `--card-bg-color` is
+  white in the light theme, invisible on the `view` background (the hero cards tint with
+  `color-mix(in srgb, currentColor 8%, transparent)` instead).
 - `Adw.NavigationView` pops on Escape, Back, `<Alt>Left` (class shortcuts, *local* scope: only
   with the focus inside it) and the mouse back button (a click gesture on every button). A push
   moves the focus into the new page (the detail page's Play button), so the keys work there;

@@ -14,7 +14,7 @@ running and better than before.
 - [x] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork (2026-09-27)
 - [x] 5. Songs page (GtkColumnView) (2026-09-27)
 - [x] 6. Detail pages: album, playlist, artist (2026-09-27)
-- [ ] 7. Shelves: Home and Radio from the cache
+- [x] 7. Shelves: Home and Radio from the cache (2026-09-27)
 - [ ] 8. Sidebar: playlists and folders
 - [ ] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI
 - [ ] 10. Engine in the app: lifecycle, sign-in, account
@@ -766,6 +766,58 @@ Verify: scripts/check.sh; screenshots with --demo for --page home (dark, --light
 400x700) and --page radio; look at them. Update CLAUDE.md if conventions changed. Tick phase 7 in
 prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- `AppleMusicShelf` (`widgets/shelf.py`): `Shelf(hero=…, see_all=…)`, `bind_shelf(shelf,
+  subtitle=None)` with a `library.Shelf`, whose GType is now `AppleMusicShelfModel` (the widget
+  took `AppleMusicShelf`; nothing referred to the old name). Phase 15's search results can wrap
+  their items in `library.Shelf(key, title, items)` and bind them the same way. The factory is
+  declared in `shelf.blp` (template callbacks) and the state starts as class attributes, so the
+  widget also works as `$AppleMusicShelf` in a template (Radio's). Tab leaves a shelf after the
+  focused tile (`tab-behavior: item`), so Tab goes shelf to shelf and arrows move along one
+  (phase 18). Accessible labels: the list is labelled with the shelf's title, each tile "title,
+  subtitle".
+- Hero cards are their own widget, `AppleMusicHeroTile` (`widgets/hero_tile.py`), not a mode
+  of `AppleMusicTile`: a 260 px `AppleMusicCover` (the 640 px `art`, the thumbnail meanwhile)
+  over two one-line `Gtk.Inscription`s (title in `heading`, subtitle dimmed), the whole card
+  in `item.art_color`, drawn in its `do_snapshot` inside the rounded `overflow` clip, so the
+  grid tiles pay nothing for it. White or black text by `artwork.is_dark()`, BT.601 luma under
+  60%: WCAG's relative luminance put black on the demo's mid blue and green, where Apple uses
+  white. No art colour: a tint of the text colour; no artwork: the note on the card's colour.
+  Cards are square-covered, not landscape: the covers (the demo's, and most album art) carry
+  text that a crop would cut. An artist on a hero shelf gets a square card; on a normal shelf
+  `Tile.set_artist()` switches the tile to the round portrait as it binds.
+- `window.open_shelf(shelf)` (See All) pushes `GridPage(library, shelf.title, model,
+  root=False)`: a library shelf is followed by its key (a load replaces Shelf objects), any
+  other is shown as it is; `page.shelf` guards a double click. `GridPage`'s `model` may now be a
+  `Gio.ListModel` or a function; `root=False` shows the header-bar title too. Home offers See All
+  on every shelf, whether or not the row overflows (the button is always there; the header
+  keeps the button's 34 px height either way).
+- Stations: `open_item(station)` calls `play_request(item.play)`, which toasts "Playing “…” is
+  not available yet" (the station is found by `by_id('station', id)`); phase 12 makes it play,
+  with no change here. Videos still toast their title.
+- Home shows every *non-empty* shelf in library.json's order, the first as hero cards; the
+  shelf widgets are kept and rebound on a reload (checked: same widgets, new Shelf objects).
+  Radio: `sections.radio` is the sync's `/v1/me/recent/radio-stations` (most recent first; the
+  subtitle is the provider, curator or artist, else "Apple Music Radio", all of them in the
+  demo), so no grouping by subtitle: the first `HERO_COUNT` (4) are a hero shelf "Recently
+  Played" and the rest a `Gtk.FlowBox` "More Stations" (hidden with 4 or fewer), its covers
+  left-aligned in their cells so the first column lines up with the shelf. The window's
+  counted placeholder (`COUNTED`, last used by Radio) is gone, and with it the window's own
+  library handlers.
+- Scrolling needed no fix: GTK 4.22's scrolled window declines a scroll along an axis it cannot
+  scroll (CLAUDE.md, "Nested scrolling"); checked by emitting `scroll` on the real controllers.
+  Real wheel, touchpad and touchscreen input could not be sent (no input synthesis on this
+  Wayland session), so touch dragging over a shelf is unverified. `scroll_test.py --page home`
+  (686 px at 1,000 px/s): mean 1.0 ms of work a frame, p90 1.5 ms, none over 16.7 ms.
+- Checked with an invented library outside the repo: a hero item without an art colour, one
+  with a light colour, one without artwork and with a long title, an artist on a normal shelf,
+  an empty shelf (skipped), no stations (the Radio empty state), no library.json (Home's).
+  Shelf items without `groups` (Apple's recommendations) open the detail page's "Sign In to
+  Load This" state until phase 10 fetches them.
+- The pointer on the real desktop hovers (and once scrolled) the screenshot windows that open
+  under it; retake a shot that shows a stray scroll.
 
 ## Phase 8: Sidebar playlists and folders
 

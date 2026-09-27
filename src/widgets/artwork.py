@@ -119,6 +119,23 @@ def _load(path):
         return None
 
 
+def art_colour(text):
+    """An Item's art_color ('#1a2b3c': Apple's colour for the artwork's background) as a
+    Gdk.RGBA, or None when there is none or it does not parse."""
+    if not text:
+        return None
+    rgba = Gdk.RGBA()
+    return rgba if rgba.parse(text) else None
+
+
+def is_dark(rgba):
+    """Whether this colour takes white text rather than black: its perceived brightness (the
+    BT.601 luma of the sRGB values) is under 60%. WCAG's luminance would put black on the
+    saturated mid-tones Apple's artwork colours often are (a mid blue, a leaf green), where
+    white reads better and is what Apple uses."""
+    return 0.299 * rgba.red + 0.587 * rgba.green + 0.114 * rgba.blue < 0.6
+
+
 _default = None
 
 

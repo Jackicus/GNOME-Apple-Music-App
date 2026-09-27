@@ -44,17 +44,20 @@ SORTS = {
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/grid.ui')
 class GridPage(Adw.NavigationPage):
-    """A destination's grid.
+    """A destination's grid, or a shelf's (See All).
 
-    `model` is a function returning the Gio.ListModel of Items to show (asked again whenever the
-    library changes, for models that a load replaces, like a shelf's; None shows nothing).
-    `sorts` are SORTS keys: the first is the initial order, and with more than one the header
-    offers them; none keeps the model's own order. `artist` makes round portrait tiles. The
-    loading and empty states follow the library's state and the model's item count.
+    `model` is the Gio.ListModel of Items to show, or a function returning it (asked again
+    whenever the library changes, for models that a load replaces, like a shelf's; None shows
+    nothing). `sorts` are SORTS keys: the first is the initial order, and with more than one the
+    header offers them; none keeps the model's own order. `artist` makes round portrait tiles.
+    `root` is false for a page pushed over another, which shows its title in the header bar
+    too, as detail pages do. The loading and empty states follow the library's state and the
+    model's item count.
     """
 
     __gtype_name__ = 'AppleMusicGridPage'
 
+    header_bar = Gtk.Template.Child()
     sort_dropdown = Gtk.Template.Child()
     stack = Gtk.Template.Child()
     empty_page = Gtk.Template.Child()
@@ -63,11 +66,11 @@ class GridPage(Adw.NavigationPage):
     grid_view = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
 
-    def __init__(self, library, title, model, sorts=(), artist=False, icon_name=None,
+    def __init__(self, library, title, model, sorts=(), artist=False, root=True, icon_name=None,
                  empty_title=None, empty_description=None):
         super().__init__(title=title)
         self._library = library
-        self._get_model = model
+        self._get_model = model if callable(model) else lambda: model
         self._artist = artist
         self._library_handlers = []
         self._title_offset = 0
@@ -76,6 +79,7 @@ class GridPage(Adw.NavigationPage):
         self._accessible_format = _('{title}, {subtitle}')
 
         self.title_label.set_label(title)
+        self.header_bar.set_show_title(not root)
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(empty_title or title)
         self.empty_page.set_description(empty_description)

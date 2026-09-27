@@ -1,0 +1,77 @@
+using Gtk 4.0;
+
+// A title row over a horizontal row of tiles that scrolls sideways. The page scrolls
+// vertically around it: the row's scrolled window never scrolls vertically, so a vertical
+// wheel over it goes on to the page's (see shelf.py).
+template $AppleMusicShelf: Box {
+  orientation: vertical;
+
+  Box {
+    spacing: 12;
+    margin-start: 24;
+    margin-end: 14;
+
+    styles [
+      "shelf-header",
+    ]
+
+    Box {
+      orientation: vertical;
+      valign: center;
+      hexpand: true;
+
+      Label title_label {
+        xalign: 0;
+        ellipsize: end;
+
+        styles [
+          "title-2",
+        ]
+      }
+
+      Label subtitle_label {
+        xalign: 0;
+        ellipsize: end;
+        visible: false;
+
+        styles [
+          "dim-label",
+        ]
+      }
+    }
+
+    Button see_all_button {
+      label: _("See All");
+      valign: center;
+      visible: false;
+      clicked => $on_see_all_clicked();
+
+      styles [
+        "flat",
+      ]
+    }
+  }
+
+  ScrolledWindow scrolled_window {
+    hscrollbar-policy: automatic;
+    vscrollbar-policy: never;
+
+    // Recycled like the grids: a Gtk.ListView as the scrolled window's own child.
+    child: ListView list_view {
+      orientation: horizontal;
+      single-click-activate: true;
+      tab-behavior: item;
+      activate => $on_activate();
+
+      factory: SignalListItemFactory {
+        setup => $on_setup();
+        bind => $on_bind();
+        unbind => $on_unbind();
+      };
+
+      styles [
+        "shelf-list",
+      ]
+    };
+  }
+}

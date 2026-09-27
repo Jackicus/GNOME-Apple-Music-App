@@ -81,3 +81,58 @@ listview.track-list > row {
 listview.track-list > header {
   padding: 0;
 }
+
+/* Shelves (widgets/shelf.blp): tiles 18px apart, the first on the page title's 24px margin
+   (15px of the list's padding, 6px of the row's margin, 3px of its padding), with rounded
+   highlights as the grids' tiles have. The header is as tall as its See All button, whether
+   or not it shows one. */
+listview.shelf-list {
+  padding: 0 15px;
+}
+
+listview.shelf-list > row {
+  margin: 0 6px;
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.shelf-header {
+  min-height: 34px;
+}
+
+/* Hero cards (widgets/hero_tile.blp): one rounded card, the cover square at the top and the
+   caption band under it, in the artwork's colour (drawn by hero_tile.py over this background)
+   with text that reads on it. Without a colour, a tint that shows on the page in both
+   themes; without artwork, the placeholder's note on the card's own colour. */
+.hero-tile {
+  border-radius: 12px;
+  background-color: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.hero-tile > .cover > .card {
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  color: inherit;
+}
+
+.hero-tile > .cover > picture {
+  border-radius: 0;
+}
+
+.hero-caption {
+  padding: 10px 12px 12px 12px;
+}
+
+/* The subtitle, less dim than a dim-label elsewhere: it sits on a colour, not the page. */
+.hero-caption > .dim-label {
+  opacity: 0.75;
+}
+
+.hero-tile.dark-art {
+  color: white;
+}
+
+.hero-tile.light-art {
+  color: rgb(0 0 6 / 80%);
+}

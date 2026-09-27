@@ -13,7 +13,12 @@ src/pages/detail.py
 src/pages/detail.blp
 src/pages/grid.py
 src/pages/grid.blp
+src/pages/home.blp
+src/pages/radio.py
+src/pages/radio.blp
 src/pages/songs.py
 src/pages/songs.blp
+src/widgets/shelf.py
+src/widgets/shelf.blp
 src/widgets/song_title.blp
 src/widgets/track_row.blp

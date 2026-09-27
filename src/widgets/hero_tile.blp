@@ -1,0 +1,52 @@
+using Gtk 4.0;
+
+// A shelf's large card: the cover over a caption band in the artwork's own colour, which
+// hero_tile.py draws under the children. The card's rounded corners clip both (overflow);
+// the colours without an art colour, and the corners, are in style.css.
+template $AppleMusicHeroTile: Box {
+  orientation: vertical;
+  halign: center;
+  valign: start;
+  margin-top: 6;
+  margin-bottom: 6;
+  overflow: hidden;
+
+  styles [
+    "hero-tile",
+  ]
+
+  $AppleMusicCover cover {
+    size: 260;
+  }
+
+  // Two lines, the title and the subtitle, each ellipsized: Inscriptions, as in the tiles, so
+  // a rebind redraws them without a new layout.
+  Box {
+    orientation: vertical;
+    spacing: 2;
+
+    styles [
+      "hero-caption",
+    ]
+
+    Inscription title_label {
+      xalign: 0;
+      min-lines: 1;
+      text-overflow: ellipsize_end;
+
+      styles [
+        "heading",
+      ]
+    }
+
+    Inscription subtitle_label {
+      xalign: 0;
+      min-lines: 1;
+      text-overflow: ellipsize_end;
+
+      styles [
+        "dim-label",
+      ]
+    }
+  }
+}

@@ -30,16 +30,25 @@ class Tile(Gtk.Box):
 
     def __init__(self, artist=False, **kwargs):
         super().__init__(**kwargs)
-        self._artist = artist
+        self._artist = False
         self._item = None
         self._path = None
         self._token = None
         self._artwork = artwork.get_default()
-        if artist:
-            self.cover.set_visible(False)
-            self.avatar.set_visible(True)
-            self.label.set_xalign(0.5)
-            self.label.set_min_lines(1)
+        self.set_artist(artist)
+
+    def set_artist(self, artist):
+        """Switch between the square cover and the artist's round portrait. A grid page's tiles
+        are one or the other; a shelf, which can mix artists with albums, switches a tile as it
+        binds it (before bind())."""
+        if artist == self._artist:
+            return
+        self._release_art()
+        self._artist = artist
+        self.cover.set_visible(not artist)
+        self.avatar.set_visible(artist)
+        self.label.set_xalign(0.5 if artist else 0)
+        self.label.set_min_lines(1 if artist else 3)
 
     def bind(self, item):
         self._item = item

@@ -9,7 +9,17 @@ from gettext import gettext as _
 
 from .detail import DetailPage
 from .grid import GridPage
+from .home import HomePage
+from .radio import RadioPage
 from .songs import SongsPage
+
+
+def _home(destination, library):
+    return HomePage(library, destination.title, icon_name=destination.icon_name)
+
+
+def _radio(destination, library):
+    return RadioPage(library, destination.title, icon_name=destination.icon_name)
 
 
 def _albums(destination, library):
@@ -64,6 +74,8 @@ def _music_videos(destination, library):
 
 
 PAGES = {
+    'home': _home,
+    'radio': _radio,
     'albums': _albums,
     'artists': _artists,
     'recently-added': _recently_added,

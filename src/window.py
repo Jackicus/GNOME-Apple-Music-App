@@ -1,20 +1,12 @@
 from gettext import gettext as _
-from gettext import ngettext
 
 from gi.repository import Adw, Gio, Gtk
 
 from . import pages, sections
 from .pages.artist import ArtistPage
 from .pages.detail import DetailPage
+from .pages.grid import GridPage
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
-
-# The placeholder pages that count something: key -> (the count, its label). The labels are
-# looked up when used, after the launcher has set up gettext. %s is the count, grouped as the
-# locale groups digits.
-COUNTED = {
-    'radio': (lambda library: library.radio.get_n_items(),
-              lambda n: ngettext('%s station', '%s stations', n)),
-}
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/window.ui')
@@ -34,14 +26,8 @@ class Window(Adw.ApplicationWindow):
         self._destinations = {}  # Adw.SidebarItem -> Destination
         self._items_by_key = {}
         self._roots = {}  # destination key -> its root Adw.NavigationPage, once visited
-        self._placeholders = {}  # destination key -> Adw.StatusPage, for those without a page
 
         self._build_sidebar()
-        self._library_handlers = [
-            self._library.connect('notify::state', self._on_library_changed),
-            self._library.connect('changed', self._on_library_changed),
-        ]
-        self._on_library_changed()
         self._restore_window_state()
         self._select(self._settings.get_string('last-page'))
 
@@ -66,8 +52,9 @@ class Window(Adw.ApplicationWindow):
     def open_item(self, item):
         """Show an album, artist, playlist, station or video: what activating a tile does.
 
-        Albums and playlists push a DetailPage, artists an ArtistPage, over the page shown.
-        Stations and videos have no page: a toast, until phases 7 and 12 decide what they do.
+        Albums and playlists push a DetailPage, artists an ArtistPage, over the page shown. A
+        station has no page: it plays, as on music.apple.com. A video toasts its title, until
+        phase 12 decides what it does.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'item', None) is item:
@@ -76,9 +63,35 @@ class Window(Adw.ApplicationWindow):
             page = DetailPage(self._library, item)
         elif item.kind == 'artist':
             page = ArtistPage(self._library, item)
+        elif item.kind == 'station':
+            self.play_request(item.play)
+            return
         else:
             self.toast(item.title)
             return
+        self.navigation_view.push(page)
+
+    def open_shelf(self, shelf):
+        """Show a shelf's items as a grid, pushed over the page shown: a shelf's See All.
+
+        A shelf of the library's is followed by its key, so the page shows what a later load
+        puts on it; any other (phase 15's search results) is shown as it is.
+        """
+        visible = self.navigation_view.get_visible_page()
+        if getattr(visible, 'shelf', None) is shelf:
+            return  # a double activation
+        if shelf in self._library.shelves:
+            key = shelf.key
+
+            def model():
+                found = self._library.shelf(key)
+                return found.items if found else None
+        else:
+            model = shelf.items
+        page = GridPage(self._library, shelf.title, model, root=False,
+                        icon_name='view-grid-symbolic', empty_title=_('Nothing Here'),
+                        empty_description=_('This shelf is empty now'))
+        page.shelf = shelf
         self.navigation_view.push(page)
 
     def play_request(self, play, start_with=None, shuffle=False):
@@ -129,26 +142,9 @@ class Window(Adw.ApplicationWindow):
             title=destination.title,
             description=_('Nothing here yet'),
         )
-        self._placeholders[destination.key] = status
-        self._on_library_changed()
         toolbar = Adw.ToolbarView(content=status)
         toolbar.add_top_bar(Adw.HeaderBar(show_title=False))
         return Adw.NavigationPage(title=destination.title, child=toolbar)
-
-    def _on_library_changed(self, *_args):
-        """Placeholder pages say what the library holds for them, until real pages exist."""
-        state = self._library.state
-        for key, (count, label) in COUNTED.items():
-            if key not in self._placeholders:
-                continue
-            n = count(self._library) if state == 'ready' else 0
-            if state == 'loading':
-                description = _('Loading…')
-            elif n:
-                description = label(n) % f'{n:n}'
-            else:
-                description = _('Nothing here yet')
-            self._placeholders[key].set_description(description)
 
     def _select(self, key):
         item = self._items_by_key.get(key) or self._items_by_key['home']
@@ -190,7 +186,4 @@ class Window(Adw.ApplicationWindow):
         self._settings.set_int('window-width', width)
         self._settings.set_int('window-height', height)
         self._settings.set_boolean('window-maximized', self.is_maximized())
-        for handler in self._library_handlers:
-            self._library.disconnect(handler)  # the library outlives the window
-        self._library_handlers = []
         return Adw.ApplicationWindow.do_close_request(self)

@@ -175,5 +175,27 @@ class TestArtwork(unittest.TestCase):
         await settle()
 
 
+class TestArtColour(unittest.TestCase):
+    """The hero cards' caption band: an Item's art_color, and the text that reads on it."""
+
+    def test_parses_the_items_colour(self):
+        rgba = artwork.art_colour('#0081a7')
+        self.assertAlmostEqual(rgba.red, 0)
+        self.assertAlmostEqual(rgba.green, 0x81 / 255)
+        self.assertAlmostEqual(rgba.blue, 0xa7 / 255)
+
+    def test_no_colour(self):
+        self.assertIsNone(artwork.art_colour(None))
+        self.assertIsNone(artwork.art_colour(''))
+        self.assertIsNone(artwork.art_colour('#nothex'))
+
+    def test_dark_colours_take_white_text(self):
+        for colour in ('#000000', '#1a1a1a', '#0077b6', '#0081a7', '#499f68', '#a23b72',
+                       '#d97706', '#495057'):
+            self.assertTrue(artwork.is_dark(artwork.art_colour(colour)), colour)
+        for colour in ('#ffffff', '#f2e8cf', '#ffd166', '#90e0ef'):
+            self.assertFalse(artwork.is_dark(artwork.art_colour(colour)), colour)
+
+
 if __name__ == '__main__':
     unittest.main()

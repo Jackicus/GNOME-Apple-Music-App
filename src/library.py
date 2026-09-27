@@ -194,9 +194,13 @@ class Item(GObject.Object):
 
 
 class Shelf(GObject.Object):
-    """A titled row of Items: Apple's home page recommendations, Heavy Rotation, Recently Added."""
+    """A titled row of Items: Apple's home page recommendations, Heavy Rotation, Recently Added.
 
-    __gtype_name__ = 'AppleMusicShelf'
+    Its GType is AppleMusicShelfModel: AppleMusicShelf is the widget that shows one
+    (widgets/shelf.py).
+    """
+
+    __gtype_name__ = 'AppleMusicShelfModel'
 
     key = model_property('key', str, '')
     title = model_property('title', str, '')

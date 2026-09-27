@@ -1,1 +1,1 @@
-"""Reusable widgets: the artwork loader, grid tiles."""
+"""Reusable widgets: the artwork loader, tiles and hero cards, shelves, covers, track rows."""

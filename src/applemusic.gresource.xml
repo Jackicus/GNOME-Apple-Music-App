@@ -7,10 +7,14 @@
     <file preprocess="xml-stripblanks" alias="songs.ui">pages/songs.ui</file>
     <file preprocess="xml-stripblanks" alias="detail.ui">pages/detail.ui</file>
     <file preprocess="xml-stripblanks" alias="artist.ui">pages/artist.ui</file>
+    <file preprocess="xml-stripblanks" alias="home.ui">pages/home.ui</file>
+    <file preprocess="xml-stripblanks" alias="radio.ui">pages/radio.ui</file>
     <file preprocess="xml-stripblanks" alias="tile.ui">widgets/tile.ui</file>
     <file preprocess="xml-stripblanks" alias="song_title.ui">widgets/song_title.ui</file>
     <file preprocess="xml-stripblanks" alias="cover.ui">widgets/cover.ui</file>
     <file preprocess="xml-stripblanks" alias="track_row.ui">widgets/track_row.ui</file>
+    <file preprocess="xml-stripblanks" alias="shelf.ui">widgets/shelf.ui</file>
+    <file preprocess="xml-stripblanks" alias="hero_tile.ui">widgets/hero_tile.ui</file>
     <file>style.css</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/music-note-symbolic.svg">icons/music-note-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/playlist-symbolic.svg">icons/playlist-symbolic.svg</file>
