@@ -49,6 +49,11 @@ def on_startup(_app):
         Adw.ColorScheme.FORCE_LIGHT if args.light else Adw.ColorScheme.FORCE_DARK)
 
 
+def on_window_added(_app, window):
+    # A fixed-size window is one a tiling window manager leaves alone.
+    window.set_resizable(False)
+
+
 def on_activate(_app):
     app.settings.set_string('last-page', args.page)
     app.settings.set_int('window-width', width)
@@ -69,4 +74,6 @@ def shoot():
 
 app.connect('startup', on_startup)
 app.connect('activate', on_activate)
+app.connect('window-added', on_window_added)
+main.use_glib_event_loop()  # as main.main() does, so app.spawn() works
 app.run([])

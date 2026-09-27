@@ -8,7 +8,7 @@ running and better than before.
 
 ## Phases at a glance
 
-- [ ] 1. Foundations: git, tests, lint, logging, asyncio on GLib
+- [x] 1. Foundations: git, tests, lint, logging, asyncio on GLib (2026-09-27)
 - [ ] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests)
 - [ ] 3. Library model and demo mode
 - [ ] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork
@@ -160,6 +160,22 @@ build/narrow.png --size 400x700 shows the boxed-list sidebar, and build/wide.png
 Look at both PNGs. Update CLAUDE.md where this changed a convention (logging, spawn, tests).
 Tick phase 1 in prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- `python3 -m unittest discover -s tests` imports test modules as top-level modules and never runs
+  `tests/__init__.py`, so every test module starts with `from tests import …` (`ROOT`, `SRC`)
+  before `from applemusic import …`. That works from the repo root, where check.sh runs.
+- `main.use_glib_event_loop()` holds the warning filter and the policy; `scripts/screenshot.py` calls
+  it too (it builds the Application without `main()`), so `app.spawn()` also works in screenshots.
+  Without the policy, `Gio.Application.run` does not mark a running asyncio loop and
+  `asyncio.get_event_loop()` raises.
+- The desktop runs the Tiling Shell extension, which ignored `--size`; screenshot.py now makes the
+  window non-resizable, which it respects (so screenshots lack the maximize button). In the narrow
+  layout the sidebar page is shown whatever `--page` is.
+- ruff is not installed; `uvx ruff check --no-cache .` works for a one-off lint (it passed here).
+  Imports after `gi.require_version()` carry `# noqa: E402`.
+- check.sh takes about a second on an existing build.
 
 ## Phase 2: Vendor the backend
 

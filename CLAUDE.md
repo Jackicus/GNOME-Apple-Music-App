@@ -25,7 +25,7 @@ asynchronous CDP connection instead of the extension's process-per-command.
 Parts marked `*` exist only once their phase in `prompts.md` is done.
 
 ```
-GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)*
+GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ Window: AdwToastOverlay > AdwNavigationSplitView                                 │
 │   sidebar: AdwSidebar built from sections.py (+ playlists and folders*)          │
@@ -45,7 +45,8 @@ Disk*: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, remote-art/, lyr
 ```
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
-src/main.py                    Application: app.* actions (quit, about, shortcuts), GSettings, dialogs
+src/main.py                    Application: app.* actions (quit, about, shortcuts), GSettings, dialogs,
+                               logging and --debug, spawn(coro), use_glib_event_loop()
 src/window.py + window.blp     Window: split view, sidebar, content stack, toasts, window-state memory
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
@@ -56,6 +57,8 @@ src/meson.build                blueprint list, gresource, install_data list of .
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py
+tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`
+pyproject.toml                 ruff config only (line length 100, E/F/W)
 build-aux/flatpak/*.Devel.json Flatpak manifest, GNOME 50 runtime (not installed locally)
 subprojects/blueprint-compiler.wrap   fallback when blueprint-compiler is not on PATH
 ```
@@ -69,12 +72,14 @@ outside the Python module goes in `data/`.
 ## Commands
 
 ```
-scripts/run.sh [args]     meson setup (dev profile, prefix build/install) + install + run
-scripts/check.sh          py_compile, meson compile, meson tests (desktop/metainfo/schema validation)
+scripts/run.sh [args]     meson setup (dev profile, prefix build/install) + install + run;
+                          `--debug` (or APPLE_MUSIC_DEBUG=1) logs at DEBUG
+scripts/check.sh          compileall, ruff (skipped if not installed), unit tests, meson compile,
+                          meson tests (desktop/metainfo/schema validation); prints `check: ok`
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend
-python3 -m unittest discover -s tests -v      unit tests (tests/ arrives in phase 1, in check.sh too)
+python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
 meson setup build --prefix=/usr && meson install -C build      system install, release profile
 ```
 
@@ -100,8 +105,19 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   spawned from signal handlers with `app.spawn(coro)`. Errors are `EngineError(code)` with the
   README's codes (`engine-down`, `not-signed-in`, `api`, `timeout`); the UI shows a toast, never a
   traceback. Library reads are synchronous in-memory models.
-- Logging: Python `logging`, `log = logging.getLogger(__name__)`; configured once in `main.py`
-  (INFO to stderr; DEBUG with `--debug` or `APPLE_MUSIC_DEBUG=1`). No `print` in app code.
+- Logging: Python `logging`, `log = logging.getLogger(__name__)`; configured once in `main.main()`
+  (`basicConfig`, INFO to stderr as `LEVEL logger: message`; DEBUG with `--debug`, handled in
+  `do_handle_local_options`, or with `APPLE_MUSIC_DEBUG` set to anything but empty or `0`). No
+  `print` in app code.
+- Async: `app.spawn(coro)` runs a coroutine as a task on the GLib-backed asyncio loop, keeps a
+  reference until it finishes, logs its exception (cancellation is silent) and returns the task for
+  cancelling. Use it from signal handlers instead of threads or `GLib.idle_add`; blocking work
+  inside the coroutine goes through `asyncio.to_thread`.
+- Tests: `tests/test_<module>.py`, stdlib `unittest`, each starting with `from tests import …`
+  (e.g. `SRC`, `ROOT`) before any `from applemusic import …`: discovery with `-s tests` imports test
+  modules as top-level modules and never runs `tests/__init__.py` on its own. No GTK widgets in
+  tests; UI is checked with screenshots.
+- Lint: `pyproject.toml` configures ruff; imports after `gi.require_version()` need `# noqa: E402`.
 - Settings: one schema `io.github.jackicus.AppleMusic` for both profiles; new keys go in
   `data/…gschema.xml` with a summary, and are read through `app.settings`.
 - Actions: `app.*` in `main.py`, `win.*` in `window.py`; accelerators via `set_accels_for_action`;
@@ -142,13 +158,16 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `label: bind item.title;`. Each new `.blp` goes in `src/meson.build`'s blueprint list and in
   `applemusic.gresource.xml` as `.ui`.
 - The source tree is not importable as `applemusic`; the launcher imports it from
-  `build/install/share/apple-music/applemusic`, where the gresource also lives. Tests register
-  `src/` under that name (phase 1).
+  `build/install/share/apple-music/applemusic`, where the gresource also lives. `tests/__init__.py`
+  registers `src/` under that name (spec_from_file_location + sys.modules) for the tests.
 - Icons in `src/icons/` resolve by `icon-name` through the resource alias; symbolic SVGs use a `#222`
   fill and are recoloured. Adwaita no longer ships some legacy names (`emblem-favorite-symbolic` is
   gone); bundle anything not in `/usr/share/icons/Adwaita/symbolic/`.
 - `screenshot.py` uses a `.Screenshot` app ID and renders after 1.2 s, so content that arrives later
-  needs a longer delay; it prints a harmless at-spi warning.
+  needs a longer delay; it prints a harmless at-spi warning. It makes the window non-resizable so
+  the desktop's tiling extension (Tiling Shell) honours `--size`; so shots have no maximize button.
+  It calls `main.use_glib_event_loop()` itself, since it builds the Application without `main()`.
+  In the collapsed (narrow) layout the sidebar is shown, whatever `--page` says.
 - The dev build shares the release schema and resource path; only the app ID, desktop file and icons
   differ. `run.sh` sets `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS` to `build/install`.
 - Chrome: `google-chrome-stable` 154 is installed. Its MPRIS player is
@@ -158,5 +177,7 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   (the `.Devel` build 9229 and `chrome-devel`) so they can run side by side, which also means a
   separate sign-in per profile.
 - Python 3.14 deprecates `asyncio.set_event_loop_policy` (removal in 3.16), but it is still how
-  PyGObject 3.56 puts asyncio on the GLib loop; the DeprecationWarning is expected and filtered.
-- No commits yet: the repo is initialised and empty until phase 1.
+  PyGObject 3.56 puts asyncio on the GLib loop; `main.use_glib_event_loop()` filters the
+  DeprecationWarning and sets the policy. PyGObject's `Gio.Application.run` marks the GLib loop as
+  the running asyncio loop only when that policy is set.
+- History starts at the "Scaffold: window, sidebar, build" commit; one commit (or a few) per phase.
