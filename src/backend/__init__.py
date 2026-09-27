@@ -3,17 +3,26 @@
 Pure Python and the standard library: nothing here imports gi (GTK stays in the app), and
 importing the package imports none of its modules.
 
-    cdp.py      a CDP client over its own RFC 6455 WebSocket framing (blocking; phase 9 adds
-                the asynchronous one)
-    bridge.js   injected into music.apple.com; drives the page's own MusicKit instance.
-                Installed as data beside the Python, found through config.BRIDGE_JS
+    errors.py   EngineError(code, message): engine-down, not-signed-in, api, timeout, usage
+    chrome.py   finding Chrome, its argv, the engine.json state (EngineState), the DevTools
+                /json polling (wait_for_devtools, list_targets, find_target, wait_for_target)
+    client.py   CDPClient: one asynchronous CDP connection (calls, evaluate, events, the
+                bridge kept in the page across navigations); connect_page(port)
+    cdp.py      the RFC 6455 handshake and frame codec as pure functions, shared with
+                client.py, and the extension's blocking client on top of them
+    bridge.js   injected into music.apple.com; drives the page's own MusicKit instance and
+                forwards its events (subscribe). Installed as data beside the Python, found
+                through config.BRIDGE_JS
     sync.py     Apple Music API answers -> the Item and Track shapes, the artwork cache,
                 library.json
-    config.py   paths, port and artwork sizes (new here; replaces the extension's GSettings)
+    config.py   paths, port, the state file and artwork sizes (new here; replaces the
+                extension's GSettings)
     am.py       REFERENCE ONLY: the extension's one-process-per-command CLI. Not installed,
-                not imported, not linted; phases 9 to 11 port its engine lifecycle, sync and
-                command bodies, then delete it
-    README.md   the command table, error codes and library.json/Item/Track shapes
+                not imported, not linted; phases 10 and 11 port its sync and command bodies
+                (phase 9 ported the engine lifecycle into chrome.py and scripts/am.py), then
+                delete it
+    README.md   the command table, error codes, the events, and the library.json/Item/Track
+                shapes
 
 Provenance. Vendored on 2026-09-27 from the GNOME Shell extension Apple Music Library,
 ~/Projects/GNOME-Extensions/GNOME-Apple-Music-Library at commit 906bfa9: src/backend/{cdp.py,
@@ -23,8 +32,16 @@ from upstream:
 
 cdp.py
 - The HTTP User-Agent is AppleMusicGNOME/1.0 (was the extension's name).
+- (Phase 9) The handshake and frame codec are pure functions (parse_ws_url, handshake_request,
+  check_handshake, encode_frame, decode_frame, close_frame) and the one-line JS exception
+  message is exception_message(); CDPClient uses them (its _read_exact became _fill_buffer over
+  decode_frame). Behaviour and test_cdp.py unchanged.
 bridge.js
-- None. The page globals keep their names (window.__appleMusicLibrary{,Wanted}).
+- The page globals keep their names (window.__appleMusicLibrary{,Wanted}).
+- (Phase 9) subscribe() and unsubscribe(): MusicKit listeners (EVENT_DATA's eleven events),
+  posted through the CDP binding window.__amEvent as JSON {name, data}; the listeners are
+  remembered in window.__appleMusicListeners so a repeat is a no-op and a newer bridge replaces
+  an older one's. queue() is queueSnapshot(), shared with the queueItemsDidChange event.
 sync.py
 - Imports config; DEFAULT_ART_SIZES are config.COVER_SIZE/THUMB_SIZE, 640/320 (were 512/256).
   The art/.sizes marker and apply_art_sizes/load_art_sizes are unchanged.
@@ -45,6 +62,11 @@ README.md
 config.py
 - New: cache_dir(), profile_dir(), port(), state_file() with the APPLE_MUSIC_CACHE,
   APPLE_MUSIC_PROFILE and APPLE_MUSIC_PORT overrides, THUMB_SIZE, COVER_SIZE, BRIDGE_JS.
+- (Phase 9) state_file(profile=None) is keyed by profile: the default profile's engine.json is
+  in $XDG_RUNTIME_DIR/apple-music, any other profile's (an override, the .Devel build's
+  chrome-devel) inside that profile; default_profile_dir().
+errors.py, chrome.py, client.py
+- New in phase 9 (this app's own; nothing vendored).
 tests/test_cdp.py
 - Imports applemusic.backend.cdp through the tests/__init__.py shim. The test HTTP servers poll
   for shutdown every 50 ms instead of 500 ms (about three seconds off the suite).

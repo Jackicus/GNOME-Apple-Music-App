@@ -59,15 +59,24 @@ def port():
     return value if 0 < value < 65536 else DEFAULT_PORT
 
 
-def state_file():
-    """engine.json, describing the Chrome the app started: {pid, port, headless, profile, started}.
+def default_profile_dir():
+    """Where the release build's profile is when nothing overrides it."""
+    return _xdg_dir('XDG_DATA_HOME', '.local/share') / APP_DIR / 'chrome'
 
-    $XDG_RUNTIME_DIR/apple-music/engine.json. A run on a profile of its own (APPLE_MUSIC_PROFILE:
-    a test, a demo) keeps it in that profile instead, so it never finds, and drives, the real
-    session's engine through the shared runtime directory.
+
+def state_file(profile=None):
+    """engine.json, describing the Chrome started on `profile` (default: profile_dir()):
+    {pid, port, headless, profile, started}.
+
+    The default profile's is $XDG_RUNTIME_DIR/apple-music/engine.json, which a logout clears.
+    Any other profile (APPLE_MUSIC_PROFILE for a test or a demo, the .Devel build's chrome-devel)
+    keeps its own inside itself, so two builds never find, and drive, each other's engine
+    through the shared runtime directory. The file checks the pid is alive before it is
+    believed, so a stale one is harmless wherever it is.
     """
-    if os.environ.get('APPLE_MUSIC_PROFILE'):
-        return profile_dir() / 'engine.json'
+    profile = Path(profile) if profile else profile_dir()
+    if profile != default_profile_dir():
+        return profile / 'engine.json'
     runtime = os.environ.get('XDG_RUNTIME_DIR', '')
     if os.path.isabs(runtime):
         return Path(runtime) / APP_DIR / 'engine.json'

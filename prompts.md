@@ -16,7 +16,7 @@ running and better than before.
 - [x] 6. Detail pages: album, playlist, artist (2026-09-27)
 - [x] 7. Shelves: Home and Radio from the cache (2026-09-27)
 - [x] 8. Sidebar: playlists and folders (2026-09-27)
-- [ ] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI
+- [x] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI (2026-09-27)
 - [ ] 10. Engine in the app: lifecycle, sign-in, account
 - [ ] 11. Library sync and artwork cache
 - [ ] 12. Playback: Player state and the player bar
@@ -1012,6 +1012,73 @@ preview in Chrome shows playbackStateDidChange events, busctl --user list | grep
 chromium entry, scripts/am.py stop. Report in prompts.md under this phase if any event name or
 flag needed changing. Update CLAUDE.md (backend layout, the debug CLI). Tick phase 9 and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- The API phase 10 builds on (all in `src/backend/`, no gi; `README.md`'s last section has
+  the same in full):
+  - `errors.EngineError(code, message)`; `.code`, `.message`; a bad code is a `ValueError`.
+  - `chrome.find_chrome(command, path=None)`, `chrome.chrome_args(binary, profile, port,
+    headless)`, `chrome.EngineState(pid, port, headless, profile, started=None)` with
+    `.load(path)` (None when missing or unreadable), `.save(path)`, `.remove(path)`,
+    `.to_dict()`, `.alive` (the pid runs *and* its `/proc` command line names the profile, so
+    a reused pid after a reboot is not "our Chrome"); `chrome.pid_alive(pid, profile=None)`;
+    `await chrome.wait_for_devtools(port, timeout=15)` (the `/json/version` dict),
+    `await chrome.list_targets(port)`, `chrome.select_target(targets)`,
+    `await chrome.find_target(port)` (None when no music.apple.com page),
+    `await chrome.wait_for_target(port, timeout=15)`, `await chrome.get_json(port, path)`.
+  - `client.CDPClient(timeout=30)`: `await connect(ws_url, page=True)` (page=False for the
+    browser target: no domains enabled), `await call(method, params=None, timeout=None)`,
+    `await evaluate(js, await_promise=True, timeout=None)`, `await bridge(method, *args)`
+    (`window.__appleMusicLibrary.method(json args)`), `on(event, callback)` / `off` where
+    callback is `(name, data)` and event is a CDP method, `'am:<MusicKit event>'`, `'am:*'` or
+    `'*'` (a coroutine returned runs as a task), `await ensure_bridge(timeout=15)`,
+    `await subscribe()` (ensures the bridge, turns events on, and both are re-done after every
+    navigation of the main frame), `await unsubscribe()`, `await close()`, `await
+    wait_closed()` (returns when Chrome hangs up: phase 10's "engine died" signal), `connected`.
+    `await client.connect_page(port, timeout=30, wait=15)` finds the page and connects.
+  - Every failure is `EngineError`: `engine-down` (no DevTools, refused or lost connection,
+    pending calls included), `timeout`, `api` (a CDP error or a JS exception, one line).
+  - `config.state_file(profile=None)` is keyed by profile (phase 2's note): the default profile's
+    is `$XDG_RUNTIME_DIR/apple-music/engine.json`, any other profile's (`chrome-devel`, an
+    `APPLE_MUSIC_PROFILE` override) is `<profile>/engine.json`. Phase 10 passes the profile it
+    derived from `app.profile`.
+- Events: all eleven names in the prompt exist in `MusicKit.Events` of the live page (checked
+  against `Object.keys(MusicKit.Events)`; none needed changing). Payloads are in the README's
+  table. `playbackStateDidChange.state` is the `MusicKit.PlaybackStates` name (`none loading
+  playing paused stopped ended seeking waiting stalled completed`; a play walks playing →
+  waiting → loading → playing, a stop goes stopped → seeking → stopped);
+  `nowPlayingItemDidChange` carries the Track (null after a stop); `queueItemsDidChange` the
+  queue shape (index -1 before playback starts); `playbackTimeDidChange` about 4/s with
+  integer seconds. `nowPlaying()`'s own `state` stays the coarse playing/paused/stopped.
+- Flags: as the prompt, plus `--hide-crash-restore-bubble` (a Chrome that was SIGKILLed would
+  otherwise greet the next visible window with "Restore pages?") and, from am.py, `--app=URL`
+  for the visible window (no tabs or address bar; headless gets the bare URL).
+  `--disable-features=HardwareMediaKeyHandling` verified: no `chromium.instance<pid>` on the
+  bus for our Chrome, visible or headless. `EngineState.alive` looks for
+  `--user-data-dir=<profile>` on the command line, so keep that flag's spelling.
+- `scripts/am.py` spawns Chrome with `subprocess.Popen(..., start_new_session=True)` in a
+  thread, not `asyncio.create_subprocess_exec` as the prompt said: an asyncio subprocess
+  transport kills its child when it is garbage-collected, which is as the command exits, and
+  Chrome died with it (seen as "Close running child process: kill" under
+  PYTHONASYNCIODEBUG=1). Phase 10's `Gio.Subprocess` has no such behaviour; stop is
+  SIGTERM, 5 s, SIGKILL there as here. `stop` without a state file falls back to
+  `Browser.close` on the browser target. `events` handles SIGINT/SIGTERM itself
+  (`loop.add_signal_handler`): a shell's background job inherits SIGINT ignored.
+- `Runtime.addBinding` is per CDP session, so one connection at a time owns
+  `window.__amEvent`; the app's single connection is fine, and two debug CLIs at once are not.
+  `Runtime.enable` replays `executionContextCreated`; the client re-injects only after
+  `ensure_bridge()` has been called, and only for the main frame's default context.
+- Verified live (visible and headless, the app's profile, port 9228, not signed in): `start`,
+  `eval 'MusicKit.getInstance().isAuthorized'` → `false`, `events` while a catalog preview was
+  played from CDP (`mk.setQueue({song})` + `mk.play()`: unauthorised MusicKit plays 30-second
+  previews; audio confirmed as a PipeWire sink input from our Chrome's audio process), the
+  bridge coming back after a real `location.assign` navigation, `stop`. A sign-in was not
+  attempted, so `authorizationStatusDidChange` is untested live.
+- Tests: `tests/test_client.py` has an asyncio fake Chrome (`FakeChrome`, responders by method,
+  `FakePage` for the bridge's probe/inject/status/subscribe round) worth reusing for phase 10's
+  Engine tests; `tests/test_chrome.py` has a `/json` HTTP server for the polling. The suite is
+  184 tests, about 8 s.
 
 ## Phase 10: Engine in the app, sign-in and account
 

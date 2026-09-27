@@ -194,6 +194,122 @@
         });
     }
 
+    function queueSnapshot(mk) {
+        if (!mk || !mk.queue) {
+            return { index: 0, items: [] };
+        }
+        const items = (mk.queue.items || []).map(function (it, idx) {
+            return formatTrack(it, idx);
+        });
+        return {
+            index: mk.queue.position || 0,
+            items: items
+        };
+    }
+
+    // MusicKit numbers its playback states; MusicKit.PlaybackStates maps both
+    // ways (0 -> 'none', 'none' -> 0), so the name is one lookup.
+    function playbackStateName(state) {
+        const states = window.MusicKit && window.MusicKit.PlaybackStates;
+        if (states && typeof state === 'number' && typeof states[state] === 'string') {
+            return states[state];
+        }
+        return typeof state === 'string' ? state : 'none';
+    }
+
+    function describeError(err) {
+        if (!err) return 'unknown error';
+        if (typeof err === 'string') return err;
+        return String(err.message || err.description || err.name || err);
+    }
+
+    // The MusicKit events the app follows, each with the plain data it is
+    // posted with — the shapes the answers below use (nowPlaying, queue),
+    // read from the instance at the moment of the event rather than from
+    // the event object, whose shape has varied between MusicKit versions.
+    // The playback state is its PlaybackStates name ('playing', 'paused',
+    // 'stopped', 'loading', 'ended', 'seeking', 'waiting', 'stalled'…).
+    const EVENT_DATA = {
+        authorizationStatusDidChange: function (mk, e) {
+            return {
+                authorized: !!mk.isAuthorized,
+                status: (e && typeof e.authorizationStatus === 'number') ? e.authorizationStatus : null
+            };
+        },
+        playbackStateDidChange: function (mk, e) {
+            const state = (e && typeof e.state !== 'undefined') ? e.state : mk.playbackState;
+            return {
+                state: playbackStateName(state),
+                position: mk.currentPlaybackTime || 0,
+                duration: mk.currentPlaybackDuration || 0
+            };
+        },
+        nowPlayingItemDidChange: function (mk) {
+            const item = mk.nowPlayingItem;
+            const index = mk.nowPlayingItemIndex ?? 0;
+            return { track: item ? formatTrack(item, index) : null, index: index };
+        },
+        playbackTimeDidChange: function (mk) {
+            return {
+                position: mk.currentPlaybackTime || 0,
+                duration: mk.currentPlaybackDuration || 0
+            };
+        },
+        playbackDurationDidChange: function (mk) {
+            return { duration: mk.currentPlaybackDuration || 0 };
+        },
+        queueItemsDidChange: function (mk) {
+            return queueSnapshot(mk);
+        },
+        queuePositionDidChange: function (mk, e) {
+            return {
+                index: (e && typeof e.position === 'number') ? e.position : (mk.queue ? mk.queue.position || 0 : 0),
+                oldIndex: (e && typeof e.oldPosition === 'number') ? e.oldPosition : null
+            };
+        },
+        shuffleModeDidChange: function (mk) {
+            return { shuffle: shuffleModeToString(mk.shuffleMode) };
+        },
+        repeatModeDidChange: function (mk) {
+            return { repeat: repeatModeToString(mk.repeatMode) };
+        },
+        playbackVolumeDidChange: function (mk) {
+            return { volume: typeof mk.volume === 'number' ? mk.volume : 1 };
+        },
+        mediaPlaybackError: function (mk, e) {
+            return { message: describeError(e) };
+        }
+    };
+
+    // One event to the app: window.__amEvent is the CDP binding the client
+    // registers (Runtime.addBinding), which takes one string.
+    function postEvent(name, event) {
+        if (typeof window.__amEvent !== 'function') return;
+        let data = null;
+        try {
+            const mk = getMusicKit();
+            data = mk ? EVENT_DATA[name](mk, event) : null;
+        } catch (err) {
+            data = { error: describeError(err) };
+        }
+        try {
+            window.__amEvent(JSON.stringify({ name: name, data: data }));
+        } catch {
+            // The binding is gone with the connection; nothing to tell.
+        }
+    }
+
+    function detachListeners(listeners) {
+        Object.keys(listeners.handlers).forEach(function (name) {
+            try {
+                listeners.mk.removeEventListener(name, listeners.handlers[name]);
+            } catch {
+                // The instance may be gone; the handlers with it.
+            }
+        });
+        window.__appleMusicListeners = null;
+    }
+
     window.__appleMusicLibrary = {
         __version: window.__appleMusicLibraryWanted,
         status: function () {
@@ -404,17 +520,7 @@
         },
 
         queue: function () {
-            const mk = getMusicKit();
-            if (!mk || !mk.queue) {
-                return { index: 0, items: [] };
-            }
-            const items = (mk.queue.items || []).map(function (it, idx) {
-                return formatTrack(it, idx);
-            });
-            return {
-                index: mk.queue.position || 0,
-                items: items
-            };
+            return queueSnapshot(getMusicKit());
         },
 
         rating: async function (kind, id, love) {
@@ -534,6 +640,39 @@
                 extend: 'editorialArtwork',
                 platform: 'web'
             });
+        },
+
+        // Forward MusicKit's events (the keys of EVENT_DATA) to the app through
+        // window.__amEvent as JSON {name, data}. Attaches the listeners once:
+        // calling it again with the same bridge on the same instance is a
+        // no-op, and a newer bridge replaces an older bridge's listeners
+        // rather than adding to them. Requires MusicKit to be configured.
+        subscribe: function () {
+            const mk = getMusicKit();
+            if (!mk) throw new Error('MusicKit not initialized');
+            const current = window.__appleMusicListeners;
+            if (current && current.version === window.__appleMusicLibraryWanted && current.mk === mk) {
+                return { subscribed: true, events: Object.keys(current.handlers), attached: false };
+            }
+            if (current) detachListeners(current);
+            const handlers = {};
+            Object.keys(EVENT_DATA).forEach(function (name) {
+                const handler = function (event) { postEvent(name, event); };
+                mk.addEventListener(name, handler);
+                handlers[name] = handler;
+            });
+            window.__appleMusicListeners = {
+                version: window.__appleMusicLibraryWanted,
+                mk: mk,
+                handlers: handlers
+            };
+            return { subscribed: true, events: Object.keys(handlers), attached: true };
+        },
+
+        unsubscribe: function () {
+            const current = window.__appleMusicListeners;
+            if (current) detachListeners(current);
+            return { subscribed: false };
         }
     };
 })();

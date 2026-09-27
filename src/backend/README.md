@@ -3,12 +3,14 @@
 > **Vendored** from the GNOME Shell extension; `__init__.py` records where
 > from, when, and every edit. Most of this file still describes the
 > extension's process-per-command `am.py` (and the shell code around it),
-> which this app keeps only as a reference for phases 9 to 11 of
+> which this app keeps only as a reference for phases 10 and 11 of
 > `prompts.md`: it is not installed, imported or linted. What carries over
 > as is: `cdp.py`, `bridge.js`, `sync.py`, the command table (as the list of
 > what the bridge can do), the error codes, and the `library.json`, `Item`
 > and `Track` shapes. Here, paths, the port and the artwork sizes come from
-> `config.py`, and nothing in this directory imports gi.
+> `config.py`, and nothing in this directory imports gi. This app's own
+> layer on top, one long-lived asynchronous connection instead of a process
+> per command, is described at the end ("The asynchronous layer").
 
 Everything that talks to Apple Music lives here. The shell process never
 touches the network: `src/lib/amctl.js` spawns `am.py <command>`, reads the
@@ -169,3 +171,68 @@ python3 -m unittest discover -s tests -v   # the tests, the backend's among them
 scripts/check.sh                            # those plus byte-compiling, lint, the build and its tests
 scripts/demo_library.py --cache build/demo  # an invented library.json and artwork, no Chrome
 ```
+
+## The asynchronous layer (this app, phase 9)
+
+The app is one long-running process, so it keeps one CDP connection open
+and hears MusicKit's events instead of polling. Pure Python and asyncio,
+no gi; the app's `Engine` (phase 10) and `scripts/am.py` sit on it.
+
+- **`errors.py`** — `EngineError(code, message)` with the codes above
+  (`engine-down`, `not-signed-in`, `api`, `timeout`, `usage`). Everything
+  in this layer raises it and nothing else.
+- **`chrome.py`** — `find_chrome(command)` (the configured command, then
+  `google-chrome-stable`, `google-chrome`, `/opt/google/chrome/chrome`;
+  None if absent), `chrome_args(binary, profile, port, headless)` (the argv,
+  `--disable-features=HardwareMediaKeyHandling` included so Chrome publishes
+  no MPRIS player; visible mode is an `--app=` window as before),
+  `EngineState` (engine.json: `{pid, port, headless, profile, started}`,
+  `load`/`save`/`remove`, `alive` checks the pid *and* that its command line
+  names the profile), `pid_alive`, and the `/json` polling in a thread:
+  `await wait_for_devtools(port)`, `await list_targets(port)`,
+  `select_target(targets)` (the page whose URL starts with
+  `https://music.apple.com`), `await find_target(port)`,
+  `await wait_for_target(port)`.
+- **`client.py`** — `CDPClient`: `await connect(ws_url)` (handshake, then
+  `Runtime.enable`, `Page.enable`, `Runtime.addBinding('__amEvent')`),
+  `await call(method, params, timeout)`, `await evaluate(js, await_promise,
+  timeout)` (by value; a JS exception is `EngineError('api')`),
+  `await bridge(method, *args)` (`window.__appleMusicLibrary.method(...)`),
+  `on(event, callback)` / `off` (callback gets `(name, data)`; a CDP method
+  name, a bridge event as `'am:<name>'`, or the wildcards `'am:*'` and
+  `'*'`), `await ensure_bridge()` (injects `bridge.js` when the page's
+  `__version` differs from the file's hash, waits for MusicKit, and from then
+  on puts the bridge back after every navigation of the page's main frame,
+  seen as `Runtime.executionContextCreated`), `await subscribe()` (bridge
+  events on, re-done after navigations), `await close()`, `await
+  wait_closed()`, `connected`. `await connect_page(port)` finds the page
+  and connects. Timeouts are `EngineError('timeout')`, a lost socket
+  `'engine-down'` (pending calls included).
+- **`scripts/am.py`** — the debug CLI: `status`, `start [--visible]`,
+  `stop`, `eval <js>`, `now-playing`, `events`. Same configuration as the
+  app (`config.py`, so 9228 and `$XDG_DATA_HOME/apple-music/chrome` unless
+  overridden). Starts Chrome with a plain `Popen` in its own session: an
+  asyncio subprocess transport kills its child when garbage-collected, i.e.
+  when the command exits.
+
+### Events
+
+`bridge.subscribe()` attaches MusicKit listeners once and posts each event
+through the binding as `{name, data}`; the client dispatches it as
+`'am:<name>'`. All eleven names exist in `MusicKit.Events` of the live page
+(checked 2026-09-27). The data, read from the instance at the moment of the
+event:
+
+| Event | data |
+|---|---|
+| `authorizationStatusDidChange` | `{authorized, status}` (status: MusicKit's number, or null) |
+| `playbackStateDidChange` | `{state, position, duration}` — state is the `MusicKit.PlaybackStates` name: `none loading playing paused stopped ended seeking waiting stalled completed`; a play walks playing → waiting → loading → playing |
+| `nowPlayingItemDidChange` | `{track: Track or null, index}` (the `now-playing` Track shape) |
+| `playbackTimeDidChange` | `{position, duration}` in seconds, about four times a second while playing |
+| `playbackDurationDidChange` | `{duration}` |
+| `queueItemsDidChange` | `{index, items: [Track…]}` (the `queue` shape; index is -1 before playback starts) |
+| `queuePositionDidChange` | `{index, oldIndex}` |
+| `shuffleModeDidChange` | `{shuffle: "on"\|"off"}` |
+| `repeatModeDidChange` | `{repeat: "none"\|"one"\|"all"}` |
+| `playbackVolumeDidChange` | `{volume}` (0..1) |
+| `mediaPlaybackError` | `{message}` |

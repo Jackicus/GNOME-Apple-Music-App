@@ -132,21 +132,37 @@ src/applemusic.gresource.xml   compiled .ui files (subdirectories' aliased to th
                                style.css, icons
 src/meson.build                blueprint list, gresource, install_data lists (app .py; pages/,
                                widgets/, backend/ each their own)
-src/backend/                   vendored from the extension, no gi; __init__.py records provenance
-                               and every edit, README.md the command table, error codes and the
-                               library.json/Item/Track shapes
-  config.py                    cache_dir() profile_dir() port() state_file(), APPLE_MUSIC_CACHE/
+src/backend/                   the engine layer: vendored from the extension plus this app's async
+                               layer; no gi, asyncio and stdlib only. __init__.py records provenance
+                               and every edit, README.md the command table, error codes, the events
+                               and the library.json/Item/Track shapes
+  errors.py                    EngineError(code, message): engine-down, not-signed-in, api, timeout,
+                               usage
+  chrome.py                    find_chrome(), chrome_args(binary, profile, port, headless),
+                               EngineState (engine.json load/save/remove, .alive), pid_alive(),
+                               async wait_for_devtools/list_targets/find_target/wait_for_target
+                               (urllib in a thread); select_target() picks the music.apple.com page
+  client.py                    CDPClient: connect(ws_url), call(), evaluate(), bridge(method, *args),
+                               on/off(event, cb(name, data)) for CDP events and 'am:<event>' bridge
+                               events ('am:*', '*' wildcards), ensure_bridge() (kept across the
+                               page's navigations), subscribe(), close(), wait_closed();
+                               connect_page(port)
+  config.py                    cache_dir() profile_dir() port() state_file(profile), APPLE_MUSIC_CACHE/
                                _PROFILE/_PORT overrides, THUMB_SIZE 320, COVER_SIZE 640, BRIDGE_JS
-  cdp.py                       blocking CDP client, own WebSocket framing (stdlib)
+  cdp.py                       the WebSocket handshake and frame codec as pure functions (shared with
+                               client.py) and the extension's blocking client on them
   bridge.js                    injected into music.apple.com (window.__appleMusicLibrary); installed
-                               as data beside the Python
+                               as data beside the Python; subscribe() forwards MusicKit events through
+                               the window.__amEvent binding as {name, data}
   sync.py                      API answers → Item/Track, artwork cache (.sizes, scale_image hook),
                                library.json writing
   am.py                        REFERENCE ONLY (the extension's CLI): not installed, imported or
-                               linted; phases 9-11 port it, then delete it
+                               linted; phases 10-11 port its sync and command bodies, then delete it
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
+scripts/am.py                  the engine's debug CLI (no GUI): status, start [--visible], stop,
+                               eval <js>, now-playing, events; the app's port and profile
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
                                --albums N adds generated albums and artists; the last playlist is
                                Favourite Songs (attributes.isFavourites); `folders`: three
@@ -195,6 +211,14 @@ scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size W
                           APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
                           (Songs of 30,000: --page songs --distance 40000, the whole is 1.5M px)
 python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
+scripts/am.py [--debug] status | start [--visible] [--browser CMD] | stop | eval [--no-await] JS |
+              now-playing | events
+                          drives the engine without the GUI, on the app's port and profile
+                          (APPLE_MUSIC_PORT/APPLE_MUSIC_PROFILE override; the .Devel build's
+                          are 9229 and chrome-devel). One JSON value per command, or
+                          {"error": code, "message"} and exit 1. `start` leaves Chrome running
+                          (headless unless --visible) and reuses one already up; `events`
+                          prints bridge events one per line until Ctrl+C. Never signs in.
 scripts/demo_library.py [--cache DIR] [--albums N]
                           writes an invented library (library.json, art/, thumb/, art/.sizes) into
                           DIR, default build/demo; no Chrome. --albums 2000 (about 24,000 songs,
@@ -455,6 +479,22 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `$XDG_DATA_HOME/apple-music-library/chrome`; this app uses 9228 and `$XDG_DATA_HOME/apple-music/chrome`
   (the `.Devel` build 9229 and `chrome-devel`) so they can run side by side, which also means a
   separate sign-in per profile.
+- The engine layer (phase 9): `EngineState.alive` is the pid *and* `--user-data-dir=<profile>`
+  on its `/proc` command line, so a reused pid is never mistaken for our Chrome; the state file
+  is keyed by profile (`config.state_file(profile)`: the default profile's in
+  `$XDG_RUNTIME_DIR/apple-music/engine.json`, any other's inside the profile). A
+  `Runtime.addBinding` is per CDP session: each connection registers `__amEvent` itself and
+  the last one to connect owns the page's `window.__amEvent`. `Runtime.enable` replays
+  `executionContextCreated` for existing contexts; the client re-injects only once
+  `ensure_bridge()` has been asked for, and only for the main frame's default context
+  (iframes such as Apple's sign-in get their own). MusicKit's `PlaybackStates` names
+  (`none loading playing paused stopped ended seeking waiting stalled completed`) are what
+  `am:playbackStateDidChange` carries; a play walks playing → waiting → loading → playing.
+  An asyncio subprocess transport kills its child when garbage-collected (as a CLI command
+  exits), so `scripts/am.py` spawns Chrome with `subprocess.Popen(start_new_session=True)`;
+  the app spawns with `Gio.Subprocess`. Visible Chrome is an `--app=` window (no tabs or
+  address bar), as the extension had it. Unauthorised MusicKit plays 30-second catalog
+  previews, which is enough to exercise playback and events without signing in.
 - Python 3.14 deprecates `asyncio.set_event_loop_policy` (removal in 3.16), but it is still how
   PyGObject 3.56 puts asyncio on the GLib loop; `main.use_glib_event_loop()` filters the
   DeprecationWarning and sets the policy. PyGObject's `Gio.Application.run` marks the GLib loop as

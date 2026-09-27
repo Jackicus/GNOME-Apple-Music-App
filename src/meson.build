@@ -103,7 +103,10 @@ install_data(
   'backend/__init__.py',
   'backend/bridge.js',
   'backend/cdp.py',
+  'backend/chrome.py',
+  'backend/client.py',
   'backend/config.py',
+  'backend/errors.py',
   'backend/sync.py',
   install_dir: moduledir / 'backend',
 )

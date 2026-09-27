@@ -2,6 +2,12 @@
 
 A pure standard-library implementation of RFC 6455 WebSocket client
 and Chrome DevTools Protocol client for controlling headless Chrome.
+
+The handshake, the frame codec and the reading of a JS exception are
+pure functions (handshake_request, check_handshake, encode_frame,
+decode_frame, close_frame, exception_message), shared with the
+asynchronous client in client.py; the CDPClient here is the blocking
+one, kept as the extension has it.
 """
 
 from __future__ import annotations
@@ -30,6 +36,13 @@ __all__ = [
     "http_get_json",
     "discover_target",
     "connect_to_chrome",
+    "parse_ws_url",
+    "handshake_request",
+    "check_handshake",
+    "encode_frame",
+    "decode_frame",
+    "close_frame",
+    "exception_message",
 ]
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -57,6 +70,148 @@ def _mask(payload: bytes, mask_key: bytes) -> bytes:
     for i in range(4):
         masked[i::4] = bytes(b ^ mask_key[i] for b in masked[i::4])
     return bytes(masked)
+
+
+# ---------------------------------------------------------------------------
+# The WebSocket handshake and frame codec, as pure functions
+# ---------------------------------------------------------------------------
+
+
+def parse_ws_url(ws_url: str) -> tuple[str, str, int, str, str]:
+    """(scheme, host, port, path, netloc) of a ws:// or wss:// URL; CDPError otherwise."""
+    parsed = urllib.parse.urlsplit(ws_url)
+    if parsed.scheme not in ("ws", "wss"):
+        raise CDPError(f"Unsupported WebSocket scheme: {parsed.scheme}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    return parsed.scheme, host, port, path, parsed.netloc
+
+
+def handshake_request(path: str, host_header: str) -> tuple[bytes, str]:
+    """The client's HTTP Upgrade request for `path`, and the Sec-WebSocket-Key it carries
+    (check_handshake wants it back)."""
+    sec_key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host_header}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {sec_key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    )
+    return request.encode("ascii"), sec_key
+
+
+def check_handshake(header_bytes: bytes, sec_key: str) -> None:
+    """Raise CDPError unless `header_bytes` (the response head, without its closing blank line)
+    is a 101 whose Sec-WebSocket-Accept answers `sec_key`."""
+    lines = header_bytes.split(b"\r\n")
+    if not lines or not lines[0]:
+        raise CDPError("Empty handshake response from server")
+
+    status_line = lines[0].decode("iso-8859-1")
+    parts = status_line.split()
+    if len(parts) < 2 or parts[1] != "101":
+        raise CDPError(f"WebSocket handshake failed with status: {status_line}")
+
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if b":" in line:
+            name, val = line.split(b":", 1)
+            headers[name.strip().lower().decode("iso-8859-1")] = val.strip().decode("iso-8859-1")
+
+    expected_accept = base64.b64encode(
+        hashlib.sha1((sec_key + WS_GUID).encode("ascii")).digest()
+    ).decode("ascii")
+
+    actual_accept = headers.get("sec-websocket-accept")
+    if actual_accept != expected_accept:
+        raise CDPError(
+            f"Handshake failed: Sec-WebSocket-Accept mismatch (expected {expected_accept}, got {actual_accept})"
+        )
+
+
+def encode_frame(opcode: int, payload: bytes) -> bytes:
+    """One masked client-to-server RFC 6455 frame (FIN set) carrying `payload`."""
+    header = bytearray()
+    header.append(0x80 | (opcode & 0x0F))  # FIN=1, RSV=0, opcode
+
+    length = len(payload)
+    mask_bit = 0x80  # Client-to-server frames MUST be masked
+    if length < 126:
+        header.append(mask_bit | length)
+    elif length <= 0xFFFF:
+        header.append(mask_bit | 126)
+        header.extend(struct.pack("!H", length))
+    else:
+        header.append(mask_bit | 127)
+        header.extend(struct.pack("!Q", length))
+
+    mask_key = os.urandom(4)
+    header.extend(mask_key)
+    return bytes(header) + _mask(payload, mask_key)
+
+
+def decode_frame(buffer: bytes | bytearray) -> tuple[int, bool, bytes, int] | None:
+    """The frame at the front of `buffer` as (opcode, fin, payload, bytes consumed), or None
+    while the buffer holds less than a whole frame. Server frames are unmasked; a masked one
+    is unmasked all the same."""
+    if len(buffer) < 2:
+        return None
+    b0, b1 = buffer[0], buffer[1]
+    fin = bool(b0 & 0x80)
+    opcode = b0 & 0x0F
+    masked = bool(b1 & 0x80)
+    length = b1 & 0x7F
+    pos = 2
+
+    if length == 126:
+        if len(buffer) < 4:
+            return None
+        length = struct.unpack("!H", bytes(buffer[2:4]))[0]
+        pos = 4
+    elif length == 127:
+        if len(buffer) < 10:
+            return None
+        length = struct.unpack("!Q", bytes(buffer[2:10]))[0]
+        pos = 10
+
+    mask_key = None
+    if masked:
+        if len(buffer) < pos + 4:
+            return None
+        mask_key = bytes(buffer[pos:pos + 4])
+        pos += 4
+
+    if len(buffer) < pos + length:
+        return None
+    payload = bytes(buffer[pos:pos + length])
+    if mask_key:
+        payload = _mask(payload, mask_key)
+    return opcode, fin, payload, pos + length
+
+
+def close_frame() -> bytes:
+    """A masked Close frame with the normal-closure status, 1000."""
+    return encode_frame(8, struct.pack("!H", 1000))
+
+
+def exception_message(exc: dict[str, Any]) -> str:
+    """One line for a Runtime.evaluate exceptionDetails.
+
+    `description` is the message followed by the stack, and `text` repeats
+    the message behind "Uncaught (in promise)". One line is all a
+    notification can show; the rest rides along with the exception itself.
+    """
+    desc = (exc.get("exception") or {}).get("description") or exc.get("text") or "JS exception"
+    message = desc.splitlines()[0]
+    if message.startswith("Error: "):
+        message = message[len("Error: "):]
+    return message
 
 
 def http_get_json(port: int, path: str, host: str = "127.0.0.1", timeout: float = 5.0) -> Any:
@@ -217,20 +372,12 @@ class CDPClient:
         self._call_lock = threading.Lock()
         self._send_lock = threading.Lock()
 
-        parsed = urllib.parse.urlsplit(ws_url)
-        if parsed.scheme not in ("ws", "wss"):
-            raise CDPError(f"Unsupported WebSocket scheme: {parsed.scheme}")
-
-        self.host = parsed.hostname or "127.0.0.1"
-        self.port = parsed.port or (443 if parsed.scheme == "wss" else 80)
-        self.path = parsed.path or "/"
-        if parsed.query:
-            self.path = f"{self.path}?{parsed.query}"
+        scheme, self.host, self.port, self.path, netloc = parse_ws_url(ws_url)
 
         # Connect TCP socket and optionally wrap with TLS
         try:
             raw_sock = socket.create_connection((self.host, self.port), timeout=timeout)
-            if parsed.scheme == "wss":
+            if scheme == "wss":
                 import ssl
                 ssl_context = ssl.create_default_context()
                 self._sock: socket.socket | None = ssl_context.wrap_socket(
@@ -246,29 +393,18 @@ class CDPClient:
 
         # Perform RFC 6455 opening handshake
         try:
-            self._perform_handshake(parsed.netloc)
+            self._perform_handshake(netloc)
         except Exception:
             self.close()
             raise
 
     def _perform_handshake(self, netloc: str) -> None:
         """Perform the client-side HTTP Upgrade handshake."""
-        sec_key = base64.b64encode(os.urandom(16)).decode("ascii")
-        host_header = netloc or f"{self.host}:{self.port}"
-
-        req = (
-            f"GET {self.path} HTTP/1.1\r\n"
-            f"Host: {host_header}\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Key: {sec_key}\r\n"
-            "Sec-WebSocket-Version: 13\r\n"
-            "\r\n"
-        )
+        request, sec_key = handshake_request(self.path, netloc or f"{self.host}:{self.port}")
 
         try:
             assert self._sock is not None
-            self._sock.sendall(req.encode("ascii"))
+            self._sock.sendall(request)
 
             # Read HTTP response headers until delimiter \r\n\r\n
             while b"\r\n\r\n" not in self._buffer:
@@ -280,31 +416,7 @@ class CDPClient:
             idx = self._buffer.find(b"\r\n\r\n")
             header_bytes = bytes(self._buffer[:idx])
             del self._buffer[:idx + 4]
-
-            lines = header_bytes.split(b"\r\n")
-            if not lines:
-                raise CDPError("Empty handshake response from server")
-
-            status_line = lines[0].decode("iso-8859-1")
-            parts = status_line.split()
-            if len(parts) < 2 or parts[1] != "101":
-                raise CDPError(f"WebSocket handshake failed with status: {status_line}")
-
-            headers: dict[str, str] = {}
-            for line in lines[1:]:
-                if b":" in line:
-                    name, val = line.split(b":", 1)
-                    headers[name.strip().lower().decode("iso-8859-1")] = val.strip().decode("iso-8859-1")
-
-            expected_accept = base64.b64encode(
-                hashlib.sha1((sec_key + WS_GUID).encode("ascii")).digest()
-            ).decode("ascii")
-
-            actual_accept = headers.get("sec-websocket-accept")
-            if actual_accept != expected_accept:
-                raise CDPError(
-                    f"Handshake failed: Sec-WebSocket-Accept mismatch (expected {expected_accept}, got {actual_accept})"
-                )
+            check_handshake(header_bytes, sec_key)
 
         except (socket.timeout, TimeoutError) as e:
             raise CDPTimeoutError(f"WebSocket handshake timed out for {self.ws_url}") from e
@@ -313,90 +425,49 @@ class CDPClient:
         except Exception as e:
             raise CDPError(f"WebSocket handshake failed: {e}") from e
 
-    def _read_exact(self, n: int, deadline: float | None = None) -> bytes:
-        """Read exactly n bytes from the socket into a byte buffer."""
-        if n == 0:
-            return b""
+    def _fill_buffer(self, deadline: float | None = None) -> None:
+        """Read whatever the socket has into the buffer, at least one byte."""
+        if self._closed or not self._sock:
+            raise CDPError("WebSocket connection closed")
 
-        while len(self._buffer) < n:
-            if self._closed or not self._sock:
-                raise CDPError("WebSocket connection closed")
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CDPTimeoutError("Timed out reading from WebSocket")
+            self._sock.settimeout(max(0.001, remaining))
 
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise CDPTimeoutError("Timed out reading from WebSocket")
-                self._sock.settimeout(max(0.001, remaining))
+        try:
+            chunk = self._sock.recv(65536)
+        except (socket.timeout, TimeoutError) as e:
+            raise CDPTimeoutError("Timed out reading from WebSocket") from e
+        except OSError as e:
+            raise CDPError(f"Socket error reading from WebSocket: {e}") from e
 
-            try:
-                chunk = self._sock.recv(max(4096, n - len(self._buffer)))
-            except (socket.timeout, TimeoutError) as e:
-                raise CDPTimeoutError("Timed out reading from WebSocket") from e
-            except OSError as e:
-                raise CDPError(f"Socket error reading from WebSocket: {e}") from e
-
-            if not chunk:
-                raise CDPError("WebSocket connection closed unexpectedly by remote peer")
-            self._buffer.extend(chunk)
-
-        res = bytes(self._buffer[:n])
-        del self._buffer[:n]
-        return res
+        if not chunk:
+            raise CDPError("WebSocket connection closed unexpectedly by remote peer")
+        self._buffer.extend(chunk)
 
     def _send_frame(self, opcode: int, payload: bytes) -> None:
         """Send a single masked RFC 6455 frame to the server."""
         if self._closed or not self._sock:
             raise CDPError("WebSocket connection is closed")
 
-        header = bytearray()
-        header.append(0x80 | (opcode & 0x0F))  # FIN=1, RSV=0, opcode
-
-        length = len(payload)
-        mask_bit = 0x80  # Client-to-server frames MUST be masked
-        if length < 126:
-            header.append(mask_bit | length)
-        elif length <= 0xFFFF:
-            header.append(mask_bit | 126)
-            header.extend(struct.pack("!H", length))
-        else:
-            header.append(mask_bit | 127)
-            header.extend(struct.pack("!Q", length))
-
-        mask_key = os.urandom(4)
-        header.extend(mask_key)
-        masked_payload = _mask(payload, mask_key)
-
+        frame = encode_frame(opcode, payload)
         with self._send_lock:
             try:
-                self._sock.sendall(header + masked_payload)
+                self._sock.sendall(frame)
             except OSError as e:
                 raise CDPError(f"Failed to send WebSocket frame: {e}") from e
 
     def _read_frame(self, deadline: float | None = None) -> tuple[int, bool, bytes]:
         """Read and decode a single RFC 6455 frame. Returns (opcode, fin, payload)."""
-        b0, b1 = self._read_exact(2, deadline=deadline)
-        fin = bool(b0 & 0x80)
-        opcode = b0 & 0x0F
-
-        mask = bool(b1 & 0x80)
-        payload_len = b1 & 0x7F
-
-        if payload_len == 126:
-            len_bytes = self._read_exact(2, deadline=deadline)
-            payload_len = struct.unpack("!H", len_bytes)[0]
-        elif payload_len == 127:
-            len_bytes = self._read_exact(8, deadline=deadline)
-            payload_len = struct.unpack("!Q", len_bytes)[0]
-
-        mask_key = None
-        if mask:
-            mask_key = self._read_exact(4, deadline=deadline)
-
-        payload = self._read_exact(payload_len, deadline=deadline) if payload_len > 0 else b""
-        if mask and mask_key:
-            payload = _mask(payload, mask_key)
-
-        return opcode, fin, payload
+        while True:
+            frame = decode_frame(self._buffer)
+            if frame is not None:
+                opcode, fin, payload, consumed = frame
+                del self._buffer[:consumed]
+                return opcode, fin, payload
+            self._fill_buffer(deadline=deadline)
 
     def _read_message(self, deadline: float | None = None) -> str:
         """Read a complete message, handling fragmented frames, ping/pong, and close."""
@@ -550,14 +621,7 @@ class CDPClient:
 
         if "exceptionDetails" in result:
             exc = result["exceptionDetails"]
-            desc = (exc.get("exception") or {}).get("description") or exc.get("text") or "JS exception"
-            # `description` is the message followed by the stack, and `text`
-            # repeats the message behind "Uncaught (in promise)". One line is
-            # all a notification can show; the rest rides along in `data`.
-            message = desc.splitlines()[0]
-            if message.startswith("Error: "):
-                message = message[len("Error: "):]
-            raise CDPError(f"JS Exception: {message}", data=exc)
+            raise CDPError(f"JS Exception: {exception_message(exc)}", data=exc)
 
         result_obj = result.get("result")
         if isinstance(result_obj, dict):
@@ -574,12 +638,7 @@ class CDPClient:
 
         if sock is not None:
             try:
-                # Normal closure status code 1000 masked with random key
-                header = bytearray([0x80 | 0x08, 0x80 | 2])
-                mask_key = os.urandom(4)
-                header.extend(mask_key)
-                payload = _mask(struct.pack("!H", 1000), mask_key)
-                sock.sendall(header + payload)
+                sock.sendall(close_frame())
             except Exception:
                 pass
             try:
