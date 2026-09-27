@@ -24,6 +24,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from pathlib import Path
 
 from gi.repository import Gio, GLib, GObject
@@ -55,6 +56,7 @@ LIBRARY_PREFIXES = ('l.', 'p.', 'r.')
 # is not a prompt or a menu label is taken; none gives '', never a guess.
 ACCOUNT_NAME_JS = r'''(() => {
   const candidates = [
+    '.account-menu .user__name', '.user__name',
     '[data-testid="user-menu-name"]', '[data-testid="account-name"]',
     '.auth-content [class*="name"]', '.auth-content [data-testid*="name"]',
     '.navigation__account-name', '.account-name', '.user-name',
@@ -538,19 +540,25 @@ class Engine(GObject.Object):
         except EngineError as e:
             log.debug('authorize: %s', e)
 
-    async def account_name(self):
+    async def account_name(self, wait=0):
         """The account's display name as the signed-in page shows it, or '' when no known
-        element holds one. Never a guess."""
-        client = self._require_up()
-        try:
-            name = await client.evaluate(ACCOUNT_NAME_JS, await_promise=False, timeout=5)
-        except EngineError as e:
-            if e.code == 'engine-down':
-                raise
-            log.debug('account name: %s', e)
-            return ''
-        if isinstance(name, str):
-            name = ' '.join(name.split())
-            if 0 < len(name) <= 64:
-                return name
-        return ''
+        element holds one. Never a guess. Apple's page renders the account menu a moment
+        after authorization, so `wait` seconds of polling (every half second) covers the
+        gap right after sign-in."""
+        deadline = time.monotonic() + wait
+        while True:
+            client = self._require_up()
+            try:
+                name = await client.evaluate(ACCOUNT_NAME_JS, await_promise=False, timeout=5)
+            except EngineError as e:
+                if e.code == 'engine-down':
+                    raise
+                log.debug('account name: %s', e)
+                name = None
+            if isinstance(name, str):
+                name = ' '.join(name.split())
+                if 0 < len(name) <= 64:
+                    return name
+            if time.monotonic() >= deadline:
+                return ''
+            await asyncio.sleep(0.5)

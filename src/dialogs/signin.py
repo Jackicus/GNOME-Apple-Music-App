@@ -51,7 +51,7 @@ class SignInDialog(Adw.Dialog):
             settings.set_boolean('signed-in', True)
             self.status_page.set_description(_('Signed in'))
             self.cancel_button.set_sensitive(False)
-            name = await engine.account_name()
+            name = await engine.account_name(wait=15)
             settings.set_string('account-name', name)
             if name:
                 log.info('account name read from the page')

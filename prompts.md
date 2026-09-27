@@ -1175,6 +1175,14 @@ verified up to the visible Chrome on Apple's page, then cancelled). Notes for la
      scripts/am.py eval 'document.querySelector(".auth-content").outerHTML'` and add the
      element that holds the name to `ACCOUNT_NAME_JS` in `src/engine.py` (candidates first,
      `.auth-content` fallbacks last). The `bad` regex there lists what is not a name.
+- **Verified by Jack and the coordinator on 2026-09-28** (dev build): sign-in in the visible
+  Chrome completed, the engine restarted headless and came up authorized; quit removed the
+  Chrome and the state file; relaunch autostarted headless; after `kill -9` the relaunch
+  reclaimed the surviving Chrome. The account name was missed at sign-in because Apple's page
+  renders its account menu a moment after authorization: `account_name(wait=…)` now polls
+  (15 s in the dialog), the element is `.account-menu .user__name` (first candidate now), and
+  autostart fills an empty `account-name`. Item fetch (step 2) waits for phase 11's shelves;
+  sign-out was not run on the real profile.
 - What was verified live on this machine (dev build, `chrome-devel`, 9229, never signed in):
   `app.sign-in` opened the dialog and a visible `--app` Chrome on `music.apple.com/us/new`,
   the engine reached `signing-in` (the bridge's `signin()` was called, its promise pending),

@@ -145,6 +145,16 @@ class Application(Adw.Application):
         if not self.engine.authorized:
             log.warning('the engine is up but Apple Music is not signed in')
             self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
+        elif not self.settings.get_string('account-name'):
+            # Sign-in may have missed the name (the page renders it late); try again now.
+            try:
+                name = await self.engine.account_name(wait=10)
+            except EngineError as error:
+                log.debug('account name after autostart: %s', error)
+                return
+            if name:
+                self.settings.set_string('account-name', name)
+                log.info('account name read from the page after autostart')
 
     def toast(self, title, button_label=None, action_name=None):
         """A toast on the active window, with a button running an action when given."""
