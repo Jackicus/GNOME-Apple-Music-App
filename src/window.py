@@ -10,8 +10,6 @@ from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar 
 # looked up when used, after the launcher has set up gettext. %s is the count, grouped as the
 # locale groups digits.
 COUNTED = {
-    'songs': (lambda library: library.song_count(),
-              lambda n: ngettext('%s song', '%s songs', n)),
     'radio': (lambda library: library.radio.get_n_items(),
               lambda n: ngettext('%s station', '%s stations', n)),
 }
@@ -55,6 +53,11 @@ class Window(Adw.ApplicationWindow):
     def open_item(self, item):
         """Show an album, artist, playlist, station or video: what activating a tile does."""
         self.toast(item.title)
+
+    def play_request(self, track):
+        """Play a track where it was chosen (a Songs row): its group's queue (track.play) from
+        its place in it (track.index). Until the engine plays, a toast with its title."""
+        self.toast(track.title)
 
     def _build_sidebar(self):
         for title, destinations in sections.sidebar_sections():

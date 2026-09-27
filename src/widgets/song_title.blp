@@ -1,0 +1,71 @@
+using Gtk 4.0;
+
+template $AppleMusicSongTitle: Box {
+  spacing: 12;
+
+  // A 32 px thumbnail: a placeholder card under the cover, which is drawn over it when
+  // decoded. The overlay takes the placeholder's size, whatever the cover decodes to.
+  Overlay {
+    valign: center;
+
+    child: Box {
+      width-request: 32;
+      height-request: 32;
+
+      styles [
+        "card",
+        "song-art",
+      ]
+
+      Image placeholder_icon {
+        icon-name: "music-note-symbolic";
+        hexpand: true;
+        accessible-role: presentation;
+
+        styles [
+          "dim-label",
+        ]
+      }
+    };
+
+    [overlay]
+    Picture picture {
+      content-fit: cover;
+      overflow: hidden;
+      accessible-role: presentation;
+
+      styles [
+        "song-art",
+      ]
+    }
+  }
+
+  Box {
+    spacing: 6;
+
+    // A label rather than a Gtk.Inscription, so the badge follows the title's text. One
+    // line only: measuring it again at every rebind is cheap, unlike a wrapping label.
+    Label label {
+      xalign: 0;
+      ellipsize: end;
+      single-line-mode: true;
+    }
+
+    Label explicit_badge {
+      // Translators: the badge marking a song with explicit lyrics, as Apple Music shows it
+      label: C_("explicit badge", "E");
+      tooltip-text: _("Explicit");
+      valign: center;
+      visible: false;
+
+      accessibility {
+        label: _("Explicit");
+      }
+
+      styles [
+        "caption",
+        "explicit-badge",
+      ]
+    }
+  }
+}

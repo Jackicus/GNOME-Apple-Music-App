@@ -22,3 +22,28 @@ gridview.tile-grid {
 .tile-art {
   border-radius: 8px;
 }
+
+/* The Songs table (pages/songs.blp): its outer cells and headers line up with the page title's
+   24px margins (a cell has 6px of its own). */
+columnview.songs-table > header > button:first-child,
+columnview.songs-table > listview > row > cell:first-child {
+  padding-left: 24px;
+}
+
+columnview.songs-table > header > button:last-child,
+columnview.songs-table > listview > row > cell:last-child {
+  padding-right: 24px;
+}
+
+/* Its thumbnails (widgets/song_title.blp). */
+.song-art {
+  border-radius: 4px;
+}
+
+/* The "E" after an explicit song's title: small and bold on a faint wash of the text colour. */
+.explicit-badge {
+  padding: 0 4px;
+  border-radius: 3px;
+  background-color: alpha(currentColor, 0.15);
+  font-weight: bold;
+}

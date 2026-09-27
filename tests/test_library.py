@@ -17,7 +17,7 @@ from unittest import mock
 from tests import ROOT
 
 from applemusic import library as library_module
-from applemusic.library import SECTIONS, Group, Item, Library, Track
+from applemusic.library import SECTIONS, Group, Item, Library, SongOrder, Track, fold
 
 
 def load(cache_dir, library=None):
@@ -33,6 +33,11 @@ def track(track_id, title, index):
             'album': 'Test Album', 'trackNumber': index + 1, 'discNumber': 1,
             'durationMs': 180000, 'durationLabel': '3:00', 'explicit': False, 'index': index,
             'thumb': None}
+
+
+def build_songs(library):
+    asyncio.run(library.build_songs())
+    return library.songs
 
 
 def album(album_id, title, track_ids):
@@ -129,7 +134,8 @@ class TestDemoLibrary(unittest.TestCase):
                     if entry['id'] not in expected:
                         expected.append(entry['id'])
         self.assertEqual(self.library.song_count(), len(expected))
-        songs = self.library.songs
+        songs = build_songs(self.library)
+        self.assertTrue(self.library.songs_ready)
         self.assertIs(self.library.songs, songs)
         self.assertEqual([t.id for t in songs], expected)
         self.assertEqual(self.library.song_count(), len(expected))
@@ -153,7 +159,8 @@ class TestLaziness(unittest.TestCase):
         library = load(self.cache)
         item = library.albums.get_item(0)
         self.assertIsNone(item._groups)
-        self.assertFalse(library._songs_built)
+        self.assertFalse(library.songs_ready)
+        self.assertEqual(library.songs.get_n_items(), 0)  # nothing asked for it
 
         groups = item.groups
         self.assertIs(item.groups, groups)
@@ -177,8 +184,9 @@ class TestLaziness(unittest.TestCase):
                                    album('l.a2', 'Two', ['i.2', 'i.3', 'i.1'])])
         library = load(self.cache)
         self.assertEqual(library.song_count(), 3)
-        self.assertEqual([t.id for t in library.songs], ['i.1', 'i.2', 'i.3'])
+        self.assertEqual([t.id for t in build_songs(library)], ['i.1', 'i.2', 'i.3'])
         self.assertEqual([t.album for t in library.songs], ['Test Album'] * 3)
+        self.assertEqual(library.songs.get_item(0).search_key, 'song i.1\ntest artist\ntest album')
 
     def test_properties_notify(self):
         item = Item({'id': 'l.x', 'kind': 'album', 'title': 'Before'})
@@ -237,7 +245,7 @@ class TestLoading(unittest.TestCase):
         library = Library()
         library.batch_size = 5
         load(self.cache, library)
-        albums, songs = library.albums, library.songs
+        albums, songs = library.albums, build_songs(library)
         self.assertEqual(songs.get_n_items(), 12)
         self.assertIs(library.shelf('recently-added').items.get_item(0),
                       library.by_id('album', 'l.a3'))
@@ -285,6 +293,129 @@ class TestLoading(unittest.TestCase):
         self.assertEqual([item.id for item in library.albums], ['l.new'])
         self.assertEqual(library.state, 'ready')
         self.assertEqual(len(changed), 1)  # the overtaken load gave up without a word
+
+
+class TestBuildSongs(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.cache = self.temp_dir.name
+        self.ids = [f'i.{n}' for n in range(30)]
+        write_library(self.cache, [album(f'l.a{n}', f'A{n}', self.ids[n * 3:n * 3 + 3])
+                                   for n in range(10)])
+
+    def test_batches_pause_and_splice_once(self):
+        library = load(self.cache)
+        spliced = []
+        library.songs.connect('items-changed', lambda _store, *change: spliced.append(change))
+        pauses = []
+        yield_to_frames = library_module.yield_to_frames
+
+        async def counting_yield():
+            pauses.append(True)
+            await yield_to_frames()
+
+        # A zero budget pauses after every album.
+        with mock.patch.object(library_module, 'FRAME_BUDGET', 0), \
+                mock.patch.object(library_module, 'yield_to_frames', counting_yield):
+            build_songs(library)
+        self.assertEqual([t.id for t in library.songs], self.ids)
+        self.assertEqual(len(pauses), 10)
+        self.assertEqual(spliced, [(0, 0, 30)])
+        self.assertTrue(library.songs_ready)
+        build_songs(library)  # filled already: nothing happens
+        self.assertEqual(spliced, [(0, 0, 30)])
+
+    def test_asked_while_loading_the_load_fills_it(self):
+        library = Library()
+        ready = []
+        library.connect('notify::songs-ready', lambda obj, _pspec: ready.append(obj.state))
+
+        async def load_and_ask():
+            with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
+                loading = asyncio.ensure_future(library.load())
+                await asyncio.sleep(0)  # the load has started
+            self.assertEqual(library.state, 'loading')
+            await library.build_songs()  # returns at once: the load will do it
+            self.assertFalse(library.songs_ready)
+            await loading
+
+        asyncio.run(load_and_ask())
+        self.assertEqual([t.id for t in library.songs], self.ids)
+        self.assertEqual(ready, ['loading'])  # filled before the load reported 'ready'
+
+    def test_a_load_during_the_build_refills_it(self):
+        library = load(self.cache)
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        write_library(other.name, [album('l.b1', 'B1', ['i.x', 'i.y'])])
+
+        async def build_then_reload():
+            build = asyncio.ensure_future(library.build_songs())
+            await asyncio.sleep(0)  # the build has paused after its first album
+            with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': other.name}):
+                await library.load()
+            await build
+
+        with mock.patch.object(library_module, 'FRAME_BUDGET', 0):
+            asyncio.run(build_then_reload())
+        self.assertEqual([t.id for t in library.songs], ['i.x', 'i.y'])
+        self.assertTrue(library.songs_ready)
+
+    def test_nothing_to_load_is_ready_and_empty(self):
+        library = Library()
+        load(tempfile.gettempdir() + '/no-such-apple-music-cache', library)
+        self.assertEqual(build_songs(library).get_n_items(), 0)
+        self.assertTrue(library.songs_ready)
+
+
+class TestSongOrder(unittest.TestCase):
+    def setUp(self):
+        rows = [
+            # id, title, artist, album, disc, track, ms
+            ('i.1', 'beta', 'Zed', 'Second', 1, 2, 200000),
+            ('i.2', 'Alpha', 'zed', 'Second', 1, 1, 100000),
+            ('i.3', 'alpha', 'Ann', 'First', 2, 1, 300000),
+            ('i.4', 'Gamma', 'Ann', 'First', 1, 1, 100000),
+            ('i.5', 'delta', 'Ann', 'Third', 1, 1, 250000),
+        ]
+        self.tracks = [Track({'id': i, 'title': title, 'artist': artist, 'album': name,
+                              'discNumber': disc, 'trackNumber': number, 'durationMs': ms})
+                       for i, title, artist, name, disc, number, ms in rows]
+        self.order = SongOrder(self.tracks)
+
+    def ids(self, column, descending=False):
+        return [t.id for t in self.order.tracks(column, descending)]
+
+    def test_title_ignores_case_and_breaks_ties_by_artist(self):
+        self.assertEqual(self.ids('title'), ['i.3', 'i.2', 'i.1', 'i.5', 'i.4'])
+        self.assertEqual(self.ids('title', descending=True), ['i.4', 'i.5', 'i.1', 'i.3', 'i.2'])
+
+    def test_artist_keeps_albums_and_tracks_in_order_both_ways(self):
+        self.assertEqual(self.ids('artist'), ['i.4', 'i.3', 'i.5', 'i.2', 'i.1'])
+        self.assertEqual(self.ids('artist', descending=True), ['i.2', 'i.1', 'i.4', 'i.3', 'i.5'])
+
+    def test_album_then_artist_then_track(self):
+        self.assertEqual(self.ids('album'), ['i.4', 'i.3', 'i.2', 'i.1', 'i.5'])
+        self.assertEqual(self.ids('album', descending=True), ['i.5', 'i.2', 'i.1', 'i.4', 'i.3'])
+
+    def test_time_is_numeric(self):
+        self.assertEqual(self.ids('time'), ['i.2', 'i.4', 'i.1', 'i.5', 'i.3'])
+        self.assertEqual(self.ids('time', descending=True), ['i.3', 'i.5', 'i.1', 'i.2', 'i.4'])
+
+    def test_fold_ignores_case_and_accents(self):
+        self.assertEqual(fold('Beyoncé'), 'beyonce')
+        self.assertEqual(fold('ÉLAN Straße'), 'elan strasse')
+        self.assertEqual(fold('Ｆｕｌｌ'), 'full')  # compatibility forms too
+        self.assertEqual(fold('Plain ASCII'), 'plain ascii')
+        track = Track({'title': 'Café', 'artist': 'Zoë', 'album': 'Über'})
+        self.assertEqual(track.search_key, 'cafe\nzoe\nuber')
+
+    def test_same_objects_and_repeatable(self):
+        first = self.order.tracks('artist')
+        self.assertTrue(all(any(t is u for u in self.tracks) for t in first))
+        self.assertEqual(self.order.tracks('artist'), first)
+        self.assertEqual(SongOrder([]).tracks('title'), [])
 
 
 if __name__ == '__main__':

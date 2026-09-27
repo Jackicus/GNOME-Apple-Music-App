@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Scroll a page of the real window from top to bottom and report dropped frames.
 
-    scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--size WxH] [--light]
+    scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH]
+                           [--light]
 
 Runs the installed build (scripts/run.sh or meson install -C build first) on the
 demo library, as screenshot.py --demo does: build/demo, or $APPLE_MUSIC_CACHE
@@ -11,14 +12,19 @@ when set, which is how a big library is measured:
     APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
 
 Once the library has loaded, the page's scrolled window is moved at a steady
-speed on every frame. Two things are reported. The app's own work per frame,
-timed on the main thread from the frame clock's before-paint to the end of its
-paint (tick callbacks and the binds they cause, layout, snapshot and render):
-a frame whose work overran the monitor's refresh interval, or 16.7 ms, would
-have been dropped at that rate. And the gaps between the frames the compositor
-actually asked for, which also depend on the compositor and on what else the
-machine is doing, so they vary from run to run. Also counts the artwork decoded
-on the way. Settings go to a memory backend.
+speed on every frame, to the bottom or for --distance pixels (the Songs page
+of 30,000 songs is 1.5 million pixels long: 6 minutes at 4,000 px/s):
+
+    APPLE_MUSIC_CACHE=build/demo-2500 scripts/scroll_test.py --page songs --distance 40000
+
+Two things are reported. The app's own work per frame, timed on the main thread
+from the frame clock's before-paint to the end of its paint (tick callbacks and
+the binds they cause, layout, snapshot and render): a frame whose work overran
+the monitor's refresh interval, or 16.7 ms, would have been dropped at that
+rate. And the gaps between the frames the compositor actually asked for, which
+also depend on the compositor and on what else the machine is doing, so they
+vary from run to run. Also counts the artwork decoded on the way. Settings go
+to a memory backend.
 """
 
 import argparse
@@ -36,6 +42,7 @@ pkgdatadir = os.path.join(prefix, 'share', 'apple-music')
 parser = argparse.ArgumentParser()
 parser.add_argument('--page', default='albums')
 parser.add_argument('--speed', type=float, default=4000, help='pixels a second (default 4000)')
+parser.add_argument('--distance', type=float, help='pixels to scroll (default: to the bottom)')
 parser.add_argument('--size', default='1100x760')
 parser.add_argument('--light', action='store_true')
 args = parser.parse_args()
@@ -136,6 +143,8 @@ def start():
         end = adjustment.get_upper() - adjustment.get_page_size()
         if end <= 0:  # not laid out yet
             return GLib.SOURCE_CONTINUE
+        if args.distance:
+            end = min(end, args.distance)
         now = clock.get_frame_time()
         times.append(now)
         adjustment.set_value(min(end, args.speed * (now - times[0]) / 1e6))

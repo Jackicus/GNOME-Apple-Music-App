@@ -12,7 +12,9 @@ blueprints = custom_target(
   'blueprints',
   input: files(
     'pages/grid.blp',
+    'pages/songs.blp',
     'player_bar.blp',
+    'widgets/song_title.blp',
     'widgets/tile.blp',
     'window.blp',
   ),
@@ -67,12 +69,14 @@ install_data(
 install_data(
   'pages/__init__.py',
   'pages/grid.py',
+  'pages/songs.py',
   install_dir: moduledir / 'pages',
 )
 
 install_data(
   'widgets/__init__.py',
   'widgets/artwork.py',
+  'widgets/song_title.py',
   'widgets/tile.py',
   install_dir: moduledir / 'widgets',
 )

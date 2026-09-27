@@ -1,0 +1,163 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicSongsPage: Adw.NavigationPage {
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Narrow: the album column goes, title, artist and time stay.
+    Adw.Breakpoint {
+      condition ("max-width: 560sp")
+
+      setters {
+        album_column.visible: false;
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {
+        show-title: false;
+
+        [end]
+        SearchEntry filter_entry {
+          placeholder-text: _("Filter");
+          width-chars: 16;
+          visible: false;
+          search-changed => $on_filter_changed();
+          stop-search => $on_stop_search();
+
+          accessibility {
+            label: _("Filter Songs");
+          }
+        }
+      }
+
+      content: Stack stack {
+        StackPage {
+          name: "loading";
+
+          child: Adw.Spinner {
+            width-request: 32;
+            height-request: 32;
+            halign: center;
+            valign: center;
+          };
+        }
+
+        StackPage {
+          name: "empty";
+          child: Adw.StatusPage empty_page {};
+        }
+
+        StackPage {
+          name: "items";
+
+          // The title stays put above the table: a Gtk.ColumnView only recycles its rows as
+          // the scrollable child of a Gtk.ScrolledWindow, and its header row is its own. On
+          // the view background, as the grid pages' titles are.
+          child: Box {
+            orientation: vertical;
+
+            styles [
+              "view",
+            ]
+
+            Box {
+              spacing: 12;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 12;
+
+              Label title_label {
+                xalign: 0;
+                ellipsize: end;
+                valign: baseline_fill;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Label count_label {
+                xalign: 0;
+                hexpand: true;
+                ellipsize: end;
+                valign: baseline_fill;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+
+            Stack results_stack {
+              vexpand: true;
+
+              StackPage {
+                name: "table";
+
+                child: ScrolledWindow {
+                  hscrollbar-policy: never;
+
+                  child: ColumnView column_view {
+                    show-row-separators: true;
+                    tab-behavior: item;
+                    single-click-activate: false;
+                    activate => $on_activate();
+
+                    styles [
+                      "songs-table",
+                    ]
+
+                    // Fixed widths, shared out as the table grows, keep the columns from
+                    // measuring their cells: rows are rebound all the time while scrolling,
+                    // and widths that followed the text shown would jump as it changed.
+                    // Without the album column they fit a 360 px window: 350 px.
+                    ColumnViewColumn title_column {
+                      title: _("Title");
+                      fixed-width: 170;
+                      expand: true;
+                      resizable: true;
+                    }
+
+                    ColumnViewColumn artist_column {
+                      title: _("Artist");
+                      fixed-width: 100;
+                      expand: true;
+                      resizable: true;
+                    }
+
+                    ColumnViewColumn album_column {
+                      title: _("Album");
+                      fixed-width: 100;
+                      expand: true;
+                      resizable: true;
+                    }
+
+                    ColumnViewColumn time_column {
+                      title: _("Time");
+                      fixed-width: 80;
+                    }
+                  };
+                };
+              }
+
+              StackPage {
+                name: "no-results";
+
+                child: Adw.StatusPage {
+                  icon-name: "edit-find-symbolic";
+                  title: _("No Results Found");
+                  description: _("Try a different filter");
+                };
+              }
+            }
+          };
+        }
+      };
+    };
+  };
+}

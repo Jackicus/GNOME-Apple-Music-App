@@ -3,14 +3,16 @@
 library.json holds the Item and Track shapes src/backend/README.md describes. Library.load()
 parses it in a thread and wraps it on the main thread in batches, so pages fill while frames
 keep painting. Items become Item objects in one Gio.ListStore per section; an Item's `groups`
-and the Songs store are wrapped only when first asked for. GLib, GObject and Gio only, no GTK, so
-the model works in tests without a display.
+and the Songs store are wrapped only when first asked for. SongOrder sorts the Songs table.
+GLib, GObject and Gio only, no GTK, so the model works in tests without a display.
 """
 
 import asyncio
 import json
+import locale
 import logging
 import time
+import unicodedata
 
 from gi.repository import Gio, GLib, GObject
 
@@ -22,6 +24,9 @@ log = logging.getLogger(__name__)
 SECTIONS = ('albums', 'artists', 'playlists', 'radio', 'videos')
 
 BATCH_SIZE = 500
+
+# How long wrapping the Songs store runs before it lets GTK paint a frame, in seconds.
+FRAME_BUDGET = 0.008
 
 
 def _text(value):
@@ -91,6 +96,16 @@ class Track(GObject.Object):
         self._thumb = _text(data.get('thumb')) or thumb
         self.raw = data
         self.play = play or {}
+        self._search_key = None
+
+    @property
+    def search_key(self):
+        """Title, artist and album folded (fold()) on lines of their own: what the Songs filter
+        looks for a folded search in. A search cannot hold a line break, so no match spans two
+        of them. Made on first use and kept."""
+        if self._search_key is None:
+            self._search_key = fold(f'{self._title}\n{self._artist}\n{self._album}')
+        return self._search_key
 
 
 class Group(GObject.Object):
@@ -192,7 +207,8 @@ class Library(GObject.Object):
 
     The stores are created once and filled in place, so a page can bind them before anything
     is loaded. `state` is 'empty' (nothing loaded, or no library.json), 'loading' or 'ready';
-    'changed' is emitted when a load() finishes, whatever it found.
+    'changed' is emitted when a load() finishes, whatever it found. `songs-ready` is true once
+    the Songs store has been filled (build_songs()).
     """
 
     __gtype_name__ = 'AppleMusicLibrary'
@@ -204,6 +220,7 @@ class Library(GObject.Object):
     state = GObject.Property(type=str, default='empty')
     generated = GObject.Property(type=str)
     storefront = GObject.Property(type=str)
+    songs_ready = GObject.Property(type=bool, default=False)
 
     def __init__(self):
         super().__init__()
@@ -215,22 +232,41 @@ class Library(GObject.Object):
         self.shelves = []
         self.batch_size = BATCH_SIZE
         self._songs = Gio.ListStore(item_type=Track)
-        self._songs_built = False
+        self._songs_wanted = False  # build_songs() was called: every load() refills the store
         self._song_count = 0
         self._index = {}  # (kind, id) -> Item
         self._generation = 0
 
     @property
     def songs(self):
-        """Every album's tracks, deduplicated by id: built on first access, then kept current."""
-        if not self._songs_built:
-            self._songs_built = True
-            self._build_songs()
+        """The Songs store: every album's tracks, deduplicated by id, in album order.
+
+        It stays empty until build_songs() fills it (`songs-ready`); from then on every load()
+        refills it.
+        """
         return self._songs
 
     def song_count(self):
         """How many tracks `songs` holds or will hold, without building it."""
-        return self._songs.get_n_items() if self._songs_built else self._song_count
+        return self._songs.get_n_items() if self.songs_ready else self._song_count
+
+    async def build_songs(self):
+        """Fill the Songs store, unless it is filled or being filled already.
+
+        Wrapping 30,000 tracks takes about 300 ms, so it runs a few albums at a time with a
+        pause for GTK to paint in between, and the store is spliced in one go at the end, so a
+        view over it sorts once. When a load() is running, that load fills the store as it
+        finishes; a load() that overtakes this build fills it instead.
+        """
+        if self._songs_wanted:
+            return
+        self._songs_wanted = True
+        if self.state == 'loading':
+            return
+        try:
+            await self._fill_songs(self._generation)
+        except _Superseded:
+            pass
 
     def by_id(self, kind, item_id):
         """The Item of that kind and id, from a section or a shelf, or None."""
@@ -295,8 +331,8 @@ class Library(GObject.Object):
             shelves.append(Shelf(_text(raw.get('key')) or '', _text(raw.get('title')) or '', items))
         self.shelves = shelves
         self._index = index
-        if self._songs_built:
-            self._build_songs()
+        if self._songs_wanted:
+            await self._fill_songs(generation)
 
     async def _splice(self, store, dicts, wrap, generation):
         """Replace the store's contents with the wrapped dicts, a batch at a time.
@@ -314,16 +350,25 @@ class Library(GObject.Object):
             self._check(generation)
         store.splice(position, store.get_n_items() - position, [])
 
-    def _build_songs(self):
+    async def _fill_songs(self, generation):
         seen = set()
         tracks = []
-        for item in self.albums:
+        started = paused = time.monotonic()
+        for item in list(self.albums):
             for group in item.groups:
                 for track in group.entries:
                     if track.id not in seen:
                         seen.add(track.id)
                         tracks.append(track)
+            if time.monotonic() - paused > FRAME_BUDGET:
+                await yield_to_frames()
+                self._check(generation)
+                paused = time.monotonic()
         self._songs.splice(0, self._songs.get_n_items(), tracks)
+        if not self.songs_ready:
+            self.songs_ready = True
+        log.debug('Songs built in %.0f ms: %d songs', (time.monotonic() - started) * 1000,
+                  len(tracks))
 
     def _check(self, generation):
         if generation != self._generation:
@@ -332,6 +377,82 @@ class Library(GObject.Object):
     def _set_state(self, state):
         if self.state != state:
             self.state = state
+
+
+class SongOrder:
+    """The Songs table's orders, sorted in Python.
+
+    A column's order is its own key, ascending or descending, with ties broken by the other
+    columns, always ascending (by artist, the albums and their tracks stay in order either
+    way). GTK's sorters are too slow here: they read a Track's properties from C, which costs
+    about 3 µs a read into Python, and a Gtk.ColumnViewSorter has no sort keys, so a
+    Gtk.SortListModel sorting by it compares pairs and reads both tracks for every comparison:
+    1.6 to 6 s a click on 30,000 songs. Here each key is computed once per track (collation
+    once per distinct string) and cached, and Python sorts positions: on 30,000 songs a
+    column's first order takes 15 to 60 ms (titles, nearly all distinct, collate slowest), any
+    order after that 5 to 8 ms.
+    """
+
+    # Column -> the keys that break its ties, most significant first.
+    TIES = {
+        'title': ('artist', 'album', 'track'),
+        'artist': ('album', 'track'),
+        'album': ('artist', 'track'),
+        'time': ('title', 'artist'),
+    }
+
+    def __init__(self, tracks):
+        self._tracks = list(tracks)
+        self._keys = {}  # key name -> one key per track
+        self._ties = {}  # column -> positions in the order of its tie-breakers
+
+    def tracks(self, column, descending=False):
+        """The tracks in column's order: 'title', 'artist', 'album' or 'time'."""
+        ties = self._ties.get(column)
+        if ties is None:
+            ties = list(range(len(self._tracks)))
+            for name in reversed(self.TIES[column]):  # stable sorts, least significant first
+                ties.sort(key=self._key(name).__getitem__)
+            self._ties[column] = ties
+        order = sorted(ties, key=self._key(column).__getitem__, reverse=descending)
+        return [self._tracks[position] for position in order]
+
+    def _key(self, name):
+        keys = self._keys.get(name)
+        if keys is None:
+            if name == 'time':
+                keys = [track._duration_ms for track in self._tracks]
+            elif name == 'track':
+                keys = [(track._disc_number, track._track_number) for track in self._tracks]
+            else:
+                attribute = '_' + name
+                collated = {}
+                keys = []
+                for track in self._tracks:
+                    text = getattr(track, attribute)
+                    key = collated.get(text)
+                    if key is None:
+                        key = collated[text] = collation_key(text)
+                    keys.append(key)
+            self._keys[name] = keys
+        return keys
+
+
+def fold(text):
+    """text for matching as people type: case and accents ignored ("Beyoncé" is "beyonce")."""
+    if not text.isascii():
+        text = ''.join(char for char in unicodedata.normalize('NFKD', text)
+                       if not unicodedata.combining(char))
+    return text.casefold()
+
+
+def collation_key(text):
+    """A key that sorts text as the locale collates it, ignoring case, as a Gtk.StringSorter
+    does. The app's locale is set by GTK; without it (tests) this is code point order."""
+    try:
+        return locale.strxfrm(text.casefold())
+    except ValueError:  # an embedded NUL
+        return text.casefold()
 
 
 def _dicts(value):

@@ -12,7 +12,7 @@ running and better than before.
 - [x] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests) (2026-09-27)
 - [x] 3. Library model and demo mode (2026-09-27)
 - [x] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork (2026-09-27)
-- [ ] 5. Songs page (GtkColumnView)
+- [x] 5. Songs page (GtkColumnView) (2026-09-27)
 - [ ] 6. Detail pages: album, playlist, artist
 - [ ] 7. Shelves: Home and Radio from the cache
 - [ ] 8. Sidebar: playlists and folders
@@ -533,6 +533,69 @@ Verify: scripts/check.sh; scripts/screenshot.py build/songs.png --demo --page so
 --light); look at them. Update CLAUDE.md if a convention changed. Tick phase 5 in prompts.md and
 commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- The model chain is not the one above: GTK's is too slow over Python objects, measured in the
+  app on `--albums 2500` (30,116 songs, `build/demo-2500`; no new generator option was needed).
+  A `Gtk.ColumnViewSorter` has no sort keys, so a `Gtk.SortListModel` over it compares pairs and
+  reads both tracks' Python properties (about 3 µs a read from C) at every comparison: 1.6 to
+  6 s a click. The `Gtk.AnyFilter` of three `Gtk.StringFilter`s refilters once per sub-filter it
+  changes: up to 1.1 s a keystroke (one `Gtk.StringFilter` over the three fields: 60 ms a pass).
+  What the page does instead: `library.songs` → `library.SongOrder` (Python sorts positions with
+  cached keys: collation via `locale.strxfrm` of the casefolded text, once per distinct string;
+  ties broken by the other columns, always ascending, so by artist the albums and tracks keep
+  their order either way) → a list comprehension over `Track.search_key` (title, artist and
+  album folded by `library.fold()`: case and accents ignored, so "beyonce" finds "Beyoncé") →
+  one `Gio.ListStore` of rows → `Gtk.SingleSelection` (no autoselect) → `Gtk.ColumnView`. The
+  columns still carry `Gtk.StringSorter`/`Gtk.NumericSorter`s so their headers sort and show the
+  arrow; the page follows the view sorter's `changed` and reads its primary column and order.
+- The other half of the cost was GTK's: a `Gtk.ListView`/`Gtk.ColumnView` keeps 200 rows alive,
+  and a change that removes the items they show destroys their widgets and builds new ones
+  (about 0.5 ms a Songs row: an `Inscription` costs 100 µs to build in the app against 30 alone,
+  the title cell's template 130 µs), whatever model filters. `SongsPage._show()` inserts the new
+  rows first, `scroll_to(0)`s, then removes the old ones, so the view recycles every widget and
+  only rebinds (about 800 cell binds). A filter with no matches leaves the rows as they are behind
+  the "No Results Found" page, so clearing it rebinds rather than rebuilds. Result, rebinding
+  included: a sort click 30 to 50 ms, a keystroke 10 to 50 ms (the first also folds every
+  track's key, ~30 ms), after `Gtk.SearchEntry`'s own 150 ms delay. Phase 6's track lists and
+  phase 15's results can reuse `_show()`'s trick if they are big.
+- `library.songs` is no longer built on first access: `await library.build_songs()` fills it
+  (the page calls it through `app.spawn` when first mapped), a few albums at a time with
+  `yield_to_frames()` (`FRAME_BUDGET` 8 ms) and one splice at the end; asked during a load, that
+  load fills it before reporting ready; once asked, every load refills it (in place, so the page's
+  handler re-sorts). `songs-ready` notifies. 30,116 songs: about 320 ms of work, 500 ms wall.
+  Phase 11's loose songs merge in `_fill_songs` (and `_read_library`'s count, now used only by
+  `song_count()`).
+- `window.play_request(track)` toasts the title. Phase 6 describes rows calling
+  `play_request(group.play, start_with=track.index)`: a Track carries both (`track.play`,
+  `track.index`), so phase 6 can either keep this signature for tracks or generalise it
+  (`play_request(play, start_with=None, shuffle=False)`) and change the one call in
+  `pages/songs.py` (`on_activate`).
+- Layout: the title and count ("30,116 songs", or "3,482 of 30,116 songs" while filtering) sit
+  above the table and do not scroll (a `Gtk.ColumnView` recycles only as the scrolled window's
+  child, and has its own header row); that box is on the `view` background like the grid pages.
+  CSS pads the first and last columns' cells and headers to the title's 24 px. Columns have fixed
+  widths (170, 100, 100, 80) shared out by `expand`, so they never measure cells; below 560sp an
+  `Adw.BreakpointBin` (`width-request` 360, `height-request` 200) hides Album, and Title, Artist
+  and Time fit 360 px. Text cells are `Gtk.Inscription`s with `valign: center` (given the row's
+  height they wrap onto a second line); the title is a one-line `Gtk.Label` so the "E" badge
+  (`.explicit-badge`, accessible label "Explicit") follows its text. Rows are 49 px (the 32 px
+  thumbnail and cell padding). The sort starts at Title ascending and, like the grids', is not
+  remembered. The filter entry is hidden while loading or empty; Escape clears it; typing
+  elsewhere does not start filtering (no key-capture widget: phase 12's Space and phase 18's
+  shortcuts would compete).
+- Scrolling (`scripts/scroll_test.py`, which gained `--distance`): the 460-song demo top to
+  bottom at 4,000 px/s: mean 2.3 ms of work a frame, 90th percentile 3.5, longest 9.6, none over
+  16.7 ms. 30,116 songs, first 40,000 px at 4,000 px/s: mean 3.6 to 3.9 ms, p90 4.6 to 5.3,
+  longest 7 to 11, none over 16.7 ms. The whole 1.5M px at 20,000 px/s (a fling): mean 11.4 ms,
+  211 of 4,575 frames over 16.7 ms. Sorted by title nearly every row shows another album, so a
+  row decodes its album's 320 px thumbnail to draw 32 px (785 decodes in those 10 s); phase 19
+  could decode small copies for rows (the Artwork cache is keyed by path only).
+- Not done here: accessible labels for rows (phase 18; the cells' text is readable), row context
+  menus (16), Favourite Songs (6).
+- `Gtk.ColumnView.sort_by_column()` leaves the previous primary column's arrow drawn (GTK 4.22
+  does not notify it; header clicks do). The page uses it once, before anything is sorted.
 
 ## Phase 6: Detail pages
 

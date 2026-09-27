@@ -8,6 +8,7 @@ visit and keeps it.
 from gettext import gettext as _
 
 from .grid import GridPage
+from .songs import SongsPage
 
 
 def _albums(destination, library):
@@ -35,6 +36,10 @@ def _recently_added(destination, library):
                     empty_description=_('Music you add to your library appears here'))
 
 
+def _songs(destination, library):
+    return SongsPage(library, destination.title, icon_name=destination.icon_name)
+
+
 def _all_playlists(destination, library):
     return GridPage(library, destination.title, lambda: library.playlists, sorts=('title',),
                     icon_name=destination.icon_name,
@@ -53,6 +58,7 @@ PAGES = {
     'albums': _albums,
     'artists': _artists,
     'recently-added': _recently_added,
+    'songs': _songs,
     'all-playlists': _all_playlists,
     'music-videos': _music_videos,
 }

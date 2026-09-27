@@ -9,3 +9,6 @@ src/sections.py
 src/pages/__init__.py
 src/pages/grid.py
 src/pages/grid.blp
+src/pages/songs.py
+src/pages/songs.blp
+src/widgets/song_title.blp
