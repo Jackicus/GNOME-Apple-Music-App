@@ -2,7 +2,7 @@
 """Render the app's window to a PNG, for checking UI changes without a human.
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
-                          [--open KIND:ID]
+                          [--open KIND:ID] [--expand ID[,ID…]]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -17,10 +17,14 @@ waits for the library to finish loading.
 tile does (window.open_item), over the --page (default home): KIND is album,
 artist, playlist, station or video, and ID an item id or "first", the first
 of that section. The shot then waits longer, for the artwork.
+--page also takes a sidebar playlist or folder, as last-page names them:
+playlist:ID or folder:ID. --expand opens these playlist folders in the
+sidebar (the expanded-folders setting); "first" is the library's first folder.
 """
 
 import argparse
 import gettext
+import json
 import os
 import subprocess
 import sys
@@ -37,6 +41,8 @@ parser.add_argument('--page')
 parser.add_argument('--demo', action='store_true', help='show the demo library in build/demo')
 parser.add_argument('--open', metavar='KIND:ID',
                     help='open an item (ID an item id or "first") over the page')
+parser.add_argument('--expand', metavar='ID[,ID…]', default='',
+                    help='expand these playlist folders in the sidebar ("first": the first one)')
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
 
@@ -78,10 +84,24 @@ def on_window_added(_app, window):
     window.set_resizable(False)
 
 
+def first_folder():
+    """The id of the first playlist folder of the library the app will load, or None."""
+    from applemusic.backend import config
+    try:
+        with open(config.cache_dir() / 'library.json', encoding='utf-8') as file:
+            folders = json.load(file).get('folders') or []
+    except (OSError, ValueError):
+        return None
+    return next((folder['id'] for folder in folders if folder.get('id') != 'root'), None)
+
+
 def on_activate(_app):
     app.settings.set_string('last-page', args.page or 'home')
     app.settings.set_int('window-width', width)
     app.settings.set_int('window-height', height)
+    expand = [folder_id for folder_id in args.expand.split(',') if folder_id]
+    expand = [first_folder() if folder_id == 'first' else folder_id for folder_id in expand]
+    app.settings.set_strv('expanded-folders', [folder_id for folder_id in expand if folder_id])
     GLib.timeout_add(1200, shoot)
 
 

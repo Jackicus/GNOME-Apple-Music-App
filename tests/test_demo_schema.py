@@ -224,6 +224,32 @@ class TestDemoLibrarySchema(unittest.TestCase):
                   if item is not flagged[0]]
         self.assertFalse([item["id"] for item in others if "attributes" in item])
 
+    def test_folders(self):
+        # library.json's folders: the "root" entry lists the top level; three folders, one of
+        # them inside another; every playlist in exactly one children list.
+        folders = self.data["folders"]
+        by_id = {folder["id"]: folder for folder in folders}
+        self.assertEqual(len(by_id), len(folders))
+        self.assertIsNone(by_id["root"]["parent"])
+        others = [folder for folder in folders if folder["id"] != "root"]
+        self.assertEqual(len(others), 3)
+        self.assertEqual(sorted(folder["parent"] != "root" for folder in others), [False, False, True])
+        listed = []
+        for folder in folders:
+            self.assertEqual(set(folder), {"id", "title", "parent", "children"})
+            self.assertTrue(isinstance(folder["title"], str) and folder["title"])
+            for child in folder["children"]:
+                self.assertEqual(set(child), {"kind", "id"})
+                self.assertIn(child["kind"], ("folder", "playlist"))
+                listed.append((child["kind"], child["id"]))
+                if child["kind"] == "folder":
+                    self.assertEqual(by_id[child["id"]]["parent"], folder["id"])
+        playlist_ids = [pl["id"] for pl in self.data["sections"]["playlists"]]
+        self.assertEqual(sorted(listed), sorted([("folder", folder["id"]) for folder in others]
+                                                + [("playlist", pid) for pid in playlist_ids]))
+        top = [child["kind"] for child in by_id["root"]["children"]]
+        self.assertIn("playlist", top)  # loose playlists, not only folders
+
     def test_radio_stations_detail(self):
         radio = self.data["sections"]["radio"]
         for st in radio:

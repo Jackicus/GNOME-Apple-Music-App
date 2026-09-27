@@ -8,12 +8,18 @@ from . import artwork
 # caption size.
 SUBTITLE = '<span size="smaller" alpha="55%">{}</span>'
 
+# The placeholder's icon and size: a music note until the cover arrives, and a playlist
+# folder's big folder icon, which no cover replaces.
+PLACEHOLDER = ('music-note-symbolic', 48)
+FOLDER = ('folder-symbolic', 72)
+
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/tile.ui')
 class Tile(Gtk.Box):
     """A 160 px square cover over a title and a dim subtitle; with artist=True, a round portrait
     over a centred name.
 
+    A playlist folder (an Item of kind 'folder') has no cover: its tile shows a folder icon.
     bind(item) and unbind() are called by a list factory as tiles are recycled. The cover is
     asked for only while the tile is mapped, which in a Gtk.GridView means on screen (the grid
     binds many more tiles than it shows), and let go of when it is unmapped, so the textures
@@ -31,6 +37,7 @@ class Tile(Gtk.Box):
     def __init__(self, artist=False, **kwargs):
         super().__init__(**kwargs)
         self._artist = False
+        self._folder = False
         self._item = None
         self._path = None
         self._token = None
@@ -53,6 +60,12 @@ class Tile(Gtk.Box):
     def bind(self, item):
         self._item = item
         self._path = item.thumb or item.art
+        folder = item.kind == 'folder'
+        if folder != self._folder:  # only then: setting an icon costs a relayout
+            self._folder = folder
+            icon_name, size = FOLDER if folder else PLACEHOLDER
+            self.placeholder_icon.set_from_icon_name(icon_name)
+            self.placeholder_icon.set_pixel_size(size)
         if self._artist or not item.subtitle:
             self.label.set_text(item.title)
         else:

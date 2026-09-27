@@ -15,7 +15,7 @@ running and better than before.
 - [x] 5. Songs page (GtkColumnView) (2026-09-27)
 - [x] 6. Detail pages: album, playlist, artist (2026-09-27)
 - [x] 7. Shelves: Home and Radio from the cache (2026-09-27)
-- [ ] 8. Sidebar: playlists and folders
+- [x] 8. Sidebar: playlists and folders (2026-09-27)
 - [ ] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI
 - [ ] 10. Engine in the app: lifecycle, sign-in, account
 - [ ] 11. Library sync and artwork cache
@@ -868,6 +868,75 @@ first folder when --demo is set) and of a folder page; restart and confirm the e
 (GSettings memory backend in screenshots won't; test with scripts/demo.sh). Update CLAUDE.md.
 Tick phase 8 in prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- The shape (phase 11 writes it): library.json's top-level `folders` (optional, beside
+  `sections`), a list of `{id, title, parent, children: [{kind: "folder"|"playlist", id}]}` in
+  Apple's order; the entry with id `root` lists the top level, loose playlists included, and
+  its `parent` is null; top-level folders have `parent: "root"`. The children lists decide the
+  tree and its order; `parent` is informational. Map Apple's root folder (expected
+  `p.playlistsroot`) onto `root`. `PlaylistTree` puts whatever no list reaches at the end of the
+  top level (folders, then playlists in section order), skips children naming nothing and
+  anything listed twice, and survives cycles, so a library without `folders` (the extension's
+  format, `build/demo-2000`/`-2500`) is every playlist at the top level. The demo's: "Chill &
+  Focus" (`l.fd001`, holding "Jazz Nights" `l.fd002` and three playlists), "On the Road"
+  (`l.fd003`), then five loose playlists, Favourite Songs last (`build/demo` was regenerated).
+- The model: `library.playlist_tree()` (a new tree per load; an empty one before the first):
+  `root` is nested `TreeNode`s (`item`, `depth` (root -1, top level 0), `parent`, `children`,
+  `store`, `ancestors()`), `flat` depth first; `tree.folder(id)`, `tree.folders()`. Folders are
+  `Item`s of kind `folder` (title only, no art or groups, `raw` the folders entry), found by
+  `by_id('folder', id)`, the top level as `by_id('folder', 'root')`. `library.folder_items(id)`
+  is a folder's `Gio.ListStore` of folder and playlist Items (the playlists are the section's
+  objects); each load makes new ones, so pages follow a folder by id. Phase 11's in-place reload
+  can keep them or not: the sidebar compares what it shows, not identity.
+- The sidebar (`src/sidebar.py`, new; `window.py`): the Playlists section is bound to a
+  `Gio.ListStore` of `SidebarEntry` (`kind` fixed/folder/playlist, `key`, `title`, `icon-name`,
+  `depth`, and Python attributes `item` and `ancestors`), the section's two destinations first,
+  then `playlist_entries(tree)`, which leaves Favourite Songs out wherever it is (All Playlists
+  still shows it, as phase 6 wanted). Items are `SidebarItem`s (`AppleMusicSidebarItem`,
+  `item.entry`), folders with a `pan-end`/`pan-down-symbolic` suffix (presentation role). Keys,
+  which `last-page` stores: a destination key, `playlist:<id>`, `folder:<id>`
+  (`sidebar.parse_key`). A reload whose entries have the same shapes (kind, key, title, depth,
+  ancestors) only swaps their Items, keeping the items, the selection and pushed pages; any
+  change re-splices the tail, then the shown key is selected again (its folders expanded if it
+  is hidden), roots of vanished keys are dropped, renamed ones retitled, and a shown playlist or
+  folder that is gone falls back to Home.
+- Selection and activation: selecting an item (click or arrow keys) shows its root page;
+  `activated` (click, Enter, also on the selected item) toggles a folder and shows the content
+  when collapsed. A sidebar playlist's root page is `pages.playlist()` (a `DetailPage` with
+  `find=by_id('playlist', id)`, `root=True`); a folder's is `pages.folder()` (a `GridPage` over
+  `folder_items(id)`, unsorted, empty state "Empty Folder"); folder tiles (a 72 px
+  `folder-symbolic` in place of the note, switched only when a tile's kind changes) push
+  `pages.folder(root=False)` through `open_item`. All Playlists is now the root folder in
+  Apple's order: no longer sorted by title.
+- Restoring: `last-page` = `playlist:`/`folder:` is shown at once (its page loads with the
+  library) with All Playlists selected, and selected when the library arrives, or Home. Not
+  with nothing selected: AdwSidebar's list selects the row with the focus when nothing is
+  selected, as the window is shown and again when it becomes active (it took Search in one
+  shot out of two). Every selection the window makes itself goes through `_set_selected`
+  (`_quiet`: the notify shows nothing), splices included.
+- `expanded-folders` (as, new key) holds folder ids, written on each toggle; ids of folders the
+  library lacks are kept, since a demo run shares the settings with the real library. Checked
+  across restarts on the real backend: a click (the row's `Gtk.ListBoxRow.activate()`) wrote
+  `['l.fd001']` and `folder:l.fd001`, `scripts/demo.sh --debug` then logged `Sidebar: 3
+  folders, 12 playlists in 3.8 ms; expanded: l.fd001` and showed it expanded; the real
+  settings were put back afterwards.
+- ~150 playlists: an invented library of 163 playlists and 7 folders (the demo's with 150
+  cloned playlists, made by a throwaway script into `build/demo-150`, not kept): 169 entries
+  spliced in 24 ms, then a 15-17 ms frame; a folder toggle 5 ms including building its page;
+  `scroll_test.py --sidebar` (new) over 151 visible rows at 2,000 and 4,000 px/s: 0.5 ms of
+  work a frame, none over 4.2 ms. Numbers in CLAUDE.md's AdwSidebar note.
+- For phase 16: the section's `menu-model` and `setup-menu` get the `SidebarItem` (its
+  `entry.kind` and `entry.item`); drops belong on `playlist` entries only. For phase 18: a
+  folder's expanded state is not exposed to assistive technology (the arrow is presentation;
+  the row reads its title), arrow keys select (and show pages) without toggling, and selecting
+  does not scroll the sidebar to the item (a restored playlist far down stays off screen).
+  AdwSidebar cannot indent, so nesting shows only by order and arrows, as settled question 4
+  accepted; in the narrow layout the arrow sits before the row's own navigation arrow.
+- `scripts/screenshot.py` gained `--expand ID[,ID…]` ("first": the library's first folder) and
+  `--page` takes any last-page value; `--open folder:ID` pushes a folder. It does not scroll
+  the sidebar: `--size 1100x1000` fits the demo's.
 
 ## Phase 9: Backend layer, engine process and async CDP client
 

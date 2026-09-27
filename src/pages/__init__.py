@@ -2,10 +2,14 @@
 
 create(destination, library) builds a destination's page, or returns None for a destination that
 has none yet (the window shows a placeholder for it). The window builds each page on its first
-visit and keeps it.
+visit and keeps it. The sidebar's playlists and folders get theirs from playlist() and folder(),
+which a folder's tiles use too.
 """
 
 from gettext import gettext as _
+
+from ..library import ROOT_FOLDER
+from ..sidebar import FOLDER_ICON, PLAYLIST_ICON
 
 from .detail import DetailPage
 from .grid import GridPage
@@ -52,7 +56,8 @@ def _songs(destination, library):
 
 
 def _all_playlists(destination, library):
-    return GridPage(library, destination.title, lambda: library.playlists, sorts=('title',),
+    # The top level of the playlist folders: folders and the playlists in none, in Apple's order.
+    return GridPage(library, destination.title, lambda: library.folder_items(ROOT_FOLDER),
                     icon_name=destination.icon_name,
                     empty_title=_('No Playlists'),
                     empty_description=_('Playlists in your library appear here'))
@@ -71,6 +76,24 @@ def _music_videos(destination, library):
                     sorts=('title', 'artist', 'year'), icon_name=destination.icon_name,
                     empty_title=_('No Music Videos'),
                     empty_description=_('Music videos in your library appear here'))
+
+
+def playlist(library, playlist_id, title):
+    """A sidebar playlist's root page: its detail page, following the library by the id (each
+    load makes new Items), with an empty state once the playlist is gone."""
+    return DetailPage(library, find=lambda: library.by_id('playlist', playlist_id), root=True,
+                      title=title, icon_name=PLAYLIST_ICON,
+                      empty_title=_('Playlist Not Found'),
+                      empty_description=_('This playlist is no longer in your library'))
+
+
+def folder(library, folder_id, title, root=True):
+    """A folder's page: its folders and playlists as tiles, in Apple's order, following the
+    library by the folder's id. A sidebar folder's is a root page; a folder opened from a tile
+    is pushed (root=False) over the page it was in."""
+    return GridPage(library, title, lambda: library.folder_items(folder_id), root=root,
+                    icon_name=FOLDER_ICON, empty_title=_('Empty Folder'),
+                    empty_description=_('Playlists you put in this folder appear here'))
 
 
 PAGES = {

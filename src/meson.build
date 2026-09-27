@@ -70,6 +70,7 @@ install_data(
   'main.py',
   'player_bar.py',
   'sections.py',
+  'sidebar.py',
   'window.py',
   install_dir: moduledir,
 )

@@ -9,7 +9,7 @@ whose cost grows with every comparison rather than every item.
 
 from gettext import gettext as _
 
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gio, GObject, Gtk
 
 from ..library import Item
 from ..widgets.tile import Tile
@@ -51,8 +51,9 @@ class GridPage(Adw.NavigationPage):
     nothing). `sorts` are SORTS keys: the first is the initial order, and with more than one the
     header offers them; none keeps the model's own order. `artist` makes round portrait tiles.
     `root` is false for a page pushed over another, which shows its title in the header bar
-    too, as detail pages do. The loading and empty states follow the library's state and the
-    model's item count.
+    too, as detail pages do. The in-content title follows the page's `title`. The loading and
+    empty states follow the library's state and the model's item count. A playlist folder's
+    page is one too (pages.folder()): its folders are tiles with a folder icon.
     """
 
     __gtype_name__ = 'AppleMusicGridPage'
@@ -78,7 +79,8 @@ class GridPage(Adw.NavigationPage):
         # Looked up once: gettext searches the disk on every call, and binding is hot.
         self._accessible_format = _('{title}, {subtitle}')
 
-        self.title_label.set_label(title)
+        # The page's title, which a folder's page changes when the folder is renamed.
+        self.bind_property('title', self.title_label, 'label', GObject.BindingFlags.SYNC_CREATE)
         self.header_bar.set_show_title(not root)
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(empty_title or title)

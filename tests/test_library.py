@@ -17,7 +17,8 @@ from unittest import mock
 from tests import ROOT
 
 from applemusic import library as library_module
-from applemusic.library import SECTIONS, Group, Item, Library, SongOrder, Track, fold
+from applemusic.library import (ROOT_FOLDER, SECTIONS, Group, Item, Library, PlaylistTree,
+                                SongOrder, Track, fold)
 
 
 def load(cache_dir, library=None):
@@ -50,10 +51,31 @@ def album(album_id, title, track_ids):
                         'entries': [track(t, f'Song {t}', i) for i, t in enumerate(track_ids)]}]}
 
 
-def write_library(cache_dir, albums, shelves=()):
+def write_library(cache_dir, albums, shelves=(), playlists=None, folders=None):
     data = {'version': 1, 'generated': '2026-01-01T00:00:00Z', 'storefront': 'gb',
             'sections': {'albums': albums}, 'shelves': list(shelves)}
+    if playlists is not None:
+        data['sections']['playlists'] = playlists
+    if folders is not None:
+        data['folders'] = folders
     Path(cache_dir, 'library.json').write_text(json.dumps(data), encoding='utf-8')
+
+
+def playlist(playlist_id, title=None):
+    return Item({'id': playlist_id, 'kind': 'playlist', 'title': title or playlist_id,
+                 'play': {'kind': 'playlist', 'id': playlist_id}, 'groups': []})
+
+
+def folder(folder_id, children, parent=ROOT_FOLDER, title=None):
+    """A folders entry; children are 'f:<id>' for a folder and a plain id for a playlist."""
+    return {'id': folder_id, 'title': title or folder_id, 'parent': parent,
+            'children': [{'kind': 'folder', 'id': child[2:]} if child.startswith('f:')
+                         else {'kind': 'playlist', 'id': child} for child in children]}
+
+
+def shape(tree):
+    """A PlaylistTree's flat list as (kind, id, depth, ancestors)."""
+    return [(node.kind, node.id, node.depth, node.ancestors()) for node in tree.flat]
 
 
 class TestDemoLibrary(unittest.TestCase):
@@ -152,6 +174,43 @@ class TestDemoLibrary(unittest.TestCase):
         self.assertTrue(favourites.favourites)
         self.assertEqual([item.id for item in self.library.playlists if item.favourites],
                          flagged)
+
+    def test_playlist_tree(self):
+        tree = self.library.playlist_tree()
+        folders = {raw['id']: raw for raw in self.data['folders']}
+
+        def expected(folder_id, depth, ancestors):
+            nodes = []
+            for child in folders[folder_id]['children']:
+                nodes.append((child['kind'], child['id'], depth, ancestors))
+                if child['kind'] == 'folder':
+                    nodes += expected(child['id'], depth + 1, ancestors + [child['id']])
+            return nodes
+
+        self.assertEqual(shape(tree), expected(ROOT_FOLDER, 0, []))
+        # Three folders, one inside another, and every playlist once, as its section Item.
+        self.assertEqual([(node.item.title, node.depth) for node in tree.folders()],
+                         [(folders[node.id]['title'], node.depth) for node in tree.folders()])
+        self.assertEqual(sorted(node.depth for node in tree.folders()), [0, 0, 1])
+        playlists = [node for node in tree.flat if node.kind == 'playlist']
+        self.assertEqual(sorted(node.id for node in playlists),
+                         sorted(self.store_ids(self.library.playlists)))
+        for node in playlists:
+            self.assertIs(node.item, self.library.by_id('playlist', node.id))
+        # Nested: each node is among its parent's children, and the stores mirror them.
+        for node in tree.flat:
+            self.assertIn(node, node.parent.children)
+        for folder_node in [tree.root] + tree.folders():
+            self.assertIs(self.library.by_id('folder', folder_node.id), folder_node.item)
+            self.assertEqual(folder_node.item.kind, 'folder')
+            store = self.library.folder_items(folder_node.id)
+            self.assertIs(store, folder_node.store)
+            self.assertEqual(list(store), [child.item for child in folder_node.children])
+        self.assertIs(tree.folder(ROOT_FOLDER), tree.root)
+        self.assertEqual(tree.root.depth, -1)
+        self.assertIsNone(self.library.folder_items('l.no-such-folder'))
+        # Favourite Songs is in the tree like any playlist (the sidebar leaves it out).
+        self.assertIn(self.library.favourite_songs(), [node.item for node in playlists])
 
     def test_track_at(self):
         two_discs = next(item for item in self.library.albums if len(item.groups) > 1)
@@ -324,6 +383,105 @@ class TestLoading(unittest.TestCase):
         self.assertEqual([item.id for item in library.albums], ['l.new'])
         self.assertEqual(library.state, 'ready')
         self.assertEqual(len(changed), 1)  # the overtaken load gave up without a word
+
+
+class TestPlaylistTree(unittest.TestCase):
+    """PlaylistTree over invented folders: the children lists decide, the rest is tidied up."""
+
+    def test_nesting_and_order(self):
+        playlists = [playlist(f'p{n}') for n in range(1, 6)]
+        tree = PlaylistTree([
+            folder('root', ['f:a', 'p5', 'f:c']),
+            folder('a', ['f:b', 'p2', 'p1']),
+            folder('b', ['p3'], parent='a'),
+            folder('c', ['p4']),
+        ], playlists)
+        self.assertEqual(shape(tree), [
+            ('folder', 'a', 0, []),
+            ('folder', 'b', 1, ['a']),
+            ('playlist', 'p3', 2, ['a', 'b']),
+            ('playlist', 'p2', 1, ['a']),
+            ('playlist', 'p1', 1, ['a']),
+            ('playlist', 'p5', 0, []),
+            ('folder', 'c', 0, []),
+            ('playlist', 'p4', 1, ['c']),
+        ])
+        self.assertEqual([child.id for child in tree.root.children], ['a', 'p5', 'c'])
+        self.assertEqual([child.id for child in tree.folder('a').children], ['b', 'p2', 'p1'])
+        self.assertIs(tree.folder('b').parent, tree.folder('a'))
+        self.assertIs(tree.flat[2].item, playlists[2])
+        self.assertEqual(tree.folder('a').item.title, 'a')
+        self.assertEqual([item.id for item in tree.folder('a').store], ['b', 'p2', 'p1'])
+
+    def test_without_folders_every_playlist_is_at_the_top(self):
+        playlists = [playlist('p2'), playlist('p1')]
+        tree = PlaylistTree([], playlists)
+        self.assertEqual(shape(tree), [('playlist', 'p2', 0, []), ('playlist', 'p1', 0, [])])
+        self.assertEqual(list(tree.root.store), playlists)
+        self.assertEqual(shape(PlaylistTree()), [])
+
+    def test_what_nothing_lists_goes_at_the_end_of_the_top(self):
+        playlists = [playlist(f'p{n}') for n in range(1, 5)]
+        root = folder('root', ['p2', 'f:gone', 'p.gone', 'f:p1'])  # p1 is not a folder
+        root['children'] += [{'kind': 'station', 'id': 'p4'}, 'p4', {'id': 'p4'}]
+        tree = PlaylistTree([root, folder('orphan', ['p3'], parent='nowhere')], playlists)
+        self.assertEqual(shape(tree), [
+            ('playlist', 'p2', 0, []),
+            ('folder', 'orphan', 0, []),
+            ('playlist', 'p3', 1, ['orphan']),
+            ('playlist', 'p1', 0, []),
+            ('playlist', 'p4', 0, []),
+        ])
+
+    def test_nothing_twice_and_no_cycles(self):
+        playlists = [playlist('p1'), playlist('p2')]
+        tree = PlaylistTree([
+            folder('root', ['f:a', 'p1', 'f:a']),
+            folder('a', ['p1', 'f:b', 'f:a', 'f:root', 'p2']),
+            folder('b', ['f:a', 'p2'], parent='a'),
+        ], playlists)
+        self.assertEqual(shape(tree), [
+            ('folder', 'a', 0, []),
+            ('playlist', 'p1', 1, ['a']),
+            ('folder', 'b', 1, ['a']),
+            ('playlist', 'p2', 2, ['a', 'b']),
+        ])
+
+    def test_without_a_root_entry_the_top_is_the_parentless_folders(self):
+        playlists = [playlist('p1'), playlist('p2')]
+        tree = PlaylistTree([
+            folder('a', ['p1'], parent=None),
+            folder('b', ['p2'], parent='a'),  # listed by nothing: at the top, after a
+        ], playlists)
+        self.assertEqual(shape(tree), [
+            ('folder', 'a', 0, []),
+            ('playlist', 'p1', 1, ['a']),
+            ('folder', 'b', 0, []),
+            ('playlist', 'p2', 1, ['b']),
+        ])
+
+    def test_loaded_with_the_library(self):
+        with tempfile.TemporaryDirectory() as cache:
+            raw = [{'id': f'p{n}', 'kind': 'playlist', 'title': f'P{n}',
+                    'play': {'kind': 'playlist', 'id': f'p{n}'}, 'groups': []} for n in (1, 2)]
+            write_library(cache, [], playlists=raw,
+                          folders=[folder('root', ['f:a']), folder('a', ['p2', 'p1'])])
+            library = load(cache)
+            first = library.playlist_tree()
+            self.assertEqual(shape(first), [('folder', 'a', 0, []), ('playlist', 'p2', 1, ['a']),
+                                            ('playlist', 'p1', 1, ['a'])])
+            self.assertIs(library.by_id('folder', 'a'), first.folder('a').item)
+            self.assertEqual([item.id for item in library.folder_items('a')], ['p2', 'p1'])
+            self.assertIs(library.folder_items('a').get_item(0), library.by_id('playlist', 'p2'))
+            # A reload makes a new tree; one without folders puts everything at the top.
+            write_library(cache, [], playlists=raw)
+            load(cache, library)
+            self.assertIsNot(library.playlist_tree(), first)
+            self.assertEqual(shape(library.playlist_tree()),
+                             [('playlist', 'p1', 0, []), ('playlist', 'p2', 0, [])])
+            self.assertIsNone(library.by_id('folder', 'a'))
+            self.assertIsNone(library.folder_items('a'))
+        self.assertEqual(shape(Library().playlist_tree()), [])  # before any load
 
 
 class TestBuildSongs(unittest.TestCase):

@@ -5,6 +5,12 @@ parses it in a thread and wraps it on the main thread in batches, so pages fill 
 keep painting. Items become Item objects in one Gio.ListStore per section; an Item's `groups`
 and the Songs store are wrapped only when first asked for. SongOrder sorts the Songs table.
 GLib, GObject and Gio only, no GTK, so the model works in tests without a display.
+
+Besides the README's shape, library.json may hold `folders`, the user's playlist folders (an
+optional key, like `sections.songs` and `sections.videos`; the demo writes it, phase 11's sync
+will): a list of {id, title, parent, children}, `parent` a folder id or null and `children` a
+list of {kind: "folder" | "playlist", id} in Apple's order. The entry with id "root" lists what
+is in no folder. PlaylistTree reads it.
 """
 
 import asyncio
@@ -32,6 +38,9 @@ FRAME_BUDGET = 0.008
 # songs the user loves. Not part of the README's Item shape: the demo library sets it, and the
 # sync maps Apple's own flag onto it.
 FAVOURITES = 'isFavourites'
+
+# The id of the folders entry that lists the top level: the playlists and folders in no folder.
+ROOT_FOLDER = 'root'
 
 
 def _text(value):
@@ -137,7 +146,9 @@ class Item(GObject.Object):
     """An album, artist, playlist, station, video or song: the Item shape.
 
     `play` is the dict a play command takes and `raw` the source dict. `groups` is a list of
-    Group, wrapped from raw on first access.
+    Group, wrapped from raw on first access. A playlist folder is an Item too, of kind 'folder'
+    (made by PlaylistTree from a `folders` entry, with no artwork and no groups), so a grid of a
+    folder's contents shows folders and playlists alike.
     """
 
     __gtype_name__ = 'AppleMusicItem'
@@ -213,6 +224,129 @@ class Shelf(GObject.Object):
         self.items.splice(0, 0, items)
 
 
+class TreeNode:
+    """A folder or a playlist in the PlaylistTree.
+
+    `item` is its Item: the playlist's own, from the playlists section, or the folder's (kind
+    'folder'). `depth` is 0 at the top level (the root's is -1), `parent` the TreeNode of the
+    folder holding it (None for the root), and a folder's `children` are its nodes in Apple's
+    order, as `store` holds their Items for a grid.
+    """
+
+    __slots__ = ('item', 'depth', 'parent', 'children', 'store')
+
+    def __init__(self, item, depth, parent):
+        self.item = item
+        self.depth = depth
+        self.parent = parent
+        self.children = []
+        self.store = None
+
+    @property
+    def kind(self):
+        return self.item.kind
+
+    @property
+    def id(self):
+        return self.item.id
+
+    def ancestors(self):
+        """The ids of the folders holding this node, outermost first, the root left out."""
+        ids = []
+        node = self.parent
+        while node is not None and node.parent is not None:
+            ids.append(node.item.id)
+            node = node.parent
+        ids.reverse()
+        return ids
+
+    def __repr__(self):
+        return f'TreeNode({self.kind}, {self.id!r}, depth={self.depth})'
+
+
+class PlaylistTree:
+    """The playlists and their folders, as Apple's sidebar nests them.
+
+    `root` is the nested tree: a TreeNode for the folder with id ROOT_FOLDER, the top level.
+    `flat` is every node below it, depth first (each folder followed by its contents), each
+    with its `depth`: the order a sidebar lists them in. The children lists of library.json's
+    `folders` decide the nesting and order. What they do not reach is added to the top level,
+    at the end: folders (with their contents) in the list's order, then playlists in the
+    playlists section's order; so a library without `folders` is every playlist at the top
+    level. A child naming nothing in the library is left out, and nothing is listed twice.
+    Without a root entry, the top level is the folders whose parent is null. Built by
+    Library.load() (the model: GObject only, no GTK).
+    """
+
+    def __init__(self, folders=(), playlists=()):
+        """folders: library.json's `folders` dicts; playlists: the playlist Items."""
+        folders = [raw for raw in folders if _text(raw.get('id'))]
+        raw_by_id = {}
+        for raw in folders:
+            raw_by_id.setdefault(_text(raw.get('id')), raw)
+        playlist_by_id = {}
+        for item in playlists:
+            playlist_by_id.setdefault(item.id, item)
+        root_raw = raw_by_id.get(ROOT_FOLDER)
+        if root_raw is None:
+            root_raw = {'id': ROOT_FOLDER, 'title': '', 'parent': None, 'children': [
+                {'kind': 'folder', 'id': _text(raw.get('id'))} for raw in folders
+                if raw.get('parent') is None]}
+        self.root = TreeNode(_folder_item(root_raw), -1, None)
+        self.flat = []
+        self._folders = {ROOT_FOLDER: self.root}
+        placed = set()  # (kind, id) already in the tree
+
+        def fill(node, children):
+            for child in _dicts(children):
+                kind, child_id = child.get('kind'), _text(child.get('id'))
+                if (kind, child_id) in placed:
+                    continue
+                if kind == 'folder' and child_id in raw_by_id:
+                    add(node, _folder_item(raw_by_id[child_id]), raw_by_id[child_id])
+                elif kind == 'playlist' and child_id in playlist_by_id:
+                    add(node, playlist_by_id[child_id])
+
+        def add(parent, item, raw=None):
+            placed.add((item.kind, item.id))
+            child = TreeNode(item, parent.depth + 1, parent)
+            parent.children.append(child)
+            self.flat.append(child)
+            if item.kind == 'folder':
+                self._folders[item.id] = child
+                fill(child, raw.get('children'))
+
+        # A folder's contents are added right after it, so `flat` fills depth first, and what
+        # nothing reached goes at the end of the top level, which is the end of `flat` too.
+        placed.add(('folder', ROOT_FOLDER))
+        fill(self.root, root_raw.get('children'))
+        for raw in folders:
+            if ('folder', _text(raw.get('id'))) not in placed:
+                add(self.root, _folder_item(raw), raw)
+        for item in playlists:
+            if ('playlist', item.id) not in placed:
+                add(self.root, item)
+        for node in self._folders.values():
+            node.store = Gio.ListStore(item_type=Item)
+            node.store.splice(0, 0, [child.item for child in node.children])
+
+    def folder(self, folder_id):
+        """The TreeNode of the folder with that id (ROOT_FOLDER for the top level), or None."""
+        return self._folders.get(folder_id)
+
+    def folders(self):
+        """Every folder's TreeNode but the root's, depth first."""
+        return [node for node in self.flat if node.kind == 'folder']
+
+
+def _folder_item(raw):
+    """A folders entry as an Item of kind 'folder'."""
+    folder_id = _text(raw.get('id'))
+    return Item({'id': folder_id, 'kind': 'folder', 'title': _text(raw.get('title')) or '',
+                 'play': {}, 'groups': [], 'parent': raw.get('parent'),
+                 'children': raw.get('children')})
+
+
 class _Superseded(Exception):
     """A newer load() started while this one waited."""
 
@@ -250,6 +384,7 @@ class Library(GObject.Object):
         self._songs_wanted = False  # build_songs() was called: every load() refills the store
         self._song_count = 0
         self._index = {}  # (kind, id) -> Item
+        self._tree = PlaylistTree()
         self._generation = 0
 
     @property
@@ -284,12 +419,28 @@ class Library(GObject.Object):
             pass
 
     def by_id(self, kind, item_id):
-        """The Item of that kind and id, from a section or a shelf, or None."""
+        """The Item of that kind and id, from a section, a shelf or the playlist folders
+        (kind 'folder'), or None."""
         return self._index.get((kind, item_id))
 
     def shelf(self, key):
         """The shelf with that key ('recently-added', 'heavy-rotation'…), or None."""
         return next((shelf for shelf in self.shelves if shelf.key == key), None)
+
+    def playlist_tree(self):
+        """The playlists and folders as a PlaylistTree: `root` nested, `flat` depth first.
+
+        Built by each load() (a new tree, with new folder Items, each time); before the first,
+        an empty one.
+        """
+        return self._tree
+
+    def folder_items(self, folder_id):
+        """A Gio.ListStore of the Items (folders and playlists) in the folder with that id, in
+        Apple's order, or None when there is no such folder. ROOT_FOLDER is the top level. A
+        load() makes new stores: follow the folder by its id."""
+        node = self._tree.folder(folder_id)
+        return node.store if node is not None else None
 
     def favourite_songs(self):
         """The Favourite Songs playlist (Item.favourites), or None when the library has none."""
@@ -365,7 +516,12 @@ class Library(GObject.Object):
         for raw in _dicts(data.get('shelves')):
             items = [shelf_item(item) for item in _dicts(raw.get('items'))]
             shelves.append(Shelf(_text(raw.get('key')) or '', _text(raw.get('title')) or '', items))
+        tree = PlaylistTree(_dicts(data.get('folders')), list(self.playlists))
+        for node in tree.folders():
+            index.setdefault(('folder', node.id), node.item)
+        index.setdefault(('folder', ROOT_FOLDER), tree.root.item)
         self.shelves = shelves
+        self._tree = tree
         self._index = index
         if self._songs_wanted:
             await self._fill_songs(generation)

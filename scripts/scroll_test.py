@@ -2,7 +2,7 @@
 """Scroll a page of the real window from top to bottom and report dropped frames.
 
     scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH]
-                           [--light]
+                           [--light] [--sidebar]
 
 Runs the installed build (scripts/run.sh or meson install -C build first) on the
 demo library, as screenshot.py --demo does: build/demo, or $APPLE_MUSIC_CACHE
@@ -16,6 +16,9 @@ speed on every frame, to the bottom or for --distance pixels (the Songs page
 of 30,000 songs is 1.5 million pixels long: 6 minutes at 4,000 px/s):
 
     APPLE_MUSIC_CACHE=build/demo-2500 scripts/scroll_test.py --page songs --distance 40000
+
+--sidebar scrolls the sidebar instead of the page (a library with many
+playlists makes it long: its rows are not recycled).
 
 Two things are reported. The app's own work per frame, timed on the main thread
 from the frame clock's before-paint to the end of its paint (tick callbacks and
@@ -45,6 +48,7 @@ parser.add_argument('--speed', type=float, default=4000, help='pixels a second (
 parser.add_argument('--distance', type=float, help='pixels to scroll (default: to the bottom)')
 parser.add_argument('--size', default='1100x760')
 parser.add_argument('--light', action='store_true')
+parser.add_argument('--sidebar', action='store_true', help='scroll the sidebar, not the page')
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
 
@@ -120,10 +124,10 @@ def start():
         GLib.timeout_add(100, start)
         return GLib.SOURCE_REMOVE
     window = app.get_active_window()
-    page = window.navigation_view.get_visible_page()
+    page = window.sidebar if args.sidebar else window.navigation_view.get_visible_page()
     scrolled = scrolled_window(page)
     if scrolled is None:
-        print(f'scroll-test: no scrolled window on the {args.page} page', flush=True)
+        print(f'scroll-test: no scrolled window on the {where()}', flush=True)
         app.quit()
         return GLib.SOURCE_REMOVE
     monitor = window.get_display().get_monitor_at_surface(window.get_surface())
@@ -159,6 +163,10 @@ def start():
     return GLib.SOURCE_REMOVE
 
 
+def where():
+    return 'sidebar' if args.sidebar else f'{args.page} page'
+
+
 def window_size():
     window = app.get_active_window()
     return f'{window.get_width()}x{window.get_height()}'
@@ -168,7 +176,7 @@ def report(times, work, interval, distance):
     gaps = [b - a for a, b in zip(times, times[1:])] or [0]
     work = sorted(work[5:] or [0])  # the first frames include the start
     budget = interval / 1e6
-    print(f'scroll-test: {args.page} at {window_size()}: {distance:.0f} px in '
+    print(f'scroll-test: {where()} at {window_size()}: {distance:.0f} px in '
           f'{(times[-1] - times[0]) / 1e6:.1f} s at {args.speed:.0f} px/s; '
           f'{decoded} covers decoded', flush=True)
     over = [(budget, f'{1 / budget:.0f} Hz')]

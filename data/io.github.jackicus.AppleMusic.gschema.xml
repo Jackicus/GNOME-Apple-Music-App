@@ -16,7 +16,12 @@
     <key name="last-page" type="s">
       <default>'home'</default>
       <summary>Last page shown</summary>
-      <description>The key of the sidebar destination that was selected when the window closed.</description>
+      <description>The sidebar item that was selected when the window closed: a destination's key, or "playlist:ID" or "folder:ID" for one of the library's playlists or folders.</description>
+    </key>
+    <key name="expanded-folders" type="as">
+      <default>[]</default>
+      <summary>Expanded playlist folders</summary>
+      <description>The ids of the playlist folders shown open in the sidebar, their contents listed under them.</description>
     </key>
   </schema>
 </schemalist>

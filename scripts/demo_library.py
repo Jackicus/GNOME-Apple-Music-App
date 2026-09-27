@@ -12,6 +12,8 @@ GNOME Shell extension with the backend (see src/backend/__init__.py).
 hand-written ones, for measuring big libraries: about 12 songs an album, so
 2,500 albums make 30,000 songs. The covers are drawn in parallel.
 The last playlist is Favourite Songs, flagged by attributes.isFavourites.
+Three playlist folders, one inside another, hold some of the playlists; the
+rest are at the top level (`folders`, whose "root" entry lists the top level).
 Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
 """
 import argparse
@@ -1197,6 +1199,16 @@ FAVOURITES_DATA = {
     "size": 36,
 }
 
+# The playlist folders, as Apple's sidebar nests them: a folder's playlists are numbers into
+# PLAYLISTS_DATA (1 is l.pl001), its folders are titles here, and each lists its folders first,
+# as Apple Music does. The playlists no folder holds, Favourite Songs among them, are at the top
+# level, after the top-level folders, in the playlists' order.
+FOLDERS_DATA = [
+    {"title": "Chill & Focus", "folders": ["Jazz Nights"], "playlists": [1, 4, 10]},
+    {"title": "Jazz Nights", "folders": [], "playlists": [5, 11]},
+    {"title": "On the Road", "folders": [], "playlists": [6, 7, 2]},
+]
+
 STATIONS_DATA = [
     {
         "title": "Lighthouse One",
@@ -1252,6 +1264,29 @@ STATIONS_DATA = [
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
+
+def build_folders(playlist_ids):
+    """library.json's `folders` from FOLDERS_DATA: the "root" entry first, listing the top
+    level, then each folder in FOLDERS_DATA's order. playlist_ids are the playlists' ids in
+    section order; ids like l.fd001 are given in FOLDERS_DATA's order."""
+    ids = {data["title"]: f"l.fd{n:03d}" for n, data in enumerate(FOLDERS_DATA, 1)}
+    parents = {child: ids[data["title"]] for data in FOLDERS_DATA for child in data["folders"]}
+    folders = []
+    held = set()
+    for data in FOLDERS_DATA:
+        children = [{"kind": "folder", "id": ids[title]} for title in data["folders"]]
+        children += [{"kind": "playlist", "id": playlist_ids[n - 1]} for n in data["playlists"]]
+        held.update(playlist_ids[n - 1] for n in data["playlists"])
+        folders.append({
+            "id": ids[data["title"]],
+            "title": data["title"],
+            "parent": parents.get(data["title"], "root"),
+            "children": children,
+        })
+    top = [{"kind": "folder", "id": folder["id"]} for folder in folders if folder["parent"] == "root"]
+    top += [{"kind": "playlist", "id": pid} for pid in playlist_ids if pid not in held]
+    return [{"id": "root", "title": "Playlists", "parent": None, "children": top}] + folders
+
 
 def slug(text):
     """Generate a clean URL-friendly slug."""
@@ -1813,6 +1848,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             "radio": radio_stations,
         },
         "shelves": shelves,
+        "folders": build_folders([playlist["id"] for playlist in playlists]),
     }
 
     draw_covers(covers, thumb_dir, thumb_size)

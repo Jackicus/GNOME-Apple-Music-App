@@ -28,13 +28,17 @@ Parts marked `*` exist only once their phase in `prompts.md` is done.
 GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ Window: AdwToastOverlay > AdwNavigationSplitView                                 │
-│   sidebar: AdwSidebar built from sections.py (+ playlists and folders*)          │
+│   sidebar: AdwSidebar: sections.py's fixed items; the Playlists section bound to │
+│            a store of SidebarEntry (sidebar.py): All Playlists, Favourite Songs, │
+│            then library.playlist_tree() depth first, folders collapsible         │
 │   content: AdwNavigationView; a sidebar item replaces its stack with that        │
 │            destination's root page (pages/, built on first visit and kept, each  │
 │            with its own header bar): Home and Radio (shelves), GridPages, the    │
-│            SongsPage (ColumnView), Favourite Songs (a DetailPage), placeholders  │
-│            for the rest; tiles → window.open_item() pushes a DetailPage (album,  │
-│            playlist) or an ArtistPage, or plays a station; a shelf's See All →   │
+│            SongsPage (ColumnView), Favourite Songs and each sidebar playlist (a  │
+│            DetailPage), each folder (a GridPage of its folders and playlists),   │
+│            placeholders for the rest; tiles → window.open_item() pushes a        │
+│            DetailPage (album, playlist), an ArtistPage or a folder's GridPage,   │
+│            or plays a station; a shelf's See All →                               │
 │            window.open_shelf() pushes a GridPage; track rows, Play, Shuffle,     │
 │            stations → window.play_request(play, start_with, shuffle) (a toast    │
 │            until phase 12*)                                                      │
@@ -63,22 +67,34 @@ src/main.py                    Application: app.* actions (quit, about, shortcut
                                use_glib_event_loop()
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
-                               favourite_songs(), track_at(play, index), async load; songs filled
-                               by async build_songs(), songs-ready), Item (favourites), Group,
-                               Track (search_key), Shelf (GType AppleMusicShelfModel: the widget
-                               is AppleMusicShelf); SongOrder (the Songs table's orders), fold(),
-                               collation_key(); GObject/Gio only
-src/window.py + window.blp     Window: split view, sidebar, the content's AdwNavigationView and its root
-                               pages (pages.create, or a placeholder), open_item(item),
-                               open_shelf(shelf), play_request(play, start_with=None,
-                               shuffle=False), win.back, toasts, window-state memory
+                               favourite_songs(), track_at(play, index), playlist_tree(),
+                               folder_items(id), async load; songs filled by async
+                               build_songs(), songs-ready), Item (favourites; kind 'folder' for
+                               a playlist folder), Group, Track (search_key), Shelf (GType
+                               AppleMusicShelfModel: the widget is AppleMusicShelf),
+                               PlaylistTree/TreeNode (the folders); SongOrder (the Songs table's
+                               orders), fold(), collation_key(); GObject/Gio only
+src/window.py + window.blp     Window: split view, sidebar (the Playlists section bound to the
+                               library's tree; folder expansion in `expanded-folders`), the
+                               content's AdwNavigationView and its root pages (pages.create,
+                               pages.playlist/folder, or a placeholder), last-page restore,
+                               open_item(item), open_shelf(shelf), play_request(play,
+                               start_with=None, shuffle=False), win.back, toasts, window state
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
+src/sidebar.py                 the Playlists section's model: SidebarEntry (kind fixed/folder/
+                               playlist, key, title, icon, depth, item, ancestors),
+                               playlist_entries(tree), is_shown(), parse_key(), SidebarItem (an
+                               Adw.SidebarItem holding its entry; a folder's arrow suffix)
 src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
-src/pages/__init__.py          PAGES: destination key → factory; create(destination, library)
+src/pages/__init__.py          PAGES: destination key → factory; create(destination, library);
+                               playlist(library, id, title) and folder(library, id, title, root)
+                               for the sidebar's playlists and folders
 src/pages/grid.py + .blp       $AppleMusicGridPage: title over a Gtk.GridView of tiles, sort drop-down,
                                loading/empty states (albums, artists, recently-added,
-                               all-playlists, music-videos; pushed with root=False for See All);
-                               `model` a Gio.ListModel or a function returning one
+                               all-playlists (the root folder), music-videos, folders; pushed
+                               with root=False for See All and folder tiles); `model` a
+                               Gio.ListModel or a function returning one; the title follows
+                               the page's `title`
 src/pages/home.py + .blp       $AppleMusicHomePage: title over a Gtk.Box of AppleMusicShelf, one per
                                non-empty library.shelves, the first as hero cards, all with See All
 src/pages/radio.py + .blp      $AppleMusicRadioPage: the first HERO_COUNT (4) of library.radio as a
@@ -94,8 +110,8 @@ src/pages/artist.py + .blp     $AppleMusicArtistPage: round portrait, name, bio,
                                album tiles (the artist's groups, resolved through by_id)
 src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel);
                                art_colour(item.art_color) → Gdk.RGBA, is_dark(rgba)
-src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist()) and one
-                               Gtk.Inscription
+src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist(); a folder's
+                               big folder icon) and one Gtk.Inscription
 src/widgets/hero_tile.py + .blp  $AppleMusicHeroTile: a 260 px AppleMusicCover over a two-line
                                caption band in the item's art colour (drawn in do_snapshot)
 src/widgets/shelf.py + .blp    $AppleMusicShelf: title row (title-2, subtitle, See All) over a
@@ -133,7 +149,8 @@ po/                            gettext; POTFILES.in must list every file with tr
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
                                --albums N adds generated albums and artists; the last playlist is
-                               Favourite Songs (attributes.isFavourites)
+                               Favourite Songs (attributes.isFavourites); `folders`: three
+                               playlist folders (l.fd002 inside l.fd001) and loose playlists
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
                                fixtures/ holds invented API answers
 pyproject.toml                 ruff config only (line length 100, E/F/W; am.py excluded, vendored
@@ -158,17 +175,23 @@ scripts/check.sh          compileall, ruff (skipped if not installed), unit test
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
                           first when missing); no Chrome, no account. Use it for all UI work
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
+                      [--expand ID[,ID…]]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
                           --demo as demo.sh (without it the real cache is read); waits for the
                           library to load; in the narrow layout shows the page when --page or
-                          --open is given, else the sidebar. --open album:first (or
-                          artist/playlist/station/video, ID an id or "first") calls
-                          window.open_item over the page and waits 1.5 s more for artwork
-scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH]
-                          scrolls a page of the demo library top to bottom (or PX pixels) and
-                          reports the app's work per frame (mean, 90th percentile, frames over the
-                          refresh interval and over 16.7 ms); run it on a big library:
+                          --open is given, else the sidebar. --page takes a last-page value
+                          (a destination key, playlist:ID, folder:ID); --expand opens sidebar
+                          folders ("first": the library's first). --open album:first (or
+                          artist/playlist/station/video/folder, ID an id or "first") calls
+                          window.open_item over the page and waits 1.5 s more for artwork.
+                          The sidebar is not scrolled: --size 1100x1000 shows all the demo's
+                          playlists
+scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH] [--sidebar]
+                          scrolls a page (or, with --sidebar, the sidebar) of the demo library top
+                          to bottom (or PX pixels) and reports the app's work per frame (mean, 90th
+                          percentile, frames over the refresh interval and over 16.7 ms); run it
+                          on a big library:
                           APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
                           (Songs of 30,000: --page songs --distance 40000, the whole is 1.5M px)
 python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
@@ -202,7 +225,16 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   `Gio.ListStore` (`pages/songs.py`): GTK's sorters and filters read each Python item's
   properties from C at about 3 µs a read, which made them 5 to 100 times slower there.
 - The model (`src/library.py`): pages bind `app.library`'s stores, which keep their identity across
-  loads and are refilled in place; watch `notify::state` and `changed`. `item.groups` (Group:
+  loads and are refilled in place; watch `notify::state` and `changed`. Playlist folders:
+  library.json's optional top-level `folders` is a list of {id, title, parent, children: [{kind:
+  folder|playlist, id}]} in Apple's order, the entry with id `root` listing the top level
+  (playlists in no folder included); the children lists decide, `parent` is informational.
+  `library.playlist_tree()` (a new PlaylistTree per load) has `root` (nested TreeNodes: item,
+  depth, parent, children, store) and `flat` (depth first, with depth); whatever no list reaches
+  goes at the end of the top level, so a library without `folders` is all playlists at the top.
+  Folders are Items of kind `folder` (`by_id('folder', id)`, no art, no groups);
+  `folder_items(id)` is a folder's Gio.ListStore of folder and playlist Items (`root`: All
+  Playlists), replaced by each load, so pages follow a folder by id. `item.groups` (Group:
   `name`, `play`, `entries` store of Track) is wrapped on first access. `library.songs` stays
   empty until `await library.build_songs()` (the Songs page asks when first shown; batched with
   `yield_to_frames()`, one splice at the end), and every load after that refills it;
@@ -283,8 +315,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   style.css). Keep such Python snapshots off the grid tiles: the hero card is its own class.
 - The seams to the rest of the app, on the window (`self.get_root()` from a page):
   `open_item(item)` pushes the item's page (album/playlist → `DetailPage`, artist →
-  `ArtistPage`; a station has no page and goes to `play_request(item.play)`; videos toast for
-  now; the same item twice in a row is pushed once); `open_shelf(shelf)` pushes a `GridPage` of
+  `ArtistPage`, folder → its `GridPage` (`pages.folder(root=False)`); a station has no page and
+  goes to `play_request(item.play)`; videos toast for now; the same item twice in a row is pushed
+  once); `open_shelf(shelf)` pushes a `GridPage` of
   the shelf's items (See All; a library shelf is followed by key across loads, any other shown
   as it is);
   `play_request(play, start_with=None, shuffle=False)` is every "play this": a track row passes
@@ -329,6 +362,26 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `AdwSidebarSection.bind_model(model, create_func)` mirrors a `Gio.ListModel`; `menu-model` plus
   the `setup-menu` signal give per-item context menus; `setup_drop_target()` accepts drops;
   `mode: page` turns it into boxed lists for the collapsed layout (the window's breakpoint sets it).
+  Measured in phase 8 (the Playlists section is bound, `window._update_playlists`):
+  - It is a `Gtk.ListBox` of real rows (one per item, hidden ones `visible: false`) in its own
+    `Gtk.ScrolledWindow`, not recycled. 169 playlist entries (162 playlists, 7 folders): about
+    24 ms to splice in, then a 15-17 ms frame; scrolling 151 visible rows at 2,000-4,000 px/s,
+    0.5 ms of work a frame, none over 4.2 ms (`scroll_test.py --sidebar`). Fine at ~150; a few
+    thousand playlists would want a lighter path. The same shapes on a reload keep the items
+    (only their entries' Items are swapped), so a reload costs 5 ms and loses nothing.
+  - A click selects (`notify::selected-item`) and then emits `activated`; a click on the
+    selected item only `activated`; `set_selected()` only the notify. So selection shows pages
+    and `activated` toggles folders (arrow keys select without toggling).
+  - Splicing out the selected bound item sets `selected` to INVALID (items before the splice keep
+    theirs), and bind_model makes new items for everything spliced in: reselect by key after.
+  - With nothing selected its list selects the row with the focus: the first (Search) when the
+    window is shown and again when it becomes active. Never leave it empty on purpose (a
+    playlist restored before the library loads keeps All Playlists selected meanwhile), and
+    route the window's own selections through `_set_selected` (`_quiet`), which shows nothing.
+  - It cannot indent: a folder's contents follow it, the arrow (`pan-end`/`pan-down-symbolic`
+    suffix) says whether they show. In page mode the suffix sits before the row's own arrow.
+    Selecting does not scroll the list to the item (a restored playlist far down stays off
+    screen; the API has no scroll-to).
 - Blueprint 0.22: `template $AppleMusicWindow: Adw.ApplicationWindow {}`; a custom widget used in a
   template (`$AppleMusicPlayerBar`) needs its Python class imported before the template is built
   (hence `from .player_bar import PlayerBar  # noqa: F401` in `window.py`); `[top]`/`[bottom]`/`[end]`
