@@ -42,6 +42,8 @@ configure_file(
     'APP_ID': application_id,
     'BASE_ID': base_id,
     'PROFILE': get_option('profile'),
+    # Where --demo looks: scripts/demo_library.py's default output.
+    'DEMO_DIR': meson.project_source_root() / 'build' / 'demo',
     'localedir': get_option('prefix') / get_option('localedir'),
     'pkgdatadir': pkgdatadir,
   },
@@ -52,6 +54,7 @@ configure_file(
 
 install_data(
   '__init__.py',
+  'library.py',
   'main.py',
   'player_bar.py',
   'sections.py',

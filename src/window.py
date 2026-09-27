@@ -1,9 +1,28 @@
 from gettext import gettext as _
+from gettext import ngettext
 
 from gi.repository import Adw, Gio, Gtk
 
 from . import sections
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
+
+# The placeholder pages that count something: key -> (the count, its label). The labels are
+# looked up when used, after the launcher has set up gettext. %s is the count, grouped as the
+# locale groups digits.
+COUNTED = {
+    'albums': (lambda library: library.albums.get_n_items(),
+               lambda n: ngettext('%s album', '%s albums', n)),
+    'artists': (lambda library: library.artists.get_n_items(),
+                lambda n: ngettext('%s artist', '%s artists', n)),
+    'all-playlists': (lambda library: library.playlists.get_n_items(),
+                      lambda n: ngettext('%s playlist', '%s playlists', n)),
+    'songs': (lambda library: library.song_count(),
+              lambda n: ngettext('%s song', '%s songs', n)),
+    'music-videos': (lambda library: library.videos.get_n_items(),
+                     lambda n: ngettext('%s music video', '%s music videos', n)),
+    'radio': (lambda library: library.radio.get_n_items(),
+              lambda n: ngettext('%s station', '%s stations', n)),
+}
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/window.ui')
@@ -19,10 +38,17 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._settings = self.get_application().settings
+        self._library = self.get_application().library
         self._destinations = {}  # Adw.SidebarItem -> Destination
         self._items_by_key = {}
+        self._placeholders = {}  # destination key -> Adw.StatusPage
 
         self._build_sidebar()
+        self._library_handlers = [
+            self._library.connect('notify::state', self._on_library_changed),
+            self._library.connect('changed', self._on_library_changed),
+        ]
+        self._on_library_changed()
         self._restore_window_state()
         self._select(self._settings.get_string('last-page'))
 
@@ -41,7 +67,9 @@ class Window(Adw.ApplicationWindow):
                 section.append(item)
                 self._destinations[item] = destination
                 self._items_by_key[destination.key] = item
-                self.stack.add_named(self._placeholder_page(destination), destination.key)
+                page = self._placeholder_page(destination)
+                self._placeholders[destination.key] = page
+                self.stack.add_named(page, destination.key)
             self.sidebar.append(section)
 
         self.sidebar.connect('notify::selected-item', self._on_selected_item)
@@ -53,6 +81,19 @@ class Window(Adw.ApplicationWindow):
             title=destination.title,
             description=_('Nothing here yet'),
         )
+
+    def _on_library_changed(self, *_args):
+        """Placeholder pages say what the library holds for them, until real pages exist."""
+        state = self._library.state
+        for key, (count, label) in COUNTED.items():
+            n = count(self._library) if state == 'ready' else 0
+            if state == 'loading':
+                description = _('Loading…')
+            elif n:
+                description = label(n) % f'{n:n}'
+            else:
+                description = _('Nothing here yet')
+            self._placeholders[key].set_description(description)
 
     def _select(self, key):
         item = self._items_by_key.get(key) or self._items_by_key['home']
@@ -79,4 +120,7 @@ class Window(Adw.ApplicationWindow):
         self._settings.set_int('window-width', width)
         self._settings.set_int('window-height', height)
         self._settings.set_boolean('window-maximized', self.is_maximized())
+        for handler in self._library_handlers:
+            self._library.disconnect(handler)  # the library outlives the window
+        self._library_handlers = []
         return Adw.ApplicationWindow.do_close_request(self)

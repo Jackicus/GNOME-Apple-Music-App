@@ -17,6 +17,7 @@ is used if installed; otherwise Meson fetches it.
 ```bash
 scripts/run.sh          # build the development profile into ./build and run it
 scripts/run.sh --debug  # the same with debug logging (or set APPLE_MUSIC_DEBUG=1)
+scripts/demo.sh         # the same on an invented demo library (build/demo), no account needed
 scripts/check.sh        # byte-compile, lint (if ruff is installed), run the unit
                         # tests, build, validate the desktop/metainfo/schema files
 python3 -m unittest discover -s tests -v    # just the unit tests

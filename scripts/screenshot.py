@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Render the app's window to a PNG, for checking UI changes without a human.
 
-    scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY]
+    scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
 a tiling window manager may choose its own. Settings go to a memory backend.
+--demo shows the invented library in build/demo (generated first if missing)
+or in $APPLE_MUSIC_CACHE when that is set, as scripts/demo.sh does. The shot
+waits for the library to finish loading.
 """
 
 import argparse
 import gettext
 import os
+import subprocess
 import sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,8 +26,15 @@ parser.add_argument('out', nargs='?', default=os.path.join(root, 'build', 'scree
 parser.add_argument('--light', action='store_true')
 parser.add_argument('--size', default='1100x760')
 parser.add_argument('--page', default='home')
+parser.add_argument('--demo', action='store_true', help='show the demo library in build/demo')
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
+
+demo_dir = os.path.join(root, 'build', 'demo')  # what the launcher passes as DEMO_DIR
+if (args.demo and not os.environ.get('APPLE_MUSIC_CACHE')
+        and not os.path.exists(os.path.join(demo_dir, 'library.json'))):
+    subprocess.run([sys.executable, os.path.join(root, 'scripts', 'demo_library.py'),
+                    '--cache', demo_dir], check=True)
 
 os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(prefix, 'share', 'glib-2.0', 'schemas')
 os.environ['GSETTINGS_BACKEND'] = 'memory'  # don't touch the real settings
@@ -40,7 +51,7 @@ Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
 from applemusic import main  # noqa: E402
 
 app = main.Application('0.0.0', 'io.github.jackicus.AppleMusic.Screenshot',
-                       'io.github.jackicus.AppleMusic', 'default')
+                       'io.github.jackicus.AppleMusic', 'default', demo_dir)
 app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
 
 
@@ -62,6 +73,9 @@ def on_activate(_app):
 
 
 def shoot():
+    if app.library.props.state == 'loading':
+        GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
+        return GLib.SOURCE_REMOVE
     window = app.get_active_window()
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()
@@ -70,10 +84,11 @@ def shoot():
     texture.save_to_png(args.out)
     print(args.out)
     app.quit()
+    return GLib.SOURCE_REMOVE
 
 
 app.connect('startup', on_startup)
 app.connect('activate', on_activate)
 app.connect('window-added', on_window_added)
 main.use_glib_event_loop()  # as main.main() does, so app.spawn() works
-app.run([])
+app.run(['screenshot'] + (['--demo'] if args.demo else []))

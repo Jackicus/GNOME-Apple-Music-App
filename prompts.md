@@ -10,7 +10,7 @@ running and better than before.
 
 - [x] 1. Foundations: git, tests, lint, logging, asyncio on GLib (2026-09-27)
 - [x] 2. Vendor the backend (cdp.py, bridge.js, sync.py, demo generator, tests) (2026-09-27)
-- [ ] 3. Library model and demo mode
+- [x] 3. Library model and demo mode (2026-09-27)
 - [ ] 4. Grid pages (Albums, Artists, Recently Added, All Playlists, Music Videos) and artwork
 - [ ] 5. Songs page (GtkColumnView)
 - [ ] 6. Detail pages: album, playlist, artist
@@ -319,6 +319,53 @@ Verify: scripts/check.sh passes; scripts/demo.sh runs and the sidebar pages show
 scripts/screenshot.py build/albums.png --demo --page albums and look at it. Update CLAUDE.md
 (architecture: Library exists; commands: demo.sh and --demo). Tick phase 3 in prompts.md and commit.
 ```
+
+**Done 2026-09-27. Notes for later phases.**
+
+- The model: `Library` has stores `albums artists playlists radio videos` (created once, refilled
+  in place by every load), `shelves` (a list, replaced per load), `shelf(key)`, `by_id(kind, id)`
+  over section and shelf Items (kinds as in the README: album, artist, playlist, station, video,
+  song; a shelf item with a section item's kind and id is that same object), `songs` and
+  `song_count()`. `Item.groups` is a list of `Group` (GObject: `name`; `play`, `raw`, `entries` a
+  Gio.ListStore of Track). A `Track` also carries `play` (its group's, which `index` counts in:
+  phase 6 rows call `play_request(track.play, start_with=track.index)`), and its `thumb` falls back
+  to its album's when the Track shape has none, so phase 5's Songs rows have art. Integer
+  properties hold 0 for JSON null; string ones keep None.
+- Properties are declared with `library.model_property(name, type, default)` and assigned to
+  `_<name>` in `__init__`. Handing them to `GObject.Object.__init__` instead cost ~50 µs per Track
+  against under 10. Measured on a 2,000-album, 23,000-track, 8.3 MB library.json: load() about
+  100 ms under `asyncio.run` (JSON parse included), Item ~6 µs, `songs` built in ~220 ms on first
+  access, synchronously. Phase 5 (30,000 tracks) should build it in batches or ahead of the page.
+- `await asyncio.sleep(0)` does not let GTK paint under the GLib loop: asyncio runs at
+  `G_PRIORITY_DEFAULT`, above the redraw. `library.yield_to_frames()` runs the task's next step at
+  `G_PRIORITY_DEFAULT_IDLE` instead; in the app, wrapping 2,000 slowed-down albums in 8 batches
+  painted 5 frames that way and 0 with sleep(0). Use it for any chunked main-thread work.
+- `json.load` in `asyncio.to_thread` keeps the main loop's C work (drawing) going, but the parser
+  holds the GIL for the whole parse (~70 ms at 8 MB), so Python callbacks on the main thread wait
+  it out. Phase 19 should measure this with its big library.
+- load() makes new Item objects each time (phase 11's reload diffs by id to keep identity). Each
+  load bumps a generation; one overtaken by a newer load returns at its next pause without
+  touching state or emitting `changed`. A load that raises sets 'empty', emits `changed` and
+  re-raises (spawn logs it). The state is 'empty' until the first load; that load sets 'loading'
+  before the first frame is painted (the task's first step outranks the redraw).
+- `sections.songs` (phase 11's loose songs) is not read yet; `Library._build_songs` and
+  `_read_library`'s count are the two places that merge it by id.
+- Demo mode: `--demo` sets `app.demo`, adds `NON_UNIQUE` (a demo never raises a running app and
+  owns no bus name) and sets `APPLE_MUSIC_CACHE` to the launcher's `DEMO_DIR` unless it is already
+  set. `DEMO_DIR` is configured by `src/meson.build` as the source tree's `build/demo` for both
+  profiles; phase 20 may want it blank for packaged builds. `scripts/demo.sh` and
+  `screenshot.py --demo` generate `build/demo` when it is missing and `APPLE_MUSIC_CACHE` is unset.
+  Demo runs share the real GSettings (last page, window size).
+- `run.sh` and `check.sh` now run `meson setup` when `build/build.ninja` is missing rather than
+  when `build/` is: `build/demo` alone made `build/` exist and `meson install` fail.
+- `screenshot.py` waits for the library to leave 'loading' before rendering; without `--demo` it
+  reads the real cache (`~/.cache/apple-music`, which does not exist on this machine yet).
+- The placeholder counts live in `window.py`'s `COUNTED` (ngettext `'%s albums'` with the count
+  formatted `f'{n:n}'`, which groups digits under GTK's locale: "23,000 songs"). A count of 0 reads
+  "Nothing here yet" (Music Videos in the demo). Drop entries as real pages replace placeholders.
+  The window disconnects its library handlers in `do_close_request`.
+- check.sh runs 95 unit tests; `test_library.py` generates a demo library through the CLI once
+  (about 1.7 s) and builds small invented ones for dedup, batches, reload and overtaken loads.
 
 ## Phase 4: Grid pages and artwork
 

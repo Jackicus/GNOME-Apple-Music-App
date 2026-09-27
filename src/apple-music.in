@@ -10,6 +10,7 @@ VERSION = '@VERSION@'
 APP_ID = '@APP_ID@'
 BASE_ID = '@BASE_ID@'
 PROFILE = '@PROFILE@'
+DEMO_DIR = '@DEMO_DIR@'
 pkgdatadir = '@pkgdatadir@'
 localedir = '@localedir@'
 
@@ -27,4 +28,4 @@ if __name__ == '__main__':
 
     from applemusic import main
 
-    sys.exit(main.main(VERSION, APP_ID, BASE_ID, PROFILE))
+    sys.exit(main.main(VERSION, APP_ID, BASE_ID, PROFILE, DEMO_DIR))

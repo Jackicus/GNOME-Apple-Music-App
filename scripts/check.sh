@@ -10,7 +10,7 @@ else
   echo "check: ruff not installed, lint skipped"
 fi
 python3 -m unittest discover -s tests
-if [ ! -d build ]; then
+if [ ! -f build/build.ninja ]; then  # build/ alone may be just build/demo
   meson setup build --prefix="$PWD/build/install" -Dprofile=development
 fi
 meson compile -C build

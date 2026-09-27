@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 prefix="$PWD/build/install"
-if [ ! -d build ]; then
+if [ ! -f build/build.ninja ]; then  # build/ alone may be just build/demo
   meson setup build --prefix="$prefix" -Dprofile=development
 fi
 meson install -C build --quiet

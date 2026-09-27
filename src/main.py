@@ -1,4 +1,5 @@
-"""The application: app actions, settings, logging and the asyncio-on-GLib bootstrap."""
+"""The application: app actions, settings, the library, demo mode, logging and the asyncio-on-GLib
+bootstrap."""
 
 import asyncio
 import logging
@@ -14,6 +15,8 @@ gi.require_version('Adw', '1')
 
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
+from .backend import config  # noqa: E402
+from .library import Library  # noqa: E402
 from .window import Window  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -22,7 +25,10 @@ RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
 
 
 class Application(Adw.Application):
-    def __init__(self, version, app_id, base_id, profile):
+    """The app. `demo_dir` is where --demo finds its invented library (the launcher passes the
+    source tree's build/demo, where scripts/demo_library.py writes it)."""
+
+    def __init__(self, version, app_id, base_id, profile, demo_dir=None):
         super().__init__(
             application_id=app_id,
             flags=Gio.ApplicationFlags.DEFAULT_FLAGS,
@@ -30,6 +36,9 @@ class Application(Adw.Application):
         )
         self.version = version
         self.profile = profile
+        self.demo_dir = demo_dir
+        self.demo = False  # True under --demo: an invented library and no engine
+        self.library = None  # created in do_startup
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
@@ -41,15 +50,37 @@ class Application(Adw.Application):
 
         self.add_main_option('debug', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
                              _('Log debug messages'), None)
+        self.add_main_option('demo', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+                             _('Show an invented library instead of yours, without the engine'),
+                             None)
 
     def do_handle_local_options(self, options):
         if options.contains('debug'):
             logging.getLogger().setLevel(logging.DEBUG)
+        if options.contains('demo'):
+            self._use_demo()
         return -1  # carry on with the default handling
+
+    def _use_demo(self):
+        """Point the backend's cache at the demo library, before anything reads it.
+
+        An APPLE_MUSIC_CACHE already set wins, so a bigger generated library can be shown the
+        same way. The demo runs as an instance of its own rather than raising a running app.
+        """
+        self.demo = True
+        self.set_flags(self.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
+        if not os.environ.get('APPLE_MUSIC_CACHE') and self.demo_dir:
+            os.environ['APPLE_MUSIC_CACHE'] = str(self.demo_dir)
+        log.info('Demo mode: the library in %s', config.cache_dir())
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        self.library = Library()
 
     def do_activate(self):
         window = self.get_active_window()
         if window is None:
+            self.spawn(self.library.load())
             window = Window(application=self)
             if self.profile == 'development':
                 window.add_css_class('devel')
@@ -119,10 +150,10 @@ def use_glib_event_loop():
     asyncio.set_event_loop_policy(GLibEventLoopPolicy())
 
 
-def main(version, app_id, base_id, profile):
+def main(version, app_id, base_id, profile, demo_dir=None):
     debug = os.environ.get('APPLE_MUSIC_DEBUG', '') not in ('', '0')
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO,
                         format='%(levelname)s %(name)s: %(message)s')
     use_glib_event_loop()
-    app = Application(version, app_id, base_id, profile)
+    app = Application(version, app_id, base_id, profile, demo_dir)
     return app.run(sys.argv)

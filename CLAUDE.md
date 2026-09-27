@@ -29,9 +29,11 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ Window: AdwToastOverlay > AdwNavigationSplitView                                 │
 │   sidebar: AdwSidebar built from sections.py (+ playlists and folders*)          │
-│   content: GtkStack of placeholder AdwStatusPages (→ AdwNavigationView*)         │
+│   content: GtkStack of placeholder AdwStatusPages counting the library's stores  │
+│            (→ AdwNavigationView*)                                                │
 │   PlayerBar stub at the bottom of the content (→ AdwBottomSheet bottom bar*)     │
-│ Library*: Item/Track GObjects in Gio.ListStores, loaded from library.json        │
+│ app.library: Item/Track GObjects in Gio.ListStores, loaded from library.json     │
+│   (parsed in a thread, wrapped in batches); --demo reads build/demo instead      │
 │ Engine*: Chrome (Gio.Subprocess) + async CDP client ─► bridge.js ─► MusicKit     │
 │   MusicKit events ─► Player* state ─► PlayerBar / Now Playing* / MPRIS* service  │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
@@ -46,7 +48,12 @@ Disk*: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, remote-art/, lyr
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
 src/main.py                    Application: app.* actions (quit, about, shortcuts), GSettings, dialogs,
-                               logging and --debug, spawn(coro), use_glib_event_loop()
+                               logging and --debug, --demo (app.demo), app.library (made in
+                               do_startup, loaded in do_activate), spawn(coro),
+                               use_glib_event_loop()
+src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
+                               albums artists playlists radio videos, shelves, lazy songs, by_id,
+                               shelf, async load), Item, Group, Track, Shelf; GObject/Gio only
 src/window.py + window.blp     Window: split view, sidebar, content stack, toasts, window-state memory
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/player_bar.py + .blp       $AppleMusicPlayerBar, a stub transport bar
@@ -68,7 +75,7 @@ src/backend/                   vendored from the extension, no gi; __init__.py r
                                linted; phases 9-11 port it, then delete it
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
-scripts/run.sh check.sh screenshot.py
+scripts/run.sh check.sh screenshot.py demo.sh
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
                                fixtures/ holds invented API answers
@@ -91,9 +98,12 @@ scripts/run.sh [args]     meson setup (dev profile, prefix build/install) + inst
                           `--debug` (or APPLE_MUSIC_DEBUG=1) logs at DEBUG
 scripts/check.sh          compileall, ruff (skipped if not installed), unit tests, meson compile,
                           meson tests (desktop/metainfo/schema validation); prints `check: ok`
-scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY]
+scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
+                          first when missing); no Chrome, no account. Use it for all UI work
+scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
-                          dark by default; GSettings go to a memory backend
+                          dark by default; GSettings go to a memory backend; --demo as demo.sh
+                          (without it the real cache is read); waits for the library to load
 python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
 scripts/demo_library.py [--cache DIR]         writes an invented library (library.json, art/, thumb/,
                                               art/.sizes) into DIR, default build/demo; no Chrome
@@ -118,10 +128,23 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - Collections are models: `Gtk.GridView`/`Gtk.ListView`/`Gtk.ColumnView` over `Gio.ListStore`
   (with `Gtk.SortListModel`/`Gtk.FilterListModel`) and `Gtk.SignalListItemFactory`. Never a
   `Gtk.Box` of hundreds of widgets.
+- The model (`src/library.py`): pages bind `app.library`'s stores, which keep their identity across
+  loads and are refilled in place; watch `notify::state` and `changed`. `item.groups` (Group:
+  `name`, `play`, `entries` store of Track) and `library.songs` are wrapped on first access;
+  `library.song_count()` counts without building. Model GObjects declare properties with
+  `library.model_property` (kept in `_<name>` attributes, assigned directly when wrapping):
+  passing properties to `GObject.Object.__init__` costs about 4 µs each, 5-10x slower wrapping.
+- Main-thread work in chunks yields with `library.yield_to_frames()`, not a bare
+  `await asyncio.sleep(0)`: asyncio runs at `G_PRIORITY_DEFAULT`, above GTK's redraw, so sleep(0)
+  alone paints nothing until the task ends (measured: 0 frames against 5 in the same load).
 - The backend is reached only through the `Engine` object (coroutines: `await app.engine.play(...)`),
   spawned from signal handlers with `app.spawn(coro)`. Errors are `EngineError(code)` with the
   README's codes (`engine-down`, `not-signed-in`, `api`, `timeout`); the UI shows a toast, never a
   traceback. Library reads are synchronous in-memory models.
+- Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
+  `APPLE_MUSIC_CACHE` at the launcher's `DEMO_DIR` (the source tree's `build/demo`) unless the
+  variable is already set, so `APPLE_MUSIC_CACHE=DIR scripts/demo.sh` shows another generated
+  library. Treat `app.demo` as "no engine": never start Chrome or sign in under it.
 - Logging: Python `logging`, `log = logging.getLogger(__name__)`; configured once in `main.main()`
   (`basicConfig`, INFO to stderr as `LEVEL logger: message`; DEBUG with `--debug`, handled in
   `do_handle_local_options`, or with `APPLE_MUSIC_DEBUG` set to anything but empty or `0`). No
@@ -145,8 +168,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 ## Verifying a change
 
 1. `scripts/check.sh` passes (it grows: tests, lint).
-2. Anything visual: `scripts/run.sh` builds, then `scripts/screenshot.py build/shot.png --page KEY`
-   and look at the PNG with the Read tool; also `--light`, and `--size 400x700` for anything adaptive.
+2. Anything visual: `scripts/run.sh` (or `scripts/demo.sh`) builds, then
+   `scripts/screenshot.py build/shot.png --demo --page KEY` and look at the PNG with the Read tool;
+   also `--light`, and `--size 400x700` for anything adaptive.
 3. Backend or model changes get a unit test in `tests/`.
 4. The real engine is only exercised when the phase needs it, and never leaves data in the repo.
 
@@ -186,9 +210,11 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
 - Icons in `src/icons/` resolve by `icon-name` through the resource alias; symbolic SVGs use a `#222`
   fill and are recoloured. Adwaita no longer ships some legacy names (`emblem-favorite-symbolic` is
   gone); bundle anything not in `/usr/share/icons/Adwaita/symbolic/`.
-- `screenshot.py` uses a `.Screenshot` app ID and renders after 1.2 s, so content that arrives later
-  needs a longer delay; it prints a harmless at-spi warning. It makes the window non-resizable so
-  the desktop's tiling extension (Tiling Shell) honours `--size`; so shots have no maximize button.
+- `screenshot.py` uses a `.Screenshot` app ID and renders after 1.2 s, and not before the library
+  has loaded, so content that arrives later still needs a longer delay; it prints a harmless at-spi
+  warning (and, on this desktop, an Adwaita one about gtk-application-prefer-dark-theme). It makes
+  the window non-resizable so the desktop's tiling extension (Tiling Shell) honours `--size`; so
+  shots have no maximize button.
   It calls `main.use_glib_event_loop()` itself, since it builds the Application without `main()`.
   In the collapsed (narrow) layout the sidebar is shown, whatever `--page` says.
 - The dev build shares the release schema and resource path; only the app ID, desktop file and icons
