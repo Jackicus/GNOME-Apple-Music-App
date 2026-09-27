@@ -9,6 +9,7 @@
     <file preprocess="xml-stripblanks" alias="artist.ui">pages/artist.ui</file>
     <file preprocess="xml-stripblanks" alias="home.ui">pages/home.ui</file>
     <file preprocess="xml-stripblanks" alias="radio.ui">pages/radio.ui</file>
+    <file preprocess="xml-stripblanks" alias="signin.ui">dialogs/signin.ui</file>
     <file preprocess="xml-stripblanks" alias="tile.ui">widgets/tile.ui</file>
     <file preprocess="xml-stripblanks" alias="song_title.ui">widgets/song_title.ui</file>
     <file preprocess="xml-stripblanks" alias="cover.ui">widgets/cover.ui</file>

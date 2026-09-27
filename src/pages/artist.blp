@@ -105,17 +105,15 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
             child-activated => $on_album_activated();
           }
 
-          // In place of the albums: an artist that came without them (a shelf's).
+          // In place of the albums: an artist that came without them (a shelf's) while the
+          // engine fetches them, or what stopped the fetch (artist.py sets the texts).
           Adw.StatusPage status_page {
             icon-name: "media-optical-cd-audio-symbolic";
-            title: _("Sign In to Load This");
-            description: _("The albums appear once you sign in to Apple Music");
             visible: false;
 
-            child: Button {
-              label: _("Sign In");
-              action-name: "win.sign-in";
+            child: Button status_button {
               halign: center;
+              clicked => $on_status_clicked();
 
               styles [
                 "pill",

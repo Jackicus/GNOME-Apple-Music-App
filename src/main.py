@@ -1,10 +1,13 @@
-"""The application: app actions, settings, the library, demo mode, logging and the asyncio-on-GLib
-bootstrap."""
+"""The application: app actions, settings, the library, the engine's lifecycle, sign-in and
+sign-out, demo mode, logging and the asyncio-on-GLib bootstrap."""
 
 import asyncio
 import logging
 import os
+import shutil
+import signal
 import sys
+import time
 import warnings
 from gettext import gettext as _
 
@@ -16,12 +19,18 @@ gi.require_version('Adw', '1')
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .backend import config  # noqa: E402
+from .backend.errors import EngineError  # noqa: E402
+from .engine import Engine, engine_paths  # noqa: E402
 from .library import Library  # noqa: E402
 from .window import Window  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
+
+# How long quitting waits for the engine to stop (its own SIGTERM grace is 5 s) before Chrome is
+# killed outright and the app quits anyway.
+QUIT_TIMEOUT = 6.0
 
 
 class Application(Adw.Application):
@@ -39,13 +48,18 @@ class Application(Adw.Application):
         self.demo_dir = demo_dir
         self.demo = False  # True under --demo: an invented library and no engine
         self.library = None  # created in do_startup
+        self.engine = None  # created in do_startup
         self._tasks = set()  # strong references: asyncio only keeps weak ones
+        self._quitting = None  # the task stopping the engine before the app quits
+        self._signin = None  # the sign-in dialog while it is open
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
 
-        self._add_action('quit', lambda *_: self.quit(), ['<primary>q'])
+        self._add_action('quit', self._on_quit, ['<primary>q'])
         self._add_action('about', self._on_about)
         self._add_action('shortcuts', self._on_shortcuts, ['<primary>question'])
+        self._add_action('sign-in', self._on_sign_in)
+        self._add_action('sign-out', self._on_sign_out)
         self.set_accels_for_action('window.close', ['<primary>w'])
         self.set_accels_for_action('win.back', ['<alt>Left'])
 
@@ -77,6 +91,30 @@ class Application(Adw.Application):
     def do_startup(self):
         Adw.Application.do_startup(self)
         self.library = Library()
+        self.engine = self._make_engine()
+        # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
+        # default, which would end the process with Chrome running on (reclaimed next time).
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_signal, signum)
+
+    def _make_engine(self):
+        """The Engine on this build's profile directory and port (engine_paths: the .Devel build
+        beside the release one; the environment overrides win), reading the browser command
+        from the settings, then and whenever it changes."""
+        if self.demo:
+            return Engine(demo=True)
+        profile_dir, port = engine_paths(self.profile, self.settings.get_int('engine-port'))
+        engine = Engine(profile_dir, port, self.settings.get_string('browser-command'))
+        self.settings.connect(
+            'changed::browser-command',
+            lambda settings, key: setattr(engine, 'browser_command', settings.get_string(key)))
+        log.debug('engine: profile %s, port %d, state %s', profile_dir, port, engine.state_file)
+        return engine
+
+    def _on_signal(self, signum):
+        log.info('signal %d: quitting', signum)
+        self.activate_action('quit')
+        return GLib.SOURCE_REMOVE
 
     def do_activate(self):
         window = self.get_active_window()
@@ -86,7 +124,128 @@ class Application(Adw.Application):
             if self.profile == 'development':
                 window.add_css_class('devel')
             self.spawn(self._log_event_loop())
+            if self._autostart_wanted():
+                self.spawn(self._autostart())
         window.present()
+
+    # -- the engine ----------------------------------------------------------------------
+
+    def _autostart_wanted(self):
+        return (not self.demo and self.settings.get_boolean('signed-in')
+                and self.settings.get_boolean('engine-autostart'))
+
+    async def _autostart(self):
+        """Chrome headless on launch, as the settings ask, and a word when the sign-in it
+        expected is gone."""
+        try:
+            await self.engine.start()
+        except EngineError as error:
+            self.report(error)
+            return
+        if not self.engine.authorized:
+            log.warning('the engine is up but Apple Music is not signed in')
+            self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
+
+    def toast(self, title, button_label=None, action_name=None):
+        """A toast on the active window, with a button running an action when given."""
+        window = self.get_active_window()
+        if window is None:
+            return
+        toast = Adw.Toast(title=title)
+        if button_label and action_name:
+            toast.set_button_label(button_label)
+            toast.set_action_name(action_name)
+        window.toast_overlay.add_toast(toast)
+
+    def report(self, error):
+        """An EngineError as a toast: a sentence for its code, never a traceback."""
+        log.warning('engine: %s', error)
+        code = getattr(error, 'code', 'api')
+        if code == 'engine-down':
+            self.toast(_('The engine is not running'))
+        elif code == 'not-signed-in':
+            self.toast(_('Sign in to Apple Music first'), _('Sign In'), 'app.sign-in')
+        elif code == 'timeout':
+            self.toast(_('Apple Music did not answer in time'))
+        else:
+            self.toast(_('Apple Music could not do that: {message}').format(
+                message=getattr(error, 'message', error)))
+
+    # -- quitting ------------------------------------------------------------------------
+
+    def _on_quit(self, *_args):
+        """Stop the engine, then quit: Chrome must not outlive the app. Closing the last window
+        comes here too (Window.do_close_request)."""
+        if self._quitting is None:
+            self._quitting = self.spawn(self._quit())
+
+    async def _quit(self):
+        for window in self.get_windows():
+            if hasattr(window, 'prepare_quit'):  # a dialog's toplevel has none
+                window.prepare_quit()  # remembers its state and hides at once
+        try:
+            await asyncio.wait_for(self.engine.stop(), QUIT_TIMEOUT)
+        except TimeoutError:
+            log.warning('the engine took longer than %g s to stop', QUIT_TIMEOUT)
+            self.engine.kill()
+        except Exception:
+            log.exception('stopping the engine failed')
+            self.engine.kill()
+        finally:
+            Gio.Application.quit(self)
+
+    # -- sign-in and sign-out ----------------------------------------------------------------
+
+    def _on_sign_in(self, *_args):
+        if self.demo:
+            self.toast(_('Not available with the demo library'))
+            return
+        if self._signin is not None:
+            return  # the dialog is open already
+        from .dialogs.signin import SignInDialog
+
+        dialog = SignInDialog(self)
+        self._signin = dialog
+        dialog.connect('closed', self._on_signin_closed)
+        dialog.present(self.get_active_window())
+
+    def _on_signin_closed(self, _dialog):
+        self._signin = None
+
+    def _on_sign_out(self, *_args):
+        if self.demo:
+            return
+        dialog = Adw.AlertDialog(
+            heading=_('Sign Out of Apple Music?'),
+            body=_('The engine stops, and your library, artwork and sign-in cached on this '
+                   'computer are removed.'),
+        )
+        dialog.add_response('cancel', _('_Cancel'))
+        dialog.add_response('sign-out', _('Sign _Out'))
+        dialog.set_response_appearance('sign-out', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_sign_out_response)
+        dialog.present(self.get_active_window())
+
+    def _on_sign_out_response(self, _dialog, response):
+        if response == 'sign-out':
+            self.spawn(self._sign_out())
+
+    async def _sign_out(self):
+        """Stop the engine, forget the account, wipe the Chrome profile and the cache, and
+        empty the library."""
+        if self.demo:
+            return
+        try:
+            await self.engine.stop()
+        except EngineError as error:
+            log.warning('stopping the engine before signing out: %s', error)
+        self.settings.set_boolean('signed-in', False)
+        self.settings.set_string('account-name', '')
+        await asyncio.to_thread(remove_trees, self.engine.profile_dir, config.cache_dir())
+        await self.library.load()  # nothing left to read: the models empty
+        self.toast(_('Signed out'))
 
     def spawn(self, coro):
         """Run a coroutine as a task on the GLib-backed asyncio loop.
@@ -138,6 +297,25 @@ class Application(Adw.Application):
         dialog = Adw.ShortcutsDialog()
         dialog.add(section)
         dialog.present(self.get_active_window())
+
+
+def remove_trees(*paths, attempts=4, pause=0.5):
+    """Delete directories (in a thread), leaving anything that cannot be deleted. Chrome's
+    helper processes write to the profile for a moment after the browser process has exited
+    (its network service re-created `Default/Network Persistent State` in one run), so a
+    directory that comes back is removed again, a few times, `pause` seconds apart."""
+    for path in paths:
+        if not path:
+            continue
+        for attempt in range(attempts):
+            if not os.path.isdir(path):
+                break
+            if attempt:
+                time.sleep(pause)
+            log.info('removing %s', path)
+            shutil.rmtree(path, ignore_errors=True)
+        if os.path.isdir(path):
+            log.warning('%s could not be removed entirely', path)
 
 
 def use_glib_event_loop():

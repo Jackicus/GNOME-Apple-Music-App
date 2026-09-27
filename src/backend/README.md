@@ -176,7 +176,9 @@ scripts/demo_library.py --cache build/demo  # an invented library.json and artwo
 
 The app is one long-running process, so it keeps one CDP connection open
 and hears MusicKit's events instead of polling. Pure Python and asyncio,
-no gi; the app's `Engine` (phase 10) and `scripts/am.py` sit on it.
+no gi; the app's `Engine` (`src/engine.py`, phase 10: Chrome as a
+`Gio.Subprocess`, the commands as coroutines, sign-in) and `scripts/am.py`
+sit on it.
 
 - **`errors.py`** — `EngineError(code, message)` with the codes above
   (`engine-down`, `not-signed-in`, `api`, `timeout`, `usage`). Everything

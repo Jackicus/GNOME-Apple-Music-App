@@ -26,6 +26,10 @@ class Window(Adw.ApplicationWindow):
     sidebar = Gtk.Template.Child()
     content_page = Gtk.Template.Child()
     navigation_view = Gtk.Template.Child()
+    account_stack = Gtk.Template.Child()
+    account_avatar = Gtk.Template.Child()
+    account_label = Gtk.Template.Child()
+    sign_in_banner = Gtk.Template.Child()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -39,6 +43,7 @@ class Window(Adw.ApplicationWindow):
         self._expanded = set(self._settings.get_strv('expanded-folders'))
         self._shown = None  # the key whose root page is at the bottom of the navigation stack
         self._quiet = False  # the selection changes, but not by the user: show nothing
+        self._quitting = False
 
         self._build_sidebar()
         self._update_playlists()
@@ -46,9 +51,12 @@ class Window(Adw.ApplicationWindow):
         self._restore_window_state()
         self._restore_page(self._settings.get_string('last-page'))
 
-        sign_in = Gio.SimpleAction.new('sign-in', None)
-        sign_in.connect('activate', lambda *_args: self.toast(_('Signing in is not available yet')))
-        self.add_action(sign_in)
+        # The account button and the banner follow the signed-in and account-name keys.
+        self._settings_handlers = [
+            self._settings.connect('changed::signed-in', self._update_account),
+            self._settings.connect('changed::account-name', self._update_account),
+        ]
+        self._update_account()
 
         # Alt+Left (main.py): the navigation views pop on their own only while the focus is in
         # them; this goes back from anywhere in the window, and is off when there is nowhere to
@@ -63,6 +71,21 @@ class Window(Adw.ApplicationWindow):
 
     def toast(self, title):
         self.toast_overlay.add_toast(Adw.Toast(title=title))
+
+    # The account.
+
+    def _update_account(self, *_args):
+        signed_in = self._settings.get_boolean('signed-in')
+        name = self._settings.get_string('account-name')
+        self.account_stack.set_visible_child_name('account' if signed_in else 'sign-in')
+        self.account_label.set_label(name or _('Signed In'))
+        self.account_avatar.set_text(name)
+        self.account_avatar.set_show_initials(bool(name))
+        self.sign_in_banner.set_revealed(not signed_in and not self.get_application().demo)
+
+    @Gtk.Template.Callback()
+    def on_banner_sign_in(self, _banner):
+        self.get_application().activate_action('sign-in')
 
     def open_item(self, item):
         """Show an album, artist, playlist, folder, station or video: what activating a tile
@@ -371,10 +394,27 @@ class Window(Adw.ApplicationWindow):
         if self._settings.get_boolean('window-maximized'):
             self.maximize()
 
-    def do_close_request(self):
-        self._library.disconnect(self._library_handler)  # the library outlives the window
+    def _save_window_state(self):
         width, height = self.get_default_size()
         self._settings.set_int('window-width', width)
         self._settings.set_int('window-height', height)
         self._settings.set_boolean('window-maximized', self.is_maximized())
-        return Adw.ApplicationWindow.do_close_request(self)
+
+    def prepare_quit(self):
+        """The app is quitting (app.quit, or this window closing): remember the window's
+        state and hide it now, so nothing shows while the engine stops."""
+        if self._quitting:
+            return
+        self._quitting = True
+        self._save_window_state()
+        self._library.disconnect(self._library_handler)  # the library outlives the window
+        for handler in self._settings_handlers:
+            self._settings.disconnect(handler)
+        self._settings_handlers = []
+        self.set_visible(False)
+
+    def do_close_request(self):
+        # Closing the last window quits, and quitting stops the engine first: the window
+        # stays (hidden) until the app has, so the close is declined here.
+        self.get_application().activate_action('quit')
+        return True

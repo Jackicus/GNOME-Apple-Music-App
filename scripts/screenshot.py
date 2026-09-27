@@ -2,7 +2,7 @@
 """Render the app's window to a PNG, for checking UI changes without a human.
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
-                          [--open KIND:ID] [--expand ID[,ID…]]
+                          [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -20,6 +20,9 @@ of that section. The shot then waits longer, for the artwork.
 --page also takes a sidebar playlist or folder, as last-page names them:
 playlist:ID or folder:ID. --expand opens these playlist folders in the
 sidebar (the expanded-folders setting); "first" is the library's first folder.
+--signed-in shows the account button as signed in (the signed-in and account-name
+settings, in the memory backend only), with NAME on it when given; the engine is
+never started here.
 """
 
 import argparse
@@ -43,6 +46,8 @@ parser.add_argument('--open', metavar='KIND:ID',
                     help='open an item (ID an item id or "first") over the page')
 parser.add_argument('--expand', metavar='ID[,ID…]', default='',
                     help='expand these playlist folders in the sidebar ("first": the first one)')
+parser.add_argument('--signed-in', metavar='NAME', nargs='?', const='',
+                    help='show the account as signed in, as NAME when given')
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
 
@@ -102,6 +107,9 @@ def on_activate(_app):
     expand = [folder_id for folder_id in args.expand.split(',') if folder_id]
     expand = [first_folder() if folder_id == 'first' else folder_id for folder_id in expand]
     app.settings.set_strv('expanded-folders', [folder_id for folder_id in expand if folder_id])
+    if args.signed_in is not None:
+        app.settings.set_boolean('signed-in', True)
+        app.settings.set_string('account-name', args.signed_in)
     GLib.timeout_add(1200, shoot)
 
 

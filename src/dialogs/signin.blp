@@ -1,0 +1,34 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicSignInDialog: Adw.Dialog {
+  title: _("Sign In");
+  content-width: 440;
+  content-height: 400;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-title: false;
+    }
+
+    content: Adw.StatusPage status_page {
+      title: _("Signing In to Apple Music");
+      description: _("Starting Chrome…");
+
+      paintable: Adw.SpinnerPaintable {
+        widget: status_page;
+      };
+
+      child: Button cancel_button {
+        label: _("Cancel");
+        halign: center;
+        clicked => $on_cancel_clicked();
+
+        styles [
+          "pill",
+        ]
+      };
+    };
+  };
+}

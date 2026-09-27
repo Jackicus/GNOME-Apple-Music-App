@@ -54,37 +54,84 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
 
           content: Adw.Sidebar sidebar {};
 
+          // The account: Sign In while signed out; the name (or "Signed In") over a menu with
+          // Sign Out once signed in.
           [bottom]
-          Button account_button {
-            action-name: "win.sign-in";
+          Stack account_stack {
+            hhomogeneous: true;
+            vhomogeneous: true;
             margin-start: 6;
             margin-end: 6;
             margin-top: 6;
             margin-bottom: 6;
 
-            styles [
-              "flat",
-              "account-button",
-            ]
+            StackPage {
+              name: "sign-in";
 
-            child: Box {
-              spacing: 10;
-
-              Adw.Avatar account_avatar {
-                size: 28;
-              }
-
-              Label account_label {
-                label: _("Sign In");
-                xalign: 0;
-                hexpand: true;
-                ellipsize: end;
+              child: Button sign_in_button {
+                action-name: "app.sign-in";
 
                 styles [
-                  "heading",
+                  "flat",
+                  "account-button",
                 ]
-              }
-            };
+
+                child: Box {
+                  spacing: 10;
+
+                  Adw.Avatar {
+                    size: 28;
+                    icon-name: "avatar-default-symbolic";
+                  }
+
+                  Label {
+                    label: _("Sign In");
+                    xalign: 0;
+                    hexpand: true;
+                    ellipsize: end;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+                };
+              };
+            }
+
+            StackPage {
+              name: "account";
+
+              child: MenuButton account_button {
+                menu-model: account_menu;
+                direction: up;
+                tooltip-text: _("Account");
+
+                styles [
+                  "flat",
+                  "account-button",
+                ]
+
+                child: Box {
+                  spacing: 10;
+
+                  Adw.Avatar account_avatar {
+                    size: 28;
+                    show-initials: true;
+                  }
+
+                  Label account_label {
+                    label: _("Signed In");
+                    xalign: 0;
+                    hexpand: true;
+                    ellipsize: end;
+
+                    styles [
+                      "heading",
+                    ]
+                  }
+                };
+              };
+            }
           }
         };
       };
@@ -93,8 +140,16 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
         title: _("Home");
         tag: "content";
 
-        // Each page in the navigation view carries its own header bar.
+        // Each page in the navigation view carries its own header bar; the banner sits above
+        // them while signed out (window.py reveals it).
         child: Adw.ToolbarView {
+          [top]
+          Adw.Banner sign_in_banner {
+            title: _("Sign in to see your library");
+            button-label: _("Sign In");
+            button-clicked => $on_banner_sign_in();
+          }
+
           content: Adw.NavigationView navigation_view {};
 
           [bottom]
@@ -115,6 +170,15 @@ menu primary_menu {
     item {
       label: _("_About Apple Music");
       action: "app.about";
+    }
+  }
+}
+
+menu account_menu {
+  section {
+    item {
+      label: _("Sign _Out");
+      action: "app.sign-out";
     }
   }
 }

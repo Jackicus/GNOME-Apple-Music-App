@@ -17,6 +17,7 @@ blueprints = custom_target(
     'pages/home.blp',
     'pages/radio.blp',
     'pages/songs.blp',
+    'dialogs/signin.blp',
     'player_bar.blp',
     'widgets/cover.blp',
     'widgets/hero_tile.blp',
@@ -66,6 +67,7 @@ configure_file(
 
 install_data(
   '__init__.py',
+  'engine.py',
   'library.py',
   'main.py',
   'player_bar.py',
@@ -84,6 +86,12 @@ install_data(
   'pages/radio.py',
   'pages/songs.py',
   install_dir: moduledir / 'pages',
+)
+
+install_data(
+  'dialogs/__init__.py',
+  'dialogs/signin.py',
+  install_dir: moduledir / 'dialogs',
 )
 
 install_data(

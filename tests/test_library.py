@@ -287,6 +287,35 @@ class TestLaziness(unittest.TestCase):
         self.assertEqual(seen, ['After', 'Again'])
         self.assertEqual(item.get_property('title'), 'Again')
 
+    def test_merge_takes_a_fetched_item_in(self):
+        # A shelf hit: no groups, little else. The engine's item() answer fills it in.
+        item = Item({'id': 'l.a1', 'kind': 'album', 'title': 'Shelf Title',
+                     'subtitle': 'Test Artist', 'play': {'kind': 'album', 'id': 'l.a1'}})
+        self.assertEqual(item.groups, [])
+        seen = []
+        item.connect('notify', lambda obj, pspec: seen.append(pspec.name))
+        answer = album('l.a1', 'Full Title', ['i.1', 'i.2'])
+        answer.update(genre='Rock', summary='Notes', art='/x/art.jpg', thumb='/x/thumb.jpg',
+                      artColor='#112233', cached='2026-01-01T00:00:00Z', kind='album',
+                      id='l.a1')
+        item.merge(answer)
+        self.assertEqual((item.title, item.genre, item.summary, item.year), ('Full Title',
+                         'Rock', 'Notes', 2001))
+        self.assertEqual((item.art, item.thumb, item.art_color, item.count_label),
+                         ('/x/art.jpg', '/x/thumb.jpg', '#112233', '2 songs'))
+        self.assertEqual(item.raw['groups'], answer['groups'])
+        self.assertEqual(item.raw['cached'], answer['cached'])
+        self.assertEqual([t.id for t in item.groups[0].entries], ['i.1', 'i.2'])
+        self.assertEqual(item.groups[0].entries.get_item(0).thumb, '/x/thumb.jpg')
+        self.assertEqual(item.play, answer['play'])
+        self.assertIn('title', seen)
+        self.assertIn('art', seen)
+        self.assertNotIn('subtitle', seen)  # unchanged: no notify
+        # Merging again with the same answer changes nothing and notifies nothing.
+        seen.clear()
+        item.merge(answer)
+        self.assertEqual(seen, [])
+
 
 class TestLoading(unittest.TestCase):
     def setUp(self):

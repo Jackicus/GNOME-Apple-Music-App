@@ -203,6 +203,36 @@ class Item(GObject.Object):
             self._groups = [Group(group, thumb) for group in _dicts(self.raw.get('groups'))]
         return self._groups
 
+    # The properties an `item` answer refreshes, with the raw key each reads.
+    _MERGED = (('title', 'title'), ('subtitle', 'subtitle'), ('genre', 'genre'),
+               ('summary', 'summary'), ('art', 'art'), ('thumb', 'thumb'),
+               ('art_color', 'artColor'), ('count_label', 'countLabel'),
+               ('catalog_id', 'catalogId'), ('url', 'url'))
+
+    def merge(self, data):
+        """Take a fresh Item dict for this item (the engine's item() answer: the same shape,
+        with `groups`) into this object: the raw dict updated, the properties that changed
+        set (so bound widgets follow), the groups wrapped again on the next access."""
+        for key, value in data.items():
+            if key in ('id', 'kind'):
+                continue
+            self.raw[key] = value
+        for name, key in self._MERGED:
+            if key in data:
+                value = _text(data.get(key))
+                if name in ('title', 'subtitle', 'count_label'):
+                    value = value or ''
+                if value != getattr(self, '_' + name):
+                    setattr(self, name, value)  # the property's setter: it notifies
+        if 'year' in data and _number(data.get('year')) != self._year:
+            self.year = _number(data.get('year'))
+        if 'explicit' in data and bool(data.get('explicit')) != self._explicit:
+            self.explicit = bool(data.get('explicit'))
+        if data.get('play'):
+            self.play = data['play']
+        if 'groups' in data:
+            self._groups = None
+
 
 class Shelf(GObject.Object):
     """A titled row of Items: Apple's home page recommendations, Heavy Rotation, Recently Added.

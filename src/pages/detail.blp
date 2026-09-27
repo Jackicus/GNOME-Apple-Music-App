@@ -171,9 +171,11 @@ Box hero {
     ]
   }
 
-  // In place of the tracks: an item that came without them (a shelf's), or an empty playlist.
-  // A compact status page's look, but not an Adw.StatusPage: a list row gets its minimum height,
-  // and a status page, a scrolled window inside, asks for a fifth of what it shows.
+  // In place of the tracks: an item that came without them (a shelf's) while the engine
+  // fetches them, what stopped the fetch (the engine down, not signed in, an error) with a
+  // button that helps, or an empty playlist. A compact status page's look, but not an
+  // Adw.StatusPage: a list row gets its minimum height, and a status page, a scrolled window
+  // inside, asks for a fifth of what it shows.
   Box status_box {
     orientation: vertical;
     spacing: 12;
@@ -181,7 +183,7 @@ Box hero {
     margin-bottom: 24;
     visible: false;
 
-    Image {
+    Image status_icon {
       icon-name: "music-note-symbolic";
       pixel-size: 64;
       margin-bottom: 12;
@@ -190,6 +192,14 @@ Box hero {
       styles [
         "dim-label",
       ]
+    }
+
+    Adw.Spinner status_spinner {
+      width-request: 48;
+      height-request: 48;
+      halign: center;
+      margin-bottom: 12;
+      visible: false;
     }
 
     Label status_title {
@@ -206,11 +216,10 @@ Box hero {
       justify: center;
     }
 
-    Button sign_in_button {
-      label: _("Sign In");
-      action-name: "win.sign-in";
+    Button status_button {
       halign: center;
       margin-top: 12;
+      clicked => $on_status_clicked();
 
       styles [
         "pill",

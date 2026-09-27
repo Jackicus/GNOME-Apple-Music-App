@@ -48,12 +48,18 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   --demo reads build/demo instead                                                │
 │ Artwork (widgets/artwork.py): thumbnails decoded in threads into a 200-texture   │
 │   LRU, asked for by tiles, rows and covers while they are on screen              │
-│ Engine*: Chrome (Gio.Subprocess) + async CDP client ─► bridge.js ─► MusicKit     │
-│   MusicKit events ─► Player* state ─► PlayerBar / Now Playing* / MPRIS* service  │
+│ app.engine (engine.py): Chrome (Gio.Subprocess, headless after sign-in) + the    │
+│   async CDPClient ─► bridge.js ─► MusicKit; start/stop/restart, status(),        │
+│   item() (a shelf item's groups, on demand), signin(), account_name();           │
+│   MusicKit events ─► `event` signal ─► Player* state ─► PlayerBar / MPRIS*       │
+│   Sign-in: dialogs/signin.py (visible Chrome, then headless); the account button │
+│   and the "Sign in to see your library" banner follow the signed-in key          │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
 └──────────────────────────────────────────────────────────────────────────────────┘
-Disk*: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, remote-art/, lyrics/, items/}
-       $XDG_DATA_HOME/apple-music/chrome (the Chrome profile)      GSettings: one schema
+Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/ (+ remote-art/, lyrics/*)}
+      $XDG_DATA_HOME/apple-music/chrome (the Chrome profile; chrome-devel for .Devel)
+      engine.json (which Chrome is ours): $XDG_RUNTIME_DIR/apple-music/ for the release
+      profile, inside the profile for any other                     GSettings: one schema
 ```
 
 ## Layout, and where new things go
@@ -61,10 +67,18 @@ Disk*: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, remote-art/, lyr
 ```
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
-src/main.py                    Application: app.* actions (quit, about, shortcuts), GSettings, dialogs,
-                               logging and --debug, --demo (app.demo), app.library (made in
-                               do_startup, loaded in do_activate), spawn(coro),
+src/main.py                    Application: app.* actions (quit, about, shortcuts, sign-in, sign-out),
+                               GSettings, logging and --debug, --demo (app.demo), app.library
+                               and app.engine (made in do_startup; the library loaded and the
+                               engine autostarted in do_activate), spawn(coro), toast(),
+                               report(error), the quit path (engine stopped first),
                                use_glib_event_loop()
+src/engine.py                  Engine (GObject: state down/starting/up/signing-in, authorized,
+                               headless, `event` signal): Chrome's lifecycle in the app, the one
+                               CDPClient, the commands (status, item, signin, account_name);
+                               engine_paths(profile, port) (chrome-devel and port+1 for the
+                               .Devel build), item_endpoint()
+src/dialogs/signin.py + .blp   $AppleMusicSignInDialog: the sign-in flow as a task while shown
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
                                favourite_songs(), track_at(play, index), playlist_tree(),
@@ -76,10 +90,12 @@ src/library.py                 the model: Library (state empty/loading/ready, 'c
                                orders), fold(), collation_key(); GObject/Gio only
 src/window.py + window.blp     Window: split view, sidebar (the Playlists section bound to the
                                library's tree; folder expansion in `expanded-folders`), the
-                               content's AdwNavigationView and its root pages (pages.create,
-                               pages.playlist/folder, or a placeholder), last-page restore,
-                               open_item(item), open_shelf(shelf), play_request(play,
-                               start_with=None, shuffle=False), win.back, toasts, window state
+                               account button (Sign In, or the name over a Sign Out menu) and
+                               the signed-out banner, the content's AdwNavigationView and its
+                               root pages (pages.create, pages.playlist/folder, or a
+                               placeholder), last-page restore, open_item(item),
+                               open_shelf(shelf), play_request(play, start_with=None,
+                               shuffle=False), win.back, toasts, window state, prepare_quit()
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/sidebar.py                 the Playlists section's model: SidebarEntry (kind fixed/folder/
                                playlist, key, title, icon, depth, item, ancestors),
@@ -105,9 +121,12 @@ src/pages/songs.py + .blp      $AppleMusicSongsPage: title and count over a Gtk.
 src/pages/detail.py + .blp     $AppleMusicDetailPage: an album or playlist, one Gtk.ListView whose
                                first row is the hero (cover, titles, Play/Shuffle, summary) and
                                then a section per group ("Disc 2" headers); pushed with an item,
-                               or a root page following find() (Favourite Songs)
+                               or a root page following find() (Favourite Songs); an item
+                               without groups is fetched through engine.item() (spinner, then
+                               Start Engine / Sign In / Try Again states)
 src/pages/artist.py + .blp     $AppleMusicArtistPage: round portrait, name, bio, a Gtk.FlowBox of
-                               album tiles (the artist's groups, resolved through by_id)
+                               album tiles (the artist's groups, resolved through by_id); fetches
+                               the groups as the detail page does
 src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel);
                                art_colour(item.art_color) → Gdk.RGBA, is_dark(rgba)
 src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist(); a folder's
@@ -127,11 +146,11 @@ src/widgets/track_row.py + .blp  $AppleMusicTrackRow: number (albums) or 40 px t
 src/style.css                  auto-loaded app CSS: accent colour and a few small classes
 src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/actions/ by the gresource
 src/applemusic.gresource.xml   compiled .ui files (subdirectories' aliased to the root: grid.ui,
-                               songs.ui, detail.ui, artist.ui, home.ui, radio.ui, tile.ui,
-                               song_title.ui, cover.ui, track_row.ui, shelf.ui, hero_tile.ui),
-                               style.css, icons
+                               songs.ui, detail.ui, artist.ui, home.ui, radio.ui, signin.ui,
+                               tile.ui, song_title.ui, cover.ui, track_row.ui, shelf.ui,
+                               hero_tile.ui), style.css, icons
 src/meson.build                blueprint list, gresource, install_data lists (app .py; pages/,
-                               widgets/, backend/ each their own)
+                               widgets/, dialogs/, backend/ each their own)
 src/backend/                   the engine layer: vendored from the extension plus this app's async
                                layer; no gi, asyncio and stdlib only. __init__.py records provenance
                                and every edit, README.md the command table, error codes, the events
@@ -191,7 +210,7 @@ scripts/check.sh          compileall, ruff (skipped if not installed), unit test
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
                           first when missing); no Chrome, no account. Use it for all UI work
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
-                      [--expand ID[,ID…]]
+                      [--expand ID[,ID…]] [--signed-in [NAME]]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
                           --demo as demo.sh (without it the real cache is read); waits for the
@@ -202,7 +221,8 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           artist/playlist/station/video/folder, ID an id or "first") calls
                           window.open_item over the page and waits 1.5 s more for artwork.
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
-                          playlists
+                          playlists. --signed-in [NAME] shows the account button signed in
+                          (memory-backend settings only; no engine)
 scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH] [--sidebar]
                           scrolls a page (or, with --sidebar, the sidebar) of the demo library top
                           to bottom (or PX pixels) and reports the app's work per frame (mean, 90th
@@ -300,14 +320,33 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - Main-thread work in chunks yields with `library.yield_to_frames()`, not a bare
   `await asyncio.sleep(0)`: asyncio runs at `G_PRIORITY_DEFAULT`, above GTK's redraw, so sleep(0)
   alone paints nothing until the task ends (measured: 0 frames against 5 in the same load).
-- The backend is reached only through the `Engine` object (coroutines: `await app.engine.play(...)`),
-  spawned from signal handlers with `app.spawn(coro)`. Errors are `EngineError(code)` with the
-  README's codes (`engine-down`, `not-signed-in`, `api`, `timeout`); the UI shows a toast, never a
-  traceback. Library reads are synchronous in-memory models.
+- The backend is reached only through `app.engine` (`src/engine.py`; coroutines: `await
+  app.engine.item(kind, id)`, later `play(...)`), spawned from signal handlers with
+  `app.spawn(coro)`. Errors are `EngineError(code)` with the README's codes (`engine-down`,
+  `not-signed-in`, `api`, `timeout`); `app.report(error)` toasts a sentence for the code (with
+  a Sign In button for `not-signed-in`), never a traceback. Library reads are synchronous
+  in-memory models. Engine properties: `state` (`down`, `starting`, `up`, `signing-in`),
+  `authorized`, `headless`; the `event(name, data)` signal re-emits MusicKit's events without
+  the `am:` prefix. `engine.start(visible=False)` reclaims a live Chrome that engine.json names
+  when its mode matches, else spawns one (Gio.Subprocess; stderr relayed to the log only at
+  DEBUG) and waits for DevTools, the bridge and `status()`; `stop()` is close, SIGTERM, 5 s,
+  SIGKILL; `kill()` is the synchronous last resort. Under `--demo` the Engine is `demo=True`:
+  start/stop do nothing, every command raises `engine-down`.
+- Lifecycle: `do_startup` makes `app.engine` on `engine_paths(app.profile, engine-port)` (the
+  .Devel build: `chrome-devel` and the port after the setting's, 9229 by default;
+  `APPLE_MUSIC_PROFILE`/`APPLE_MUSIC_PORT` win); `do_activate` autostarts it headless when
+  `signed-in` and `engine-autostart` are set. `app.quit` (Ctrl+Q, the last window's close
+  request, SIGINT/SIGTERM) runs `Application._quit()`: windows `prepare_quit()` (state saved,
+  hidden), `engine.stop()` bounded by 6 s, then `Gio.Application.quit`. Never call `quit()`
+  from app code; activate the action. Sign-in is `app.sign-in` (`dialogs/signin.py`: restart
+  visible, `engine.signin()`, `signed-in` set, `account_name()` best effort, restart headless
+  when `engine-headless`); `app.sign-out` asks, then stops the engine, wipes the profile and
+  the cache in a thread and reloads the (now empty) library.
 - Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
   `APPLE_MUSIC_CACHE` at the launcher's `DEMO_DIR` (the source tree's `build/demo`) unless the
   variable is already set, so `APPLE_MUSIC_CACHE=DIR scripts/demo.sh` shows another generated
-  library. Treat `app.demo` as "no engine": never start Chrome or sign in under it.
+  library. Treat `app.demo` as "no engine": the Engine is a demo one (every command
+  `engine-down`), `app.sign-in` toasts, `app.sign-out` does nothing, the banner stays hidden.
 - Logging: Python `logging`, `log = logging.getLogger(__name__)`; configured once in `main.main()`
   (`basicConfig`, INFO to stderr as `LEVEL logger: message`; DEBUG with `--debug`, handled in
   `do_handle_local_options`, or with `APPLE_MUSIC_DEBUG` set to anything but empty or `0`). No
@@ -354,7 +393,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   tests; UI is checked with screenshots.
 - Lint: `pyproject.toml` configures ruff; imports after `gi.require_version()` need `# noqa: E402`.
 - Settings: one schema `io.github.jackicus.AppleMusic` for both profiles; new keys go in
-  `data/…gschema.xml` with a summary, and are read through `app.settings`.
+  `data/…gschema.xml` with a summary, and are read through `app.settings`. Keys: window-width/
+  height/maximized, last-page, expanded-folders, browser-command, engine-port, engine-headless,
+  engine-autostart, signed-in, account-name (phase 17 shows the engine ones in Preferences).
 - Actions: `app.*` in `main.py`, `win.*` in `window.py`; accelerators via `set_accels_for_action`;
   every shortcut also appears in the shortcuts dialog.
 - Style: 4-space Python, single quotes, no type-annotation ceremony, a docstring where a module or
@@ -495,6 +536,21 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   the app spawns with `Gio.Subprocess`. Visible Chrome is an `--app=` window (no tabs or
   address bar), as the extension had it. Unauthorised MusicKit plays 30-second catalog
   previews, which is enough to exercise playback and events without signing in.
+- The Engine in the app (phase 10): `Gio.Subprocess.wait_async()` is awaitable under the GLib
+  loop and an `asyncio.wait_for` timeout on it is clean (then `force_exit()`);
+  `Gio.InputStream.read_bytes_async()` is awaitable too (the stderr relay; `read_line_async`
+  returns an empty line at EOF, indistinguishable from a blank one). Chrome's helper processes
+  write to the profile for a moment after the browser process has exited (the network service
+  re-created `Default/Network Persistent State`), so sign-out's `remove_trees` retries. A
+  headless start takes about 10 s to the bridge on this machine (Chrome 4 s, the page the
+  rest). `Adw.Dialog` (libadwaita 1.9) is presented inside the window (`AdwDialogHost` →
+  `AdwFloatingSheet`) only when the window is maximized or tiled; a normal window gets a
+  separate toplevel, so a screenshot of the window misses the dialog: snapshot
+  `dialog.get_root()`. `gapplication action io.github.jackicus.AppleMusic.Devel quit` (or
+  `sign-in`) activates an app action from a shell, which is how live runs are driven without
+  input synthesis. Apple's page is Svelte with hashed class names; signed out, the sidebar
+  footer holds `div.auth-content > button.signin`; `Engine.account_name()` tries known
+  selectors under it and returns '' rather than guessing (the signed-in markup is unverified).
 - Python 3.14 deprecates `asyncio.set_event_loop_policy` (removal in 3.16), but it is still how
   PyGObject 3.56 puts asyncio on the GLib loop; `main.use_glib_event_loop()` filters the
   DeprecationWarning and sets the policy. PyGObject's `Gio.Application.run` marks the GLib loop as

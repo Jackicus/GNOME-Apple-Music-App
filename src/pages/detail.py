@@ -12,13 +12,20 @@ header, where it does reach an item's.
 """
 
 import bisect
+import logging
 from gettext import gettext as _
 
 from gi.repository import Adw, Gio, GObject, Gtk, Pango
 
+from ..backend.errors import EngineError
 from ..library import Track
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
+
+log = logging.getLogger(__name__)
+
+# The kinds whose tracks the engine's item() fetches when an Item came without them.
+FETCHED_KINDS = ('album', 'playlist')
 
 
 class _Hero(GObject.Object):
@@ -79,9 +86,11 @@ class DetailPage(Adw.NavigationPage):
     shuffle_button = Gtk.Template.Child()
     summary_label = Gtk.Template.Child()
     status_box = Gtk.Template.Child()
+    status_icon = Gtk.Template.Child()
+    status_spinner = Gtk.Template.Child()
     status_title = Gtk.Template.Child()
     status_description = Gtk.Template.Child()
-    sign_in_button = Gtk.Template.Child()
+    status_button = Gtk.Template.Child()
 
     def __init__(self, library, item=None, find=None, root=False, title=None, icon_name=None,
                  empty_title=None, empty_description=None):
@@ -94,6 +103,8 @@ class DetailPage(Adw.NavigationPage):
         self._album_artist = None  # an album's artist, whose name its rows leave out
         self._starts = []  # the list position of each section of tracks
         self._headings = []  # and its heading
+        self._fetching = None  # the Item whose tracks the engine is fetching
+        self._status = None  # what the status box says: 'loading', an error code, or 'empty'
 
         self.header_bar.set_show_title(not root)
         self.empty_page.set_icon_name(icon_name)
@@ -181,22 +192,97 @@ class DetailPage(Adw.NavigationPage):
             self._headings.append(self._heading(item, group, number))
             position += group.entries.get_n_items()
 
-        # Phase 10 fetches the tracks of an item that came without them (a shelf's).
-        if not item.groups:
-            self.status_title.set_label(_('Sign In to Load This'))
-            self.status_description.set_label(
-                _('The songs appear once you sign in to Apple Music'))
-        else:
-            self.status_title.set_label(_('No Songs'))
-            self.status_description.set_label('')
-        self.status_description.set_visible(not item.groups)
-        self.sign_in_button.set_visible(not item.groups)
+        # An item that came without its tracks (a shelf's) gets them from the engine.
+        if not item.groups and item.kind in FETCHED_KINDS and self._fetching is not item:
+            self._fetch(item)
+        elif not item.groups and self._fetching is not item:
+            self._set_status('empty')
+        elif item.groups:
+            self._set_status('empty')
         self.status_box.set_visible(not groups)
 
         self.list_view.set_header_factory(self._header_factory if len(groups) > 1 else None)
         self._sections.splice(0, self._sections.get_n_items(),
                               [self._hero_section] + [group.entries for group in groups])
         self._update_state()
+
+    # Fetching the tracks of an item that came without them.
+
+    def _fetch(self, item):
+        self._fetching = item
+        self._set_status('loading')
+        Gio.Application.get_default().spawn(self._fetch_groups(item))
+
+    async def _fetch_groups(self, item):
+        app = Gio.Application.get_default()
+        try:
+            answer = await app.engine.item(item.kind, item.id)
+        except EngineError as error:
+            log.info('tracks of %s %s: %s', item.kind, item.id, error)
+            if self._fetching is item:
+                self._fetching = None
+                if self.item is item:
+                    self._set_status(error.code, error.message)
+            return
+        if self._fetching is item:
+            self._fetching = None
+        item.merge(answer)
+        if self.item is item:
+            self._show(item)
+
+    def _set_status(self, status, message=''):
+        """The status box for `status`: 'loading' (a spinner), an EngineError code with a
+        button that helps ('engine-down': Start Engine; 'not-signed-in': Sign In; anything
+        else: Try Again), or 'empty' (no tracks at all)."""
+        self._status = status
+        self.status_spinner.set_visible(status == 'loading')
+        self.status_icon.set_visible(status != 'loading')
+        if status == 'loading':
+            title, description, button = _('Loading…'), '', None
+        elif status == 'engine-down':
+            title = _('Engine Not Running')
+            description = _('Start the engine to load the songs')
+            button = _('Start Engine')
+        elif status == 'not-signed-in':
+            title = _('Sign In to Load This')
+            description = _('The songs appear once you sign in to Apple Music')
+            button = _('Sign In')
+        elif status == 'empty':
+            title, description, button = _('No Songs'), '', None
+        else:
+            title = _('Could Not Load the Songs')
+            description = message
+            button = _('Try Again')
+        self.status_title.set_label(title)
+        self.status_description.set_label(description)
+        self.status_description.set_visible(bool(description))
+        self.status_button.set_label(button or '')
+        self.status_button.set_visible(bool(button))
+
+    @Gtk.Template.Callback()
+    def on_status_clicked(self, _button):
+        app = Gio.Application.get_default()
+        if self._status == 'not-signed-in':
+            app.activate_action('sign-in')
+        elif self._status == 'engine-down':
+            self._fetching = self.item
+            self._set_status('loading')
+            app.spawn(self._start_and_fetch(self.item))
+        elif self.item is not None:
+            self._fetch(self.item)
+
+    async def _start_and_fetch(self, item):
+        app = Gio.Application.get_default()
+        try:
+            await app.engine.start()
+        except EngineError as error:
+            app.report(error)
+            if self._fetching is item:
+                self._fetching = None
+                if self.item is item:
+                    self._set_status(error.code, error.message)
+            return
+        await self._fetch_groups(item)
 
     def _heading(self, item, group, number):
         """An album's discs are numbered, whatever their groups are called; anything else's

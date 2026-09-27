@@ -23,5 +23,36 @@
       <summary>Expanded playlist folders</summary>
       <description>The ids of the playlist folders shown open in the sidebar, their contents listed under them.</description>
     </key>
+    <key name="browser-command" type="s">
+      <default>'google-chrome-stable'</default>
+      <summary>Browser command</summary>
+      <description>The command that runs Google Chrome, the playback engine (it must be the real Chrome: it ships Widevine). When it is not on PATH, google-chrome-stable, google-chrome and /opt/google/chrome/chrome are tried.</description>
+    </key>
+    <key name="engine-port" type="i">
+      <range min="1024" max="65535"/>
+      <default>9228</default>
+      <summary>Engine debugging port</summary>
+      <description>The port on 127.0.0.1 where the engine's Chrome listens for DevTools. The development build uses the port after this one (9229 by default) so it can run beside a release build; APPLE_MUSIC_PORT in the environment overrides both.</description>
+    </key>
+    <key name="engine-headless" type="b">
+      <default>true</default>
+      <summary>Run the engine headless</summary>
+      <description>Whether Chrome runs without a window once signed in. Off, the Chrome window stays visible after signing in.</description>
+    </key>
+    <key name="engine-autostart" type="b">
+      <default>true</default>
+      <summary>Start the engine on launch</summary>
+      <description>Whether Chrome is started (headless) when the app starts and the account is signed in.</description>
+    </key>
+    <key name="signed-in" type="b">
+      <default>false</default>
+      <summary>Signed in to Apple Music</summary>
+      <description>Whether the engine's Chrome profile holds an Apple Music sign-in; set by signing in and cleared by signing out.</description>
+    </key>
+    <key name="account-name" type="s">
+      <default>''</default>
+      <summary>Account display name</summary>
+      <description>The name shown on the account button, read from the Apple Music page after signing in; empty when none could be read.</description>
+    </key>
   </schema>
 </schemalist>

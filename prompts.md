@@ -17,7 +17,7 @@ running and better than before.
 - [x] 7. Shelves: Home and Radio from the cache (2026-09-27)
 - [x] 8. Sidebar: playlists and folders (2026-09-27)
 - [x] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI (2026-09-27)
-- [ ] 10. Engine in the app: lifecycle, sign-in, account
+- [x] 10. Engine in the app: lifecycle, sign-in, account (2026-09-27)
 - [ ] 11. Library sync and artwork cache
 - [ ] 12. Playback: Player state and the player bar
 - [ ] 13. MPRIS
@@ -1146,6 +1146,83 @@ account name or profile contents; screenshots of the account button use --demo (
 signed-out state) only. Update CLAUDE.md (Engine façade, lifecycle, keys). Tick phase 10 and
 commit.
 ```
+
+**Done 2026-09-27 (without a real sign-in: the session could not sign in, so the flow was
+verified up to the visible Chrome on Apple's page, then cancelled). Notes for later phases.**
+
+- **Jack, verify by hand** (the release build uses `chrome` and 9228, the dev build
+  `chrome-devel` and 9229; `ps -ef | grep remote-debugging-port=9229` shows the dev Chrome):
+  1. `scripts/run.sh --debug`, click Sign In (the sidebar's account button, the banner or a
+     shelf item's page): the dialog appears, a Chrome window opens on music.apple.com; sign in
+     there with the Apple ID. The dialog should say "Signed in", the Chrome window should
+     close and a headless one appear (`ps` shows `--headless=new`), the toast "Signed in"
+     shows and the account button reads the name or "Signed In". Note whether the name was
+     found (it is best effort; see below).
+  2. Open an item from a Home shelf whose tracks the library lacks (any album or playlist the
+     sync did not fetch groups for; after phase 11 these are Apple's recommendations): the
+     page shows a spinner, then the tracks; `~/.cache/apple-music/items/<kind>-<id>.json`
+     appears.
+  3. Quit (Ctrl+Q or close the window): the Chrome is gone within a second or two, and
+     `~/.local/share/apple-music/chrome-devel/engine.json` too.
+  4. Relaunch: the engine starts headless by itself ("engine up: authorized" in the log with
+     `--debug`) and the account button is still signed in.
+  5. Kill the app (`kill -9`), relaunch: the log says "reclaiming Chrome <pid>".
+  6. Sign Out from the account button's menu: confirm, the Chrome stops, the profile and the
+     cache directories are gone (`~/.local/share/apple-music/chrome-devel`,
+     `~/.cache/apple-music`), the library is empty and the button says Sign In.
+  7. If the account name was not found in step 1: with the engine up and signed in, run
+     `APPLE_MUSIC_PORT=9229 APPLE_MUSIC_PROFILE=~/.local/share/apple-music/chrome-devel
+     scripts/am.py eval 'document.querySelector(".auth-content").outerHTML'` and add the
+     element that holds the name to `ACCOUNT_NAME_JS` in `src/engine.py` (candidates first,
+     `.auth-content` fallbacks last). The `bad` regex there lists what is not a name.
+- What was verified live on this machine (dev build, `chrome-devel`, 9229, never signed in):
+  `app.sign-in` opened the dialog and a visible `--app` Chrome on `music.apple.com/us/new`,
+  the engine reached `signing-in` (the bridge's `signin()` was called, its promise pending),
+  Cancel stopped the Chrome and left `signed-in` false; a headless start reached the bridge in
+  about 10 s and `status()` answered; a groupless album and artist showed the not-signed-in
+  state (and the engine-down one under `--demo`); `scripts/run.sh --debug` with `signed-in`
+  set autostarted one headless Chrome (stderr relayed at DEBUG), `gapplication action
+  io.github.jackicus.AppleMusic.Devel quit` stopped it; after `kill -9` of the app the
+  relaunch reclaimed the surviving Chrome; sign-out (on throwaway copies of the profile and
+  cache) stopped the engine, wiped both, cleared the keys and emptied the library. The real
+  settings were put back (`signed-in` false). Unit tests: `tests/test_engine.py` (33: the
+  lifecycle against a sleeping process standing in for Chrome and test_client's fake page,
+  reclaiming, SIGKILL after the grace, a lost connection, events, status, item for an album
+  and an artist, signin by event, by poll, timeout, cancel and engine stop, account_name,
+  demo, `engine_paths`, `item_endpoint`); `Item.merge` in test_library.py. 218 tests.
+- The Engine's API (`src/engine.py`, CLAUDE.md has the summary): `Engine(profile_dir, port,
+  browser_command, demo=False)`; `await start(visible=False)` / `stop()` / `restart(visible)`,
+  `kill()`; `await status()`, `item(kind, id)` (raises `not-signed-in` when MusicKit is not
+  authorized, `engine-down` when down; the answer is the Item shape with groups, `cached`
+  stamped, kept at `<cache>/items/<kind>-<id>.json`, artwork fetched in the thread),
+  `signin(timeout=600)`, `account_name()`; properties `state`, `authorized`, `headless`;
+  `pid`, `profile_dir`, `port`, `state_file`. Phase 12 adds `play`, `control`… as thin
+  `client.bridge(...)` wrappers behind `_require_up()`; phase 11's sync gets the client the
+  same way (`self._client`, or add a `bridge(method, *args)` passthrough) and should mark the
+  engine busy rather than start a second connection (`Runtime.addBinding` is per session).
+  The `event` signal is where phase 12's Player subscribes (`engine.connect('event', …)`,
+  names without `am:`). `authorized` follows `authorizationStatusDidChange` and every
+  `status()`.
+- Autostart when `signed-in` is set but MusicKit says not authorized (a session Apple
+  expired): the engine stays up, a toast with a Sign In button says so, `signed-in` is not
+  cleared. Sign-in while the engine is up headless restarts it visible (the profile keeps
+  Apple's cookies, so a second sign-in on the same profile may complete at once).
+- The account name: `ACCOUNT_NAME_JS` tries selectors and returns '' otherwise; the
+  signed-out footer is `div.auth-content > button.commerce-button.signin` (Svelte, hashed
+  classes), the signed-in markup unknown until Jack's run (step 7 above). `account-name`
+  empty shows "Signed In" and the default avatar; with a name, `Adw.Avatar` initials.
+- Quit: `app.quit` is an action that stops the engine first; `Window.do_close_request`
+  activates it and returns True (the window is hidden by `prepare_quit()` and destroyed when
+  the app ends). SIGINT/SIGTERM do the same (`GLib.unix_signal_add`). `screenshot.py` and
+  `scroll_test.py` still call `app.quit()` directly (the Gio method), which is fine with no
+  engine. Phase 17's background-playback preference changes `do_close_request` only.
+- The banner is the content pane's `[top]` bar above the pages' header bars (each page has
+  its own header bar, so "under the header bar" would mean one banner per page); it is hidden
+  in demo mode and once signed in. `Adw.Dialog` on this desktop is a separate toplevel unless
+  the window is maximized (CLAUDE.md), which phase 18 should remember for focus and Escape.
+- Not done: the detail page does not read `<cache>/items/` back when the engine is down (the
+  cache is written for a later offline path); `sync.py` still writes `library.json` only from
+  phase 11's sync. `src/backend/am.py` keeps its sync body for phase 11 and is deleted then.
 
 ## Phase 11: Library sync and artwork cache
 
