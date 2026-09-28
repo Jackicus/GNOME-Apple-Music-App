@@ -1,12 +1,15 @@
 /**
- * Page-side helper injected into music.apple.com to bridge MusicKit JS with am.py.
- * Defines window.__appleMusicLibrary idempotently.
+ * The app's side of music.apple.com. The app's CDP client (client.load_bridge) injects it
+ * into the page, where it defines window.__appleMusicLibrary over the page's own MusicKit
+ * instance and forwards MusicKit's events through the __amEvent binding. The Engine's
+ * commands (src/engine.py) are calls into it; src/backend/README.md lists them and the
+ * events, and tests/test_bridge.py runs it under gjs against a fake MusicKit.
  */
 
 (function () {
-    // am.py sets __appleMusicLibraryWanted to a hash of this file before injecting,
-    // so an engine left running across an update picks up the new bridge
-    // instead of keeping the one it was first given.
+    // client.load_bridge sets __appleMusicLibraryWanted to a hash of this file before
+    // injecting it: the same bridge injected again is a no-op, and a changed one replaces
+    // the one the page was first given.
     if (window.__appleMusicLibrary && window.__appleMusicLibrary.__version === window.__appleMusicLibraryWanted) {
         return;
     }
@@ -167,8 +170,8 @@
     }
 
     // The catalog search and its autocomplete, each on its own so that one
-    // call from am.py can run both at once (searchAndSuggest) or either
-    // alone (search, suggest).
+    // bridge call can run both at once (searchAndSuggest) or either alone
+    // (search, suggest).
     async function doSearch(term, isLibrary, limit) {
         const mk = getMusicKit();
         if (!mk) throw new Error('MusicKit not initialized');
@@ -565,7 +568,7 @@
         },
 
         // `type` is the song's resource type: 'songs' for a catalog id (the
-        // default, as am.py sent it), 'library-songs' for a library one.
+        // default), 'library-songs' for a library one.
         addToPlaylist: async function (playlistId, songId, type) {
             const path = '/v1/me/library/playlists/' + playlistId + '/tracks';
             return await apiWrite(path, {}, {
@@ -597,7 +600,7 @@
 
         // `limit` is per type. The catalog is also asked for its own pick of
         // the best few hits across every type (`with=topResults`, answered
-        // as `results.top`), which is the "Top Results" shelf at the head
+        // as `results.topResults`), which is the "Top Results" shelf at the head
         // of Apple Music's own search page; the library's search has no
         // such thing.
         search: async function (term, isLibrary, limit) {
@@ -612,7 +615,7 @@
             return await doSuggest(term, limit);
         },
 
-        // Both at once, in one round trip from am.py: the search's answer
+        // Both at once, in one round trip: the search's answer
         // under `search`, the autocomplete's under `suggestions` — or null
         // there, since a search is not lost for want of its completions.
         searchAndSuggest: async function (term, isLibrary, limit, suggestLimit) {

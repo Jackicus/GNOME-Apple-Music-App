@@ -28,6 +28,8 @@ paths:
   dies as Chrome would (`FAKE_CHROME_MODE` `stubborn` or `exit:N`). test_client.py drives
   `PipeFakeChrome` (two pipes) and `FakeChrome` (a WebSocket, the attach); test_am_cli.py runs
   am.py's commands against the engine fixture. No test looks for a real Chrome, so CI has none.
+  test_bridge.py runs src/backend/bridge.js under gjs against tests/bridge_harness.js's fake
+  page, all its scenarios in one gjs process; it is skipped without gjs, which CI installs.
 - Fixtures (`tests/fixtures/`) and anything a test writes are invented: no real titles, names
   or IDs.
 - Some tests guard project rules rather than behaviour: test_build_lists (install, blueprint,
