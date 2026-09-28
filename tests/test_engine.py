@@ -15,6 +15,8 @@ import pathlib
 import re
 import shlex
 import signal
+import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -371,6 +373,45 @@ class LifecycleTest(EngineFixture):
         self.engine.browser_command = 'my-chrome'
         await self.engine.start()
         self.assertEqual(self.browser_commands, ['my-chrome'])
+
+    # -- a Chrome already on the profile ----------------------------------------------------
+
+    def leftover(self, lock=True):
+        """A Chrome another process left on the profile (scripts/am.py's, or one an app crash
+        left): a live process with the profile on its command line, which the profile's
+        SingletonLock names."""
+        self.profile.mkdir(parents=True, exist_ok=True)
+        flag = f'--user-data-dir={self.profile}'
+        process = subprocess.Popen(
+            [sys.executable, '-S', '-c', 'import time; time.sleep(30)', flag])
+        self.addCleanup(lambda: (process.kill(), process.wait()))
+        deadline = time.monotonic() + 2
+        while not chrome.pid_alive(process.pid, self.profile) and time.monotonic() < deadline:
+            time.sleep(0.005)  # its cmdline is the runner's for an instant while it execs
+        if lock:
+            os.symlink(f'{socket.gethostname()}-{process.pid}', self.profile / 'SingletonLock')
+        return process
+
+    async def test_a_chrome_holding_the_profile_is_stopped_first(self):
+        leftover = self.leftover()
+        await self.engine.start()
+        self.assertIsNotNone(leftover.poll())
+        self.assertEqual(leftover.returncode, -signal.SIGTERM)
+        self.assertEqual(len(self.engine.spawned), 1)
+        self.assertEqual(self.engine.state, 'up')
+
+    async def test_stop_ends_the_chrome_on_the_profile_even_when_it_never_started(self):
+        leftover = self.leftover()
+        await self.engine.stop()
+        self.assertIsNotNone(leftover.poll())
+        self.assertEqual(self.engine.spawned, [])
+
+    async def test_a_lock_naming_no_chrome_on_the_profile_is_left_alone(self):
+        leftover = self.leftover(lock=False)
+        os.symlink(f'{socket.gethostname()}-{os.getpid()}', self.profile / 'SingletonLock')
+        await self.engine.start()
+        await self.engine.stop()
+        self.assertIsNone(leftover.poll())
 
     # -- the connection --------------------------------------------------------------------
 

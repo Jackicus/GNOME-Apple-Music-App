@@ -19,9 +19,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
+import socket
 import subprocess
-import time
 import urllib.parse
 from pathlib import Path
 
@@ -33,6 +34,9 @@ log = logging.getLogger(__name__)
 CANDIDATES = ('google-chrome-stable', 'google-chrome', '/opt/google/chrome/chrome')
 START_URL = 'https://music.apple.com/'
 DEVTOOLS_HOST = '127.0.0.1'
+
+# Chrome's lock on its profile: a symlink to "<hostname>-<pid>" of the browser holding it.
+SINGLETON_LOCK = 'SingletonLock'
 
 FLATPAK_INFO = '/.flatpak-info'
 # How a sandboxed app runs a host command; --watch-bus ends it when flatpak-spawn ends.
@@ -146,9 +150,22 @@ def select_page(targets):
     return None
 
 
+def cmdline_names_profile(cmdline, profile):
+    """Whether a /proc/<pid>/cmdline (bytes) is a Chrome browser process on exactly `profile`:
+    `--user-data-dir=<profile>` as a whole argument, and no `--type=` (a renderer, zygote or
+    other helper, which carry the profile too). Chrome rewrites its command line into one
+    space-joined string, so an argument ends at a space, a NUL or the end: splitting on NULs
+    alone would never match the real Chrome, and a prefix match would take .../chrome-devel
+    for .../chrome."""
+    if re.search(rb'(?:^|[ \0])--type=', cmdline):
+        return False
+    flag = re.escape(os.fsencode(f'--user-data-dir={profile}'))
+    return re.search(rb'(?:^|[ \0])' + flag + rb'(?:[ \0]|$)', cmdline) is not None
+
+
 def pid_alive(pid, profile=None):
     """Whether `pid` is a live process, and (on a system with /proc, when `profile` is given)
-    a Chrome on that profile rather than whatever reused the number."""
+    a Chrome browser process on that profile rather than whatever reused the number."""
     if not pid or pid <= 0:
         return False
     try:
@@ -171,62 +188,29 @@ def pid_alive(pid, profile=None):
             return ') Z ' not in Path(f'/proc/{pid}/stat').read_text()
         except OSError:
             return True
-    return f'--user-data-dir={profile}'.encode() in cmdline
+    return cmdline_names_profile(cmdline, profile)
 
 
-class EngineState:
-    """What engine.json records about the Chrome the app started: {pid, port, headless,
-    profile, started}. `load` returns None for a missing or unreadable file; `alive` is whether
-    the pid still runs a Chrome on the profile."""
-
-    def __init__(self, pid, port, headless, profile, started=None):
-        self.pid = int(pid)
-        self.port = int(port)
-        self.headless = bool(headless)
-        self.profile = str(profile)
-        self.started = int(started if started is not None else time.time())
-
-    def to_dict(self):
-        return {'pid': self.pid, 'port': self.port, 'headless': self.headless,
-                'profile': self.profile, 'started': self.started}
-
-    @classmethod
-    def from_dict(cls, data):
-        return cls(data['pid'], data['port'], data.get('headless', True), data.get('profile', ''),
-                   data.get('started'))
-
-    @classmethod
-    def load(cls, path):
-        """The state in `path`, or None when there is none or it is not readable."""
-        try:
-            with open(path, encoding='utf-8') as f:
-                data = json.load(f)
-            return cls.from_dict(data)
-        except (OSError, ValueError, KeyError, TypeError):
-            return None
-
-    def save(self, path):
-        """Write atomically, creating the directory."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + '.tmp')
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(self.to_dict(), f)
-        os.replace(tmp, path)
-
-    @staticmethod
-    def remove(path):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-    @property
-    def alive(self):
-        return pid_alive(self.pid, self.profile)
-
-    def __repr__(self):
-        return f'EngineState(pid={self.pid}, port={self.port}, headless={self.headless})'
+def profile_owner(profile):
+    """The pid of the Chrome that holds `profile`, read from Chrome's own lock (SingletonLock,
+    a symlink to "<hostname>-<pid>"), when that is this host and a live Chrome browser process
+    on exactly this profile; None otherwise, and always in a Flatpak sandbox (the lock names a
+    host pid). Blocking (a readlink and /proc reads): call it in a thread."""
+    if in_flatpak():
+        return None
+    try:
+        target = os.readlink(Path(profile) / SINGLETON_LOCK)
+    except OSError:
+        return None
+    host, _, pid = target.rpartition('-')
+    if host != socket.gethostname() or not pid.isdigit():
+        return None
+    pid = int(pid)
+    try:
+        cmdline = Path(f'/proc/{pid}/cmdline').read_bytes()
+    except OSError:
+        return None
+    return pid if cmdline and cmdline_names_profile(cmdline, profile) else None
 
 
 def _get_json(url, timeout):

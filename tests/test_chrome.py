@@ -1,5 +1,6 @@
-"""Unit tests for src/backend/chrome.py and errors.py: the argv, the state file, finding Chrome,
-picking the page target, and a DevTools port's /json (against a local HTTP server)."""
+"""Unit tests for src/backend/chrome.py and errors.py: the argv, finding Chrome, which Chrome
+holds a profile, picking the page target, and a DevTools port's /json (against a local HTTP
+server)."""
 
 import http.server
 import json
@@ -16,7 +17,7 @@ from unittest import mock
 
 from tests import SRC  # noqa: F401  (registers src/ as the applemusic package)
 
-from applemusic.backend import chrome, config
+from applemusic.backend import chrome
 from applemusic.backend.errors import EngineError
 
 SAMPLE_TARGETS = [
@@ -170,43 +171,68 @@ class FindChromeTest(unittest.TestCase):
         self.assertIsNone(chrome.find_chrome(None, path=str(self.bin)))
 
 
-class EngineStateTest(unittest.TestCase):
+def sleeper(*args):
+    """A live process whose /proc cmdline carries `args` (waited for: it is empty, then the
+    runner's, for an instant while the child execs)."""
+    process = subprocess.Popen([sys.executable, '-S', '-c', 'import time; time.sleep(30)', *args])
+    deadline = time.monotonic() + 2
+    wanted = os.fsencode(args[-1]) if args else b'time.sleep'
+    while time.monotonic() < deadline:
+        try:
+            if wanted in pathlib.Path(f'/proc/{process.pid}/cmdline').read_bytes():
+                break
+        except OSError:
+            pass
+        time.sleep(0.005)
+    return process
+
+
+def stop(process):
+    if process.poll() is None:
+        process.kill()
+    process.wait()
+
+
+class CmdlineTest(unittest.TestCase):
+    """cmdline_names_profile on the command lines Chrome's processes really have: the browser
+    rewrites its own into one space-joined string."""
+
+    def test_chrome_s_rewritten_browser_line(self):
+        line = (b'/opt/google/chrome/chrome --user-data-dir=/x/chrome --remote-debugging-pipe '
+                b'--headless=new https://music.apple.com/\0')
+        self.assertTrue(chrome.cmdline_names_profile(line, '/x/chrome'))
+        self.assertTrue(chrome.cmdline_names_profile(line, pathlib.Path('/x/chrome')))
+
+    def test_another_profile_with_the_same_prefix(self):
+        line = b'/opt/google/chrome/chrome --user-data-dir=/x/chrome-devel --headless=new\0'
+        self.assertFalse(chrome.cmdline_names_profile(line, '/x/chrome'))
+        self.assertTrue(chrome.cmdline_names_profile(line, '/x/chrome-devel'))
+
+    def test_a_helper_is_not_the_browser(self):
+        line = (b'/opt/google/chrome/chrome --type=renderer --user-data-dir=/x/chrome '
+                b'--lang=en-GB\0\0\0')
+        self.assertFalse(chrome.cmdline_names_profile(line, '/x/chrome'))
+
+    def test_a_plain_argv(self):
+        argv = b'\0'.join([b'/opt/google/chrome/chrome', b'--user-data-dir=/x/chrome',
+                           b'--remote-debugging-pipe']) + b'\0'
+        self.assertTrue(chrome.cmdline_names_profile(argv, '/x/chrome'))
+        self.assertFalse(chrome.cmdline_names_profile(argv, '/x/chrom'))
+        self.assertTrue(chrome.cmdline_names_profile(b'chrome --user-data-dir=/x/chrome',
+                                                     '/x/chrome'))
+
+
+class PidAliveTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.path = pathlib.Path(self.tmp.name) / 'run' / 'engine.json'
-
-    def test_round_trip(self):
-        state = chrome.EngineState(4242, 9228, False, '/p/chrome', started=1700000000)
-        state.save(self.path)  # creates the directory
-        self.assertEqual(json.loads(self.path.read_text()), {
-            'pid': 4242, 'port': 9228, 'headless': False, 'profile': '/p/chrome',
-            'started': 1700000000})
-        loaded = chrome.EngineState.load(self.path)
-        self.assertEqual(loaded.to_dict(), state.to_dict())
-        self.assertFalse(list(self.path.parent.glob('*.tmp')))
-        chrome.EngineState.remove(self.path)
-        self.assertFalse(self.path.exists())
-        chrome.EngineState.remove(self.path)  # twice is fine
-
-    def test_started_defaults_to_now(self):
-        state = chrome.EngineState(1, 9228, True, '/p')
-        self.assertGreater(state.started, 1700000000)
-
-    def test_missing_or_broken_is_none(self):
-        self.assertIsNone(chrome.EngineState.load(self.path))
-        self.path.parent.mkdir(parents=True)
-        self.path.write_text('{not json')
-        self.assertIsNone(chrome.EngineState.load(self.path))
-        self.path.write_text('{"port": 9228}')  # no pid
-        self.assertIsNone(chrome.EngineState.load(self.path))
+        self.profile = pathlib.Path(self.tmp.name) / 'chrome'
 
     def test_alive(self):
-        # This process: alive, but not a Chrome on the profile.
         self.assertTrue(chrome.pid_alive(os.getpid()))
-        self.assertFalse(chrome.EngineState(os.getpid(), 9228, True, '/p/chrome').alive)
-        # A process that has exited.
-        proc = subprocess.Popen([sys.executable, '-c', 'pass'])
+        # This process: alive, but not a Chrome on the profile.
+        self.assertFalse(chrome.pid_alive(os.getpid(), self.profile))
+        proc = subprocess.Popen([sys.executable, '-S', '-c', 'pass'])
         proc.wait()
         self.assertFalse(chrome.pid_alive(proc.pid))
         self.assertFalse(chrome.pid_alive(0))
@@ -214,40 +240,71 @@ class EngineStateTest(unittest.TestCase):
 
     @unittest.skipUnless(os.path.isdir('/proc'), 'needs /proc')
     def test_alive_checks_the_profile_on_the_command_line(self):
-        profile = pathlib.Path(self.tmp.name) / 'chrome'
-        proc = subprocess.Popen(
-            [sys.executable, '-c', 'import time; time.sleep(30)', f'--user-data-dir={profile}'])
+        proc = sleeper(f'--user-data-dir={self.profile}')
+        devel = sleeper(f'--user-data-dir={self.profile}-devel')
         try:
-            time.sleep(0.2)  # /proc/<pid>/cmdline is empty for an instant while it execs
-            self.assertTrue(chrome.EngineState(proc.pid, 9228, True, profile).alive)
-            self.assertFalse(chrome.EngineState(proc.pid, 9228, True, '/elsewhere').alive)
+            self.assertTrue(chrome.pid_alive(proc.pid, self.profile))
+            self.assertFalse(chrome.pid_alive(proc.pid, '/elsewhere'))
+            self.assertFalse(chrome.pid_alive(devel.pid, self.profile))
         finally:
-            proc.kill()
-            proc.wait()
-        self.assertFalse(chrome.EngineState(proc.pid, 9228, True, profile).alive)
+            stop(proc)
+            stop(devel)
+        self.assertFalse(chrome.pid_alive(proc.pid, self.profile))
 
 
-class StateFileTest(unittest.TestCase):
-    """config.state_file is keyed by profile: the default profile's is in the runtime directory,
-    any other keeps its own inside itself (so a release and a .Devel build never share one)."""
+@unittest.skipUnless(os.path.isdir('/proc'), 'needs /proc')
+class ProfileOwnerTest(unittest.TestCase):
+    """profile_owner: the Chrome SingletonLock names, when it really is one on the profile."""
 
     def setUp(self):
-        patcher = mock.patch.dict(os.environ, {
-            'XDG_DATA_HOME': '/x/data', 'XDG_RUNTIME_DIR': '/x/run'})
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.profile = pathlib.Path(self.tmp.name) / 'chrome'
+        self.profile.mkdir()
+        patcher = mock.patch.object(chrome, 'in_flatpak', lambda: False)
         patcher.start()
         self.addCleanup(patcher.stop)
-        os.environ.pop('APPLE_MUSIC_PROFILE', None)
 
-    def test_default_profile_uses_the_runtime_dir(self):
-        self.assertEqual(config.state_file(), pathlib.Path('/x/run/apple-music/engine.json'))
-        self.assertEqual(config.state_file('/x/data/apple-music/chrome'),
-                         pathlib.Path('/x/run/apple-music/engine.json'))
+    def lock(self, target):
+        (self.profile / 'SingletonLock').symlink_to(target)
 
-    def test_other_profiles_keep_their_own(self):
-        self.assertEqual(config.state_file('/x/data/apple-music/chrome-devel'),
-                         pathlib.Path('/x/data/apple-music/chrome-devel/engine.json'))
-        self.assertEqual(config.state_file(pathlib.Path('/tmp/t/profile')),
-                         pathlib.Path('/tmp/t/profile/engine.json'))
+    def test_the_chrome_the_lock_names(self):
+        proc = sleeper(f'--user-data-dir={self.profile}')
+        self.addCleanup(stop, proc)
+        self.lock(f'{socket.gethostname()}-{proc.pid}')
+        self.assertEqual(chrome.profile_owner(self.profile), proc.pid)
+        stop(proc)
+        self.assertIsNone(chrome.profile_owner(self.profile))  # a stale lock
+
+    def test_no_lock(self):
+        self.assertIsNone(chrome.profile_owner(self.profile))
+        self.assertIsNone(chrome.profile_owner(pathlib.Path(self.tmp.name) / 'missing'))
+
+    def test_another_host_s_lock(self):
+        proc = sleeper(f'--user-data-dir={self.profile}')
+        self.addCleanup(stop, proc)
+        self.lock(f'elsewhere.example-{proc.pid}')
+        self.assertIsNone(chrome.profile_owner(self.profile))
+
+    def test_a_pid_that_is_no_chrome_on_the_profile(self):
+        self.lock(f'{socket.gethostname()}-{os.getpid()}')  # this test runner
+        self.assertIsNone(chrome.profile_owner(self.profile))
+        other = sleeper(f'--user-data-dir={self.profile}-devel')
+        self.addCleanup(stop, other)
+        (self.profile / 'SingletonLock').unlink()
+        self.lock(f'{socket.gethostname()}-{other.pid}')
+        self.assertIsNone(chrome.profile_owner(self.profile))
+
+    def test_a_malformed_lock(self):
+        self.lock('not-a-pid')
+        self.assertIsNone(chrome.profile_owner(self.profile))
+
+    def test_none_in_a_flatpak(self):
+        proc = sleeper(f'--user-data-dir={self.profile}')
+        self.addCleanup(stop, proc)
+        self.lock(f'{socket.gethostname()}-{proc.pid}')
+        with mock.patch.object(chrome, 'in_flatpak', lambda: True):
+            self.assertIsNone(chrome.profile_owner(self.profile))
 
 
 class SelectPageTest(unittest.TestCase):

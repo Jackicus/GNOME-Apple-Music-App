@@ -5,9 +5,9 @@ importing the package imports none of its modules.
 
     errors.py   EngineError(code, message): engine-down, not-signed-in, api, timeout, usage
     chrome.py   finding Chrome, its argv (--remote-debugging-pipe; the host's Chrome through
-                flatpak-spawn from a Flatpak sandbox), the engine.json state (EngineState),
-                select_page() (the music.apple.com target), get_json() (a DevTools port's
-                /json, for the developer attach)
+                flatpak-spawn from a Flatpak sandbox), which Chrome holds a profile
+                (profile_owner: its SingletonLock), select_page() (the music.apple.com
+                target), get_json() (a DevTools port's /json, for the developer attach)
     client.py   the transports (PipeTransport: Chrome's DevTools pipe; WebSocketTransport: a
                 DevTools port) and CDPClient: one asynchronous CDP connection, attached to the
                 page by session (calls, evaluate, events, the bridge kept in the page across
@@ -19,8 +19,8 @@ importing the package imports none of its modules.
                 through config.BRIDGE_JS
     sync.py     Apple Music API answers -> the Item and Track shapes, the artwork cache,
                 library.json
-    config.py   paths, the developer's DevTools port, the state file and artwork sizes (new
-                here; replaces the extension's GSettings)
+    config.py   paths, the developer's DevTools port and artwork sizes (new here; replaces
+                the extension's GSettings)
     README.md   the command table, error codes, the events, and the library.json/Item/Track
                 shapes
 
@@ -73,15 +73,16 @@ README.md
 - A header note on what still applies; the paths, variables, port, sizes, the thumbnail scaler
   and the settings paragraph describe this app.
 config.py
-- New: cache_dir(), profile_dir(), port(), state_file() with the APPLE_MUSIC_CACHE,
-  APPLE_MUSIC_PROFILE and APPLE_MUSIC_PORT overrides, THUMB_SIZE, COVER_SIZE, BRIDGE_JS.
+- New: cache_dir(), profile_dir(), a port and a state file with their environment overrides
+  (APPLE_MUSIC_CACHE, APPLE_MUSIC_PROFILE and one for the port), THUMB_SIZE, COVER_SIZE,
+  BRIDGE_JS.
 - (2026-09-28) port() and its environment override gave way to debug_port()
   (APPLE_MUSIC_DEBUG_PORT, unset by default): the engine speaks CDP over a pipe.
 - (2026-09-28) set_build_profile(profile): the development build's own cache
   (apple-music-devel) and Chrome profile (chrome-devel), which the Engine used to derive.
-- (Phase 9) state_file(profile=None) is keyed by profile: the default profile's engine.json is
-  in $XDG_RUNTIME_DIR/apple-music, any other profile's (an override, the .Devel build's
-  chrome-devel) inside that profile; default_profile_dir().
+- (Phase 9) the state file's place was keyed by profile; default_profile_dir().
+- (2026-09-28) The state file is gone: Chrome dies with the app, and the profile's own
+  SingletonLock names the Chrome that holds it (chrome.profile_owner).
 errors.py, chrome.py, client.py
 - New in phase 9 (this app's own; nothing vendored).
 tests/test_cdp.py

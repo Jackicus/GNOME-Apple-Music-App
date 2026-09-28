@@ -451,6 +451,9 @@ class Engine(GObject.Object):
                 'google-chrome or /opt/google/chrome/chrome; the browser-command setting '
                 'names another)')
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        # A Chrome already on the profile (scripts/am.py's, or one an app crash left behind)
+        # would take the new one's arguments and let it exit at once.
+        await self._end_owner()
         debug_port = config.debug_port()
         if debug_port is not None:
             log.warning("APPLE_MUSIC_DEBUG_PORT is set: Chrome's DevTools listen on "
@@ -557,6 +560,8 @@ class Engine(GObject.Object):
         process, self._process = self._process, None
         if process is not None:
             await self._terminate(pid, process)
+        else:
+            await self._end_owner()  # stopping an engine that was never started here
         relay, self._relay = self._relay, None
         if relay is not None and not relay.done():
             try:
@@ -576,6 +581,38 @@ class Engine(GObject.Object):
             log.warning('Chrome %d ignored SIGTERM for %g s; killing it', pid, self.stop_grace)
             self._signal(process, signal.SIGKILL)
             await self._wait_exit(process, self.stop_grace)
+
+    async def _end_owner(self):
+        """End a Chrome this process did not start that holds the profile (its SingletonLock
+        names it): SIGTERM, stop_grace seconds, SIGKILL."""
+        pid = await asyncio.to_thread(chrome.profile_owner, self.profile_dir)
+        if pid is None:
+            return
+        log.info('Chrome %d holds the engine profile; stopping it', pid)
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(pid, signum)
+            except ProcessLookupError:
+                return
+            except OSError as e:
+                log.warning('could not signal Chrome %d: %s', pid, e)
+                return
+            if await self._pid_gone(pid, self.stop_grace):
+                return
+            if signum == signal.SIGTERM:
+                log.warning('Chrome %d ignored SIGTERM for %g s; killing it', pid,
+                            self.stop_grace)
+        log.warning('Chrome %d is still running after SIGKILL', pid)
+
+    async def _pid_gone(self, pid, timeout):
+        """True once `pid` is no Chrome on the profile, False after `timeout` seconds."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while await asyncio.to_thread(chrome.pid_alive, pid, self.profile_dir):
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(0.05)
+        return True
 
     @staticmethod
     def _signal(process, signum):

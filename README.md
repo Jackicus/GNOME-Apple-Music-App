@@ -90,7 +90,6 @@ with the window closed, turn on background playback in Preferences.
 |---|---|
 | The library snapshot, artwork, lyrics and cached pages | `~/.cache/apple-music/` |
 | Chrome's profile, which holds your Apple sign-in | `~/.local/share/apple-music/chrome/` |
-| Which Chrome process belongs to the app | `$XDG_RUNTIME_DIR/apple-music/engine.json` |
 | Settings | GSettings schema `io.github.jackicus.AppleMusic` |
 
 The development build uses `~/.local/share/apple-music/chrome-devel/` and

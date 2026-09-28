@@ -38,7 +38,6 @@ class ConfigTest(unittest.TestCase):
         self.env(XDG_CACHE_HOME='/x/cache', XDG_DATA_HOME='/x/data', XDG_RUNTIME_DIR='/x/run')
         self.assertEqual(config.cache_dir(), pathlib.Path('/x/cache/apple-music'))
         self.assertEqual(config.profile_dir(), pathlib.Path('/x/data/apple-music/chrome'))
-        self.assertEqual(config.state_file(), pathlib.Path('/x/run/apple-music/engine.json'))
         self.assertIsNone(config.debug_port())
 
     def test_home_fallbacks(self):
@@ -46,8 +45,6 @@ class ConfigTest(unittest.TestCase):
         home = pathlib.Path.home()
         self.assertEqual(config.cache_dir(), home / '.cache' / 'apple-music')
         self.assertEqual(config.profile_dir(), home / '.local' / 'share' / 'apple-music' / 'chrome')
-        self.assertEqual(config.state_file().name, 'engine.json')
-        self.assertEqual(config.state_file().parent.name, f'apple-music-{os.getuid()}')
 
     def test_overrides(self):
         self.env(APPLE_MUSIC_CACHE='/o/cache', APPLE_MUSIC_PROFILE='/o/profile',
@@ -55,8 +52,6 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.cache_dir(), pathlib.Path('/o/cache'))
         self.assertEqual(config.profile_dir(), pathlib.Path('/o/profile'))
         self.assertEqual(config.debug_port(), 9300)
-        # A profile of its own keeps its engine state too, away from the real session's.
-        self.assertEqual(config.state_file(), pathlib.Path('/o/profile/engine.json'))
 
     def build(self, profile):
         config.set_build_profile(profile)
