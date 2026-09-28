@@ -128,10 +128,6 @@ class Application(Adw.Application):
             self._add_action('play-pause', lambda *_: self.player_command(self.player.toggle())),
             self._add_action('next', lambda *_: self.player_command(self.player.next())),
             self._add_action('previous', lambda *_: self.player_command(self.player.previous())),
-            self._add_action('shuffle',
-                             lambda *_: self.player_command(self.player.toggle_shuffle())),
-            self._add_action('repeat',
-                             lambda *_: self.player_command(self.player.cycle_repeat())),
         ]
         for action in self._playback_actions:
             action.set_enabled(False)
