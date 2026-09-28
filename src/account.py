@@ -1,16 +1,17 @@
-"""The account's lifecycle on this computer: signing out, and clearing the cache.
+"""The account's lifecycle on this computer: signing in and out, and clearing the cache.
 
+    await account.sign_in(app, on_status)   # True once signed in; the rest goes on by itself
     await account.sign_out(app)      # the Apple session revoked, the profile and cache wiped
     await account.clear_cache(app)   # the cache wiped, the library synced again
 
-Both race every job that writes the cache (the sync and its thread, an item's artwork, the
-kept answers, lyrics, the covers the pages fetch), so both begin the same way: the cache's
-generation bumped (store.bump_cache_generation: from then on no write of those jobs lands),
-the sync cancelled and waited for (its thread included), and only then the wipe. No sync
-starts meanwhile (LibrarySync.hold()).
+Signing out and clearing the cache race every job that writes the cache (the sync and its
+thread, an item's artwork, the kept answers, lyrics, the covers the pages fetch), so both
+begin the same way: the cache's generation bumped (store.bump_cache_generation: from then on
+no write of those jobs lands), the sync cancelled and waited for (its thread included), and
+only then the wipe. No sync starts meanwhile (LibrarySync.hold()), nor while signing in.
 
-`app` is the Application: its settings, engine, library, library_sync, mpris, toast() and
-the active window. No widgets: the window and the dialogs call these.
+`app` is the Application: its settings, engine, library, library_sync, mpris, spawn(),
+toast(), report() and the active window. No widgets: the window and the dialogs call these.
 """
 
 import asyncio
@@ -28,6 +29,90 @@ log = logging.getLogger(__name__)
 # Signing out revokes the Apple session through the engine. A stopped engine is started for
 # that (headless), for this long at most; whatever happens, the wipe follows.
 REVOKE_TIMEOUT = 20.0
+
+
+async def sign_in(app, on_status):
+    """The sign-in flow, to its commit point: a running sync stopped (its engine is about to
+    restart), Chrome restarted in a window on music.apple.com, and a wait until MusicKit
+    says the account is authorized (engine.signin(): the person signs in in that window).
+    Then the account is signed in (`signed-in` set, "Signed in" toasted) and the flow is
+    committed: this returns True, and the rest runs as a task of the app's (_finish_sign_in:
+    the account's name, the engine in the mode the settings ask for, the first sync), which
+    nothing cancels. Before that, cancelling this (the dialog's Cancel, or its closing)
+    stops the engine, and a failure is toasted in words for a sign-in, stops the engine and
+    answers False. `on_status(text)` is told each step, for the dialog to show. No sync
+    starts while it runs, and `app.signing_in` is true to the end of the task."""
+    engine = app.engine
+    app.signing_in = True
+    app.library_sync.hold()
+    committed = False
+    signing = False  # past the start: Chrome's window is the person's to close
+    try:
+        await app.library_sync.cancel()
+        on_status(_('Starting Chrome…'))
+        await engine.restart(visible=True)
+        signing = True
+        on_status(_('Sign in with your Apple ID in the Chrome window'))
+        await engine.signin()
+        app.settings.set_boolean('signed-in', True)
+        committed = True
+    except asyncio.CancelledError:
+        log.info('sign-in cancelled')
+        app.spawn(engine.stop())
+        raise
+    except EngineError as error:
+        log.warning('sign-in: %s', error)
+        if error.code == 'timeout':
+            app.toast(_('Sign-in timed out'))
+        elif error.code == 'engine-down' and signing:
+            app.toast(_('Sign-in cancelled: the Chrome window was closed'))
+        else:
+            app.report(error)
+        app.spawn(engine.stop())
+        return False
+    except Exception:
+        log.exception('sign-in failed')
+        app.toast(_('Could not sign in'))
+        app.spawn(engine.stop())
+        return False
+    finally:
+        if not committed:
+            app.signing_in = False
+            app.library_sync.release()
+    log.info('signed in')
+    on_status(_('Signed in'))
+    app.toast(_('Signed in'))
+    app.spawn(_finish_sign_in(app))
+    return True
+
+
+# How long the page is given to show the account's name after sign-in (it renders it late).
+ACCOUNT_NAME_WAIT = 15
+
+
+async def _finish_sign_in(app):
+    """After the commit: the account's name as the page shows it (best effort), the engine
+    headless unless engine-headless is off (or started again, if its window was closed),
+    then the first sync."""
+    engine = app.engine
+    settings = app.settings
+    try:
+        try:
+            name = await engine.account_name(wait=ACCOUNT_NAME_WAIT)
+        except EngineError as error:
+            log.info('no account name read after sign-in: %s', error)
+            name = ''
+        settings.set_string('account-name', name)
+        if not name:
+            log.info('no account name found on the page; the button says Signed In')
+        try:
+            await engine.start(visible=not settings.get_boolean('engine-headless'))
+        except EngineError as error:
+            app.report(error)
+    finally:
+        app.signing_in = False
+        app.library_sync.release()
+    app.library_sync.start()
 
 
 async def sign_out(app):

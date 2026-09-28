@@ -81,9 +81,11 @@ widgets.
   toast, and the next play starts a fresh Chrome. When the page loads a new document, the client injects the bridge again and the
   engine passes a `bridgeReset` event on; if MusicKit does not come back after four tries, the
   connection is given up the same way.
-- **Signing in and out.** Sign-in restarts Chrome visible on music.apple.com, waits until
-  MusicKit is authorized, records it, reads the account name if it can, restarts Chrome
-  headless (if `engine-headless` is on) and syncs. Sign-out asks first, then revokes the Apple
+- **Signing in and out.** Sign-in (`account.sign_in()`, shown by its dialog) stops a running
+  sync, restarts Chrome visible on music.apple.com and waits until MusicKit is authorized;
+  from then on it is committed (the dialog closes, closing Chrome's window changes nothing),
+  and it reads the account name if it can, restarts Chrome headless (if `engine-headless` is
+  on) and syncs. Sign-out asks first, then revokes the Apple
   session through MusicKit (starting a stopped engine for it, 20 seconds at most), stops every
   job that writes the cache (the cache's generation is bumped, the sync cancelled and waited
   for, its thread included), stops Chrome, deletes the profile and what the cache holds,

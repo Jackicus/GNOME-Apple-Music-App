@@ -40,12 +40,46 @@ class FakeEngine(GObject.Object):
         self.profile_dir = profile_dir
         self.state = state
         self.start_fails = False
+        # Sign-in: what signin() does (None: succeed), whether the window is closed right
+        # after, the name the page shows, and a future the name read waits for.
+        self.signin_error = None
+        self.signin_waits = False
+        self.closed_after_signin = False
+        self.name = 'Invented Person'
+        self.name_gate = None
 
     async def start(self, visible=None):
         self.calls.append(('start', visible))
         if self.start_fails:
             raise EngineError('no-browser', 'no Chrome here')
         self.state = 'up'
+        if visible is not None:
+            self.headless = not visible
+
+    async def restart(self, visible=None):
+        self.calls.append(('restart', visible))
+        await self.stop()
+        await self.start(visible)
+
+    async def signin(self, timeout=None):
+        self.calls.append('signin')
+        if self.signin_waits:
+            await asyncio.get_running_loop().create_future()
+        if self.signin_error is not None:
+            raise self.signin_error
+        self.authorized = True
+        if self.closed_after_signin:
+            self.state = 'down'  # the person closed Chrome's window at once
+            self.authorized = False
+        return True
+
+    async def account_name(self, wait=0):
+        self.calls.append('account-name')
+        if self.name_gate is not None:
+            await self.name_gate
+        if self.state == 'down':
+            raise EngineError('engine-down', 'the engine is not running')
+        return self.name
 
     async def unauthorize(self, timeout=None):
         self.calls.append('unauthorize')
@@ -62,6 +96,12 @@ class FakeSync:
         self.holds = 0
         self.held_while = []
 
+    def hold(self):
+        self.holds += 1
+
+    def release(self):
+        self.holds -= 1
+
     @contextlib.contextmanager
     def held(self):
         self.holds += 1
@@ -75,7 +115,7 @@ class FakeSync:
         self.held_while.append(self.holds > 0)
 
     def start(self):
-        self.calls.append('sync')
+        self.calls.append(('sync', self.holds))
 
 
 class FakeLibrary:
@@ -106,7 +146,9 @@ class FakeApp:
     def __init__(self, calls, profile_dir, engine_state='up'):
         self.calls = calls
         self.demo = False
+        self.signing_in = False
         self.signing_out = False
+        self.reported = []
         self.settings = Gio.Settings.new(SCHEMA_ID)
         self.engine = FakeEngine(calls, profile_dir, engine_state)
         self.library_sync = FakeSync(calls)
@@ -120,6 +162,12 @@ class FakeApp:
 
     def toast(self, title, button_label=None, action_name=None):
         self.toasts.append(title)
+
+    def report(self, error):
+        self.reported.append(error.code)
+
+    def spawn(self, coro):
+        return asyncio.get_running_loop().create_task(coro)
 
 
 class AccountTestCase(unittest.IsolatedAsyncioTestCase):
@@ -225,11 +273,102 @@ class SignOutTest(AccountTestCase):
         self.assertTrue((self.cache / 'library.json').exists())
 
 
+class SignInTest(AccountTestCase):
+    def make_app(self, engine_state='down'):
+        app = super().make_app(engine_state)
+        for key in ('signed-in', 'account-name'):
+            app.settings.reset(key)
+        self.statuses = []
+        return app
+
+    async def settle(self):
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+    async def test_signed_in_is_the_commit_and_the_rest_follows(self):
+        app = self.make_app()
+        self.assertTrue(await account.sign_in(app, self.statuses.append))
+        self.assertTrue(app.settings.get_boolean('signed-in'))
+        self.assertEqual(app.toasts, ['Signed in'])
+        self.assertEqual(self.statuses, ['Starting Chrome…',
+                                         'Sign in with your Apple ID in the Chrome window',
+                                         'Signed in'])
+        self.assertTrue(app.signing_in)  # the rest runs on
+        await self.settle()
+        self.assertEqual(app.settings.get_string('account-name'), 'Invented Person')
+        self.assertEqual(self.calls, ['cancel', ('restart', True), 'stop', ('start', True),
+                                      'signin', 'account-name', ('start', False),
+                                      ('sync', 0)])
+        self.assertTrue(app.engine.headless)
+        self.assertFalse(app.signing_in)
+        self.assertEqual(app.library_sync.holds, 0)
+
+    async def test_the_window_closed_after_signing_in_changes_nothing(self):
+        app = self.make_app()
+        app.engine.closed_after_signin = True
+        self.assertTrue(await account.sign_in(app, self.statuses.append))
+        await self.settle()
+        self.assertEqual((app.engine.state, app.engine.headless), ('up', True))
+        self.assertTrue(app.settings.get_boolean('signed-in'))
+        self.assertEqual(self.calls.count(('sync', 0)), 1)
+        self.assertEqual(app.toasts, ['Signed in'])
+        self.assertEqual(app.reported, [])
+
+    async def test_a_close_during_the_name_read_does_not_stop_the_engine(self):
+        app = self.make_app()
+        app.engine.name_gate = asyncio.get_running_loop().create_future()
+        task = asyncio.ensure_future(account.sign_in(app, self.statuses.append))
+        await self.settle()
+        self.assertTrue(task.done())  # committed: the dialog closes, nothing left to cancel
+        task.cancel()
+        await self.settle()
+        self.assertNotIn('stop', self.calls[self.calls.index('signin'):])
+        app.engine.name_gate.set_result(None)
+        await self.settle()
+        self.assertEqual(self.calls[-1], ('sync', 0))
+
+    async def test_cancelled_before_the_commit_stops_the_engine(self):
+        app = self.make_app()
+        app.engine.signin_waits = True
+        task = asyncio.ensure_future(account.sign_in(app, self.statuses.append))
+        await self.settle()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        await self.settle()
+        self.assertEqual(self.calls[-1], 'stop')
+        self.assertFalse(app.settings.get_boolean('signed-in'))
+        self.assertEqual((app.signing_in, app.library_sync.holds), (False, 0))
+        self.assertEqual(app.toasts, [])
+
+    async def test_failures_in_words_for_a_sign_in(self):
+        for error, told in ((EngineError('timeout', 'ten minutes'), 'Sign-in timed out'),
+                            (EngineError('engine-down', 'closed'),
+                             'Sign-in cancelled: the Chrome window was closed')):
+            self.calls.clear()
+            app = self.make_app()
+            app.engine.signin_error = error
+            with self.assertLogs('applemusic.account', 'WARNING'):
+                self.assertFalse(await account.sign_in(app, self.statuses.append))
+            await self.settle()
+            self.assertEqual(app.toasts, [told])
+            self.assertEqual(self.calls[-1], 'stop')
+            self.assertFalse(app.settings.get_boolean('signed-in'))
+            self.assertEqual((app.signing_in, app.library_sync.holds), (False, 0))
+
+    async def test_no_chrome_is_reported(self):
+        app = self.make_app()
+        app.engine.start_fails = True
+        with self.assertLogs('applemusic.account', 'WARNING'):
+            self.assertFalse(await account.sign_in(app, self.statuses.append))
+        self.assertEqual(app.reported, ['no-browser'])
+
+
 class ClearCacheTest(AccountTestCase):
     async def test_the_order_and_what_is_left(self):
         app = self.make_app()
         self.assertTrue(await account.clear_cache(app))
-        self.assertEqual(self.calls, ['bump', 'cancel', 'refresh-art', 'load', 'sync'])
+        self.assertEqual(self.calls, ['bump', 'cancel', 'refresh-art', 'load', ('sync', 0)])
         self.assertEqual(app.library_sync.held_while, [True])
         self.assertEqual(sorted(os.listdir(self.cache)), ['notes.txt'])  # no *.tmp either
         self.assertTrue(self.profile.exists())
@@ -240,7 +379,7 @@ class ClearCacheTest(AccountTestCase):
         app = self.make_app()
         app.settings.set_boolean('signed-in', False)
         await account.clear_cache(app)
-        self.assertNotIn('sync', self.calls)
+        self.assertNotIn(('sync', 0), self.calls)
 
     async def test_demo_does_nothing(self):
         app = self.make_app()

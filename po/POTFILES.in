@@ -8,7 +8,6 @@ src/errors.py
 src/dialogs/preferences.py
 src/dialogs/preferences.blp
 src/dialogs/shortcuts.py
-src/dialogs/signin.py
 src/dialogs/signin.blp
 src/window.py
 src/window.blp

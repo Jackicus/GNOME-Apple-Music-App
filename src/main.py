@@ -58,8 +58,9 @@ class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library: the development
     launcher passes the source tree's build/demo, where scripts/demo_library.py writes it; a
     release launcher passes '' and --demo reads build/demo under the working directory.
-    `signing-out` is true while account.sign_out() runs: the account's actions are off.
-    `signing-in` is true while the sign-in flow runs, to its end after the dialog closed."""
+    `signing-in` is true while the sign-in flow runs (account.sign_in(), to its end after the
+    dialog has closed), `signing-out` while account.sign_out() runs: the account's actions and
+    Refresh Library are off meanwhile."""
 
     signing_in = GObject.Property(type=bool, default=False)
     signing_out = GObject.Property(type=bool, default=False)
@@ -102,7 +103,8 @@ class Application(Adw.Application):
             self._add_action('sign-in', self._on_sign_in),
             self._add_action('sign-out', self._on_sign_out),
         ]
-        self.connect('notify::signing-out', self._on_signing_out)
+        self.connect('notify::signing-in', self._on_account_changing)
+        self.connect('notify::signing-out', self._on_account_changing)
         # Refresh Library: enabled while signed in, with no sync running (_update_sync_action).
         self._sync_action = self._add_action('sync', lambda *_args: self.start_sync())
         self._add_action('now-playing', self._on_now_playing)
@@ -377,12 +379,13 @@ class Application(Adw.Application):
 
     def _update_sync_action(self, *_args):
         self._sync_action.set_enabled(
-            not self.demo and not self.signing_out and not self.library_sync.props.running
+            not self.demo and not self.signing_in and not self.signing_out
+            and not self.library_sync.props.running
             and self.settings.get_boolean('signed-in'))
 
-    def _on_signing_out(self, *_args):
+    def _on_account_changing(self, *_args):
         for action in self._account_actions:
-            action.set_enabled(not self.signing_out)
+            action.set_enabled(not self.signing_in and not self.signing_out)
         if self.library_sync is not None:
             self._update_sync_action()
 
