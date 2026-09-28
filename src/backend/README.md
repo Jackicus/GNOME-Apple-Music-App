@@ -109,7 +109,8 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
   "version": 2, "generated": "2026-09-25T12:00:00Z", "storefront": "us",
   "sections": {"albums": [Item], "artists": [Item], "playlists": [Item], "radio": [Item]},
   "shelves": [{"key": "rec-<id>", "title": "New Releases for You", "items": [Item]}, …,  // Apple's home
-              {"key": "heavy-rotation", "title": "Heavy Rotation", …}, {"key": "recently-added", …}]
+              {"key": "heavy-rotation", "title": "", …}, {"key": "recently-added", …}]
+                                                // the last two titled by the app, by key
 }
 
 Item = {
@@ -149,11 +150,11 @@ once.
 
 ```jsonc
 {
-  "sections": {…, "songs": [Track],            // the loose songs: in no library album (each
-                                               // is also under a stand-in album, `l.alb_…`,
-                                               // which plays {"kind": "songs", "id":
-                                               // "<id>,<id>…"}); the Songs page merges them
-                                               // by id after the albums'
+  "sections": {…,                              // (older syncs wrote "songs": [Track], the
+                                               // loose songs, which are only under their
+                                               // stand-in album now, `l.alb_…`, playing
+                                               // {"kind": "songs", "id": "<id>,<id>…"}; the
+                                               // model still reads it)
                "videos": [Item]},              // kind "video", play {"kind": "musicVideo"},
                                                // "durationMs" its length
   "folders": [{"id": "root", "title": "", "parent": null,      // Apple's p.playlistsroot

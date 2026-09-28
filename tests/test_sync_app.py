@@ -35,9 +35,10 @@ class FakeEngine:
     """What sync_library() asks of the engine: status(), api(), api_pages() and api_all();
     and start(), which LibrarySync awaits first.
 
-    `answers` maps a path to an answer dict, or to a function of the params (for a paged
-    endpoint answering by offset). A path with no answer is an api error, as Apple's 404
-    would be. api_pages() is the Engine's own, over this api().
+    `answers` maps a path to an answer dict, to a function of the params (for a paged
+    endpoint answering by offset), or to an EngineError to raise (status 404 for Apple's
+    "there is none"). A path with no answer is an api error without a status: a failure.
+    api_pages() is the Engine's own, over this api().
     """
 
     api_pages = Engine.api_pages
@@ -60,7 +61,9 @@ class FakeEngine:
         self.calls.append((path, params))
         answer = self.answers.get(path)
         if answer is None:
-            raise EngineError('api', f'404 Not Found: {path}')
+            raise EngineError('api', f'invented failure: {path}')
+        if isinstance(answer, EngineError):
+            raise answer
         if callable(answer):
             answer = answer(params)
         return json.loads(json.dumps(answer))  # a copy, as Chrome's answer would be
@@ -141,16 +144,15 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         data = self.read_json()
         self.assertEqual(data['version'], app_sync.LIBRARY_VERSION)
         self.assertEqual(data['storefront'], 'gb')
-        self.assertEqual(set(data['sections']), {'albums', 'artists', 'playlists', 'songs',
-                                                 'videos', 'radio'})
+        self.assertEqual(set(data['sections']), {'albums', 'artists', 'playlists', 'videos',
+                                                 'radio'})
         sections = data['sections']
-        # Albums and artists from the songs (one real album, one stand-in for the song with no
-        # album); the loose song is the one with no album, as a Track.
+        # Albums and artists from the songs: one real album, and a stand-in holding the song
+        # with no album (a loose song), which plays that song.
         self.assertEqual(len(sections['albums']), 2)
-        self.assertEqual([song['id'] for song in sections['songs']], ['i.def456'])
-        self.assertEqual(set(sections['songs'][0]), {
-            'id', 'catalogId', 'title', 'artist', 'album', 'trackNumber', 'discNumber',
-            'durationMs', 'durationLabel', 'explicit', 'index', 'thumb', 'type'})
+        stand_in = next(a for a in sections['albums'] if a['id'] != 'l.alb123')
+        self.assertEqual([entry['id'] for entry in stand_in['groups'][0]['entries']],
+                         ['i.def456'])
         # Playlists, with Favourite Songs flagged as the demo flags it, from Apple's tag, and
         # as not editable (canEdit false); the editable ones carry no attributes.
         flagged = [p['id'] for p in sections['playlists'] if p.get('attributes')]
@@ -179,6 +181,7 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         keys = [shelf['key'] for shelf in data['shelves']]
         self.assertTrue(keys[0].startswith('rec-'))
         self.assertEqual(keys[-2:], ['heavy-rotation', 'recently-added'])
+        self.assertEqual([shelf['title'] for shelf in data['shelves'][-2:]], ['', ''])
         self.assertEqual(len(data['shelves'][-1]['items']), 2)
         # Every item with artwork knows its cover's URL; only thumbnails were fetched, at the
         # thumbnail size, and the sizes marker says what the cache is built at.
@@ -195,7 +198,7 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
                                                'thumb': config.THUMB_SIZE})
         # The counts, and the progress in order.
         self.assertEqual((counts['albums'], counts['artists'], counts['playlists'],
-                          counts['songs'], counts['videos'], counts['radio'],
+                          counts['loose'], counts['videos'], counts['radio'],
                           counts['folders']), (2, 1, 4, 1, 2, 2, 2))
         self.assertEqual(counts['art']['failed'], 0)
         self.assertGreater(counts['art']['fetched'], 0)
@@ -215,8 +218,7 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([node.id for node in self.library.playlist_tree().folders()],
                          ['p.fldA1', 'p.fldB2'])
         await self.library.build_songs()
-        # The loose song is in the Songs store once: as its stand-in album's track (the
-        # albums' tracks come first), not again from sections.songs.
+        # The loose song is in the Songs store once, as its stand-in album's track.
         self.assertEqual(self.library.song_count(), 2)
         self.assertEqual(sorted(track.id for track in self.library.songs),
                          ['i.abc123', 'i.def456'])
@@ -252,6 +254,94 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(EngineError):
             await app_sync.sync_library(FakeEngine(wired), self.library)
         self.assertFalse(os.path.exists(os.path.join(self.cache, 'library.json')))
+
+    def playlist(self, data, playlist_id):
+        return next(p for p in data['sections']['playlists'] if p['id'] == playlist_id)
+
+    async def test_a_404_for_a_playlists_tracks_is_an_empty_playlist(self):
+        wired = answers()
+        path = f'{app_sync.PLAYLISTS_ENDPOINT}/p.pl123/tracks'
+        wired[path] = EngineError('api', 'Not Found', status=404)
+        engine = FakeEngine(wired)
+        await app_sync.sync_library(engine, self.library)
+        chill = self.playlist(self.read_json(), 'p.pl123')
+        self.assertEqual([group['entries'] for group in chill['groups']], [[]])
+        self.assertEqual(chill['trackCount'], 0)
+        self.assertEqual([call for call, _params in engine.calls].count(path), 1)
+
+    async def test_failed_tracks_on_a_first_sync_are_left_to_the_page(self):
+        wired = answers()
+        del wired[f'{app_sync.PLAYLISTS_ENDPOINT}/p.pl123/tracks']
+        with self.assertLogs('applemusic.sync', 'WARNING'):
+            await app_sync.sync_library(FakeEngine(wired), self.library)
+        chill = self.playlist(self.read_json(), 'p.pl123')
+        self.assertEqual((chill['title'], chill['groups']), ('Chill Mix', []))
+        self.assertNotIn('trackCount', chill)  # not "0 songs": not known
+        self.assertEqual(self.library.by_id('playlist', 'p.pl123').count_label, '')
+
+    async def test_failed_tracks_keep_last_times_under_the_new_title(self):
+        await app_sync.sync_library(FakeEngine(answers()), self.library)
+        before = self.playlist(self.read_json(), 'p.pl456')
+        wired = answers()
+        playlists = fixture('library_playlists_tags.json')
+        playlists['data'][1]['attributes']['name'] = 'Rock Workout II'
+        wired[app_sync.PLAYLISTS_ENDPOINT] = playlists
+        del wired[f'{app_sync.PLAYLISTS_ENDPOINT}/p.pl456/tracks']
+        with self.assertLogs('applemusic.sync', 'WARNING'):
+            await app_sync.sync_library(FakeEngine(wired), self.library)
+        after = self.playlist(self.read_json(), 'p.pl456')
+        self.assertEqual(after['title'], 'Rock Workout II')
+        self.assertEqual(after['groups'], before['groups'])
+        self.assertEqual((after['trackCount'], after['durationMs']),
+                         (before['trackCount'], before['durationMs']))
+
+    async def test_a_folder_listing_its_own_ancestor_ends(self):
+        wired = answers()
+        folders = fixture('playlist_folders.json')
+        folders['p.fldB2']['data'].append({'id': 'p.fldA1', 'type': app_sync.FOLDER_TYPE,
+                                           'attributes': {'name': 'Workouts'}})
+        wired[f'{app_sync.FOLDERS_ENDPOINT}/p.fldB2/children'] = folders['p.fldB2']
+        with self.assertLogs('applemusic.sync', 'WARNING'):
+            counts = await app_sync.sync_library(FakeEngine(wired), self.library)
+        data = self.read_json()
+        self.assertEqual([folder['id'] for folder in data['folders']],
+                         [ROOT_FOLDER, 'p.fldA1', 'p.fldB2'])
+        self.assertEqual(counts['folders'], 2)
+        inner = next(folder for folder in data['folders'] if folder['id'] == 'p.fldB2')
+        self.assertEqual(inner['children'], [{'kind': 'playlist', 'id': 'p.pl789'}])
+
+    async def test_a_404_for_a_folders_children_is_an_empty_folder(self):
+        wired = answers()
+        wired[f'{app_sync.FOLDERS_ENDPOINT}/p.fldB2/children'] = EngineError(
+            'api', 'Not Found', status=404)
+        await app_sync.sync_library(FakeEngine(wired), self.library)
+        inner = next(folder for folder in self.read_json()['folders']
+                     if folder['id'] == 'p.fldB2')
+        self.assertEqual(inner['children'], [])
+
+    async def test_a_song_listed_twice_is_kept_once(self):
+        wired = answers()
+        songs = fixture('library_songs_albums.json')
+        songs['data'].append(songs['data'][0])  # the library changed under the read
+        wired[app_sync.SONGS_ENDPOINT] = songs
+        await app_sync.sync_library(FakeEngine(wired), self.library)
+        album = next(a for a in self.read_json()['sections']['albums'] if a['id'] == 'l.alb123')
+        entries = [entry['id'] for group in album['groups'] for entry in group['entries']]
+        self.assertEqual(len(entries), len(set(entries)))
+
+    async def test_a_failed_sync_keeps_the_thumbnails_after_a_size_change(self):
+        thumb = pathlib.Path(self.cache, 'thumb', 'old.jpg')
+        marker = pathlib.Path(self.cache, 'art', '.sizes')
+        for path in (thumb, marker):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        thumb.write_bytes(b'img')
+        marker.write_text(json.dumps({'cover': config.COVER_SIZE, 'thumb': 256}))
+        wired = answers()
+        del wired[app_sync.SONGS_ENDPOINT]
+        with self.assertRaises(EngineError):
+            await app_sync.sync_library(FakeEngine(wired), self.library)
+        self.assertTrue(thumb.exists())
+        self.assertEqual(json.loads(marker.read_text())['thumb'], 256)
 
     async def test_a_second_sync_keeps_objects_and_drops_what_is_gone(self):
         wired = answers()

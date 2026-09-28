@@ -187,14 +187,9 @@ def load_art_sizes(cache_dir):
     return dict(ART_SIZES)
 
 
-def apply_art_sizes(cache_dir, cover, thumb, generation=None):
-    """Set the sizes a sync builds at, and record them in the marker. A
-    thumbnail size that differs from the marker's wipes <cache>/thumb/:
-    the files keep their names whatever the size, so nothing else would
-    tell a stale one from a right one, and they are rebuilt from the
-    covers without a fetch. A cover size that differs needs nothing: the
-    new size is a new URL, hence a new name, and the old files go with
-    the next prune as unreferenced."""
+def wanted_art_sizes(cover, thumb):
+    """{'cover', 'thumb'}: the sizes asked for, within ART_SIZE_LIMITS (one that is not a
+    number keeps ART_SIZES'). Nothing is set or written."""
     wanted = {}
     for key, value in (('cover', cover), ('thumb', thumb)):
         low, high = ART_SIZE_LIMITS[key]
@@ -203,6 +198,18 @@ def apply_art_sizes(cache_dir, cover, thumb, generation=None):
         except (TypeError, ValueError):
             value = ART_SIZES[key]
         wanted[key] = max(low, min(high, value))
+    return wanted
+
+
+def apply_art_sizes(cache_dir, cover, thumb, generation=None):
+    """Set the sizes a sync builds at, and record them in the marker. A
+    thumbnail size that differs from the marker's wipes <cache>/thumb/:
+    the files keep their names whatever the size, so nothing else would
+    tell a stale one from a right one, and they are rebuilt from the
+    covers without a fetch. A cover size that differs needs nothing: the
+    new size is a new URL, hence a new name, and the old files go with
+    the next prune as unreferenced."""
+    wanted = wanted_art_sizes(cover, thumb)
     previous = _read_art_sizes_marker(cache_dir)
     if wanted['thumb'] != previous['thumb']:
         thumb_dir = os.path.join(cache_dir, 'thumb')
