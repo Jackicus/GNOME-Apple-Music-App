@@ -778,6 +778,23 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(seen[0], (2, 7))
         self.assertEqual(seen[-1], (7, 7))
 
+    async def test_api_pages_can_keep_each_item_once(self):
+        await self.engine.start()
+        path = '/v1/me/library/songs'
+        # A song added while the listing is read shifts the offsets: 'b' comes back on the
+        # second page.
+        self.page.api_answers[(path, 0)] = {'data': [{'id': 'a'}, {'id': 'b'}],
+                                            'meta': {'total': 5}, 'next': f'{path}?offset=2'}
+        self.page.api_answers[(path, 2)] = {'data': [{'id': 'b'}, {'id': 'c'}],
+                                            'meta': {'total': 5}, 'next': f'{path}?offset=4'}
+        self.page.api_answers[(path, 4)] = {'data': [{'id': 'd'}], 'meta': {'total': 5}}
+        items = await self.engine.api_pages(path, page=2)
+        self.assertEqual([item['id'] for item in items], ['a', 'b', 'b', 'c', 'd'])
+        with self.assertLogs(engine_module.log, 'DEBUG') as logs:
+            items = await self.engine.api_pages(path, page=2, unique=True)
+        self.assertEqual([item['id'] for item in items], ['a', 'b', 'c', 'd'])
+        self.assertIn('5 items, 4 of them once', logs.output[-1])
+
     async def test_api_pages_without_a_total_follows_next(self):
         await self.engine.start()
         path = '/v1/me/library/recently-added'
