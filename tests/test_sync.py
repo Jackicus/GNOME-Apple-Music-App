@@ -595,10 +595,6 @@ class TestSync(unittest.TestCase):
         self.assertFalse(os.path.exists(unused_thumb))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestArtworkDownload(unittest.TestCase):
     """Normalisation names the file; download_art fetches what is missing."""
 
@@ -853,3 +849,7 @@ class TestOtherCaches(unittest.TestCase):
         with open(path, "w") as f:
             f.write("{not json")
         self.assertIsNone(sync.read_answer(path, 60))
+
+
+if __name__ == "__main__":
+    unittest.main()

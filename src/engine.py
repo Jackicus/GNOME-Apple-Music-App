@@ -83,6 +83,7 @@ STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
 API_RETRIES = 3
+API_RETRY_DELAY = 0.5     # before the first retry of a failed API read; doubles after
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
 LYRICS_TIMEOUT = 30.0     # one catalog read, parsed in the page
@@ -404,6 +405,7 @@ class Engine(GObject.Object):
         self._next_port = None  # set_port() while Chrome runs: taken at the next start
         self.state_file = config.state_file(self.profile_dir)
         self.stop_grace = STOP_GRACE
+        self.api_retry_delay = API_RETRY_DELAY
         self._client = None
         self._process = None   # the Gio.Subprocess, when this process started Chrome
         self._pid = None       # Chrome's pid, ours or reclaimed
@@ -682,7 +684,7 @@ class Engine(GObject.Object):
         last = None
         for attempt in range(API_RETRIES):
             if attempt:
-                await asyncio.sleep(0.5 * 2 ** (attempt - 1))
+                await asyncio.sleep(self.api_retry_delay * 2 ** (attempt - 1))
             try:
                 answer = await client.bridge('api', path, params or {}, timeout=timeout)
             except EngineError as e:

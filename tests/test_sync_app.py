@@ -396,10 +396,6 @@ class ReloadTest(unittest.TestCase):
         self.assertIsNot(self.library.albums.get_item(0), first)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class WhenToSyncTest(unittest.TestCase):
     """The sync-interval choices, sync_due() and last_sync_text() (untranslated here)."""
 
@@ -440,3 +436,7 @@ class WhenToSyncTest(unittest.TestCase):
                          'Last refreshed 1 day ago')
         self.assertEqual(text('2026-09-28T13:00:00+01:00', self.NOW),
                          'Last refreshed just now')  # another zone, the same instant
+
+
+if __name__ == '__main__':
+    unittest.main()

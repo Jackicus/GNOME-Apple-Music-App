@@ -144,7 +144,14 @@ class TestEngine(Engine):
         return client
 
 
-class EngineTest(unittest.IsolatedAsyncioTestCase):
+class EngineFixture(unittest.IsolatedAsyncioTestCase):
+    """The fake Chrome, its page and a TestEngine on them. No tests of its own: the classes
+    below subclass it, and a test here would run once for each of them."""
+
+    # Seconds before the engine's first retry of a failed API read (doubling after): short,
+    # so a read that fails every attempt takes milliseconds rather than 1.5 s.
+    api_retry_delay = 0.01
+
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.profile = pathlib.Path(self.tmp.name) / 'chrome-test'
@@ -168,6 +175,7 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.devtools_port = 9333  # the port Chrome is expected on
         self.engine = TestEngine(self, profile_dir=self.profile, port=9333)
         self.engine.stop_grace = 0.5
+        self.engine.api_retry_delay = self.api_retry_delay
         self.states = []
         self.engine.connect('notify::state', lambda e, _p: self.states.append(e.state))
 
@@ -182,6 +190,14 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.devtools_waits += 1
         self.assertEqual(port, self.devtools_port)
         return {'Browser': 'Fake/1'}
+
+    async def chrome_saw_close(self):
+        await until(lambda: any(opcode == 8 for opcode, _ in self.chrome.frames))
+
+
+class LifecycleTest(EngineFixture):
+    """Starting, stopping and reclaiming Chrome, the connection, and the reads the rest rests
+    on (api, status, item, sign-in, the account name)."""
 
     # -- starting and stopping ------------------------------------------------------------
 
@@ -246,9 +262,6 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
             await self.engine.status()
         self.assertEqual(ctx.exception.code, 'engine-down')
         await self.engine.stop()  # twice is fine
-
-    async def chrome_saw_close(self):
-        await until(lambda: any(opcode == 8 for opcode, _ in self.chrome.frames))
 
     async def test_stop_kills_a_chrome_that_ignores_sigterm(self):
         self.process_code = STUBBORN
@@ -606,7 +619,7 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.engine.account_name(), '')
 
 
-class PlaybackTest(EngineTest):
+class PlaybackTest(EngineFixture):
     """The playback commands: thin calls into the bridge, their arguments as am.py sent
     them, their answers shaped, and the errors when the engine is down or signed out."""
 
@@ -750,7 +763,7 @@ class PlaybackTest(EngineTest):
             self.assertEqual(raised.exception.code, 'engine-down')
 
 
-class LibraryWriteTest(EngineTest):
+class LibraryWriteTest(EngineFixture):
     """love, unlove, rating, add_to_library, playlists, add_to_playlist and catalog_url: the
     bridge calls am.py made, with the API's types for library and catalog ids, all needing a
     signed-in engine. The fake page records the writes; nothing reaches Apple."""
@@ -893,7 +906,7 @@ def curator(curator_id, name, short=None):
         'artwork': {'url': 'https://x/{w}x{h}{c}.{f}', 'bgColor': 'dd6848'}}}
 
 
-class SearchTest(EngineTest):
+class SearchTest(EngineFixture):
     """search, suggest, landing, category, browse and made_for_you: the bridge calls as the
     extension's am.py made them, the shaping, and the day-long caches."""
 
