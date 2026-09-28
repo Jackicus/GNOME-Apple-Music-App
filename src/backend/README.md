@@ -50,7 +50,10 @@ The page exposes MusicKit v3 as a global, and that is all the bridge uses:
 station|song|songs, startWith, startPlaying})` and `mk.play()` for
 playback, `mk.playNext`/`mk.playLater`, `mk.shuffleMode`/`mk.repeatMode`,
 and `mk.isAuthorized`/`mk.storefrontId`. API failures come back as a 200
-with `{"errors": [...]}`, which `am.py` treats as a failure and retries.
+with `{"errors": [...]}`, which the Engine treats as a failure
+(`api.api_error`, its HTTP status as `EngineError.status`); it tries a read
+again only when it may pass (a 5xx, a 429, no status), never after a 4xx or
+a timeout.
 Writes (love, add to library, add to playlist) use
 `mk.api.client.createRequest(path, {params, method, body}).send()` instead
 of `music()`: Apple answers them with 202 or 204 and an empty body, which

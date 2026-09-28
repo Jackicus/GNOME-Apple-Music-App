@@ -27,6 +27,11 @@ paths:
   knows of the API apart from any connection (library ids, endpoints, resource types, Apple's
   `{errors}` answers as an EngineError, through `api_error()` only); `cdp.py` is only the
   WebSocket codec, for the developer attach.
+- API reads (`Engine._api`) are tried again, after a growing pause, only when they may pass
+  another time (a 5xx, a 429, an `{errors}` answer without a status, a rejected promise); a
+  4xx or a timeout raises at once (`api.is_final`), with Apple's HTTP status as
+  `EngineError.status`, so a caller can take a 404 to mean "none". A read a person waits on
+  (an item, a rating, a link) has `READ_TIMEOUT`, 15 s.
 - Only `EngineError(code, message)` leaves the backend and the Engine. A new failure kind gets a
   code in `backend/errors.py` and a sentence in `Application.report()` (`no-browser`, no Chrome
   to find or spawn, still has the generic one). `start()` raises nothing else: a Chrome that

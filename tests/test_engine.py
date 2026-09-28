@@ -709,6 +709,55 @@ class LifecycleTest(EngineFixture):
             await self.engine.api('/v1/nothing')
         self.assertEqual(ctx.exception.code, 'api')
 
+    async def test_a_4xx_is_final_and_a_5xx_is_tried_again(self):
+        await self.engine.start()
+        self.page.api_answers['/v1/gone?include=tracks'] = {
+            'errors': [{'status': '404', 'title': 'Not Found'}]}
+        with self.assertRaises(EngineError) as ctx:
+            await self.engine.api('/v1/gone?include=tracks')
+        self.assertEqual((ctx.exception.code, ctx.exception.status), ('api', 404))
+        self.assertEqual(ctx.exception.message, '/v1/gone: 404 Not Found:')  # no query
+        self.assertEqual(self.page.api_calls, ['/v1/gone?include=tracks'])
+        for status in ('503', '429', None):
+            self.page.api_calls.clear()
+            self.page.api_answers['/v1/busy'] = {'errors': [{'status': status, 'title': 'Busy'}]}
+            with self.assertRaises(EngineError) as ctx:
+                await self.engine.api('/v1/busy')
+            self.assertEqual(self.page.api_calls, ['/v1/busy'] * engine_module.API_RETRIES)
+        self.assertIsNone(ctx.exception.status)
+        # A retried read that passes answers.
+        self.page.api_calls.clear()
+        answers = iter([{'errors': [{'status': '503'}]}, {'data': [{'id': 'x'}]}])
+
+        def flaky(message):
+            expression = message['params']['expression']
+            if expression.startswith('window.__appleMusicLibrary.api("/v1/flaky"'):
+                self.page.api_calls.append('/v1/flaky')
+                return value(next(answers))
+            return page(message)
+
+        page = self.page
+        self.chrome.responders['Runtime.evaluate'] = flaky
+        self.assertEqual(await self.engine.api('/v1/flaky'), {'data': [{'id': 'x'}]})
+        self.assertEqual(self.page.api_calls, ['/v1/flaky', '/v1/flaky'])
+
+    async def test_a_read_that_times_out_is_not_tried_again(self):
+        await self.engine.start()
+        calls = []
+        page = self.page
+
+        def hang(message):
+            if message['params']['expression'].startswith('window.__appleMusicLibrary.api('):
+                calls.append(message)
+                return None  # never answers
+            return page(message)
+
+        self.chrome.responders['Runtime.evaluate'] = hang
+        with self.assertRaises(EngineError) as ctx:
+            await self.engine.api('/v1/me/library/songs', timeout=0.2)
+        self.assertEqual(ctx.exception.code, 'timeout')
+        self.assertEqual(len(calls), 1)
+
     async def test_api_pages_with_a_total_fetches_the_rest_at_once(self):
         await self.engine.start()
         path = '/v1/me/library/songs'

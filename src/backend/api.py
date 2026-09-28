@@ -7,8 +7,8 @@ The standard library only; engine.py and actions.py use it.
     item_endpoint('album', id, 'gb')    # '/v1/catalog/gb/albums/<id>?include=tracks,artists'
     resource_type('song', 'i.1')        # 'library-song' (the singular: callers add the "s")
     page_data(answer)                   # the page's resources: its `data` list's dicts
-    api_error(answer, 'search')         # EngineError('api', 'search: 404 Not Found: …') for
-                                        # Apple's {errors: [...]} answer, else None
+    api_error(answer, 'search')         # EngineError('api', 'search: 404 Not Found: …',
+                                        # status=404) for Apple's {errors: [...]}, else None
 """
 
 from .errors import EngineError
@@ -88,8 +88,8 @@ def page_data(answer):
 
 def api_error(answer, what):
     """Apple's answer to a failed request, `{"errors": [...]}` (MusicKit hands it back as if it
-    had worked), as EngineError('api', "<what>: <status> <title>: <detail>"); None for any
-    other answer."""
+    had worked), as EngineError('api', "<what>: <status> <title>: <detail>") with the first
+    error's HTTP status as its `status` (None when it gave none); None for any other answer."""
     if not isinstance(answer, dict) or not answer.get('errors'):
         return None
     errors = answer['errors']
@@ -98,4 +98,26 @@ def api_error(answer, what):
         first = {}
     return EngineError('api', f"{what}: {first.get('status', '?')} "
                               f"{first.get('title', 'error')}: "
-                              f"{first.get('detail', '')}".strip())
+                              f"{first.get('detail', '')}".strip(),
+                       status=http_status(first.get('status')))
+
+
+def http_status(value):
+    """An HTTP status as Apple writes it in an error ('404', or 404) as an int; None for
+    anything else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 100 <= value < 600 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return http_status(int(value.strip()))
+    return None
+
+
+def is_final(error):
+    """Whether a failed API read would fail the same way again: Apple's 4xx, bar 429 (too many
+    requests), and a timeout (MusicKit retries the network itself). A 5xx, a 429, an error
+    without a status, and a request the page itself threw on are worth another try."""
+    if error.code == 'timeout':
+        return True
+    return error.status is not None and 400 <= error.status < 500 and error.status != 429
