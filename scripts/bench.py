@@ -38,8 +38,10 @@ switches under 100 ms, RSS under 250 MB):
 - pages: 20 albums, 5 artists and 5 See All grids opened (window.open_item and
   open_shelf, as a tile or See All does) and popped one after the other, --settle ms
   each: the RSS and anonymous RSS they left behind, after gc.collect() and
-  malloc_trim(0), and how many of the pages pushed are still alive (weak references),
-  by class. A page that is freed once popped leaves 0 alive.
+  malloc_trim(0), and how many of the pages pushed are still alive (GObject weak
+  references: a Python weakref dies with the wrapper, which PyGObject lets go whether or
+  not the widget lives; see widgets/util.py), by class. A page that is freed once popped
+  leaves 0 alive.
 
 A frame that does not come (the compositor sends none to a window it does not show:
 keep the bench's window visible) is reported as missing after 3 s rather than waited
@@ -57,7 +59,6 @@ import statistics
 import subprocess
 import sys
 import time
-import weakref
 
 import harness
 
@@ -567,14 +568,14 @@ def child():
                 plan += [(kind, store.get_item(i))
                          for i in range(min(count, store.get_n_items()))]
         rss_before, anon_before = memory()
-        pushed = {}  # page class -> weak references to the pages pushed
+        pushed = {}  # page class -> GObject weak references to the pages pushed
         for kind, target in plan:
             if kind == 'shelf':
                 window.open_shelf(target)
             else:
                 window.open_item(target)
             page = window.navigation_view.get_visible_page()
-            pushed.setdefault(type(page).__name__, []).append(weakref.ref(page))
+            pushed.setdefault(type(page).__name__, []).append(page.weak_ref())
             del page
             await next_paint(window)
             await asyncio.sleep(args.settle / 1000)  # rows bound, artwork decoded
