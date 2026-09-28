@@ -169,34 +169,6 @@
         return { synced: synced, lines: lines };
     }
 
-    // The catalog search and its autocomplete, each on its own so that one
-    // bridge call can run both at once (searchAndSuggest) or either alone
-    // (search, suggest).
-    async function doSearch(term, isLibrary, limit) {
-        const mk = getMusicKit();
-        if (!mk) throw new Error('MusicKit not initialized');
-        const sf = mk.storefrontId || 'us';
-        const types = isLibrary
-            ? 'library-albums,library-artists,library-playlists,library-songs'
-            : 'albums,artists,music-videos,playlists,songs,stations';
-        const path = isLibrary ? '/v1/me/library/search' : `/v1/catalog/${sf}/search`;
-        const params = { term: term, types: types, limit: limit || 20 };
-        if (!isLibrary) params.with = 'topResults';
-        return await apiCall(path, params);
-    }
-
-    async function doSuggest(term, limit) {
-        const mk = getMusicKit();
-        if (!mk) throw new Error('MusicKit not initialized');
-        const sf = mk.storefrontId || 'us';
-        return await apiCall(`/v1/catalog/${sf}/search/suggestions`, {
-            term: term,
-            kinds: 'terms,topResults',
-            types: 'albums,artists,music-videos,playlists,songs,stations',
-            limit: limit || 10
-        });
-    }
-
     function queueSnapshot(mk) {
         if (!mk || !mk.queue) {
             return { index: 0, items: [] };
@@ -553,20 +525,6 @@
             return await apiWrite('/v1/me/library', query, { method: 'POST' });
         },
 
-        playlists: async function () {
-            const res = await apiCall('/v1/me/library/playlists', { limit: 100 });
-            const data = (res && res.data) ? res.data : [];
-            const items = data
-                .filter(function (p) { return p.attributes && p.attributes.canEdit !== false; })
-                .map(function (p) {
-                    return {
-                        id: p.id,
-                        title: p.attributes ? p.attributes.name : ''
-                    };
-                });
-            return { items: items };
-        },
-
         // `type` is the song's resource type: 'songs' for a catalog id (the
         // default), 'library-songs' for a library one.
         addToPlaylist: async function (playlistId, songId, type) {
@@ -598,13 +556,21 @@
             }
         },
 
-        // `limit` is per type. The catalog is also asked for its own pick of
-        // the best few hits across every type (`with=topResults`, answered
-        // as `results.topResults`), which is the "Top Results" shelf at the head
-        // of Apple Music's own search page; the library's search has no
-        // such thing.
-        search: async function (term, isLibrary, limit) {
-            return await doSearch(term, isLibrary, limit);
+        // A catalog search (the Search page's Apple Music mode). `limit` is
+        // per type. The catalog is also asked for its own pick of the best
+        // few hits across every type (`with=topResults`, answered as
+        // `results.topResults`), which is the "Top Results" shelf at the
+        // head of Apple Music's own search page.
+        search: async function (term, limit) {
+            const mk = getMusicKit();
+            if (!mk) throw new Error('MusicKit not initialized');
+            const sf = mk.storefrontId || 'us';
+            return await apiCall(`/v1/catalog/${sf}/search`, {
+                term: term,
+                types: 'albums,artists,music-videos,playlists,songs,stations',
+                limit: limit || 20,
+                with: 'topResults'
+            });
         },
 
         // Apple's own autocomplete for a term half typed: the few searches
@@ -612,18 +578,15 @@
         // for it as it stands (`kind: 'topResults'`), which is what the
         // search box on music.apple.com drops down as it is typed into.
         suggest: async function (term, limit) {
-            return await doSuggest(term, limit);
-        },
-
-        // Both at once, in one round trip: the search's answer
-        // under `search`, the autocomplete's under `suggestions` — or null
-        // there, since a search is not lost for want of its completions.
-        searchAndSuggest: async function (term, isLibrary, limit, suggestLimit) {
-            const results = await Promise.all([
-                doSearch(term, isLibrary, limit),
-                doSuggest(term, suggestLimit).catch(function () { return null; })
-            ]);
-            return { search: results[0], suggestions: results[1] };
+            const mk = getMusicKit();
+            if (!mk) throw new Error('MusicKit not initialized');
+            const sf = mk.storefrontId || 'us';
+            return await apiCall(`/v1/catalog/${sf}/search/suggestions`, {
+                term: term,
+                kinds: 'terms,topResults',
+                types: 'albums,artists,music-videos,playlists,songs,stations',
+                limit: limit || 10
+            });
         },
 
         // Apple Music's own search page before anything is typed: the

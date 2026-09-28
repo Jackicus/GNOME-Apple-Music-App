@@ -30,10 +30,9 @@ UI awaits.
     await engine.love('song', id); await engine.unlove('album', id)   # the rating, set or gone
     await engine.rating('song', id)        # 1 loved, -1 disliked, 0 neither
     await engine.add_to_library('album', catalog_id)
-    await engine.playlists()               # [{id, title}]: the library playlists one can edit
     await engine.catalog_url('album', library_id)   # its music.apple.com page, or None
     await engine.add_to_playlist(playlist_id, song_id)
-    await engine.search(term, library=False, limit=20, suggest=0)   # {shelves[, terms]}
+    await engine.search(term, limit=20)    # {shelves}: a catalog search
     await engine.suggest(term, limit=10)   # {terms: [{term, display}], items}
     await engine.landing()       # {categories}: the search page's Browse Categories
     await engine.category(id)    # {id, title, shelves}: a category's page
@@ -57,7 +56,7 @@ EngineError('engine-down') at once.
 The browser command (`browser_command`) and the preferred mode (`prefer_headless`) are read
 when Chrome is spawned, so a change applies at the next start and a running Chrome is left
 alone. APPLE_MUSIC_DEBUG_PORT, when set, also opens DevTools on that port of 127.0.0.1 for a
-developer (scripts/am.py --attach), with a warning at every start. What the cache holds and
+developer's debug CLI to attach to, with a warning at every start. What the cache holds and
 how it is cleared is src/cache.py's.
 """
 
@@ -79,8 +78,6 @@ from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
 
 log = logging.getLogger(__name__)
-
-STATES = ('down', 'starting', 'up', 'signing-in')
 
 PAGE_WAIT = 20.0          # a new Chrome showing music.apple.com
 BRIDGE_WAIT = 15.0        # a fresh page loading MusicKit
@@ -104,13 +101,13 @@ SUGGEST_LIMIT = 10        # completions and top hits while typing
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
 
-# The playback commands' arguments, as the bridge (and the extension's am.py) take them.
+# What control(), shuffle() and repeat() take: the bridge's commands of the same names.
 CONTROL_ACTIONS = ('play', 'pause', 'toggle', 'next', 'previous', 'stop')
-SHUFFLE_MODES = ('on', 'off', 'toggle')
-REPEAT_MODES = ('none', 'one', 'all', 'cycle')
+SHUFFLE_COMMANDS = ('on', 'off', 'toggle')
+REPEAT_COMMANDS = ('none', 'one', 'all', 'cycle')
 
 # The kinds add_to_library() takes (a station is followed, not added).
-LIBRARY_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
+ADDABLE_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
 
 # Where the signed-in page shows the account: the sidebar's footer (the reference layout). The
 # page is Apple's (Svelte, hashed class names) and changes; signed out, the footer holds
@@ -196,19 +193,6 @@ def _raise_api_errors(answer, what):
     error = api.api_error(answer, what)
     if error is not None:
         raise error
-
-
-def _shape_search(raw, suggestions, suggest, cache_dir):
-    """In a thread: a search answer as {shelves}, plus `terms` when suggestions were asked for
-    in the same round trip."""
-    answer = normalize.search_results(raw, cache_dir)
-    if suggest:
-        answer['terms'] = normalize.search_suggestions(suggestions, cache_dir)['terms'][:suggest]
-    return answer
-
-
-def _shape_suggestions(raw, cache_dir):
-    return normalize.search_suggestions(raw, cache_dir)
 
 
 def _shape_and_keep(shaper, raw, path, cache_dir, generation):
@@ -300,7 +284,7 @@ class Engine(GObject.Object):
 
     @property
     def client(self):
-        """The CDPClient while the engine is up (scripts/am.py drives the page through it),
+        """The CDPClient while the engine is up (the debug CLI drives the page through it),
         else None."""
         return self._client if self.state in ('up', 'signing-in') else None
 
@@ -396,7 +380,7 @@ class Engine(GObject.Object):
         except OSError as e:
             raise EngineError('engine-down',
                               f'could not prepare {self.profile_dir}: {e.strerror or e}') from e
-        # A Chrome already on the profile (scripts/am.py's, or one an app crash left behind)
+        # A Chrome already on the profile (the debug CLI's, or one an app crash left behind)
         # would take the new one's arguments and let it exit at once.
         await self._end_owner()
         debug_port = config.debug_port()
@@ -919,9 +903,9 @@ class Engine(GObject.Object):
             await asyncio.sleep(0.5)
 
     # -- playback ------------------------------------------------------------------------
-    # Thin wrappers over the bridge, as am.py's play/control/seek/volume/shuffle/repeat/
-    # now-playing/queue commands were; the outcome shows up as MusicKit events (the `event`
-    # signal), which is where the Player takes its state from, not from these answers.
+    # Thin wrappers over the bridge's methods of the same names, which the Player calls; the
+    # outcome shows up as MusicKit events (the `event` signal), which is where the Player
+    # takes its state from, not from these answers.
 
     async def _require_signed_in(self):
         client = await self._ready()
@@ -974,7 +958,7 @@ class Engine(GObject.Object):
     async def shuffle(self, mode):
         """Shuffle on, off or toggle; answers {shuffle: 'on'|'off', repeat: 'none'|'one'|'all'}
         as MusicKit has them after the change."""
-        if mode not in SHUFFLE_MODES:
+        if mode not in SHUFFLE_COMMANDS:
             raise EngineError('usage', f'unknown shuffle mode: {mode}')
         client = await self._ready()
         answer = await client.bridge('shuffle', mode)
@@ -982,7 +966,7 @@ class Engine(GObject.Object):
 
     async def repeat(self, mode):
         """Repeat none, one, all, or cycle through them; answers as shuffle() does."""
-        if mode not in REPEAT_MODES:
+        if mode not in REPEAT_COMMANDS:
             raise EngineError('usage', f'unknown repeat mode: {mode}')
         client = await self._ready()
         answer = await client.bridge('repeat', mode)
@@ -1040,10 +1024,10 @@ class Engine(GObject.Object):
         return answer
 
     # -- ratings and the library ---------------------------------------------------------
-    # As am.py's love, unlove, add-to-library, playlists and add-to-playlist were: writes
-    # through the bridge's rating(), addToLibrary() and addToPlaylist() (MusicKit's request
-    # builder, judged by the HTTP status: a refusal is EngineError('api') with Apple's
-    # "HTTP 403 Forbidden: …"), each needing a signed-in engine.
+    # The heart and the item actions' writes, through the bridge's rating(), addToLibrary()
+    # and addToPlaylist() (MusicKit's request builder, judged by the HTTP status: a refusal
+    # is EngineError('api') with Apple's "HTTP 403 Forbidden: …"), and the reads beside them
+    # (rating, catalog_url), each needing a signed-in engine.
 
     async def _require_account(self, what):
         client = await self._ready()
@@ -1087,27 +1071,12 @@ class Engine(GObject.Object):
     async def add_to_library(self, kind, item_id):
         """Add a catalog song, album, playlist or music video to the library (POST
         /v1/me/library?ids[<type>s]=<id>). A library id is refused: it is there already."""
-        if kind not in LIBRARY_KINDS or item_id in (None, ''):
+        if kind not in ADDABLE_KINDS or item_id in (None, ''):
             raise EngineError('usage', f'cannot add {kind or "nothing"} to the library')
         if is_library_id(item_id):
             raise EngineError('usage', f'{item_id} is in the library already')
         client = await self._require_account('add to your library')
         await client.bridge('addToLibrary', api.RESOURCE_TYPES[kind], str(item_id))
-
-    async def playlists(self):
-        """The library playlists that can be added to, in the library's order: [{id,
-        title}] (every page of /v1/me/library/playlists, those whose canEdit is false,
-        Favourite Songs among them, left out)."""
-        await self._require_account('list playlists')
-        entries = await self.api_pages('/v1/me/library/playlists')
-        playlists = []
-        for entry in entries:
-            attributes = entry.get('attributes') or {}
-            if not isinstance(attributes, dict) or attributes.get('canEdit') is False:
-                continue
-            playlists.append({'id': str(entry.get('id') or ''),
-                              'title': str(attributes.get('name') or '')})
-        return [playlist for playlist in playlists if playlist['id']]
 
     async def catalog_url(self, kind, item_id):
         """The music.apple.com page of a library item's catalog equivalent (its
@@ -1142,36 +1111,24 @@ class Engine(GObject.Object):
         await client.bridge('addToPlaylist', playlist_id, song_id, song_type)
 
     # -- search and browsing -------------------------------------------------------------
-    # As am.py's search, suggest, landing and category commands were, plus browse (the New
-    # page) and made_for_you. Every one needs a signed-in engine, but a kept answer (the
-    # landing, a category, browse and made-for-you are kept for normalize.ANSWER_MAX_AGE) is
-    # answered
+    # The Search page's search, suggestions, landing and categories, the New page (browse)
+    # and Made for You. Every one needs a signed-in engine, but a kept answer (the landing, a
+    # category, browse and made-for-you are kept for normalize.ANSWER_MAX_AGE) is answered
     # without one. The shaping (backend.normalize) runs in a thread: it stats the artwork cache.
 
-    async def search(self, term, library=False, limit=SEARCH_LIMIT, suggest=0):
-        """A search of the catalog (or, with `library`, of the library): {shelves: [{key,
+    async def search(self, term, limit=SEARCH_LIMIT):
+        """A search of the catalog (the Search page's Apple Music mode): {shelves: [{key,
         title, items: [Item without groups]}]}, the shelves in Apple's order (Top Results
-        first); with `suggest` > 0, `terms` too: that many of
-        suggest()'s completions, asked in the same round trip. `limit` is per kind. A hit's
-        `art` is its cached cover or a thumbnail-sized catalog URL (widgets.artwork.remote_item
-        gives it a place under <cache>/remote-art/); `thumb` is on disk or None."""
+        first). `limit` is per kind. A hit's `art` is its cached cover or a thumbnail-sized
+        catalog URL (widgets.artwork.remote_item gives it a place under <cache>/remote-art/);
+        `thumb` is on disk or None."""
         term = ' '.join(str(term or '').split())
         if not term:
             raise EngineError('usage', 'search needs a term')
         client = await self._require_signed_in()
-        suggest = max(0, int(suggest or 0))
-        if suggest:
-            answer = await client.bridge('searchAndSuggest', term, bool(library), int(limit),
-                                         suggest, timeout=SEARCH_TIMEOUT)
-            answer = answer if isinstance(answer, dict) else {}
-            raw, suggestions = answer.get('search'), answer.get('suggestions')
-        else:
-            raw = await client.bridge('search', term, bool(library), int(limit),
-                                      timeout=SEARCH_TIMEOUT)
-            suggestions = None
+        raw = await client.bridge('search', term, int(limit), timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'search')
-        return await asyncio.to_thread(_shape_search, raw, suggestions, suggest,
-                                       str(self.cache_dir))
+        return await asyncio.to_thread(normalize.search_results, raw, str(self.cache_dir))
 
     async def suggest(self, term, limit=SUGGEST_LIMIT):
         """Apple's completions of a term half typed: {terms: [{term, display}], items: [Item
@@ -1182,7 +1139,7 @@ class Engine(GObject.Object):
         client = await self._require_signed_in()
         raw = await client.bridge('suggest', term, int(limit), timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'suggestions')
-        return await asyncio.to_thread(_shape_suggestions, raw, str(self.cache_dir))
+        return await asyncio.to_thread(normalize.search_suggestions, raw, str(self.cache_dir))
 
     def _kept_path(self, path):
         """The path of a kept answer to read, or None in demo mode, where every command is
