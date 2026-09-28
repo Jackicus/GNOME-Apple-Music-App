@@ -105,7 +105,6 @@ LIBRARY_VERSION = 2
 # The sync-interval choices Preferences offers, in hours, in its order: every hour, every
 # 6 hours, every day, manually (0: only when asked).
 INTERVALS = (1, 6, 24, 0)
-DEFAULT_INTERVAL = 6
 
 # The scheduler (LibrarySync.schedule()): it looks at the clock at most CHECK_MAX seconds apart
 # (a laptop that slept, a clock that moved) and at least CHECK_MIN; after a failed sync, and
