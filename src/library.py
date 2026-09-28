@@ -734,7 +734,8 @@ class Library(GObject.Object):
     it found. `songs-ready` is true once the Songs store has been filled (build_songs()).
     `file-state` is what the last load found on disk: 'ok', 'missing' or 'unreadable' ('' until
     a load has read the file), and `version` that file's `version` (0 when it has none): a
-    missing, unreadable or outdated library is due a sync.
+    missing, unreadable or outdated library is due a sync. `syncing` is true while a sync
+    runs (the sync sets it), so that a page can show an empty library as on its way.
     """
 
     __gtype_name__ = 'AppleMusicLibrary'
@@ -743,7 +744,20 @@ class Library(GObject.Object):
         'changed': (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
+    def _get_syncing(self):
+        return self._syncing
+
+    def _set_syncing(self, value):
+        value = bool(value)
+        if value != self._syncing:  # notified only when it changes (EXPLICIT_NOTIFY)
+            self._syncing = value
+            self.notify('syncing')
+
     state = GObject.Property(type=str, default='empty')
+    syncing = GObject.Property(type=bool, default=False, getter=_get_syncing,
+                               setter=_set_syncing,
+                               flags=GObject.ParamFlags.READWRITE
+                               | GObject.ParamFlags.EXPLICIT_NOTIFY)
     file_state = GObject.Property(type=str, default='')
     version = GObject.Property(type=int, default=0)
     generated = GObject.Property(type=str)
@@ -769,6 +783,7 @@ class Library(GObject.Object):
         self._tree = PlaylistTree()
         self._generation = 0
         self._paused = 0.0  # when a load or Songs build last paused for a frame (_pause())
+        self._syncing = False
         self._reader = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix='library')  # its own: never behind a decode
         self._reading = threading.Event()  # clear: the parse waits (hold_reading())

@@ -405,6 +405,17 @@ class TestLoading(unittest.TestCase):
         self.assertIsNone(library.by_id('album', 'l.a3'))
         self.assertIsNone(library.shelf('recently-added'))
 
+    def test_syncing_notifies_only_changes(self):
+        library = Library()
+        seen = []
+        library.connect('notify::syncing', lambda obj, _pspec: seen.append(obj.syncing))
+        self.assertFalse(library.syncing)
+        library.syncing = True
+        library.syncing = True
+        library.set_property('syncing', False)
+        library.syncing = False
+        self.assertEqual(seen, [True, False])
+
     def test_file_state_and_version(self):
         library = Library()
         self.assertEqual((library.file_state, library.version), ('', 0))  # nothing read yet
