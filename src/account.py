@@ -10,8 +10,9 @@ begin the same way: the cache's generation bumped (store.bump_cache_generation: 
 no write of those jobs lands), the sync cancelled and waited for (its thread included), and
 only then the wipe. No sync starts meanwhile (LibrarySync.hold()), nor while signing in.
 
-`app` is the Application: its settings, engine, library, library_sync, mpris, spawn(),
-toast(), report() and the active window. No widgets: the window and the dialogs call these.
+`app` is the Application: its settings (account_key()), engine, library, library_sync, mpris,
+spawn(), toast(), report() and the active window; `revocation` and `sign_in_finish` are the
+tasks it keeps for quitting. No widgets: the window and the dialogs call these.
 """
 
 import asyncio
@@ -79,10 +80,12 @@ async def sign_in(app, on_status):
         if not committed:
             app.signing_in = False
             app.library_sync.release()
+    # The rest is the finish's, which releases the hold and signing_in however it ends
+    # (quitting cancels it); nothing here may come between the commit and it.
+    app.sign_in_finish = app.spawn(_finish_sign_in(app))
     log.info('signed in')
     on_status(_('Signed in'))
     app.toast(_('Signed in'))
-    app.spawn(_finish_sign_in(app))
     return True
 
 
@@ -116,29 +119,48 @@ async def _finish_sign_in(app):
 
 
 async def sign_out(app):
-    """Sign out: revoke the session at Apple's (MusicKit's unauthorize()), stop the engine,
-    wipe the Chrome profile and the cache, forget the account's settings and pages, and
-    empty the library. The account's actions are off meanwhile (`app.signing_out`)."""
+    """Sign out: stop a running sync (revoking the session would fail it, loudly), revoke
+    the session at Apple's (MusicKit's unauthorize()), stop the engine, wipe the Chrome
+    profile and the cache, forget the account's settings and pages, and empty the library.
+    The account's actions are off meanwhile (`app.signing_out`), no sync starts, and the
+    engine refuses to start from the stop on (a Chrome started then would write the profile
+    back). Quitting meanwhile cancels only the revocation (`app.revocation`): the rest,
+    which leaves nothing of the account behind, runs to its end, and the quit waits for it."""
     if app.demo:
         return
     engine = app.engine
+    cache_dir = config.cache_dir()
     app.signing_out = True
     try:
         with app.library_sync.held():
-            await _revoke(app)
-            store.bump_cache_generation()  # before anything is cancelled or wiped
             await app.library_sync.cancel()
+            revocation = app.revocation = asyncio.ensure_future(_revoke(app))
+            try:
+                await asyncio.wait([revocation])
+            finally:
+                app.revocation = None
+            if revocation.cancelled():
+                log.info('quitting: the Apple session is not revoked')
+            elif revocation.exception() is not None:
+                log.error('could not sign out of Apple Music', exc_info=revocation.exception())
+            engine.refuse_starts = 'signing out'
+            store.bump_cache_generation()  # before anything is wiped
             try:
                 await engine.stop()
             except EngineError as error:
                 log.warning('stopping the engine before signing out: %s', error)
-            await asyncio.to_thread(_wipe, engine.profile_dir, config.cache_dir())
+            await asyncio.to_thread(_wipe, engine.profile_dir, cache_dir)
             _forget(app)
             await app.library.load()  # nothing left to read: the models empty
             window = app.get_active_window()
             if window is not None and hasattr(window, 'forget_account_pages'):
                 window.forget_account_pages()
+            # A page showing the account's library until now may have fetched a cover since
+            # the bump: nothing shows the account any more, so once more is the last.
+            store.bump_cache_generation()
+            await asyncio.to_thread(cache.clear, cache_dir)
     finally:
+        engine.refuse_starts = None
         app.signing_out = False
     app.toast(_('Signed out'))
 
@@ -154,7 +176,7 @@ async def _revoke(app):
             await asyncio.wait_for(engine.start(visible=False), REVOKE_TIMEOUT)
         except (EngineError, TimeoutError) as error:
             log.warning('could not start the engine to sign out of Apple Music: %s',
-                        error or 'it took too long')
+                        str(error) or 'it took too long')
             return
     try:
         await asyncio.wait_for(engine.unauthorize(), REVOKE_TIMEOUT)
@@ -173,11 +195,11 @@ def _forget(app):
     """The settings that name the account or its library: the sign-in, the name, the last
     sync, the expanded folders, and the last page when it is a playlist or a folder."""
     settings = app.settings
-    for key in (*map(app.account_key, ('signed-in', 'account-name', 'last-sync')),
-                'expanded-folders'):
-        settings.reset(key)
-    if parse_key(settings.get_string('last-page')) is not None:
-        settings.reset('last-page')
+    for key in ('signed-in', 'account-name', 'last-sync', 'expanded-folders'):
+        settings.reset(app.account_key(key))
+    last_page = app.account_key('last-page')
+    if parse_key(settings.get_string(last_page)) is not None:
+        settings.reset(last_page)
     _forget_artwork(app)
 
 

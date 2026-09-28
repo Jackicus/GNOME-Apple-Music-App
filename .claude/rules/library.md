@@ -98,8 +98,10 @@ them before changing either. What matters most:
   old files lack bumps `LIBRARY_VERSION` (and demo_library.py's), so they are synced again.
 - A cancelled sync's task ends only after its build thread has (`sync_library()` waits it
   out), so once `await app.library_sync.cancel()` returns nothing more of it is written.
-  Sign-out and Clear Cache (account.py) bump the cache's generation first, then cancel, then
-  wipe, with the sync held (`LibrarySync.hold()`) so none starts meanwhile.
+  Clear Cache (account.py) bumps the cache's generation, cancels, then wipes; sign-out cancels
+  the sync first (revoking the session would fail it), then revokes, bumps, stops the engine
+  and wipes, and bumps and clears once more at the end for what a page fetched meanwhile.
+  Both hold the sync (`LibrarySync.hold()`) so none starts meanwhile.
 - The library.json shape lives in `src/backend/README.md` (with this app's additions) and
   library.py's docstring. A new key or kind touches the sync's writer, `scripts/demo_library.py`,
   tests/test_demo_schema.py and the README together.

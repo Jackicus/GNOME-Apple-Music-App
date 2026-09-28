@@ -59,9 +59,14 @@ QUIT_GRACE = 3.0
 # The notification that stands in for a toast while the window is closed and the music plays.
 BACKGROUND_NOTIFICATION = 'background-error'
 
-# The settings that belong to a Chrome profile's sign-in: the development build, which has a
-# profile (and a cache) of its own, keeps them under keys of its own (account_key()).
-ACCOUNT_KEYS = ('signed-in', 'account-name', 'last-sync')
+# The settings that belong to a Chrome profile's sign-in and its library: the development
+# build, which has a profile (and a cache) of its own, keeps them under keys of its own
+# (account_key()).
+ACCOUNT_KEYS = ('signed-in', 'account-name', 'last-sync', 'last-page', 'expanded-folders')
+
+# How long quitting waits, after the engine's stop, for a sign-out under way to wipe the
+# profile and the cache and forget the account.
+SIGN_OUT_WAIT = 10.0
 
 
 class Application(Adw.Application):
@@ -98,6 +103,9 @@ class Application(Adw.Application):
         self._signin = None  # the sign-in dialog while it is open
         self._engine_start = None  # a start the app asked for (app.start-engine)
         self._autostart_task = None  # the engine's start at launch
+        self._sign_out_task = None  # account.sign_out() while it runs
+        self.revocation = None  # sign-out's revocation of the Apple session (account.py)
+        self.sign_in_finish = None  # what follows a sign-in's commit (account.py)
         self._preferences = None  # the Preferences dialog while it is open
         self._first_load = None  # the library's first load(), reading since do_startup
         # Startup timing (timing.py): name -> GLib.get_monotonic_time(), for scripts/bench.py.
@@ -434,7 +442,7 @@ class Application(Adw.Application):
         if response == 'sign-out':
             from . import account
 
-            self.spawn(account.sign_out(self))
+            self._sign_out_task = self.spawn(account.sign_out(self))
 
     def show_preferences(self, page=None):
         """Present the Preferences dialog (app.preferences), on `page` ('general',
@@ -541,8 +549,8 @@ class Application(Adw.Application):
     async def _quit(self):
         """Everything shown goes at once; then a start the app asked for is cancelled (it
         would hold the engine's stop until Chrome is up), and the sync (its thread included)
-        and the engine are stopped, QUIT_TIMEOUT at most, before Chrome is killed if it
-        still runs."""
+        and the engine are stopped, QUIT_TIMEOUT at most; a sign-out under way is given
+        SIGN_OUT_WAIT more to finish; then Chrome is killed if it still runs."""
         if self.background is not None:
             self.background.leave()
         if self._signin is not None:
@@ -550,11 +558,15 @@ class Application(Adw.Application):
         for window in self.get_windows():
             if hasattr(window, 'prepare_quit'):  # a dialog's toplevel has none
                 window.prepare_quit()  # remembers its state and hides at once
-        for task in (self._autostart_task, self._engine_start):
+        # Nothing more starts: a start or a sign-in's finish under way is cancelled, and a
+        # sign-out's revocation (its wipe goes on); no sync starts.
+        for task in (self._autostart_task, self._engine_start, self.sign_in_finish,
+                     self.revocation):
             if task is not None and not task.done():
                 task.cancel()
         stopping = [self.engine.stop(grace=QUIT_GRACE)]
         if self.library_sync is not None:
+            self.library_sync.hold()
             stopping.append(self.library_sync.cancel())
         try:
             await asyncio.wait_for(asyncio.gather(*stopping), QUIT_TIMEOUT)
@@ -563,6 +575,10 @@ class Application(Adw.Application):
         except Exception:
             log.exception('stopping the engine failed')
         finally:
+            sign_out = self._sign_out_task
+            if sign_out is not None and not sign_out.done():
+                # It leaves nothing of the account behind: let it end, within a bound.
+                await asyncio.wait([sign_out], timeout=SIGN_OUT_WAIT)
             if self.engine.pid:
                 self.engine.kill()  # the stop ran out of time, or failed
             Gio.Application.quit(self)

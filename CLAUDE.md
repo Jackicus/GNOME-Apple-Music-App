@@ -136,7 +136,7 @@ sudo meson install -C _build --skip-subprojects
 - **Strings**: every user-visible string goes through `_()` (or `ngettext`, `C_`), `_("…")` in
   Blueprint, and its file is in `po/POTFILES.in`. Source strings are en-GB ("Favourite").
 - **Settings**: one schema for both builds; a new key goes in the gschema with a summary. Read
-  it through `app.settings`; `signed-in`, `account-name`, `last-sync` by `app.account_key()`.
+  it through `app.settings`, the account's (`main.ACCOUNT_KEYS`) by `app.account_key()`.
 - **Actions and shortcuts**: `app.*` in main.py, `win.*` in window.py (the item actions in
   actions.py). Every shortcut goes in `src/shortcuts.py`, which feeds the accelerators and the
   Keyboard Shortcuts dialog (tests/test_shortcuts.py). A bare key or an editing chord (Space,
@@ -160,8 +160,8 @@ sudo meson install -C _build --skip-subprojects
   committed screenshots: no names, playlist or song titles, library IDs, tokens, artwork, or
   anything from the cache or the Chrome profile. Fixtures and the demo library are invented.
 - Live data stays outside the repo: `$XDG_CACHE_HOME/apple-music` (and `apple-music-devel`),
-  `$XDG_DATA_HOME/apple-music` and the app's GSettings (`account-name`(`-devel`), `last-page`
-  and `expanded-folders` hold names and IDs). `build/` is git-ignored.
+  `$XDG_DATA_HOME/apple-music` and the app's GSettings (`account-name`, `last-page` and
+  `expanded-folders`, and their `-devel` twins, hold names and IDs). `build/` is git-ignored.
 - `scripts/run.sh`, `scripts/am.py`, and `scripts/screenshot.py` without `--demo` use the real
   profile or cache. Use `scripts/demo.sh` and `--demo` unless the task needs the real engine.
   `APPLE_MUSIC_DEBUG_PORT` opens the signed-in session to every local program: live checks only.

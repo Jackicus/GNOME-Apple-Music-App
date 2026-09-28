@@ -56,7 +56,9 @@ paths:
   with a warning at every start: while it is set, any local program can drive the signed-in
   session. Nothing sets it by default, in a script, a launcher or a package; only a person, for
   one live check (`scripts/am.py --attach`).
-- States: `down`, `starting`, `up`, `signing-in` (plus `authorized` and `headless`). Every
+- States: `down`, `starting`, `up`, `signing-in` (plus `authorized` and `headless`). While
+  `refuse_starts` holds a reason, a start that would spawn Chrome raises `engine-down` instead
+  (sign-out sets it while it stops Chrome and deletes the profile). Every
   command begins `await self._ready()`: a start in progress is waited for (its failure is the
   command's), `down` is `engine-down`. Commands never start Chrome; `Player.ensure_engine()`
   starts a `down` engine and returns at once in any other state, so a play during a start
@@ -64,7 +66,7 @@ paths:
   one Chrome, one outcome; cancelling the caller that began it cancels the start.
 - `start(visible=None)`: without a mode it keeps an engine running in either mode and starts a
   stopped one headless unless `engine-headless` is off; sign-in is the one caller that asks for
-  a window. A changed browser command applies at the next start. Nothing is reclaimed and no
+  a window (and sign-out, starting a stopped engine to revoke the session, for headless). A changed browser command applies at the next start. Nothing is reclaimed and no
   state file is kept: a start first ends a Chrome this process did not start that holds the
   profile (am.py's, or one a crash left).
 - `stop(grace=None)`: `Browser.close` over the pipe (up to 2 s), SIGTERM, `grace` (5 s),
@@ -92,8 +94,9 @@ paths:
   release build uses `$XDG_DATA_HOME/apple-music/chrome` and `$XDG_CACHE_HOME/apple-music`; the
   .Devel build `chrome-devel` and `apple-music-devel`. `APPLE_MUSIC_PROFILE` and
   `APPLE_MUSIC_CACHE` override them, read on every call. The builds share the settings but
-  the sign-in's: `signed-in`, `account-name` and `last-sync` are `-devel` keys for the .Devel
-  build, whose profile holds a sign-in of its own (`Application.account_key()`).
+  the account's (`main.ACCOUNT_KEYS`: `signed-in`, `account-name`, `last-sync`, `last-page`,
+  `expanded-folders`), which are `-devel` keys for the .Devel build, whose profile holds a
+  sign-in of its own (`Application.account_key()`).
 - The cache: src/cache.py knows what it holds (`CACHE_ENTRIES`), measures and clears it (the
   entries and `*.tmp` leftovers, never an unrelated file) and reads the kept answers.
   `normalize.prune_caches()` trims what only grows (remote-art/ to 32 MB, the 2,000 lyrics
