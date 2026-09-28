@@ -4,12 +4,14 @@
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
                           [--now-playing [lyrics|queue]] [--search TERM] [--context-menu]
-                          [--preferences [general|engine]]
+                          [--preferences [general|engine]] [--dialog about|shortcuts]
 
-Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
+Builds nothing itself: run meson install -C build (or scripts/run.sh) first.
 The window is really mapped for about a second, so --size is only a request:
 a tiling window manager may choose its own. Settings go to a memory backend,
-and animations are off, so transitions finish at once.
+and animations are off, so transitions finish at once. The shots use stock
+GNOME's icons and font (the Adwaita icon theme, Adwaita Sans 11), not the
+desktop's (scripts/harness.py).
 In the narrow (collapsed) layout the shot shows the sidebar, or the page when
 --page is given.
 --demo shows the invented library in build/demo (generated first if missing)
@@ -38,22 +40,20 @@ draws the popover into the shot where the compositor put it.
 on Engine, and shoots it: inside the window when libadwaita put it there, else its
 own window (a fixed-size window that is neither maximized nor tiled gets one), at
 --size when that is narrower than 640 px.
+--dialog opens the About (app.about) or Keyboard Shortcuts (app.shortcuts) dialog and
+shoots it as --preferences does.
 """
 
 import argparse
-import gettext
 import json
 import os
-import shutil
-import subprocess
 import sys
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-prefix = os.path.join(root, 'build', 'install')
-pkgdatadir = os.path.join(prefix, 'share', 'apple-music')
+import harness
 
 parser = argparse.ArgumentParser()
-parser.add_argument('out', nargs='?', default=os.path.join(root, 'build', 'screenshot.png'))
+parser.add_argument('out', nargs='?', default=os.path.join(harness.ROOT, 'build',
+                                                            'screenshot.png'))
 parser.add_argument('--light', action='store_true')
 parser.add_argument('--size', default='1100x760')
 parser.add_argument('--page')
@@ -74,6 +74,8 @@ parser.add_argument('--context-menu', action='store_true',
 parser.add_argument('--preferences', metavar='PAGE', nargs='?', const='general',
                     choices=['general', 'engine'],
                     help='open Preferences on PAGE and shoot the dialog')
+parser.add_argument('--dialog', choices=['about', 'shortcuts'],
+                    help='open the About or Keyboard Shortcuts dialog and shoot it')
 args = parser.parse_args()
 if args.search:
     args.page = 'search'
@@ -81,42 +83,9 @@ if args.now_playing and not args.demo:
     parser.error('--now-playing needs --demo')
 width, height = (int(n) for n in args.size.split('x'))
 
-demo_dir = os.path.join(root, 'build', 'demo')  # what the launcher passes as DEMO_DIR
-if (args.demo and not os.environ.get('APPLE_MUSIC_CACHE')
-        and not os.path.exists(os.path.join(demo_dir, 'library.json'))):
-    subprocess.run([sys.executable, os.path.join(root, 'scripts', 'demo_library.py'),
-                    '--cache', demo_dir], check=True)
+app = harness.make_app('Screenshot', demo=args.demo, light=args.light, size=(width, height))
 
-os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(prefix, 'share', 'glib-2.0', 'schemas')
-os.environ['GSETTINGS_BACKEND'] = 'memory'  # don't touch the real settings
-sys.path.insert(1, pkgdatadir)
-gettext.install('apple-music')
-
-import gi  # noqa: E402
-
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
-
-Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
-from applemusic import main  # noqa: E402
-
-app = main.Application('0.0.0', 'io.github.jackicus.AppleMusic.Screenshot',
-                       'io.github.jackicus.AppleMusic', 'default', demo_dir)
-app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
-
-
-def on_startup(_app):
-    Adw.StyleManager.get_default().set_color_scheme(
-        Adw.ColorScheme.FORCE_LIGHT if args.light else Adw.ColorScheme.FORCE_DARK)
-    # Pages arrive at once: a transition the compositor starves of frames (an unfocused window)
-    # can still be sliding when the shot is taken.
-    Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
-
-
-def on_window_added(_app, window):
-    # A fixed-size window is one a tiling window manager leaves alone.
-    window.set_resizable(False)
+from gi.repository import Adw, GLib, Graphene, Gtk  # noqa: E402  (after make_app)
 
 
 def first_folder():
@@ -132,15 +101,12 @@ def first_folder():
 
 def on_activate(_app):
     app.settings.set_string('last-page', args.page or 'home')
-    app.settings.set_int('window-width', width)
-    app.settings.set_int('window-height', height)
     expand = [folder_id for folder_id in args.expand.split(',') if folder_id]
     expand = [first_folder() if folder_id == 'first' else folder_id for folder_id in expand]
     app.settings.set_strv('expanded-folders', [folder_id for folder_id in expand if folder_id])
     if args.signed_in is not None:
         app.settings.set_boolean('signed-in', True)
-        app.settings.set_string('account-name', args.signed_in)
-        app.settings.set_boolean('engine-autostart', False)  # signed in, but no engine here
+        app.settings.set_string('account-name', args.signed_in)  # no engine: autostart is off
     GLib.timeout_add(1200, shoot)
 
 
@@ -152,46 +118,13 @@ sheet_opened = False
 searched = False
 menu_opened = False
 preferences = None  # the Preferences dialog, once --preferences has opened it
-
-# --now-playing: the invented item's artwork URL. Its cover is copied to where
-# Artwork.fetch_remote would put this URL's 640 px image, so nothing is fetched.
-DEMO_ART_URL = 'https://example.invalid/demo-art/{w}x{h}bb.jpg'
-NOW_PLAYING_POSITION = 65.0  # seconds in: a line of the fixture is current, mid-song
-
-
-def now_playing_state():
-    """The Player.apply() dict for --now-playing: the demo library's first album as the
-    queue, its first track playing, with the lyrics fixture."""
-    from applemusic.backend import config
-    from applemusic.widgets.artwork import remote_art_path
-
-    album = app.library.albums.get_item(0)
-    if album is None:
-        sys.exit('screenshot: the demo library has no album')
-    groups = album.raw.get('groups') or []
-    entries = [dict(entry) for group in groups for entry in group.get('entries') or []]
-    if not entries:
-        sys.exit('screenshot: the demo album has no tracks')
-    for position, entry in enumerate(entries):
-        entry['artUrl'] = DEMO_ART_URL
-        entry['index'] = position
-    art_path = remote_art_path(DEMO_ART_URL, config.COVER_SIZE)
-    if album.art and art_path and not os.path.exists(art_path):
-        os.makedirs(os.path.dirname(art_path), exist_ok=True)
-        shutil.copyfile(album.art, art_path)
-    with open(os.path.join(root, 'tests', 'fixtures', 'lyrics.json'), encoding='utf-8') as file:
-        lyrics = json.load(file)
-    return {
-        'state': 'playing', 'track': entries[0], 'position': NOW_PLAYING_POSITION,
-        'duration': entries[0].get('durationMs', 0) / 1000, 'shuffle': 'off',
-        'repeat': 'none', 'volume': 0.7, 'queue': {'index': 0, 'items': entries},
-        'lyrics': lyrics,
-    }
+dialog = None  # the --dialog dialog, once opened
 
 
 def open_now_playing(window):
-    """--now-playing: the invented item on the Player and the sheet open on the tab."""
-    app.player.apply(now_playing_state())
+    """--now-playing: the invented item on the Player (the demo's first album playing, with
+    the lyrics fixture) and the sheet open on the tab."""
+    app.player.apply(harness.invented_playing_state(app, lyrics=True))
     window.now_playing.tabs.set_active_name(args.now_playing)
     window.bottom_sheet.set_open(True)
 
@@ -241,22 +174,42 @@ def open_context_menu(window):
         sys.exit('screenshot: the first item has no menu')
 
 
-def popovers(widget, found):
-    """The popovers shown under widget (children of the widgets they point from)."""
-    if isinstance(widget, Gtk.Popover) and widget.get_mapped():
-        found.append(widget)
+def find_widget(widget, kind):
+    """The first widget of type kind under widget (itself included), depth first, or None."""
+    if isinstance(widget, kind):
+        return widget
     child = widget.get_first_child()
     while child is not None:
-        popovers(child, found)
+        found = find_widget(child, kind)
+        if found is not None:
+            return found
         child = child.get_next_sibling()
-    return found
+    return None
+
+
+def open_dialog(window):
+    """--dialog: the About or Keyboard Shortcuts dialog, as its menu item opens it (inside
+    the window, or in a window of its own); the dialog, or None when none is shown."""
+    kind = {'about': Adw.AboutDialog, 'shortcuts': Adw.ShortcutsDialog}[args.dialog]
+    app.activate_action(args.dialog)
+    shown = next((found for found in map(lambda toplevel: find_widget(toplevel, kind),
+                                         Gtk.Window.list_toplevels()) if found is not None),
+                 None)
+    if isinstance(shown, Adw.AboutDialog) and harness.installed_icon():
+        shown.set_application_icon(harness.installed_icon())  # not the script's own app ID
+    if shown is not None and width < 640:
+        shown.set_content_width(width)  # as narrow as the window, as for --preferences
+        shown.set_content_height(height)
+    return shown
 
 
 def draw_popovers(window, snapshot):
     """Draw the window's popovers over it, each where its surface is: a popup's position is
     relative to the window's surface, both offset by their shadows' margins."""
     window_x, window_y = window.get_surface_transform()
-    for popover in popovers(window, []):
+    for popover in harness.popovers(window):
+        if not popover.get_mapped():
+            continue
         surface = popover.get_surface()
         popover_x, popover_y = popover.get_surface_transform()
         point = Graphene.Point()
@@ -270,7 +223,7 @@ def draw_popovers(window, snapshot):
 
 
 def shoot():
-    global opened, sheet_opened, searched, menu_opened, preferences
+    global opened, sheet_opened, searched, menu_opened, preferences, dialog
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -310,8 +263,15 @@ def shoot():
             preferences.set_content_height(height)
         GLib.timeout_add(1200, shoot)  # shown, the cache measured
         return GLib.SOURCE_REMOVE
-    if preferences is not None and preferences.get_root() is not window:
-        window = preferences.get_root()  # a window of its own
+    if args.dialog and dialog is None:
+        dialog = open_dialog(window)
+        if dialog is None:
+            sys.exit(f'screenshot: no {args.dialog} dialog shown')
+        GLib.timeout_add(1200, shoot)  # shown
+        return GLib.SOURCE_REMOVE
+    for shown in (preferences, dialog):
+        if shown is not None and shown.get_root() is not window:
+            window = shown.get_root()  # a window of its own
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()
     paintable.snapshot(snapshot, window.get_width(), window.get_height())
@@ -323,8 +283,5 @@ def shoot():
     return GLib.SOURCE_REMOVE
 
 
-app.connect('startup', on_startup)
 app.connect('activate', on_activate)
-app.connect('window-added', on_window_added)
-main.use_glib_event_loop()  # as main.main() does, so app.spawn() works
-app.run(['screenshot'] + (['--demo'] if args.demo else []))
+harness.run_app(app)

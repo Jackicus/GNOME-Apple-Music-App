@@ -456,6 +456,11 @@ data/                          desktop, metainfo, gschema, app icons; Meson test
 data/screenshots/              the metainfo's screenshots (demo library only), see Distribution
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py a11y_check.py bench.py
+scripts/harness.py             the in-process scripts' shared start (screenshot, a11y_check,
+                               scroll_test, bench): make_app()/run_app() (installed build,
+                               i18n, memory settings, engine-autostart off, demo library,
+                               fixed-size window, stock icons and font), invented_playing_state(),
+                               popovers()
 scripts/am.py                  the engine's debug CLI (no GUI): status, start [--visible], stop,
                                eval <js>, now-playing, events; the app's port and profile
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
@@ -496,8 +501,10 @@ scripts/demo.sh [args]    run.sh --demo: the app on the invented library in buil
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
                       [--expand ID[,ID…]] [--signed-in [NAME]] [--now-playing [lyrics|queue]]
                       [--search TERM] [--context-menu] [--preferences [general|engine]]
+                      [--dialog about|shortcuts]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
+                          stock GNOME's icons and font (Adwaita, Adwaita Sans 11), not the desktop's;
                           --demo as demo.sh (without it the real cache is read); waits for the
                           library to load; in the narrow layout shows the page when --page or
                           --open is given, else the sidebar. --page takes a last-page value
@@ -520,7 +527,8 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           --preferences opens Preferences on General (or Engine) and shoots
                           the dialog: its own window here (the shot's window is fixed-size, so
                           neither maximized nor tiled), or the window when it is inside it;
-                          sized to --size when that is under 640 px wide.
+                          sized to --size when that is under 640 px wide. --dialog about (or
+                          shortcuts) shoots the About (or Keyboard Shortcuts) dialog the same way.
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
                           playlists. --signed-in [NAME] shows the account button signed in
                           (memory-backend settings only; no engine)

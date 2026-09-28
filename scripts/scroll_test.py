@@ -4,9 +4,10 @@
     scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH]
                            [--light] [--sidebar]
 
-Runs the installed build (scripts/run.sh or meson install -C build first) on the
-demo library, as screenshot.py --demo does: build/demo, or $APPLE_MUSIC_CACHE
-when set, which is how a big library is measured:
+Runs the installed build (meson install -C build, or scripts/run.sh, first) on the
+demo library, as screenshot.py --demo does (scripts/harness.py), with the desktop's
+icon theme and animations: build/demo, or $APPLE_MUSIC_CACHE when set, which is how
+a big library is measured:
 
     scripts/demo_library.py --cache build/demo-2000 --albums 2000
     APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
@@ -31,16 +32,10 @@ to a memory backend.
 """
 
 import argparse
-import gettext
-import os
 import statistics
-import subprocess
-import sys
 import time
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-prefix = os.path.join(root, 'build', 'install')
-pkgdatadir = os.path.join(prefix, 'share', 'apple-music')
+import harness
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--page', default='albums')
@@ -52,25 +47,12 @@ parser.add_argument('--sidebar', action='store_true', help='scroll the sidebar, 
 args = parser.parse_args()
 width, height = (int(n) for n in args.size.split('x'))
 
-demo_dir = os.path.join(root, 'build', 'demo')
-if not os.environ.get('APPLE_MUSIC_CACHE') and not os.path.exists(
-        os.path.join(demo_dir, 'library.json')):
-    subprocess.run([sys.executable, os.path.join(root, 'scripts', 'demo_library.py'),
-                    '--cache', demo_dir], check=True)
+# Animations on and the desktop's look, as the numbers were always measured.
+app = harness.make_app('ScrollTest', light=args.light, animations=True, stock_look=False,
+                       size=(width, height), name='scroll-test')
 
-os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(prefix, 'share', 'glib-2.0', 'schemas')
-os.environ['GSETTINGS_BACKEND'] = 'memory'
-sys.path.insert(1, pkgdatadir)
-gettext.install('apple-music')
+from gi.repository import GLib, Gtk  # noqa: E402  (after make_app)
 
-import gi  # noqa: E402
-
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
-
-Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
-from applemusic import main  # noqa: E402
 from applemusic.widgets import artwork  # noqa: E402
 
 decoded = 0
@@ -85,24 +67,9 @@ def counting_load(path, size=None):
 
 artwork._load = counting_load
 
-app = main.Application('0.0.0', 'io.github.jackicus.AppleMusic.ScrollTest',
-                       'io.github.jackicus.AppleMusic', 'default', demo_dir)
-app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
-
-
-def on_startup(_app):
-    Adw.StyleManager.get_default().set_color_scheme(
-        Adw.ColorScheme.FORCE_LIGHT if args.light else Adw.ColorScheme.FORCE_DARK)
-
-
-def on_window_added(_app, window):
-    window.set_resizable(False)  # a tiling window manager leaves a fixed size alone
-
 
 def on_activate(_app):
     app.settings.set_string('last-page', args.page)
-    app.settings.set_int('window-width', width)
-    app.settings.set_int('window-height', height)
     GLib.timeout_add(1000, start)
 
 
@@ -196,9 +163,6 @@ def report(times, work, interval, distance):
     GLib.timeout_add(200, app.quit)
 
 
-app.connect('startup', on_startup)
 app.connect('activate', on_activate)
-app.connect('window-added', on_window_added)
 GLib.timeout_add_seconds(300, app.quit)  # whatever happens
-main.use_glib_event_loop()
-app.run(['scroll-test', '--demo'])
+harness.run_app(app)

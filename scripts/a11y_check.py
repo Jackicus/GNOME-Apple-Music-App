@@ -3,8 +3,9 @@
 
     scripts/a11y_check.py [--size WxH] [--light] [--names]
 
-Runs the installed build (scripts/run.sh or meson install -C build first) on the demo
-library, as screenshot.py --demo does (memory settings, animations off), and walks the
+Runs the installed build (meson install -C build, or scripts/run.sh, first) on the demo
+library, as screenshot.py --demo does (scripts/harness.py: memory settings, animations off,
+no engine), and walks the
 keyboard checklist of prompts.md's phase 18 key by key, printing PASS or FAIL for each step;
 the exit status is 1 when a step fails. Use --size 360x640 for the narrow layout.
 
@@ -24,7 +25,6 @@ shows. Anything listed there is a gap (libadwaita's own widgets included).
 
 import argparse
 import asyncio
-import gettext
 import os
 import shutil
 import signal
@@ -33,9 +33,7 @@ import sys
 import tempfile
 import time
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-prefix = os.path.join(root, 'build', 'install')
-pkgdatadir = os.path.join(prefix, 'share', 'apple-music')
+import harness
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--size', default='1100x760')
@@ -107,30 +105,11 @@ if args.names:
     time.sleep(0.5)
     shutil.rmtree(config_dir, ignore_errors=True)  # read by now
 
-demo_dir = os.path.join(root, 'build', 'demo')
-if not os.environ.get('APPLE_MUSIC_CACHE') and not os.path.exists(
-        os.path.join(demo_dir, 'library.json')):
-    subprocess.run([sys.executable, os.path.join(root, 'scripts', 'demo_library.py'),
-                    '--cache', demo_dir], check=True)
+# The program name is how the lister finds the app on the accessibility bus.
+app = harness.make_app('A11yCheck', light=args.light, size=(width, height), name='a11y_check')
 
-os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(prefix, 'share', 'glib-2.0', 'schemas')
-os.environ['GSETTINGS_BACKEND'] = 'memory'
-sys.path.insert(1, pkgdatadir)
-gettext.install('apple-music')
+from gi.repository import Gdk, Gio, Gtk  # noqa: E402  (after make_app)
 
-import gi  # noqa: E402
-
-gi.require_version('Gtk', '4.0')
-gi.require_version('Adw', '1')
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
-
-Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
-from applemusic import main  # noqa: E402
-
-GLib.set_prgname('a11y_check')
-app = main.Application('0.0.0', 'io.github.jackicus.AppleMusic.A11yCheck',
-                       'io.github.jackicus.AppleMusic', 'default', demo_dir)
-app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
 failures = []
 
 
@@ -218,16 +197,6 @@ async def key(window, accel, wait=0.25):
     await asyncio.sleep(wait)
 
 
-def invented_playing_state():
-    """What the Player shows while the demo's first album plays (the demo cannot play)."""
-    album = app.library.albums.get_item(0)
-    entries = [dict(entry, index=position) for position, entry in enumerate(
-        entry for group in album.raw.get('groups') or [] for entry in group['entries'])]
-    return {'state': 'playing', 'track': entries[0], 'position': 65.0,
-            'duration': entries[0].get('durationMs', 0) / 1000,
-            'queue': {'index': 0, 'items': entries}}
-
-
 async def walkthrough(window):
     narrow = window.split_view.get_collapsed()
     print('-- sidebar')
@@ -271,7 +240,7 @@ async def walkthrough(window):
     await key(window, 'Return')
     window.play_request = play_request
     check('Down, Enter plays the second track', requests == [1], requests)
-    app.player.apply(invented_playing_state())
+    app.player.apply(harness.invented_playing_state(app))
     await asyncio.sleep(0.4)
     print('-- player bar')
     await key(window, '<primary>3')
@@ -322,7 +291,7 @@ async def walkthrough(window):
     await asyncio.sleep(0.4)
     await key(window, '<primary>2', 0.6)
     await key(window, 'Menu', 0.6)
-    popover = popovers(grid)
+    popover = harness.popovers(grid)
     check("Menu opens the focused tile's context menu", bool(popover))
     for each in popover:
         each.popdown()
@@ -336,17 +305,6 @@ async def walkthrough(window):
         press(toplevel, 'Escape')
         await asyncio.sleep(0.8)
         check('Escape closes it', app._preferences is None)
-
-
-def popovers(widget):
-    found = []
-    if isinstance(widget, Gtk.Popover) and widget.get_visible():
-        found.append(widget)
-    child = widget.get_first_child()
-    while child is not None:
-        found.extend(popovers(child))
-        child = child.get_next_sibling()
-    return found
 
 
 # -- names ---------------------------------------------------------------------------------
@@ -382,7 +340,7 @@ async def names(window):
     search.search_entry.set_text('the')
     await asyncio.sleep(1.5)
     total += await unnamed('search')
-    app.player.apply(invented_playing_state())
+    app.player.apply(harness.invented_playing_state(app))
     window.bottom_sheet.set_open(True)
     await asyncio.sleep(1.0)
     total += await unnamed('Now Playing')
@@ -403,16 +361,6 @@ async def names(window):
 
 # -- running -------------------------------------------------------------------------------
 
-def on_startup(_app):
-    Adw.StyleManager.get_default().set_color_scheme(
-        Adw.ColorScheme.FORCE_LIGHT if args.light else Adw.ColorScheme.FORCE_DARK)
-    Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
-
-
-def on_window_added(_app, window):
-    window.set_resizable(False)  # the tiling extension leaves a fixed-size window alone
-
-
 async def run():
     try:
         while app.library.props.state != 'ready':
@@ -432,18 +380,13 @@ async def run():
 
 def on_activate(_app):
     app.settings.set_string('last-page', 'home')
-    app.settings.set_int('window-width', width)
-    app.settings.set_int('window-height', height)
     app.settings.set_strv('expanded-folders', [])
     app.spawn(run())
 
 
-app.connect('startup', on_startup)
 app.connect('activate', on_activate)
-app.connect('window-added', on_window_added)
-main.use_glib_event_loop()
 try:
-    app.run(['a11y_check', '--demo'])
+    harness.run_app(app)
 finally:
     for process in reversed(bus_processes):
         process.send_signal(signal.SIGTERM)

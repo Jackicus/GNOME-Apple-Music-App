@@ -3,10 +3,11 @@
 
     scripts/bench.py [--cache DIR] [--size WxH] [--settle MS] [--runs N] [--profile KEY]
 
-Runs the installed build (scripts/run.sh or meson install -C build first) as
-scroll_test.py does, on the library in DIR (default build/demo-big, or
-$APPLE_MUSIC_CACHE when set), with --demo and --debug, the settings in a memory
-backend and animations off. Make the library first:
+Runs the installed build (meson install -C build, or scripts/run.sh, first) as
+scroll_test.py does (scripts/harness.py), on the library in DIR (default
+build/demo-big, or $APPLE_MUSIC_CACHE when set), with --demo and --debug, the
+settings in a memory backend, animations off and the desktop's icon theme and
+font. Make the library first:
 
     scripts/demo_library.py --cache build/demo-big --albums 3000 --playlists 300 --tracks 40000
 
@@ -37,7 +38,6 @@ for. Scrolling is measured by scripts/scroll_test.py.
 
 import argparse
 import gc
-import gettext
 import json
 import logging
 import os
@@ -46,9 +46,9 @@ import subprocess
 import sys
 import time
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-prefix = os.path.join(root, 'build', 'install')
-pkgdatadir = os.path.join(prefix, 'share', 'apple-music')
+import harness
+
+root = harness.ROOT
 
 CONTENT_TARGET = 1000  # ms from launch
 SWITCH_TARGET = 100  # ms
@@ -229,10 +229,6 @@ def bare():
 
 def child():
     os.environ['APPLE_MUSIC_CACHE'] = os.path.abspath(args.cache)
-    os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(prefix, 'share', 'glib-2.0', 'schemas')
-    os.environ['GSETTINGS_BACKEND'] = 'memory'
-    sys.path.insert(1, pkgdatadir)
-    gettext.install('apple-music')
 
     class Stamp(logging.Filter):
         """Every log line stamped with the RSS then."""
@@ -246,19 +242,13 @@ def child():
                                '%(name)s: %(message)s')
     logging.getLogger().handlers[0].addFilter(Stamp())
 
-    import gi
+    # The desktop's look, as the bare window below has it.
+    app = harness.make_app('Bench', stock_look=False, size=(width, height),
+                           demo_dir=args.cache)
+    from gi.repository import GLib
 
-    gi.require_version('Gtk', '4.0')
-    gi.require_version('Adw', '1')
-    from gi.repository import Adw, Gio, GLib, Gtk
-
-    Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
     from applemusic import main, sections
     from applemusic.sidebar import folder_key, playlist_key
-
-    app = main.Application('0.0.0', 'io.github.jackicus.AppleMusic.Bench',
-                           'io.github.jackicus.AppleMusic', 'default', args.cache)
-    app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
 
     rss = {}
     results = {}  # (key, 'first' | 'again') -> ms, None for a frame that never came
@@ -281,17 +271,8 @@ def child():
         at = app.marks.get(mark)
         return None if at is None else (at - main.PROCESS_START) / 1000
 
-    def on_startup(_app):
-        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
-
-    def on_window_added(_app, window):
-        window.set_resizable(False)  # a tiling window manager leaves a fixed size alone
-
     def on_activate(_app):
         app.settings.set_string('last-page', 'albums')
-        app.settings.set_int('window-width', width)
-        app.settings.set_int('window-height', height)
         GLib.timeout_add(20, wait_for_content)
 
     def wait_for_content():
@@ -459,12 +440,9 @@ def child():
         print('bench-result: ' + json.dumps(result), flush=True)
         GLib.timeout_add(200, app.quit)
 
-    app.connect('startup', on_startup)
     app.connect('activate', on_activate)
-    app.connect('window-added', on_window_added)
     GLib.timeout_add_seconds(180, app.quit)  # whatever happens
-    main.use_glib_event_loop()
-    app.run(['bench', '--demo', '--debug'])
+    harness.run_app(app, '--debug')
 
 
 if args.bare:
