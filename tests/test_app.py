@@ -174,6 +174,21 @@ class QuitTest(AppTestCase):
         self.assertIsNone(self.app.get_active_window())
 
 
+class BackgroundTest(AppTestCase):
+    def test_a_closed_window_gets_a_notification_instead_of_a_toast(self):
+        app = self.app
+        del app.toast  # the Application's own, not the recording stand-in
+        sent, withdrawn, released = [], [], []
+        app.send_notification = lambda ident, notification: sent.append(ident)
+        app.withdraw_notification = withdrawn.append
+        app.release = lambda: released.append(True)
+        app.background = mock.Mock(active=True)
+        app.toast('Could not sync your library', 'Retry', 'app.sync')
+        self.assertEqual(sent, [main.BACKGROUND_NOTIFICATION])
+        app._release_background()  # the window is back
+        self.assertEqual((withdrawn, released), ([main.BACKGROUND_NOTIFICATION], [True]))
+
+
 class DemoTest(unittest.TestCase):
     def setUp(self):
         self.addCleanup(config.set_build_profile, 'default')
