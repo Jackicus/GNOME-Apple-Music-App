@@ -55,6 +55,9 @@ RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
 QUIT_TIMEOUT = 6.0
 QUIT_GRACE = 3.0
 
+# The notification that stands in for a toast while the window is closed and the music plays.
+BACKGROUND_NOTIFICATION = 'background-error'
+
 
 class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library: the development
@@ -207,7 +210,7 @@ class Application(Adw.Application):
         if not self.demo:
             self.library_sync.schedule()  # the timed refresh, and a sync when the engine is up
         self.background = BackgroundPlayback(
-            self.player, hold=self.hold, release=self.release,
+            self.player, hold=self.hold, release=self._release_background,
             quit=lambda: self.activate_action('quit'))
         if not self.demo:
             self.mpris = Mpris(self)
@@ -446,7 +449,15 @@ class Application(Adw.Application):
     def toast(self, title, button_label=None, action_name=None):
         """Tell the user something: a toast on the active window, or in Preferences while
         that is open over it, with a button running an action when given. The one way the
-        app makes a toast; its title is plain text, never markup."""
+        app makes a toast; its title is plain text, never markup. With the window closed for
+        background playback, a notification instead (the last one only), withdrawn when the
+        window is back."""
+        if self.background is not None and self.background.active:
+            notification = Gio.Notification.new(title)
+            if button_label and action_name:
+                notification.add_button(button_label, action_name)
+            self.send_notification(BACKGROUND_NOTIFICATION, notification)
+            return
         target = self._preferences
         if target is None:
             target = self.get_active_window()
@@ -502,10 +513,10 @@ class Application(Adw.Application):
         else:
             self.activate_action('quit')
 
-    @property
-    def in_background(self):
-        """Whether the window is closed while the music plays on (the app held)."""
-        return self.background is not None and self.background.active
+    def _release_background(self):
+        """The window is back (or the app quits): what was said meanwhile goes with it."""
+        self.withdraw_notification(BACKGROUND_NOTIFICATION)
+        self.release()
 
     def _on_quit(self, *_args):
         """Stop the engine, then quit. Closing the last window comes here too (close_window,
