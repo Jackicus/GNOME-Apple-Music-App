@@ -1,0 +1,52 @@
+# Maintainer: Jack Tully <https://github.com/Jackicus>
+#
+# The AUR package's source, kept in the app's repository (build-aux/aur/). After any change:
+#   updpkgsums && makepkg --printsrcinfo > .SRCINFO
+# The checksum is SKIP until the tag v$pkgver exists on GitHub: updpkgsums fills it in then.
+
+pkgname=gnome-apple-music
+pkgver=0.9.0
+pkgrel=1
+pkgdesc='Native GNOME client for Apple Music, played through Google Chrome'
+arch=('any')
+url='https://github.com/Jackicus/GNOME-Apple-Music-App'
+license=('GPL-2.0-or-later')
+depends=(
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk4'
+  'libadwaita'
+  'python'
+  'python-gobject'
+)
+makedepends=(
+  'blueprint-compiler'
+  'meson'
+)
+checkdepends=(
+  'appstream'
+  'desktop-file-utils'
+)
+optdepends=('google-chrome: the playback engine (its Widevine plays the protected streams)')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+_srcname="GNOME-Apple-Music-App-$pkgver"
+
+build() {
+  arch-meson "$_srcname" build
+  meson compile -C build
+}
+
+check() {
+  # The desktop file, metainfo and schema validate, and the unit tests (no display needed).
+  meson test -C build --print-errorlogs
+  cd "$_srcname"
+  python -m unittest discover -s tests
+}
+
+package() {
+  # --skip-subprojects: a build that fell back to the blueprint-compiler wrap would install
+  # a file of its own.
+  meson install -C build --destdir "$pkgdir" --skip-subprojects
+}

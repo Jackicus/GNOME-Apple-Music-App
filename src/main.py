@@ -64,8 +64,9 @@ PROCESS_START = process_start()
 
 
 class Application(Adw.Application):
-    """The app. `demo_dir` is where --demo finds its invented library (the launcher passes the
-    source tree's build/demo, where scripts/demo_library.py writes it)."""
+    """The app. `demo_dir` is where --demo finds its invented library: the development
+    launcher passes the source tree's build/demo, where scripts/demo_library.py writes it; a
+    release launcher passes '' and --demo reads build/demo under the working directory."""
 
     def __init__(self, version, app_id, base_id, profile, demo_dir=None):
         super().__init__(
@@ -140,8 +141,9 @@ class Application(Adw.Application):
         """
         self.demo = True
         self.set_flags(self.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
-        if not os.environ.get('APPLE_MUSIC_CACHE') and self.demo_dir:
-            os.environ['APPLE_MUSIC_CACHE'] = str(self.demo_dir)
+        if not os.environ.get('APPLE_MUSIC_CACHE'):
+            demo_dir = self.demo_dir or os.path.join('build', 'demo')
+            os.environ['APPLE_MUSIC_CACHE'] = os.path.abspath(demo_dir)
         log.info('Demo mode: the library in %s', config.cache_dir())
 
     def do_startup(self):

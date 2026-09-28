@@ -50,17 +50,27 @@ gnome.compile_resources(
   dependencies: blueprints,
 )
 
+python3 = python.find_installation('python3')
+
+# Where --demo reads its invented library when APPLE_MUSIC_CACHE is unset. The development
+# profile points at the source tree's build/demo (scripts/demo_library.py's default output,
+# which scripts/demo.sh fills); a release build names no source path, and --demo there reads
+# build/demo under the directory it is started from.
+demo_dir = ''
+if get_option('profile') == 'development'
+  demo_dir = meson.project_source_root() / 'build' / 'demo'
+endif
+
 configure_file(
   input: 'apple-music.in',
   output: 'apple-music',
   configuration: {
-    'PYTHON': python.find_installation('python3').full_path(),
+    'PYTHON': python3.full_path(),
     'VERSION': version,
     'APP_ID': application_id,
     'BASE_ID': base_id,
     'PROFILE': get_option('profile'),
-    # Where --demo looks: scripts/demo_library.py's default output.
-    'DEMO_DIR': meson.project_source_root() / 'build' / 'demo',
+    'DEMO_DIR': demo_dir,
     'localedir': get_option('prefix') / get_option('localedir'),
     'pkgdatadir': pkgdatadir,
   },
@@ -139,3 +149,17 @@ install_data(
   'backend/sync.py',
   install_dir: moduledir / 'backend',
 )
+
+# Byte-compile the modules once they are installed (after every install_data above): they live
+# outside site-packages, so Meson's python.bytecompile never reaches them, and a system install
+# without bytecode imports twice as slowly (phase 19: 144 ms against 77 for applemusic.main).
+bytecompile = get_option('python.bytecompile')
+if bytecompile >= 0
+  meson.add_install_script(
+    python3,
+    meson.project_source_root() / 'build-aux' / 'meson' / 'compile-python.py',
+    get_option('datadir') / meson.project_name() / 'applemusic',
+    bytecompile.to_string(),
+    install_tag: 'runtime',
+  )
+endif

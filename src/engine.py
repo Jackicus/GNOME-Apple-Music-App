@@ -480,7 +480,8 @@ class Engine(GObject.Object):
         elif state is not None:
             chrome.EngineState.remove(self.state_file)
         if self._pid is None:
-            binary = chrome.find_chrome(self.browser_command)
+            # In a thread: in a Flatpak sandbox it asks the host through flatpak-spawn.
+            binary = await asyncio.to_thread(chrome.find_chrome, self.browser_command)
             if binary is None:
                 raise EngineError(
                     'engine-down', 'Google Chrome was not found (google-chrome-stable, '

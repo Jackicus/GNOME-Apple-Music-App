@@ -1,0 +1,22 @@
+pkgbase = gnome-apple-music
+	pkgdesc = Native GNOME client for Apple Music, played through Google Chrome
+	pkgver = 0.9.0
+	pkgrel = 1
+	url = https://github.com/Jackicus/GNOME-Apple-Music-App
+	arch = any
+	license = GPL-2.0-or-later
+	checkdepends = appstream
+	checkdepends = desktop-file-utils
+	makedepends = blueprint-compiler
+	makedepends = meson
+	depends = gdk-pixbuf2
+	depends = glib2
+	depends = gtk4
+	depends = libadwaita
+	depends = python
+	depends = python-gobject
+	optdepends = google-chrome: the playback engine (its Widevine plays the protected streams)
+	source = gnome-apple-music-0.9.0.tar.gz::https://github.com/Jackicus/GNOME-Apple-Music-App/archive/refs/tags/v0.9.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = gnome-apple-music

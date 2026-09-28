@@ -4,8 +4,9 @@ Pure Python and the standard library: nothing here imports gi (GTK stays in the 
 importing the package imports none of its modules.
 
     errors.py   EngineError(code, message): engine-down, not-signed-in, api, timeout, usage
-    chrome.py   finding Chrome, its argv, the engine.json state (EngineState), the DevTools
-                /json polling (wait_for_devtools, list_targets, find_target, wait_for_target)
+    chrome.py   finding Chrome, its argv (the host's Chrome through flatpak-spawn from a
+                Flatpak sandbox), the engine.json state (EngineState), the DevTools /json
+                polling (wait_for_devtools, list_targets, find_target, wait_for_target)
     client.py   CDPClient: one asynchronous CDP connection (calls, evaluate, events, the
                 bridge kept in the page across navigations); connect_page(port)
     cdp.py      the RFC 6455 handshake and frame codec as pure functions, shared with

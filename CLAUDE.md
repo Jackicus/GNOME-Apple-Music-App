@@ -448,6 +448,7 @@ src/backend/                   the engine layer: vendored from the extension plu
                                editorial_shelves() (the New page), made_for_you_shelves(),
                                write_answer()/read_answer() and the *_cache_path()s
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
+data/screenshots/              the metainfo's screenshots (demo library only), see Distribution
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py a11y_check.py bench.py
 scripts/am.py                  the engine's debug CLI (no GUI): status, start [--visible], stop,
@@ -462,7 +463,10 @@ tests/                         stdlib unittest; __init__.py registers src/ as `a
                                synced lyrics for the tests and the --now-playing shot)
 pyproject.toml                 ruff config only (line length 100, E/F/W; vendored files exempt
                                from E501)
-build-aux/flatpak/*.Devel.json Flatpak manifest, GNOME 50 runtime (not installed locally)
+build-aux/flatpak/*.Devel.json Flatpak manifest, development only (why in its "x-comment"); GNOME
+                               50 runtime and flatpak-builder not installed here, never built
+build-aux/aur/PKGBUILD         the AUR package gnome-apple-music (+ .SRCINFO, regenerated with it)
+build-aux/meson/compile-python.py  meson install's byte-compiling of the installed modules
 subprojects/blueprint-compiler.wrap   fallback when blueprint-compiler is not on PATH
 ```
 
@@ -551,7 +555,9 @@ scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--size WxH] [--profile 
                           start, every root page shown twice, RSS and anon RSS; --profile KEY
                           prints a cProfile of that page's first switch. Keep its window
                           visible (no frames otherwise: reported after 3 s)
-meson setup build --prefix=/usr && meson install -C build      system install, release profile
+meson setup build --prefix=/usr && meson install -C build --skip-subprojects
+                          system install, release profile (byte-compiled; see Distribution)
+meson dist -C build       the release tarball in build/meson-dist/ (needs a clean, committed tree)
 ```
 
 ## Conventions
@@ -731,9 +737,11 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   objects are kept by key, folder Items by id, the Songs store is left alone when nothing
   moved. `load()` still makes new objects (sign-out, the first load).
 - Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
-  `APPLE_MUSIC_CACHE` at the launcher's `DEMO_DIR` (the source tree's `build/demo`) unless the
-  variable is already set, so `APPLE_MUSIC_CACHE=DIR scripts/demo.sh` shows another generated
-  library. Treat `app.demo` as "no engine": the Engine is a demo one (every command
+  `APPLE_MUSIC_CACHE` at the launcher's `DEMO_DIR` unless the variable is already set, so
+  `APPLE_MUSIC_CACHE=DIR scripts/demo.sh` shows another generated library. `DEMO_DIR` is the
+  source tree's `build/demo` in the development profile only; a release build's is empty (no
+  source path in an installed launcher) and `--demo` there reads `./build/demo`, relative to
+  the working directory. Treat `app.demo` as "no engine": the Engine is a demo one (every command
   `engine-down`), `app.sign-in` toasts, `app.sign-out` does nothing, the banner stays hidden.
 - Logging: Python `logging`, `log = logging.getLogger(__name__)`; configured once in `main.main()`
   (`basicConfig`, INFO to stderr as `LEVEL logger: message`; DEBUG with `--debug`, handled in
@@ -1160,3 +1168,54 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   event would reach (capture key and shortcut controllers from the window down, shortcut
   controllers from the focus up, a popover's key controller), which is as close as it gets.
 - History starts at the "Scaffold: window, sidebar, build" commit; one commit (or a few) per phase.
+
+## Distribution (phase 20)
+
+- Release path: native. `meson install` (release profile) and the AUR package
+  `gnome-apple-music` (`build-aux/aur/PKGBUILD`: `arch-meson` with `--wrap-mode nodownload`, so
+  `blueprint-compiler` is a makedepend; depends gdk-pixbuf2 glib2 gtk4 libadwaita python
+  python-gobject; optdepends google-chrome; check() runs `meson test` and the unit tests,
+  which need no display). Its source is GitHub's archive of the tag `v$pkgver` (top directory
+  `GNOME-Apple-Music-App-$pkgver`), `sha256sums=('SKIP')` until the tag exists; after any
+  change to it, `updpkgsums` and `makepkg --printsrcinfo > .SRCINFO`. Flathub is out of scope
+  (settled question 1): the host Chrome and the trademark.
+- Version: `meson.build`'s `version` (0.9.0, the first release candidate); the development
+  profile appends the git revision. Each release adds a `<release version date>` at the top
+  of the metainfo's `<releases>` with a short description (a `<p>` and a `<ul>`). The tag
+  is `v<version>`, annotated.
+- Bytecode: the app's modules are `install_data`, outside site-packages, so Meson's
+  `python.bytecompile` never reaches them; `src/meson.build` adds
+  `build-aux/meson/compile-python.py` as an install script (compileall over the installed
+  package under `$MESON_INSTALL_DESTDIR_PREFIX`, tracebacks naming the final path; level 0,
+  plus -O/-OO when `python.bytecompile` is 1/2, as `arch-meson` sets 1; skipped at -1). Only
+  stale files are compiled again, so `run.sh`'s install stays quick. Under makepkg
+  (`SOURCE_DATE_EPOCH` set) the .pyc are checked-hash. `ninja uninstall` leaves the
+  `__pycache__` directories behind (they are not in Meson's install log).
+- The blueprint-compiler wrap, when Meson falls back to it, installs its
+  `reference_docs.json` into the prefix's site-packages: packages install with
+  `--skip-subprojects` (the PKGBUILD does, and the README's install lines).
+- Screenshots: `data/screenshots/{home,albums,album,now-playing}-{light,dark}.png`, 1100×760
+  at scale 1 from `scripts/screenshot.py --demo` (`--page home`, `--page albums`, `--page
+  albums --open album:first`, `--page albums --now-playing`; `--light`), losslessly shrunk
+  (`uv run --no-project --with pyoxipng`, oxipng level 6: about 15 %; no optimiser is
+  installed here). The metainfo lists them light first (`environment="gnome"`, the Home one
+  `type="default"`), then dark (`gnome:dark`), by
+  `https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/…`,
+  so they resolve only once pushed, and renaming one breaks every metainfo already
+  installed. Look at every shot before committing it: demo data only, and no text chunks.
+- `meson dist -C build` archives HEAD (commit first) without the subprojects: building the
+  tarball needs `blueprint-compiler` installed or the network for the wrap. Test a tarball
+  in a temporary directory with its own `--prefix`, and a PKGBUILD in a temporary copy with a
+  `git archive --prefix=GNOME-Apple-Music-App-<version>/` tarball named as its source
+  (makepkg finds it and skips the download); here blueprint-compiler is not installed, so
+  `makepkg --nodeps` with a `blueprint-compiler` shim on PATH that runs
+  `subprojects/blueprint-compiler/blueprint-compiler.py`. Never `makepkg -i` on this machine.
+- The Flatpak manifest (development only): `--talk-name=org.freedesktop.Flatpak`, the MPRIS
+  `--own-name` for both IDs, no pulseaudio socket (the host's Chrome makes the sound). In the
+  sandbox (`/.flatpak-info`) `chrome.find_chrome()` asks the host's shell for the binary
+  (`find_host_chrome`, through `flatpak-spawn --host`; blocking, so the engine calls it in a
+  thread) and `chrome_args()` prefixes `flatpak-spawn --host --watch-bus`: the pid the engine
+  holds is flatpak-spawn's, whose command line carries `--user-data-dir` (so `pid_alive`
+  works), which relays SIGTERM to Chrome, and whose end (SIGKILL, the sandbox closing) ends
+  Chrome through `--watch-bus`. The profile under `~/.var/app/<id>/data` and 127.0.0.1 are the
+  same on both sides. Untested: no GNOME 50 runtime or flatpak-builder on this machine.

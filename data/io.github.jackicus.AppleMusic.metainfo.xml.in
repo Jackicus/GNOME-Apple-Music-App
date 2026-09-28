@@ -9,8 +9,13 @@
   <description>
     <p>
       A GNOME app for Apple Music: your library, playlists, radio and
-      recommendations in a native interface, played through Apple's own web
-      player. Requires an Apple Music subscription.
+      recommendations in a native interface, laid out like Apple's web player.
+    </p>
+    <p>
+      Playback runs through Google Chrome, which the app starts in the
+      background: Apple's streams are protected with Widevine, which only
+      Google's own Chrome provides on Linux. It needs Google Chrome and an
+      Apple Music subscription.
     </p>
     <p>
       Not affiliated with Apple. Apple Music is a trademark of Apple Inc.
@@ -30,6 +35,7 @@
 
   <requires>
     <display_length compare="ge">360</display_length>
+    <internet>always</internet>
   </requires>
   <supports>
     <control>keyboard</control>
@@ -37,15 +43,61 @@
     <control>touch</control>
   </supports>
 
+  <screenshots>
+    <screenshot type="default" environment="gnome">
+      <caption>Home, with your heavy rotation and what you added recently</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/home-light.png</image>
+    </screenshot>
+    <screenshot environment="gnome">
+      <caption>Your albums</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/albums-light.png</image>
+    </screenshot>
+    <screenshot environment="gnome">
+      <caption>An album</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/album-light.png</image>
+    </screenshot>
+    <screenshot environment="gnome">
+      <caption>Now Playing, with synced lyrics</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/now-playing-light.png</image>
+    </screenshot>
+    <screenshot environment="gnome:dark">
+      <caption>Home, with your heavy rotation and what you added recently</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/home-dark.png</image>
+    </screenshot>
+    <screenshot environment="gnome:dark">
+      <caption>Your albums</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/albums-dark.png</image>
+    </screenshot>
+    <screenshot environment="gnome:dark">
+      <caption>An album</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/album-dark.png</image>
+    </screenshot>
+    <screenshot environment="gnome:dark">
+      <caption>Now Playing, with synced lyrics</caption>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/now-playing-dark.png</image>
+    </screenshot>
+  </screenshots>
+
   <branding>
     <color type="primary" scheme_preference="light">#ffc2cb</color>
     <color type="primary" scheme_preference="dark">#7a1325</color>
   </branding>
 
   <releases>
-    <release version="0.1.0" date="2026-09-27">
+    <release version="0.9.0" date="2026-09-28">
       <description>
-        <p>First scaffold: the window, the sidebar and the build.</p>
+        <p>
+          The first release candidate. With Google Chrome and an Apple Music
+          subscription, it plays your library and Apple Music's catalogue:
+        </p>
+        <ul>
+          <li>Your albums, artists, songs, music videos, playlists and playlist folders, synced from your account and browsable offline</li>
+          <li>Home, New, Radio, Made for You and Search, with a page for every album, playlist and artist</li>
+          <li>A player bar and a Now Playing view with synced lyrics and the queue</li>
+          <li>GNOME's media controls and the keyboard's media keys</li>
+          <li>Favourites, Play Next and Play Later, and adding to your library and playlists from context menus or by dragging songs</li>
+          <li>Playback in the background with the window closed, keyboard navigation throughout, and screen reader labels</li>
+        </ul>
       </description>
     </release>
   </releases>

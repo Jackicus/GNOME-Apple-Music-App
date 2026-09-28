@@ -4,6 +4,14 @@ Nothing here starts a process: the app spawns Chrome with Gio.Subprocess and the
 asyncio; both build the command line with chrome_args(), record it in an EngineState and wait
 for its DevTools port with wait_for_devtools(). The HTTP here is urllib in a thread, so nothing
 blocks the loop.
+
+Inside a Flatpak sandbox (/.flatpak-info exists; the development manifest only) Chrome is the
+host's: find_chrome() asks the host's shell for it and chrome_args() runs it through
+`flatpak-spawn --host` (the manifest's --talk-name=org.freedesktop.Flatpak). The process the
+app then holds is flatpak-spawn, whose argv is Chrome's: pid_alive() still finds the profile on
+its command line, flatpak-spawn relays SIGTERM to Chrome, and --watch-bus ends Chrome when
+flatpak-spawn itself goes (a SIGKILL, the sandbox closing). The profile (under ~/.var/app) and
+127.0.0.1 (--share=network) are the same paths and address on both sides.
 """
 
 import asyncio
@@ -11,6 +19,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -23,22 +32,57 @@ CANDIDATES = ('google-chrome-stable', 'google-chrome', '/opt/google/chrome/chrom
 START_URL = 'https://music.apple.com/'
 DEVTOOLS_HOST = '127.0.0.1'
 
+FLATPAK_INFO = '/.flatpak-info'
+# How a sandboxed app runs a host command; --watch-bus ends it when flatpak-spawn ends.
+HOST_SPAWN = ('flatpak-spawn', '--host', '--watch-bus')
+# The host's shell prints the first of its arguments that resolves to an executable.
+HOST_LOOKUP = ('for name do p=$(command -v "$name") && [ -x "$p" ] '
+               '&& { printf "%s\\n" "$p"; exit 0; }; done; exit 1')
 
-def find_chrome(command=None, path=None):
+
+def in_flatpak():
+    """Whether this process runs in a Flatpak sandbox, where Chrome is the host's."""
+    return os.path.exists(FLATPAK_INFO)
+
+
+def find_chrome(command=None, path=None, host=None):
     """The executable for `command` (the configured browser), else the first of CANDIDATES
-    on `path` (default $PATH); None when there is no Chrome."""
-    for name in (command, *CANDIDATES):
-        if not name:
-            continue
+    on `path` (default $PATH); None when there is no Chrome. With `host` (by default when
+    in_flatpak()) the names are resolved on the host instead (find_host_chrome). Blocking in
+    the sandbox: call it in a thread."""
+    names = [name for name in (command, *CANDIDATES) if name]
+    if host is None:
+        host = in_flatpak()
+    if host:
+        return find_host_chrome(names)
+    for name in names:
         found = shutil.which(name, path=path)
         if found:
             return found
     return None
 
 
-def chrome_args(binary, profile, port, headless=True):
+def find_host_chrome(names, run=subprocess.run):
+    """The host's path for the first of `names` it can execute, asked of the host's shell
+    through flatpak-spawn; None when it has none, or flatpak-spawn fails."""
+    argv = [*HOST_SPAWN[:2], 'sh', '-c', HOST_LOOKUP, 'sh', *names]
+    try:
+        result = run(argv, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning('could not look for Chrome on the host: %s', e)
+        return None
+    lines = (result.stdout or '').splitlines()
+    if result.returncode != 0 or not lines:
+        return None
+    return lines[0]
+
+
+def chrome_args(binary, profile, port, headless=True, host=None):
     """The argv that runs `binary` on `profile` with DevTools on 127.0.0.1:`port`, showing
-    music.apple.com; headless (no window, audio still out) or a visible window for sign-in."""
+    music.apple.com; headless (no window, audio still out) or a visible window for sign-in.
+    With `host` (by default when in_flatpak()) it runs on the host through flatpak-spawn."""
+    if host is None:
+        host = in_flatpak()
     args = [
         str(binary),
         f'--user-data-dir={profile}',
@@ -62,6 +106,8 @@ def chrome_args(binary, profile, port, headless=True):
         # As am.py did: an app window of the page alone, without tabs or an address bar, is what
         # the sign-in flow shows.
         args.append(f'--app={START_URL}')
+    if host:
+        args[:0] = HOST_SPAWN
     return args
 
 

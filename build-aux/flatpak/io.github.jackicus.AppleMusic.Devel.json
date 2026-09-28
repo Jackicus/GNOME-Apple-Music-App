@@ -1,4 +1,16 @@
 {
+  "x-comment": [
+    "Development only: GNOME Builder or flatpak-builder run the .Devel build from this tree.",
+    "Releases are native (meson install, build-aux/aur/PKGBUILD). Flathub is out of scope:",
+    "playback needs the host's Google Chrome (its Widevine plays Apple's protected streams),",
+    "which a Flathub app may not depend on, and the name and ID carry Apple's trademark.",
+    "The sandboxed app runs that Chrome through flatpak-spawn --host, hence the",
+    "org.freedesktop.Flatpak talk-name; the Chrome profile under ~/.var/app and DevTools on",
+    "127.0.0.1 (the shared network) mean the same on both sides. Audio comes out of the host's",
+    "Chrome, not the app. The app owns org.mpris.MediaPlayer2.<its id> for the Shell's media",
+    "controls: the .Devel name for this build, the release name for a build without",
+    "-Dprofile=development."
+  ],
   "id": "io.github.jackicus.AppleMusic.Devel",
   "runtime": "org.gnome.Platform",
   "runtime-version": "50",
@@ -10,8 +22,8 @@
     "--socket=fallback-x11",
     "--socket=wayland",
     "--device=dri",
-    "--socket=pulseaudio",
-    "--talk-name=org.mpris.MediaPlayer2.*",
+    "--talk-name=org.freedesktop.Flatpak",
+    "--own-name=org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic",
     "--own-name=org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel"
   ],
   "cleanup": [

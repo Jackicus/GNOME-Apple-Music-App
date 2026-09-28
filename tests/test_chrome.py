@@ -65,6 +65,70 @@ class ChromeArgsTest(unittest.TestCase):
         self.assertIn('--disable-features=HardwareMediaKeyHandling', args)
 
 
+    def test_host_through_flatpak_spawn(self):
+        args = chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome', 9229, headless=True,
+                                  host=True)
+        self.assertEqual(args[:4], ['flatpak-spawn', '--host', '--watch-bus',
+                                    '/usr/bin/google-chrome'])
+        self.assertEqual(args[4:], chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome',
+                                                      9229, headless=True, host=False)[1:])
+        # The profile is on flatpak-spawn's own command line, which pid_alive() reads.
+        self.assertIn('--user-data-dir=/p/chrome', args)
+
+    def test_host_follows_the_sandbox(self):
+        with mock.patch.object(chrome, 'in_flatpak', lambda: True):
+            self.assertEqual(chrome.chrome_args('chrome', '/p', 9228)[0], 'flatpak-spawn')
+        with mock.patch.object(chrome, 'in_flatpak', lambda: False):
+            self.assertEqual(chrome.chrome_args('chrome', '/p', 9228)[0], 'chrome')
+
+
+class HostChromeTest(unittest.TestCase):
+    """find_chrome() in a Flatpak sandbox: the host's shell resolves the names. The runner
+    stands in for flatpak-spawn by running the host part here."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bin = pathlib.Path(self.tmp.name)
+        self.calls = []
+
+    def run_here(self, argv, **kwargs):
+        self.calls.append(argv)
+        self.assertEqual(argv[:2], ['flatpak-spawn', '--host'])
+        return subprocess.run(argv[2:], **kwargs)
+
+    def executable(self, name, mode=0o755):
+        path = self.bin / name
+        path.write_text('#!/bin/sh\n')
+        path.chmod(mode)
+        return str(path)
+
+    def test_first_executable_name(self):
+        self.executable('not-executable', 0o644)
+        second = self.executable('second')
+        names = [str(self.bin / 'missing'), str(self.bin / 'not-executable'), second,
+                 self.executable('third')]
+        self.assertEqual(chrome.find_host_chrome(names, run=self.run_here), second)
+
+    def test_none_when_the_host_has_none(self):
+        self.assertIsNone(chrome.find_host_chrome([str(self.bin / 'missing')],
+                                                  run=self.run_here))
+
+    def test_none_when_flatpak_spawn_fails(self):
+        def fails(argv, **kwargs):
+            raise FileNotFoundError('flatpak-spawn')
+        with self.assertLogs(chrome.log, 'WARNING'):
+            self.assertIsNone(chrome.find_host_chrome(['google-chrome'], run=fails))
+
+    def test_find_chrome_asks_the_host_in_the_sandbox(self):
+        seen = []
+        with mock.patch.object(chrome, 'in_flatpak', lambda: True), \
+                mock.patch.object(chrome, 'find_host_chrome',
+                                  lambda names: seen.append(names) or '/usr/bin/x'):
+            self.assertEqual(chrome.find_chrome('my-chrome'), '/usr/bin/x')
+        self.assertEqual(seen, [['my-chrome', *chrome.CANDIDATES]])
+
+
 class FindChromeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

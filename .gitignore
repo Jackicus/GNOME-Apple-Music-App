@@ -9,3 +9,6 @@ __pycache__/
 /subprojects/.wraplock
 /subprojects/packagecache/
 .ruff_cache/
+/build-aux/aur/src/
+/build-aux/aur/pkg/
+/build-aux/aur/*.tar.*
