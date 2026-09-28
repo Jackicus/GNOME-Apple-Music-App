@@ -69,6 +69,7 @@ class Application(Adw.Application):
         self._add_action('sign-in', self._on_sign_in)
         self._add_action('sign-out', self._on_sign_out)
         self._add_action('sync', self._on_sync, ['<primary>r'])
+        self._add_action('now-playing', self._on_now_playing, ['<primary>n'])
         # Playback, enabled while something plays (the bar's buttons follow). Their keys
         # (Space, Ctrl+Right, Ctrl+Left) are the window's (window.PLAYBACK_KEYS), not
         # accelerators, which GTK 4 would fire before a focused entry gets them.
@@ -212,6 +213,11 @@ class Application(Adw.Application):
                 self.report(error)
         return self.spawn(command())
 
+    def _on_now_playing(self, *_args):
+        window = self.get_active_window()
+        if window is not None and hasattr(window, 'toggle_now_playing'):
+            window.toggle_now_playing()
+
     def _on_play_pause(self, *_args):
         self.player_command(self.player.toggle())
 
@@ -307,7 +313,7 @@ class Application(Adw.Application):
         if button_label and action_name:
             toast.set_button_label(button_label)
             toast.set_action_name(action_name)
-        window.toast_overlay.add_toast(toast)
+        window.add_toast(toast)
 
     def report(self, error):
         """An EngineError as a toast: a sentence for its code, never a traceback."""
@@ -454,6 +460,7 @@ class Application(Adw.Application):
         playback.add(Adw.ShortcutsItem.new(_('Play or Pause'), 'space'))
         playback.add(Adw.ShortcutsItem.new(_('Next'), '<primary>Right'))
         playback.add(Adw.ShortcutsItem.new(_('Previous'), '<primary>Left'))
+        playback.add(Adw.ShortcutsItem.new(_('Now Playing'), '<primary>n'))
         dialog = Adw.ShortcutsDialog()
         dialog.add(section)
         dialog.add(playback)

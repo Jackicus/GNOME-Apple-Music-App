@@ -1,0 +1,256 @@
+"""The transport pieces the player bar and the Now Playing sheet share, each a plain object
+over widgets a template built: the play/pause button's icon (PlayButton), the seek slider
+with its times (SeekControl), the shuffle and repeat toggles (ModeControl) and a cover
+following the item's remote artwork (RemoteCover). `attach(player, app)` makes one follow
+the Player's properties and send its commands through the Player; a command that fails is
+toasted by the app (run_command) and the widget put back to the Player's state.
+
+The seek slider ignores incoming positions while it is dragged and until the seek it sent
+has taken (MusicKit reports a position near the target, or SEEK_HOLD passes). The repeat
+button cycles none → one → all → none, showing the mode it asked for until MusicKit
+confirms. The artwork is fetched at the cover size (Artwork.fetch_remote into remote-art/),
+so the bar, the sheet and MPRIS share one file.
+"""
+
+import logging
+import time
+from gettext import gettext as _
+
+from gi.repository import GLib
+
+from ..backend import config
+from ..backend.errors import EngineError
+from ..player import format_time
+from . import artwork
+
+log = logging.getLogger(__name__)
+
+SEEK_SETTLE = 0.25       # seconds after the last slider movement before the seek is sent
+SEEK_HOLD = 1.5          # seconds after a seek during which stale positions are ignored
+SEEK_TOLERANCE = 2.0     # a reported position this close to the seek's target is the seek's
+
+REPEAT_ICONS = {
+    'none': 'media-playlist-repeat-symbolic',
+    'all': 'media-playlist-repeat-symbolic',
+    'one': 'media-playlist-repeat-song-symbolic',
+}
+
+
+def run_command(app, coro, on_error=None):
+    """A Player command as a task; an EngineError is toasted, and on_error() puts the
+    widget back to the Player's state."""
+    async def command():
+        try:
+            await coro
+        except EngineError as error:
+            app.report(error)
+            if on_error is not None:
+                on_error()
+    return app.spawn(command())
+
+
+def track_subtitle(track):
+    """"Artist — Album" for the item playing, the album left out when it repeats the title
+    (a single) or there is none."""
+    subtitle = track.artist
+    if track.album and track.album != track.title:
+        subtitle = f'{track.artist} — {track.album}' if track.artist else track.album
+    return subtitle
+
+
+class PlayButton:
+    """A play/pause button whose icon and tooltip follow the Player's state; its action
+    (app.play-pause) is the template's."""
+
+    def __init__(self, button):
+        self.button = button
+        self._player = None
+
+    def attach(self, player):
+        self._player = player
+        player.connect('notify::state', lambda *_: self.update())
+        self.update()
+
+    def update(self):
+        active = self._player is not None and self._player.active
+        self.button.set_icon_name(
+            'media-playback-pause-symbolic' if active else 'media-playback-start-symbolic')
+        self.button.set_tooltip_text(_('Pause') if active else _('Play'))
+
+
+class SeekControl:
+    """A Gtk.Scale over an adjustment, with optional elapsed and remaining labels, following
+    the Player's position and duration and seeking when the user moves it."""
+
+    def __init__(self, scale, adjustment, elapsed_label=None, remaining_label=None):
+        self.scale = scale
+        self.adjustment = adjustment
+        self.elapsed_label = elapsed_label
+        self.remaining_label = remaining_label
+        self._player = None
+        self._app = None
+        self._syncing = False       # the slider is being set from the Player
+        self._seek_timeout = 0      # the GLib source waiting for the drag to settle
+        self._seek_target = None    # the position asked for while a seek is pending or fresh
+        self._seek_until = 0.0      # until when a stale position is ignored after a seek
+        scale.connect('change-value', self._on_change_value)
+
+    def attach(self, player, app):
+        self._player = player
+        self._app = app
+        player.connect('notify::position', lambda *_: self.update())
+        player.connect('notify::duration', lambda *_: self.update())
+        player.connect('notify::track', lambda *_: self._on_track())
+        self._on_track()
+
+    def _on_track(self):
+        self.cancel()
+        self.update()
+
+    def update(self):
+        """Show the Player's position, unless a seek is on its way: the positions from
+        before it are stale until MusicKit reports one near the target, or the hold runs
+        out."""
+        if self._player is None:
+            return
+        if self._seek_target is not None:
+            if (abs(self._player.position - self._seek_target) > SEEK_TOLERANCE
+                    and time.monotonic() < self._seek_until):
+                return
+            self._seek_target = None
+        self.show(self._player.position, self._player.duration)
+
+    def show(self, position, duration):
+        self._syncing = True
+        try:
+            self.adjustment.set_upper(max(duration, 1.0))
+            self.adjustment.set_value(min(position, max(duration, 1.0)))
+        finally:
+            self._syncing = False
+        self._show_times(position, duration)
+
+    def _show_times(self, position, duration):
+        if self.elapsed_label is not None:
+            self.elapsed_label.set_label(format_time(position))
+        if self.remaining_label is not None:
+            self.remaining_label.set_label(
+                format_time(max(duration - position, 0), remaining=True))
+
+    def _on_change_value(self, _scale, _scroll, value):
+        """The slider moved by the user (a drag, a click, the keys): show the time it points
+        at now, and seek there once it has settled for SEEK_SETTLE seconds."""
+        if self._syncing or self._player is None:
+            return False
+        duration = self._player.duration
+        value = min(max(value, 0.0), duration if duration else value)
+        self._seek_target = value
+        self._seek_until = float('inf')  # nothing incoming until the seek has been sent
+        self._show_times(value, duration)
+        if self._seek_timeout:
+            GLib.source_remove(self._seek_timeout)
+        self._seek_timeout = GLib.timeout_add(int(SEEK_SETTLE * 1000), self._send_seek)
+        return False  # the default handler sets the adjustment's value
+
+    def _send_seek(self):
+        self._seek_timeout = 0
+        target = self._seek_target
+        if target is None:
+            return GLib.SOURCE_REMOVE
+        self._seek_until = time.monotonic() + SEEK_HOLD
+        log.debug('seek to %.1f s', target)
+        run_command(self._app, self._player.seek(target), self.update)
+        return GLib.SOURCE_REMOVE
+
+    def cancel(self):
+        """Forget a seek being prepared (the item changed)."""
+        if self._seek_timeout:
+            GLib.source_remove(self._seek_timeout)
+            self._seek_timeout = 0
+        self._seek_target = None
+
+
+class ModeControl:
+    """Shuffle and repeat Gtk.ToggleButtons: a click asks the Player, the events set them."""
+
+    def __init__(self, shuffle_button, repeat_button):
+        self.shuffle_button = shuffle_button
+        self.repeat_button = repeat_button
+        self._player = None
+        self._app = None
+        self._syncing = False
+        shuffle_button.connect('toggled', self._on_shuffle_toggled)
+        repeat_button.connect('toggled', self._on_repeat_toggled)
+
+    def attach(self, player, app):
+        self._player = player
+        self._app = app
+        player.connect('notify::shuffle', lambda *_: self.update())
+        player.connect('notify::repeat', lambda *_: self.update())
+        self.update()
+
+    def update(self):
+        if self._player is None:
+            return
+        self._syncing = True
+        try:
+            self.shuffle_button.set_active(self._player.shuffle)
+            self._show_repeat(self._player.repeat)
+        finally:
+            self._syncing = False
+
+    def _show_repeat(self, mode):
+        self.repeat_button.set_active(mode != 'none')
+        self.repeat_button.set_icon_name(REPEAT_ICONS.get(mode, REPEAT_ICONS['none']))
+        self.repeat_button.set_tooltip_text({
+            'none': _('Repeat'),
+            'all': _('Repeat All'),
+            'one': _('Repeat One'),
+        }.get(mode, _('Repeat')))
+
+    def _on_shuffle_toggled(self, button):
+        if self._syncing or self._player is None:
+            return
+        run_command(self._app, self._player.set_shuffle(button.get_active()), self.update)
+
+    def _on_repeat_toggled(self, _button):
+        """A click cycles none → one → all → none; the button shows the mode it asked for
+        (a toggle alone would go dark between one and all) until MusicKit confirms."""
+        if self._syncing or self._player is None:
+            return
+        mode = self._player.next_repeat()
+        self._syncing = True
+        try:
+            self._show_repeat(mode)
+        finally:
+            self._syncing = False
+        run_command(self._app, self._player.set_repeat(mode), self.update)
+
+
+class RemoteCover:
+    """An AppleMusicCover showing the item playing's artwork, fetched at the cover size."""
+
+    def __init__(self, cover):
+        self.cover = cover
+        self._app = None
+        self._url = None  # the artwork URL being shown or fetched
+
+    def attach(self, player, app):
+        self._app = app
+        player.connect('notify::track', lambda *_: self._on_track(player.track))
+        self._on_track(player.track)
+
+    def _on_track(self, track):
+        self.show(track.artwork_url if track is not None else None)
+
+    def show(self, url):
+        if url == self._url:
+            return
+        self._url = url
+        self.cover.set_paths()
+        if url and self._app is not None:
+            self._app.spawn(self._fetch(url))
+
+    async def _fetch(self, url):
+        path = await artwork.get_default().fetch_remote(url, config.COVER_SIZE)
+        if path and self._url == url:
+            self.cover.set_paths(path)

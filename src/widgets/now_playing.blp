@@ -1,0 +1,235 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Now Playing (widgets/now_playing.py): the AdwBottomSheet's sheet. A header bar with only a
+// close button (the sheet's drag handle sits over it), then, in a clamp, the item playing
+// (artwork, title, artist, transport, seek) and the Lyrics / Up Next tabs (a toggle group
+// over a stack whose pages now_playing.py builds). `wide` (the window's 900sp breakpoint)
+// puts the two side by side; `compact` (600sp) shrinks the artwork.
+template $AppleMusicNowPlayingSheet: Adw.Bin {
+  styles [
+    "now-playing",
+  ]
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-title: false;
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Button close_button {
+        icon-name: "go-down-symbolic";
+        tooltip-text: _("Close");
+        clicked => $on_close_clicked();
+      }
+    }
+
+    // Toasts while the sheet is open (it is modal: the window's overlay is under it).
+    content: Adw.ToastOverlay toast_overlay {
+      child: Adw.Clamp {
+        maximum-size: 900;
+        tightening-threshold: 900;
+
+        child: Box layout {
+          orientation: vertical;
+          spacing: 18;
+          margin-start: 24;
+          margin-end: 24;
+          margin-bottom: 18;
+
+          Box player_column {
+            orientation: vertical;
+            spacing: 18;
+            halign: center;
+            valign: center;
+
+            $AppleMusicCover cover {
+              size: 320;
+              halign: center;
+
+              styles [
+                "large",
+              ]
+            }
+
+            Box {
+              orientation: vertical;
+              spacing: 4;
+
+              Label title_label {
+                label: _("Not Playing");
+                justify: center;
+                ellipsize: end;
+                single-line-mode: true;
+                max-width-chars: 32;
+
+                styles [
+                  "title-2",
+                ]
+              }
+
+              Label subtitle_label {
+                justify: center;
+                ellipsize: end;
+                single-line-mode: true;
+                max-width-chars: 40;
+                visible: false;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+
+            Box seek_box {
+              spacing: 6;
+              sensitive: false;
+
+              Label elapsed_label {
+                label: "0:00";
+                xalign: 1;
+                width-chars: 5;
+                valign: center;
+
+                styles [
+                  "numeric",
+                  "caption",
+                  "dim-label",
+                ]
+              }
+
+              Scale seek_scale {
+                hexpand: true;
+                valign: center;
+                draw-value: false;
+                adjustment: Adjustment seek_adjustment {
+                  lower: 0;
+                  upper: 1;
+                  step-increment: 5;
+                  page-increment: 30;
+                };
+                accessible-role: slider;
+
+                accessibility {
+                  label: _("Position");
+                }
+              }
+
+              Label remaining_label {
+                label: "-0:00";
+                xalign: 0;
+                width-chars: 6;
+                valign: center;
+
+                styles [
+                  "numeric",
+                  "caption",
+                  "dim-label",
+                ]
+              }
+            }
+
+            Box transport_box {
+              spacing: 12;
+              halign: center;
+
+              ToggleButton shuffle_button {
+                icon-name: "media-playlist-shuffle-symbolic";
+                tooltip-text: _("Shuffle");
+                sensitive: false;
+                valign: center;
+
+                styles [
+                  "flat",
+                  "circular",
+                ]
+              }
+
+              Button previous_button {
+                icon-name: "media-skip-backward-symbolic";
+                tooltip-text: _("Previous");
+                action-name: "app.previous";
+                valign: center;
+
+                styles [
+                  "flat",
+                  "circular",
+                  "skip-button",
+                ]
+              }
+
+              Button play_button {
+                icon-name: "media-playback-start-symbolic";
+                tooltip-text: _("Play");
+                action-name: "app.play-pause";
+                valign: center;
+
+                styles [
+                  "circular",
+                  "suggested-action",
+                  "play-button",
+                ]
+              }
+
+              Button next_button {
+                icon-name: "media-skip-forward-symbolic";
+                tooltip-text: _("Next");
+                action-name: "app.next";
+                valign: center;
+
+                styles [
+                  "flat",
+                  "circular",
+                  "skip-button",
+                ]
+              }
+
+              ToggleButton repeat_button {
+                icon-name: "media-playlist-repeat-symbolic";
+                tooltip-text: _("Repeat");
+                sensitive: false;
+                valign: center;
+
+                styles [
+                  "flat",
+                  "circular",
+                ]
+              }
+            }
+          }
+
+          Box tabs_column {
+            orientation: vertical;
+            spacing: 12;
+            hexpand: true;
+            vexpand: true;
+
+            Adw.ToggleGroup tabs {
+              halign: center;
+              homogeneous: true;
+              active-name: "lyrics";
+              notify::active-name => $on_tab_changed();
+
+              Adw.Toggle {
+                name: "lyrics";
+                label: _("Lyrics");
+              }
+
+              Adw.Toggle {
+                name: "queue";
+                label: _("Up Next");
+              }
+            }
+
+            Stack tab_stack {
+              vexpand: true;
+              transition-type: crossfade;
+            }
+          }
+        };
+      };
+    };
+  };
+}

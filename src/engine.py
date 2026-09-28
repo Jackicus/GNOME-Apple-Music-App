@@ -20,6 +20,9 @@ UI awaits.
     await engine.shuffle('toggle'); await engine.repeat('cycle')   # answer {shuffle, repeat}
     await engine.now_playing()   # {state, track, position, duration, shuffle, repeat, volume}
     await engine.queue()         # {index, items: [Track…]}
+    await engine.queue_jump(3)   # play the queue's entry at index 3 (mk.changeToMediaAtIndex)
+    await engine.lyrics(catalog_song_id)   # {synced, lines: [{startMs, endMs, text}]},
+                                           # from <cache>/lyrics/ when fetched before
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
@@ -31,8 +34,10 @@ start() and stop() do nothing and every command raises EngineError('engine-down'
 """
 
 import asyncio
+import json
 import logging
 import os
+import re
 import signal
 import time
 from pathlib import Path
@@ -55,6 +60,10 @@ SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
 API_RETRIES = 3
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
+LYRICS_TIMEOUT = 30.0     # one catalog read, parsed in the page
+
+# A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
+CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
 
 # The playback commands' arguments, as the bridge (and the extension's am.py) take them.
 CONTROL_ACTIONS = ('play', 'pause', 'toggle', 'next', 'previous', 'stop')
@@ -174,6 +183,48 @@ def _page_data(answer):
     """The resources of one page: its `data` list's dicts."""
     data = answer.get('data') if isinstance(answer, dict) else None
     return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
+
+
+def lyrics_answer(answer):
+    """The bridge's lyrics answer as {synced: bool, lines: [{startMs, endMs, text}]}, the
+    lines kept in order with their times as integers; anything odd is no lyrics."""
+    if not isinstance(answer, dict):
+        return {'synced': False, 'lines': []}
+    lines = []
+    for line in answer.get('lines') or []:
+        if not isinstance(line, dict):
+            continue
+        text = line.get('text')
+        if not isinstance(text, str) or not text.strip():
+            continue
+        start, end = line.get('startMs'), line.get('endMs')
+        lines.append({
+            'startMs': int(start) if isinstance(start, (int, float)) and start == start else 0,
+            'endMs': int(end) if isinstance(end, (int, float)) and end == end else 0,
+            'text': text.strip(),
+        })
+    return {'synced': bool(answer.get('synced')) and bool(lines), 'lines': lines}
+
+
+def _read_json(path):
+    """In a thread: the JSON at path, or None when it is not there or not JSON."""
+    try:
+        with open(path, encoding='utf-8') as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json(path, data):
+    """In a thread: `data` as JSON at path, the directory made first; a failure is logged."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + '.tmp')
+        with open(tmp, 'w', encoding='utf-8') as file:
+            json.dump(data, file, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError as error:
+        log.warning('could not keep %s: %s', path, error)
 
 
 class Engine(GObject.Object):
@@ -729,3 +780,36 @@ class Engine(GObject.Object):
         client = self._require_up()
         answer = await client.bridge('queue')
         return answer if isinstance(answer, dict) else {'index': 0, 'items': []}
+
+    async def queue_jump(self, index):
+        """Play the queue's entry at `index` (the Up Next list): mk.changeToMediaAtIndex. The
+        queue position and now-playing events follow."""
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            raise EngineError('usage', f'not a queue index: {index!r}')
+        client = self._require_up()
+        await client.bridge('queueJump', index, timeout=PLAY_TIMEOUT)
+
+    def lyrics_path(self, catalog_song_id):
+        """Where a song's lyrics are kept: <cache>/lyrics/<catalog id>.json."""
+        return self.cache_dir / 'lyrics' / f'{catalog_song_id}.json'
+
+    async def lyrics(self, catalog_song_id):
+        """A catalog song's lyrics: {synced, lines: [{startMs, endMs, text}]} (lyrics_answer's
+        shape), from <cache>/lyrics/<id>.json when they were fetched before (no engine
+        needed then), else through the bridge (the catalog's TTML, parsed in the page) and
+        kept there when Apple had any. No lyrics ({synced: False, lines: []}) is also what
+        the page answers when Apple refuses (no subscription, a network failure), so an empty
+        answer is not kept: the next play asks again."""
+        catalog_song_id = str(catalog_song_id or '')
+        if not CATALOG_ID_RE.fullmatch(catalog_song_id):
+            raise EngineError('usage', 'lyrics need a catalog song id')
+        path = self.lyrics_path(catalog_song_id)
+        cached = await asyncio.to_thread(_read_json, path)
+        if isinstance(cached, dict) and cached.get('lines'):
+            return lyrics_answer(cached)
+        client = self._require_up()
+        answer = lyrics_answer(
+            await client.bridge('lyrics', catalog_song_id, timeout=LYRICS_TIMEOUT))
+        if answer['lines']:
+            await asyncio.to_thread(_write_json, path, answer)
+        return answer

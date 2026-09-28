@@ -127,7 +127,6 @@ template $AppleMusicPlayerBar: Adw.Bin {
               step-increment: 5;
               page-increment: 30;
             };
-            change-value => $on_seek_change_value();
             accessible-role: slider;
 
             accessibility {
@@ -160,7 +159,6 @@ template $AppleMusicPlayerBar: Adw.Bin {
         tooltip-text: _("Shuffle");
         sensitive: false;
         valign: center;
-        toggled => $on_shuffle_toggled();
 
         styles [
           "flat",
@@ -172,7 +170,6 @@ template $AppleMusicPlayerBar: Adw.Bin {
         tooltip-text: _("Repeat");
         sensitive: false;
         valign: center;
-        toggled => $on_repeat_toggled();
 
         styles [
           "flat",

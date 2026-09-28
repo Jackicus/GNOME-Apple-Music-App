@@ -10,6 +10,7 @@ from gi.repository import GObject
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
 from applemusic.backend.errors import EngineError
+from applemusic.lyrics import Lyrics
 from applemusic.player import ACTIVE_STATES, NowPlaying, Player, format_time
 
 # An invented track, as the bridge's formatTrack shapes it.
@@ -19,6 +20,18 @@ TRACK = {
     'discNumber': 1, 'durationMs': 214000, 'durationLabel': '3:34', 'explicit': False,
     'artUrl': 'https://example.invalid/art/256x256bb.jpg', 'index': 2,
 }
+
+# An invented queue of three, TRACK at index 2.
+QUEUE = {'index': 2, 'items': [
+    dict(TRACK, id='i.demo0003', catalogId='1000000003', title='Shoreline', index=0),
+    dict(TRACK, id='i.demo0002', catalogId='1000000002', title='Pilot Light', index=1),
+    TRACK,
+]}
+
+LYRICS = {'synced': True, 'lines': [
+    {'startMs': 1000, 'endMs': 3000, 'text': 'One'},
+    {'startMs': 4000, 'endMs': 6000, 'text': 'Two'},
+]}
 
 
 class FakeEngine(GObject.Object):
@@ -78,6 +91,15 @@ class FakeEngine(GObject.Object):
     async def repeat(self, mode):
         return await self._command('repeat', mode)
 
+    async def queue(self):
+        return await self._command('queue')
+
+    async def queue_jump(self, index):
+        return await self._command('queue_jump', index)
+
+    async def lyrics(self, catalog_id):
+        return await self._command('lyrics', catalog_id)
+
 
 class FakeSettings:
     def __init__(self, signed_in=True):
@@ -97,14 +119,28 @@ class FakeApp:
         self.demo = demo
         self.toasts = []
         self.tasks = []
+        self.spawned = []  # the names of coroutines spawned with no loop running
 
     def toast(self, title, *_args):
         self.toasts.append(title)
 
     def spawn(self, coro):
-        task = asyncio.get_event_loop().create_task(coro)
+        """A task on the running loop; without one (the event tests) the coroutine is only
+        noted by name and closed."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.spawned.append(coro.__qualname__)
+            coro.close()
+            return None
+        task = loop.create_task(coro)
         self.tasks.append(task)
         return task
+
+    async def settle(self):
+        """Wait for every task spawned so far, and for what they spawned."""
+        while any(not task.done() for task in self.tasks):
+            await asyncio.gather(*self.tasks, return_exceptions=True)
 
 
 def make_player(signed_in=True, demo=False, state='down'):
@@ -266,10 +302,13 @@ class EngineLifecycleTest(unittest.TestCase):
             engine.answers['now_playing'] = {
                 'state': 'paused', 'track': TRACK, 'position': 90, 'duration': 214,
                 'shuffle': 'on', 'repeat': 'all', 'volume': 0.4}
+            engine.answers['queue'] = QUEUE
             engine.state = 'up'
-            await asyncio.gather(*app.tasks)
-            self.assertEqual(engine.calls, [('now_playing',)])
+            await app.settle()
+            self.assertEqual(engine.calls, [('now_playing',), ('queue',), ('lyrics', '1000000001')])
             self.assertEqual(player.state, 'paused')
+            self.assertEqual(player.queue.get_n_items(), 3)
+            self.assertEqual(player.queue_index, 2)
             self.assertEqual(player.track.title, 'Harbour Lights')
             self.assertEqual((player.position, player.duration), (90.0, 214.0))
             self.assertTrue(player.shuffle)
@@ -282,6 +321,9 @@ class EngineLifecycleTest(unittest.TestCase):
             self.assertEqual((player.position, player.duration), (0.0, 0.0))
             self.assertTrue(player.shuffle)
             self.assertEqual(player.volume, 0.4)
+            self.assertEqual(player.queue.get_n_items(), 0)
+            self.assertEqual(player.queue_index, -1)
+            self.assertIsNone(player.lyrics)
         asyncio.run(go())
 
     def test_an_engine_already_up_is_read_at_once(self):
@@ -289,7 +331,7 @@ class EngineLifecycleTest(unittest.TestCase):
             player, engine, app = make_player(state='up')
             engine.answers['now_playing'] = {'state': 'playing', 'track': TRACK,
                                              'position': 1, 'duration': 214}
-            await asyncio.gather(*app.tasks)
+            await app.settle()
             self.assertEqual(player.state, 'playing')
             self.assertEqual(player.track.id, 'i.demo0001')
         asyncio.run(go())
@@ -299,7 +341,7 @@ class EngineLifecycleTest(unittest.TestCase):
             player, engine, app = make_player(state='down')
             engine.fail = EngineError('api', 'no')
             engine.state = 'up'
-            await asyncio.gather(*app.tasks)
+            await app.settle()
             self.assertEqual(player.state, 'none')
             self.assertIsNone(player.track)
         asyncio.run(go())
@@ -374,13 +416,15 @@ class CommandTest(unittest.TestCase):
             await player.cycle_repeat()
             await player.play_next('song', 'i.1')
             await player.play_later('album', 'l.2')
+            await player.queue_jump(1)
             self.assertEqual([call for call in engine.calls if call[0] != 'now_playing'], [
                 ('control', 'play'), ('control', 'pause'), ('control', 'pause'),
                 ('control', 'play'),
                 ('control', 'next'), ('control', 'previous'), ('control', 'stop'),
                 ('seek', 42.5), ('volume', 0.3), ('shuffle', 'on'), ('shuffle', 'off'),
                 ('shuffle', 'toggle'), ('repeat', 'all'), ('repeat', 'cycle'),
-                ('play_next', 'song', 'i.1'), ('play_later', 'album', 'l.2')])
+                ('play_next', 'song', 'i.1'), ('play_later', 'album', 'l.2'),
+                ('queue_jump', 1)])
             # Nothing above touched the properties: only events do.
             self.assertEqual(player.volume, 1.0)
             self.assertFalse(player.shuffle)
@@ -394,6 +438,181 @@ class CommandTest(unittest.TestCase):
                 await player.toggle()
             self.assertEqual(raised.exception.code, 'engine-down')
         asyncio.run(go())
+
+
+class QueueTest(unittest.TestCase):
+    """The queue store and index, from the queue events and the item playing."""
+
+    def setUp(self):
+        self.player, self.engine, self.app = make_player()
+        self.changes = []
+        self.player.queue.connect(
+            'items-changed', lambda _s, position, removed, added: self.changes.append(
+                (position, removed, added)))
+
+    def ids(self):
+        return [entry.id for entry in self.player.queue]
+
+    def test_queue_items_event_fills_the_store(self):
+        self.engine.event('queueItemsDidChange', QUEUE)
+        self.assertEqual(self.ids(), ['i.demo0003', 'i.demo0002', 'i.demo0001'])
+        self.assertEqual([entry.index for entry in self.player.queue], [0, 1, 2])
+        self.assertEqual(self.player.queue_index, 2)
+        self.assertEqual(self.changes, [(0, 0, 3)])
+        # The same snapshot again rebinds nothing; its index is taken.
+        self.engine.event('queueItemsDidChange', dict(QUEUE, index=0))
+        self.assertEqual(self.changes, [(0, 0, 3)])
+        self.assertEqual(self.player.queue_index, 0)
+        # A different queue replaces it in one splice.
+        self.engine.event('queueItemsDidChange', {'index': 0, 'items': QUEUE['items'][:1]})
+        self.assertEqual(self.ids(), ['i.demo0003'])
+        self.assertEqual(self.changes, [(0, 0, 3), (0, 3, 1)])
+
+    def test_index_before_playback_is_the_tracks_place(self):
+        self.engine.event('nowPlayingItemDidChange', {'track': QUEUE['items'][1], 'index': 1})
+        self.engine.event('queueItemsDidChange', dict(QUEUE, index=-1))
+        self.assertEqual(self.player.queue_index, 1)
+
+    def test_queue_position_event_moves_the_index(self):
+        self.engine.event('queueItemsDidChange', QUEUE)
+        self.engine.event('queuePositionDidChange', {'index': 1, 'oldIndex': 2})
+        self.assertEqual(self.player.queue_index, 1)
+        self.engine.event('queuePositionDidChange', {'index': 7, 'oldIndex': 1})
+        self.assertEqual(self.player.queue_index, -1)  # nowhere in the queue held
+        self.engine.event('queuePositionDidChange', {'index': None})
+        self.assertEqual(self.player.queue_index, -1)
+
+    def test_a_queued_item_playing_points_the_index_without_a_read(self):
+        self.engine.event('queueItemsDidChange', dict(QUEUE, index=-1))
+        self.app.spawned.clear()
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.assertEqual(self.player.queue_index, 2)
+        self.assertNotIn('Player.refresh_queue', self.app.spawned)
+        # At another index than its own: found by id.
+        moved = dict(TRACK, index=5)
+        self.engine.event('nowPlayingItemDidChange', {'track': moved, 'index': 5})
+        self.assertEqual(self.player.queue_index, 2)
+        self.assertNotIn('Player.refresh_queue', self.app.spawned)
+
+    def test_an_item_not_in_the_queue_reads_it_again(self):
+        self.engine.event('queueItemsDidChange', QUEUE)
+        self.app.spawned.clear()
+        stranger = dict(TRACK, id='i.demo0009', catalogId='1000000009', index=0)
+        self.engine.event('nowPlayingItemDidChange', {'track': stranger, 'index': 0})
+        self.assertEqual(self.player.queue_index, -1)
+        self.assertEqual(self.app.spawned.count('Player.refresh_queue'), 1)
+
+    def test_no_item_clears_the_index_and_keeps_the_entries(self):
+        self.engine.event('queueItemsDidChange', QUEUE)
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+        self.assertEqual(self.player.queue_index, -1)
+        self.assertEqual(len(self.ids()), 3)
+
+    def test_refresh_queue_reads_the_engine(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            engine.answers['queue'] = QUEUE
+            await player.refresh_queue()
+            self.assertEqual([entry.title for entry in player.queue],
+                             ['Shoreline', 'Pilot Light', 'Harbour Lights'])
+            self.assertEqual(player.queue_index, 2)
+            engine.fail = EngineError('engine-down', 'gone')
+            await player.refresh_queue()  # logged, the queue kept
+            self.assertEqual(player.queue.get_n_items(), 3)
+        asyncio.run(go())
+
+    def test_apply_takes_a_queue_and_bad_snapshots(self):
+        self.player.apply({'track': TRACK, 'queue': QUEUE})
+        self.assertEqual(self.player.queue_index, 2)
+        self.player.apply_queue({'index': 0, 'items': 'nonsense'})
+        self.assertEqual(self.player.queue.get_n_items(), 0)
+        self.player.apply_queue(None)
+        self.assertEqual(self.player.queue_index, -1)
+
+
+class LyricsTest(unittest.TestCase):
+    """Lyrics read once per catalog song as it starts, from the engine."""
+
+    def test_a_new_item_asks_the_engine_once(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            engine.answers['lyrics'] = LYRICS
+            loading = []
+            player.connect('notify::lyrics-loading',
+                           lambda p, _pspec: loading.append(p.lyrics_loading))
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            self.assertTrue(player.lyrics_loading)
+            self.assertIsNone(player.lyrics)
+            await app.settle()
+            # The item is not in the (empty) queue, so the queue is read as well.
+            self.assertEqual(engine.calls,
+                             [('now_playing',), ('queue',), ('lyrics', '1000000001')])
+            self.assertIsInstance(player.lyrics, Lyrics)
+            self.assertEqual(player.lyrics.catalog_id, '1000000001')
+            self.assertEqual(len(player.lyrics), 2)
+            self.assertEqual(loading, [True, False])
+            # The same song again (repeat one): kept, not asked again.
+            engine.event('nowPlayingItemDidChange', {'track': dict(TRACK, index=3), 'index': 3})
+            await app.settle()
+            self.assertEqual(engine.calls.count(('lyrics', '1000000001')), 1)
+            self.assertIsNotNone(player.lyrics)
+            # Another song: asked; none for it: None.
+            engine.answers['lyrics'] = {'synced': False, 'lines': []}
+            other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=0)
+            engine.event('nowPlayingItemDidChange', {'track': other, 'index': 0})
+            self.assertIsNone(player.lyrics)
+            await app.settle()
+            self.assertEqual(engine.calls[-1], ('lyrics', '1000000002'))
+            self.assertIsNone(player.lyrics)
+            self.assertFalse(player.lyrics_loading)
+            # Nothing playing: nothing asked, nothing loading.
+            engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+            await app.settle()
+            self.assertIsNone(player.lyrics)
+            self.assertFalse(player.lyrics_loading)
+        asyncio.run(go())
+
+    def test_an_answer_for_a_song_no_longer_playing_is_dropped(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            engine.answers['lyrics'] = LYRICS
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=0)
+            engine.event('nowPlayingItemDidChange', {'track': other, 'index': 0})
+            await app.settle()
+            self.assertEqual(player.lyrics.catalog_id, '1000000002')
+            self.assertFalse(player.lyrics_loading)
+        asyncio.run(go())
+
+    def test_engine_failure_means_no_lyrics(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            engine.fail = EngineError('engine-down', 'gone')
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            await app.settle()
+            self.assertIsNone(player.lyrics)
+            self.assertFalse(player.lyrics_loading)
+        asyncio.run(go())
+
+    def test_an_item_without_a_catalog_id_asks_nothing(self):
+        player, engine, app = make_player()
+        engine.event('nowPlayingItemDidChange',
+                     {'track': dict(TRACK, catalogId=None), 'index': 0})
+        self.assertNotIn('Player._load_lyrics', app.spawned)
+        self.assertFalse(player.lyrics_loading)
+
+    def test_apply_with_lyrics_takes_them_as_they_are(self):
+        player, engine, app = make_player()
+        player.apply({'track': TRACK, 'lyrics': LYRICS})
+        self.assertNotIn('Player._load_lyrics', app.spawned)
+        self.assertEqual(player.lyrics.catalog_id, '1000000001')
+        self.assertTrue(player.lyrics.synced)
+        self.assertFalse(player.lyrics_loading)
 
 
 class FormatTimeTest(unittest.TestCase):

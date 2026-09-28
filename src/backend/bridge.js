@@ -523,6 +523,16 @@
             return queueSnapshot(getMusicKit());
         },
 
+        // Play the queue's entry at `index` (the app's Up Next list): MusicKit's
+        // changeToMediaAtIndex, whose outcome arrives as the queue position and
+        // now-playing events.
+        queueJump: async function (index) {
+            const mk = getMusicKit();
+            if (!mk) throw new Error('MusicKit not initialized');
+            await mk.changeToMediaAtIndex(Number(index));
+            return { ok: true };
+        },
+
         rating: async function (kind, id, love) {
             const path = '/v1/me/ratings/' + kind + 's/' + id;
             if (love) {

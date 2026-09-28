@@ -10,6 +10,7 @@ from .pages.artist import ArtistPage
 from .pages.detail import DetailPage
 from .pages.grid import GridPage
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
+from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
 from .sidebar import SidebarEntry, SidebarItem, is_shown, parse_key, playlist_entries
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class Window(Adw.ApplicationWindow):
     toast_overlay = Gtk.Template.Child()
     bottom_sheet = Gtk.Template.Child()
     player_bar = Gtk.Template.Child()
+    now_playing = Gtk.Template.Child()
     split_view = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
     content_page = Gtk.Template.Child()
@@ -77,6 +79,8 @@ class Window(Adw.ApplicationWindow):
         self._build_sidebar()
         self._update_playlists()
         self.player_bar.set_player(self.get_application().player, self.get_application())
+        self.now_playing.set_player(self.get_application().player, self.get_application(),
+                                    self.bottom_sheet)
         self._library_handler = self._library.connect('changed', self._on_library_changed)
         self._restore_window_state()
         self._restore_page(self._settings.get_string('last-page'))
@@ -120,7 +124,19 @@ class Window(Adw.ApplicationWindow):
         return True
 
     def toast(self, title):
-        self.toast_overlay.add_toast(Adw.Toast(title=title))
+        self.add_toast(Adw.Toast(title=title))
+
+    def add_toast(self, toast):
+        """Show a toast over the content, or inside the Now Playing sheet while that is open
+        (the sheet is modal: the window's overlay is under it)."""
+        if self.bottom_sheet.get_open():
+            self.now_playing.add_toast(toast)
+        else:
+            self.toast_overlay.add_toast(toast)
+
+    def toggle_now_playing(self):
+        """Open the Now Playing sheet, or close it (app.now-playing)."""
+        self.bottom_sheet.set_open(not self.bottom_sheet.get_open())
 
     # The account.
 

@@ -29,7 +29,7 @@ from tests.test_client import FakeChrome, FakePage, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
-                    'repeat', 'nowPlaying', 'queue')
+                    'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics')
 SLEEPER = 'import time; time.sleep(60)'
 STUBBORN = 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'
 
@@ -652,11 +652,55 @@ class PlaybackTest(EngineTest):
             await self.engine.now_playing()
         self.assertEqual(raised.exception.code, 'api')
 
+    async def test_queue_jump(self):
+        await self.up()
+        await self.engine.queue_jump(3)
+        self.assertEqual(self.page.bridge_calls, [('queueJump', 3)])
+        for index in (-1, 'x', None, 2.5, True):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.queue_jump(index)
+            self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_lyrics_are_fetched_once_and_kept(self):
+        await self.up()
+        answer = {'synced': True, 'lines': [
+            {'startMs': 1000, 'endMs': 3000.4, 'text': ' Harbour lights '},
+            {'startMs': 'x', 'text': ''},
+            {'startMs': 4000, 'endMs': 6000, 'text': 'Out on the water'}]}
+        self.page.bridge_answers['lyrics'] = answer
+        lyrics = await self.engine.lyrics('1000000001')
+        self.assertEqual(lyrics, {'synced': True, 'lines': [
+            {'startMs': 1000, 'endMs': 3000, 'text': 'Harbour lights'},
+            {'startMs': 4000, 'endMs': 6000, 'text': 'Out on the water'}]})
+        path = self.cache / 'lyrics' / '1000000001.json'
+        self.assertTrue(path.is_file())
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8')), lyrics)
+        # Again: from the file, no bridge call, and no engine needed.
+        self.page.bridge_answers['lyrics'] = {'synced': False, 'lines': []}
+        self.assertEqual(await self.engine.lyrics('1000000001'), lyrics)
+        await self.engine.stop()
+        self.assertEqual(await self.engine.lyrics('1000000001'), lyrics)
+        self.assertEqual(self.page.bridge_calls, [('lyrics', '1000000001')])
+
+    async def test_no_lyrics_are_not_kept(self):
+        await self.up()
+        self.page.bridge_answers['lyrics'] = {'synced': False, 'lines': []}
+        self.assertEqual(await self.engine.lyrics('1000000002'), {'synced': False, 'lines': []})
+        self.page.bridge_answers['lyrics'] = None  # not a dict either
+        self.assertEqual(await self.engine.lyrics('1000000002'), {'synced': False, 'lines': []})
+        self.assertFalse((self.cache / 'lyrics').exists())
+        self.assertEqual(len(self.page.bridge_calls), 2)
+        for bad in ('', None, '../x', 'a/b'):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.lyrics(bad)
+            self.assertEqual(raised.exception.code, 'usage')
+
     async def test_commands_when_down(self):
         for coro in (self.engine.control('toggle'), self.engine.seek(1), self.engine.volume(1),
                      self.engine.shuffle('on'), self.engine.repeat('all'),
                      self.engine.now_playing(), self.engine.queue(),
-                     self.engine.play_next('song', 'i.1')):
+                     self.engine.play_next('song', 'i.1'), self.engine.queue_jump(0),
+                     self.engine.lyrics('1000000001')):
             with self.assertRaises(EngineError) as raised:
                 await coro
             self.assertEqual(raised.exception.code, 'engine-down')

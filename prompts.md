@@ -21,7 +21,7 @@ running and better than before.
 - [x] 11. Library sync and artwork cache (2026-09-28)
 - [x] 12. Playback: Player state and the player bar (2026-09-28)
 - [x] 13. MPRIS (2026-09-28)
-- [ ] 14. Now Playing sheet, queue, lyrics
+- [x] 14. Now Playing sheet, queue, lyrics (2026-09-28)
 - [ ] 15. Search
 - [ ] 16. Context menus and actions (play next, love, add, drag to playlist)
 - [ ] 17. Preferences
@@ -1664,6 +1664,59 @@ a song with synced lyrics, open the sheet, watch the line move, click a line, ju
 screenshots: --demo --now-playing at 1100x760 and 400x700, dark and --light. Update CLAUDE.md.
 Tick phase 14 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- Verified live (the real Application with the Devel id in-process on the dev engine and the
+  real cache, settings in a memory backend, the engine's volume 0.2 before and after): an
+  album of three tracks whose first song has synced lyrics (36 lines): `app.now-playing`
+  opened the sheet at the window's full height; the current line moved 2 → 3 from the
+  position events (sampled once a second, nothing polled); a click on a line seeked to its
+  start (44 s → 62 s; the line followed); Up Next listed the three entries with the first
+  marked; activating entry 1 played it (queuePositionDidChange and nowPlayingItemDidChange:
+  index 1, playing, the new song's lyrics read; the marker moved); the close button and the
+  action closed the sheet; a toast added while the sheet is open shows inside it
+  (`window.add_toast`); stop cleared the item; the engine was stopped after. The first two
+  albums tried were one-track releases: MusicKit's queue was one entry and Next ended
+  playback (`completed`), which is right, not a bug.
+- Escape: no controller on the `AdwBottomSheet` widget itself; walking `observe_controllers()`
+  down its tree finds a local-scope `Gtk.ShortcutController` with `Escape → callback` on
+  the sheet's inner `AdwGizmo`, so Escape closes the sheet while the focus is inside it,
+  which the modal sheet arranges. Not exercised with a real key (no input synthesis).
+- Where things live: the lyrics are the Player's (`player.lyrics`, a `lyrics.Lyrics`;
+  `player.lyrics_loading`), asked of `engine.lyrics()` once per catalog song as it starts
+  (a repeat, or the same song again, keeps them; an item without a catalog id asks nothing)
+  and kept under `<cache>/lyrics/<id>.json` only when Apple had lines: the page answers the
+  same empty shape when Apple refuses (no subscription, a failed request), so an empty
+  answer is asked again next time. The queue is `player.queue` (NowPlaying entries) and
+  `queue_index`, from `queueItemsDidChange` / `queuePositionDidChange`; `queue()` is read
+  only when the item playing is not among the entries held; a snapshot with the same ids
+  is not spliced again (rows keep their widgets). `Player.apply()` takes `queue` and
+  `lyrics` keys too (the `--now-playing` screenshot feeds it those). The views only follow
+  the Player; `set_active()` (the sheet's `open`, and the tab shown) gates the scrolling.
+- Files beyond the plan's list: `src/lyrics.py` (the model, GObject only, so
+  `tests/test_lyrics.py` imports it without the gresource), `src/widgets/transport.py` (the
+  bar's play-button, seek, shuffle/repeat and remote-artwork logic, now shared with the
+  sheet; `player_bar.py` shrank to the titles and the volume), `tests/fixtures/lyrics.json`
+  (invented). The sheet's LyricsView and QueueView are built in Python inside the template
+  class (GtkBuilder skips a Python widget's `__init__`).
+- Sizing and scrolling (the details are in CLAUDE.md): the sheet asks for a tall natural
+  height (an `Adw.Bin`'s Python `do_measure` is never called: its layout manager is
+  dropped and measure/allocate implemented); the lyrics list carries no CSS padding (GTK
+  scrolls a list's padding with its rows, outside the page); the current line is brought
+  on screen with `scroll_to(index, NONE)` when its index changes, then glides to the middle
+  (Adw.TimedAnimation on the vadjustment) once its geometry has held still for a frame
+  (a tick callback), and again whenever the page size changes (the open, a resize; the
+  re-issued scroll_to goes through an idle: one asked from inside the adjustment's
+  `changed` is lost); no following for 4 s after the user scrolls the list. The first and
+  last few lines of a song sit where the clamp leaves them (no padding to centre them in).
+- Layout: `wide` (window breakpoint `min-width: 900sp`) puts the item and the tabs side by
+  side in a 900 px clamp; `compact` (600sp) shrinks the artwork to 240 px so a 400x700
+  window keeps about 150 px for the tabs. The drag handle stays over the header bar.
+- Not done: no thumbnails in Up Next rows (number or play marker, title, artist, duration);
+  queue editing and love (16); the sheet has no volume control (the bar's is hidden while
+  the sheet is open); the queue stays listed after playback ends (Not Playing above it);
+  the `--now-playing` shot copies the demo cover into `build/demo/remote-art/`.
 
 ## Phase 15: Search, New and Made for You
 

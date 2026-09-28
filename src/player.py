@@ -10,7 +10,13 @@ the playback commands as thin coroutines over the engine.
     player.shuffle (bool), player.repeat ('none', 'one', 'all'), player.volume (0 to 1)
     player.position_updated_at                 # time.monotonic() when position last arrived
     player.estimated_position()                # position, plus the time since while playing
+    player.queue, player.queue_index           # a Gio.ListStore of NowPlaying (the queue's
+                                               # entries, in order) and where the item playing
+                                               # is in it (-1: nowhere, or nothing playing)
+    player.lyrics, player.lyrics_loading       # a lyrics.Lyrics for the track (None: none, or
+                                               # not there yet), and whether one is being read
     await player.play({'kind': 'album', 'id': …}, start_with=2, shuffle=False)
+    await player.queue_jump(3)  # play the queue's entry at index 3
     await player.toggle()       # pause while active (playing, loading…), else play
     await player.pause() / resume() / next() / previous() / stop()
     await player.seek(seconds); await player.set_volume(level)
@@ -19,22 +25,28 @@ the playback commands as thin coroutines over the engine.
 
 The properties change only from the engine's events (playbackStateDidChange,
 nowPlayingItemDidChange, playbackTimeDidChange, playbackDurationDidChange,
-shuffleModeDidChange, repeatModeDidChange, playbackVolumeDidChange), plus one now_playing()
-read when the engine comes up, so the bar follows what MusicKit does rather than what was
-asked; nothing here polls. When the engine goes down everything resets to nothing playing.
+shuffleModeDidChange, repeatModeDidChange, playbackVolumeDidChange, queueItemsDidChange,
+queuePositionDidChange), plus one now_playing() (and queue()) read when the engine comes up,
+so the bar follows what MusicKit does rather than what was asked; nothing here polls. The
+queue is read again (queue()) when an item arrives that the queue held does not hold at its
+index; the lyrics are asked of the engine (lyrics(), cached on disk) once per catalog song
+as it starts, never on a timer. When the engine goes down everything resets to nothing
+playing.
 The commands raise EngineError as the engine does; play() starts a down engine first when the
 account is signed in (a toast says so) and raises EngineError('not-signed-in') when it is not,
 which the window turns into the sign-in flow. `error(message)` is emitted for MusicKit's
 mediaPlaybackError. GObject only, no GTK: tests feed it synthetic events.
 """
 
+import asyncio
 import logging
 import time
 from gettext import gettext as _
 
-from gi.repository import GObject
+from gi.repository import Gio, GObject
 
 from .backend.errors import EngineError
+from .lyrics import Lyrics
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +62,8 @@ REPEAT_MODES = ('none', 'one', 'all')
 # The events the Player takes its state from, and the handler for each.
 EVENTS = ('playbackStateDidChange', 'nowPlayingItemDidChange', 'playbackTimeDidChange',
           'playbackDurationDidChange', 'shuffleModeDidChange', 'repeatModeDidChange',
-          'playbackVolumeDidChange', 'mediaPlaybackError')
+          'playbackVolumeDidChange', 'mediaPlaybackError', 'queueItemsDidChange',
+          'queuePositionDidChange')
 
 
 def _text(value):
@@ -121,6 +134,9 @@ class Player(GObject.Object):
     shuffle = GObject.Property(type=bool, default=False)
     repeat = GObject.Property(type=str, default='none')
     volume = GObject.Property(type=float, default=1.0)
+    queue_index = GObject.Property(type=int, default=-1)
+    lyrics = GObject.Property(type=Lyrics, default=None)
+    lyrics_loading = GObject.Property(type=bool, default=False)
 
     def __init__(self, app):
         """`app` gives the engine (`app.engine`), the settings (`signed-in`), `toast()`,
@@ -129,6 +145,9 @@ class Player(GObject.Object):
         self._app = app
         self._engine = app.engine
         self.position_updated_at = time.monotonic()
+        self.queue = Gio.ListStore(item_type=NowPlaying)
+        self._lyrics_task = None  # the task reading the track's lyrics, while one runs
+        self._lyrics_wanted = None  # the catalog id that task reads
         self._engine.connect('event', self._on_event)
         self._engine.connect('notify::state', self._on_engine_state)
         if self._engine.state == 'up':
@@ -144,7 +163,9 @@ class Player(GObject.Object):
 
     async def refresh(self):
         """Read the engine's now_playing() once (as the engine comes up: whatever it was
-        doing before, or nothing) and apply it. Errors are logged: events will tell."""
+        doing before, or nothing) and apply it; an item playing then has the queue read too
+        (apply, through _track_queued) and its lyrics. Errors are logged: events will
+        tell."""
         try:
             answer = await self._engine.now_playing()
         except EngineError as error:
@@ -152,19 +173,35 @@ class Player(GObject.Object):
             return
         self.apply(answer)
 
+    async def refresh_queue(self):
+        """Read the engine's queue() and apply it. Errors are logged."""
+        try:
+            answer = await self._engine.queue()
+        except EngineError as error:
+            log.debug('queue: %s', error)
+            return
+        self.apply_queue(answer)
+
     def apply(self, now_playing):
         """Set everything from a now-playing answer ({state, track, position, duration,
-        shuffle, repeat, volume}; a key left out is left alone), or reset to nothing
-        playing (None: the state, track and times; shuffle, repeat and the volume are
-        Apple's page's, kept across engine restarts, and the next refresh() reads them)."""
+        shuffle, repeat, volume}; a key left out is left alone; a `queue` snapshot and a
+        `lyrics` answer are taken too, the lyrics then not asked of the engine), or reset
+        to nothing playing (None: the state, track, times, queue and lyrics; shuffle,
+        repeat and the volume are Apple's page's, kept across engine restarts, and the
+        next refresh() reads them)."""
         if not isinstance(now_playing, dict):
             self._set_track(None)
             self._set_state('none')
             self._set_position(0.0, 0.0)
+            self.apply_queue(None)
             return
         data = now_playing
+        if 'queue' in data:  # before the track, which then finds itself in it
+            self.apply_queue(data.get('queue'))
         if 'track' in data:
-            self._set_track(data.get('track'))
+            self._set_track(data.get('track'), fetch_lyrics='lyrics' not in data)
+        if 'lyrics' in data:
+            self._set_lyrics(data.get('lyrics'))
         if 'state' in data:
             self._set_state(data.get('state'))
         if 'position' in data or 'duration' in data:
@@ -176,6 +213,40 @@ class Player(GObject.Object):
             self._set_repeat(data.get('repeat'))
         if 'volume' in data:
             self._set_volume(data.get('volume'))
+
+    def apply_queue(self, snapshot):
+        """Set the queue from a {index, items: [Track…]} snapshot (the bridge's queue()
+        answer and the queueItemsDidChange event), or empty it (None). Entries showing the
+        same items as before, in the same order, are kept (a repeated snapshot rebinds no
+        rows); the index is the snapshot's, or the track's place when it says -1."""
+        items = snapshot.get('items') if isinstance(snapshot, dict) else None
+        items = items if isinstance(items, list) else []
+        items = [item for item in items if isinstance(item, dict)]
+        entries = [NowPlaying(dict(item, index=position)) for position, item in enumerate(items)]
+        current = [entry.id for entry in self.queue]
+        if [entry.id for entry in entries] != current:
+            self.queue.splice(0, len(current), entries)
+        index = snapshot.get('index') if isinstance(snapshot, dict) else None
+        index = int(index) if isinstance(index, int) and not isinstance(index, bool) else -1
+        if index < 0 and self.track is not None:
+            index = self._index_of(self.track)
+        self._set_queue_index(index)
+
+    def _index_of(self, track):
+        """Where `track` is in the queue: at its own index when the entry there is it, else
+        the first entry with its id, else -1."""
+        count = self.queue.get_n_items()
+        if 0 <= track.index < count and self.queue.get_item(track.index).id == track.id:
+            return track.index
+        for position, entry in enumerate(self.queue):
+            if entry.id == track.id:
+                return position
+        return -1
+
+    def _set_queue_index(self, index):
+        index = index if 0 <= index < self.queue.get_n_items() else -1
+        if index != self.queue_index:
+            self.queue_index = index
 
     def _on_event(self, _engine, name, data):
         if name not in EVENTS:
@@ -202,6 +273,11 @@ class Player(GObject.Object):
             self._set_repeat(data.get('repeat'))
         elif name == 'playbackVolumeDidChange':
             self._set_volume(data.get('volume'))
+        elif name == 'queueItemsDidChange':
+            self.apply_queue(data)
+        elif name == 'queuePositionDidChange':
+            index = data.get('index')
+            self._set_queue_index(index if isinstance(index, int) else -1)
         elif name == 'mediaPlaybackError':
             message = _text(data.get('message')) or _('Playback failed')
             log.warning('playback error: %s', message)
@@ -214,7 +290,7 @@ class Player(GObject.Object):
         if state != self.state:
             self.state = state
 
-    def _set_track(self, data):
+    def _set_track(self, data, fetch_lyrics=True):
         if isinstance(data, dict):
             track = NowPlaying(data)
             current = self.track
@@ -223,9 +299,85 @@ class Player(GObject.Object):
             # A new item starts from the top; the time events correct this at once.
             self.track = track
             self._set_position(0.0, track.duration_ms / 1000 if track.duration_ms else None)
+            self._track_queued(track)
+            if fetch_lyrics:
+                self._want_lyrics(track)
         elif self.track is not None:
             self.track = None
             self._set_position(0.0, 0.0)
+            self._set_queue_index(-1)
+            self._cancel_lyrics()
+            self._set_lyrics(None)
+
+    def _track_queued(self, track):
+        """The item playing has changed: point the queue index at it, or read the queue
+        again when the entries held do not include it (a new queue whose items event was
+        missed, or came before the engine's connection)."""
+        index = self._index_of(track)
+        if index >= 0:
+            self._set_queue_index(index)
+        else:
+            self._set_queue_index(-1)
+            self._app.spawn(self.refresh_queue())
+
+    # -- lyrics ------------------------------------------------------------------------------
+
+    def _want_lyrics(self, track):
+        """Lyrics for the item playing: kept when they are the song's already (the same
+        song again, or repeat one), else asked of the engine as a task; none for an item
+        without a catalog id (a station's ad, say)."""
+        catalog_id = track.catalog_id
+        if self.lyrics is not None and self.lyrics.catalog_id == catalog_id:
+            return
+        if self._lyrics_task is not None and not self._lyrics_task.done():
+            if self._lyrics_wanted == catalog_id:
+                return
+        self._cancel_lyrics()
+        self._set_lyrics(None)
+        if not catalog_id:
+            return
+        self._set_lyrics_loading(True)
+        self._lyrics_wanted = catalog_id
+        self._lyrics_task = self._app.spawn(self._load_lyrics(catalog_id))
+
+    def _cancel_lyrics(self):
+        task, self._lyrics_task = self._lyrics_task, None
+        self._lyrics_wanted = None
+        if task is not None and not task.done():
+            task.cancel()
+        self._set_lyrics_loading(False)
+
+    async def _load_lyrics(self, catalog_id):
+        task = asyncio.current_task()
+        answer = None
+        try:
+            answer = await self._engine.lyrics(catalog_id)
+        except EngineError as error:
+            log.debug('lyrics: %s', error)
+        finally:
+            if self._lyrics_task is task:
+                self._lyrics_task = None
+                self._lyrics_wanted = None
+                self._set_lyrics_loading(False)
+        if self.track is not None and self.track.catalog_id == catalog_id:
+            self._set_lyrics(answer, catalog_id)
+
+    def _set_lyrics(self, answer, catalog_id=None):
+        """`answer` the engine's lyrics answer (no lines: no lyrics), or None."""
+        if isinstance(answer, Lyrics):
+            lyrics = answer
+        elif isinstance(answer, dict) and answer.get('lines'):
+            if catalog_id is None:
+                catalog_id = self.track.catalog_id if self.track is not None else ''
+            lyrics = Lyrics(answer, catalog_id)
+        else:
+            lyrics = None
+        if lyrics is not self.lyrics:
+            self.lyrics = lyrics
+
+    def _set_lyrics_loading(self, loading):
+        if loading != self.lyrics_loading:
+            self.lyrics_loading = loading
 
     def _set_position(self, position, duration=None):
         position = max(0.0, position)
@@ -327,6 +479,10 @@ class Player(GObject.Object):
 
     async def stop(self):
         await self._engine.control('stop')
+
+    async def queue_jump(self, index):
+        """Play the queue's entry at `index` (the Up Next list)."""
+        await self._engine.queue_jump(int(index))
 
     async def seek(self, seconds):
         await self._engine.seek(seconds)

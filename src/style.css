@@ -144,3 +144,68 @@ listview.shelf-list > row {
 .hero-tile.light-art {
   color: rgb(0 0 6 / 80%);
 }
+
+/* The Now Playing sheet (widgets/now_playing.blp): larger transport buttons than the bar's,
+   the play button largest; the lyrics as big bold lines, the current one at full opacity
+   (the others carry dim-label); the queue's rows as the detail pages' track rows. */
+.now-playing .play-button {
+  min-width: 56px;
+  min-height: 56px;
+  -gtk-icon-size: 24px;
+}
+
+.now-playing .skip-button {
+  min-width: 44px;
+  min-height: 44px;
+  -gtk-icon-size: 20px;
+}
+
+.now-playing scale {
+  margin: 0;
+  padding: 0;
+}
+
+/* No padding on the list itself: GTK scrolls a list's CSS padding with its rows, so the
+   adjustment's page would be the content box while the eye sees the padding box too, and
+   the sheet's centring of the current line works from that page. */
+listview.lyrics-list {
+  background: none;
+}
+
+listview.lyrics-list > row {
+  margin: 0 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+.lyric-line {
+  font-size: 1.35em;
+  font-weight: bold;
+  transition: opacity 200ms ease-out;
+}
+
+.lyric-line.current {
+  opacity: 1;
+}
+
+.lyrics-text {
+  font-size: 1.1em;
+  line-height: 1.5;
+}
+
+listview.queue-list {
+  background: none;
+  padding-bottom: 12px;
+}
+
+listview.queue-list > row {
+  margin: 0 6px;
+  padding: 8px 12px;
+  min-height: 24px;
+  border-radius: 8px;
+}
+
+/* Only the title: a Gtk.Inscription has the `label` CSS name too. */
+listview.queue-list > row .current .queue-title {
+  font-weight: bold;
+}

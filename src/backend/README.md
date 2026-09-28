@@ -84,6 +84,7 @@ Engine (phase 10) and the sync (phase 11), and are read in the app.
 | `shuffle on\|off\|toggle`, `repeat none\|one\|all\|cycle` | `{shuffle, repeat}` |
 | `now-playing` | `{state, track, position, duration, shuffle, repeat, volume}` |
 | `queue` | `{index, items: [Track…]}` |
+| (bridge only) `queueJump(index)` | `{ok: true}` — plays the queue's entry at `index` (`mk.changeToMediaAtIndex`); the app's Up Next list, phase 14 |
 | `love\|unlove <kind> <id>`, `add-to-library <kind> <id>` | `{ok: true}` |
 | `playlists`, `add-to-playlist <playlistId> <songId>` | `{items: [{id, title}]}`, `{ok: true}` |
 | `lyrics <catalogSongId>` | `{synced, lines: [{startMs, endMs, text}]}`, cached under `<cache>/lyrics/` |

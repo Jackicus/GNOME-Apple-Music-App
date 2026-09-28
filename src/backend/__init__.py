@@ -44,6 +44,7 @@ bridge.js
   posted through the CDP binding window.__amEvent as JSON {name, data}; the listeners are
   remembered in window.__appleMusicListeners so a repeat is a no-op and a newer bridge replaces
   an older one's. queue() is queueSnapshot(), shared with the queueItemsDidChange event.
+- (Phase 14) queueJump(index): mk.changeToMediaAtIndex, for the app's Up Next list.
 sync.py
 - Imports config; DEFAULT_ART_SIZES are config.COVER_SIZE/THUMB_SIZE, 640/320 (were 512/256).
   The art/.sizes marker and apply_art_sizes/load_art_sizes are unchanged.

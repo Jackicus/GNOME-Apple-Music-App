@@ -29,7 +29,8 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │ Window: AdwBottomSheet (content: AdwToastOverlay > AdwNavigationSplitView;       │
 │   bottom-bar: $AppleMusicPlayerBar, always shown, the content inset by its       │
-│   height; sheet: a "Now Playing" placeholder until phase 14*)                    │
+│   height; sheet: $AppleMusicNowPlayingSheet, opened by the bar, a swipe and      │
+│   app.now-playing; toasts go into it while it is open)                           │
 │   sidebar: AdwSidebar: sections.py's fixed items; the Playlists section bound to │
 │            a store of SidebarEntry (sidebar.py): All Playlists, Favourite Songs, │
 │            then library.playlist_tree() depth first, folders collapsible         │
@@ -47,6 +48,10 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   PlayerBar (player_bar.py): transport (app.previous/play-pause/next), the item  │
 │            playing with its artwork (Artwork.fetch_remote → remote-art/), seek   │
 │            slider and times, shuffle, repeat, volume; follows app.player only    │
+│   NowPlayingSheet (widgets/now_playing.py): 320 px artwork, titles, transport,   │
+│            seek (widgets/transport.py, shared with the bar), then Lyrics         │
+│            (widgets/lyrics.py: the current line by position, click seeks) and    │
+│            Up Next (widgets/queue.py: player.queue, activation jumps) tabs      │
 │ app.library: Item/Track GObjects in Gio.ListStores, loaded from library.json     │
 │   (parsed in a thread, wrapped in batches; the Songs store on request);          │
 │   --demo reads build/demo instead                                                │
@@ -57,14 +62,15 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   item() (a shelf item's groups, on demand), signin(), account_name();           │
 │   play/play_next/play_later/control/seek/volume/shuffle/repeat/now_playing/queue │
 │   MusicKit events ─► `event` signal ─► app.player (player.py: state, track,      │
-│   position, duration, shuffle, repeat, volume; never polled) ─► PlayerBar and    │
-│   app.mpris (mpris.py: org.mpris.MediaPlayer2.<app id> on the session bus, the   │
-│   Shell's media controls and the media keys; its methods run the Player)         │
+│   position, duration, shuffle, repeat, volume, queue + queue_index, lyrics       │
+│   (engine.lyrics() once per song, cached); never polled) ─► PlayerBar, the       │
+│   sheet and app.mpris (mpris.py: org.mpris.MediaPlayer2.<app id> on the session  │
+│   bus, the Shell's media controls and the media keys; its methods run the Player)│
 │   Sign-in: dialogs/signin.py (visible Chrome, then headless); the account button │
 │   and the "Sign in to see your library" banner follow the signed-in key          │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
 └──────────────────────────────────────────────────────────────────────────────────┘
-Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/, remote-art/ (+ lyrics/*)}
+Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/, remote-art/, lyrics/}
       $XDG_DATA_HOME/apple-music/chrome (the Chrome profile; chrome-devel for .Devel)
       engine.json (which Chrome is ours): $XDG_RUNTIME_DIR/apple-music/ for the release
       profile, inside the profile for any other                     GSettings: one schema
@@ -76,8 +82,8 @@ Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/, remote-ar
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
 src/main.py                    Application: app.* actions (quit, about, shortcuts, sign-in, sign-out,
-                               sync; play-pause, next, previous, shuffle, repeat, enabled while
-                               something plays), GSettings, logging and --debug, --demo
+                               sync, now-playing; play-pause, next, previous, shuffle, repeat,
+                               enabled while something plays), GSettings, logging and --debug, --demo
                                (app.demo), app.library, app.engine, app.player and app.mpris
                                (made in do_startup; the library loaded and the engine
                                autostarted in do_activate; MPRIS released in do_shutdown),
@@ -95,19 +101,30 @@ src/engine.py                  Engine (GObject: state down/starting/up/signing-i
                                signin, account_name; playback: play(kind, id, start_with,
                                shuffle), play_next, play_later, control(action), seek(s),
                                volume(level), shuffle(mode), repeat(mode), now_playing(),
-                               queue()); engine_paths(profile, port) (chrome-devel and port+1
-                               for the .Devel build), item_endpoint()
+                               queue(), queue_jump(index), lyrics(catalog_song_id) (kept
+                               under <cache>/lyrics/ when Apple had any; lyrics_answer()
+                               shapes the answer)); engine_paths(profile, port) (chrome-devel
+                               and port+1 for the .Devel build), item_endpoint()
 src/player.py                  Player (GObject, no GTK): state (MusicKit PlaybackStates name),
                                track (NowPlaying: id, catalog_id, title, artist, album,
                                duration_ms, artwork_url, index, explicit; or None), position,
                                duration, shuffle, repeat, volume, position_updated_at,
-                               active, estimated_position(); set only from the engine's events
-                               and one now_playing() refresh() when it comes up (apply(dict));
+                               active, estimated_position(); queue (a Gio.ListStore of
+                               NowPlaying, from queueItemsDidChange and queue() when the item
+                               playing is not in it) and queue_index; lyrics (a lyrics.Lyrics,
+                               asked of engine.lyrics() once per catalog song as it starts)
+                               and lyrics_loading; set only from the engine's events and one
+                               now_playing() refresh() when it comes up (apply(dict), which
+                               also takes `queue` and `lyrics`; apply_queue(snapshot));
                                commands play(play, start_with, shuffle) (starts a down engine
                                when signed in, else not-signed-in), toggle, pause, resume, next,
-                               previous, stop, seek, set_volume, set_shuffle, toggle_shuffle,
-                               set_repeat, cycle_repeat, play_next, play_later; `error` signal;
-                               format_time()
+                               previous, stop, queue_jump(index), seek, set_volume,
+                               set_shuffle, toggle_shuffle, set_repeat, cycle_repeat, play_next,
+                               play_later; `error` signal; format_time()
+src/lyrics.py                  Lyrics(answer, catalog_id): synced, lines (Gio.ListStore of
+                               LyricLine: start_ms, end_ms, text, in time order), text,
+                               index_at(seconds) (the last line started, -1 before the first),
+                               start_of(index); parse_lines(), line_index_at(); GObject only
 src/mpris.py                   Mpris(app): the org.mpris.MediaPlayer2.<application id> service
                                (Gio.bus_own_name; /org/mpris/MediaPlayer2 registered from
                                INTROSPECTION_XML with register_object_with_closures2), both
@@ -145,23 +162,46 @@ src/window.py + window.blp     Window: split view, sidebar (the Playlists sectio
                                open_shelf(shelf), play_request(play, start_with=None,
                                shuffle=False) → app.player.play (sign-in when signed out,
                                app.report otherwise), the bottom sheet (bottom_sheet,
-                               player_bar), the playback keys (PLAYBACK_KEYS: Space,
-                               Ctrl+Right, Ctrl+Left in a capture-phase key controller that
-                               leaves editables alone), win.back, toasts, window state,
-                               prepare_quit()
+                               player_bar, now_playing; toggle_now_playing(); add_toast()
+                               into the sheet while it is open), the playback keys
+                               (PLAYBACK_KEYS: Space, Ctrl+Right, Ctrl+Left in a capture-phase
+                               key controller that leaves editables alone), win.back, toasts,
+                               window state, prepare_quit()
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/sidebar.py                 the Playlists section's model: SidebarEntry (kind fixed/folder/
                                playlist, key, title, icon, depth, item, ancestors),
                                playlist_entries(tree), is_shown(), parse_key(), SidebarItem (an
                                Adw.SidebarItem holding its entry; a folder's arrow suffix)
 src/player_bar.py + .blp       $AppleMusicPlayerBar: the bottom sheet's bottom bar; set_player(player,
-                               app) once; previous/play-pause/next run the app actions, the
-                               seek Gtk.Scale (change-value, sent when the drag settles, stale
-                               positions ignored meanwhile), shuffle and repeat ToggleButtons
-                               (a click asks the Player, the events set them), a Gtk.ScaleButton
-                               volume; `compact` (the window's 600sp breakpoint) hides the
-                               volume and the times; "Not Playing" and everything insensitive
-                               without a track
+                               app) once; previous/play-pause/next run the app actions; the
+                               play button, seek scale, shuffle/repeat toggles and artwork are
+                               widgets/transport.py's helpers; a Gtk.ScaleButton volume;
+                               `compact` (the window's 600sp breakpoint) hides the volume and
+                               the times; "Not Playing" and everything insensitive without a
+                               track
+src/widgets/now_playing.py + .blp  $AppleMusicNowPlayingSheet: the bottom sheet's sheet; header
+                               with a close button (go-down-symbolic), a toast overlay, a clamp
+                               (900) holding the item playing (320 px AppleMusicCover, title-2,
+                               "Artist — Album", seek, shuffle/previous/play/next/repeat) and
+                               the Lyrics / Up Next Adw.ToggleGroup over a Gtk.Stack; `wide`
+                               (window breakpoint min-width 900sp: two columns) and `compact`
+                               (600sp: 240 px artwork); measures itself tall so the sheet fills
+                               the window; set_player(player, app, bottom_sheet)
+src/widgets/lyrics.py          $AppleMusicLyricsView (a Gtk.Stack, built in Python): synced
+                               lines in a Gtk.ListView over lyrics.lines (the current line
+                               `current`, the rest `dim-label`; a click seeks; the line glides
+                               to the middle when it changes, not for 4 s after the user
+                               scrolls), unsynced text in a label, a spinner, "No Lyrics";
+                               set_player(player, app), set_active(open)
+src/widgets/queue.py           $AppleMusicQueueView (a Gtk.Stack): Up Next, a Gtk.ListView over
+                               player.queue with QueueRow (number or play icon, title, artist,
+                               duration; the entry playing marked), activation →
+                               player.queue_jump(position); "Nothing Queued"
+src/widgets/transport.py       the transport pieces the bar and the sheet share: run_command(app,
+                               coro, on_error), track_subtitle(track), PlayButton, SeekControl
+                               (settle, hold and tolerance for a seek), ModeControl (shuffle and
+                               repeat toggles), RemoteCover (fetch_remote at the cover size);
+                               each `attach(player, app)`
 src/pages/__init__.py          PAGES: destination key → factory; create(destination, library);
                                playlist(library, id, title) and folder(library, id, title, root)
                                for the sidebar's playlists and folders
@@ -213,8 +253,8 @@ src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/action
 src/applemusic.gresource.xml   compiled .ui files (every .blp's, flat in build/src whatever its
                                source directory: window.ui, player_bar.ui, grid.ui, songs.ui,
                                detail.ui, artist.ui, home.ui, radio.ui, signin.ui, tile.ui,
-                               song_title.ui, cover.ui, track_row.ui, shelf.ui, hero_tile.ui),
-                               style.css, icons
+                               song_title.ui, cover.ui, track_row.ui, shelf.ui, hero_tile.ui,
+                               now_playing.ui), style.css, icons
 src/meson.build                blueprint list (one custom_target per .blp), gresource, install_data
                                lists (app .py; pages/, widgets/, dialogs/, backend/ each their own)
 src/backend/                   the engine layer: vendored from the extension plus this app's async
@@ -238,7 +278,7 @@ src/backend/                   the engine layer: vendored from the extension plu
                                client.py) and the extension's blocking client on them
   bridge.js                    injected into music.apple.com (window.__appleMusicLibrary); installed
                                as data beside the Python; subscribe() forwards MusicKit events through
-                               the window.__amEvent binding as {name, data}
+                               the window.__amEvent binding as {name, data}; queueJump(index)
   sync.py                      API answers → Item/Track, artwork cache (.sizes, scale_image hook,
                                download_art with progress/cancelled), library.json writing
                                (save_library under flock, atomic)
@@ -252,7 +292,8 @@ scripts/demo_library.py        invented library.json + drawn artwork (config siz
                                Favourite Songs (attributes.isFavourites); `folders`: three
                                playlist folders (l.fd002 inside l.fd001) and loose playlists
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
-                               fixtures/ holds invented API answers
+                               fixtures/ holds invented API answers (lyrics.json: invented
+                               synced lyrics for the tests and the --now-playing shot)
 pyproject.toml                 ruff config only (line length 100, E/F/W; vendored files exempt
                                from E501)
 build-aux/flatpak/*.Devel.json Flatpak manifest, GNOME 50 runtime (not installed locally)
@@ -275,7 +316,7 @@ scripts/check.sh          compileall, ruff (skipped if not installed), unit test
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
                           first when missing); no Chrome, no account. Use it for all UI work
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
-                      [--expand ID[,ID…]] [--signed-in [NAME]]
+                      [--expand ID[,ID…]] [--signed-in [NAME]] [--now-playing [lyrics|queue]]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
                           --demo as demo.sh (without it the real cache is read); waits for the
@@ -285,6 +326,11 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           folders ("first": the library's first). --open album:first (or
                           artist/playlist/station/video/folder, ID an id or "first") calls
                           window.open_item over the page and waits 1.5 s more for artwork.
+                          --now-playing (with --demo) puts the demo's first album on the
+                          Player (its first track playing 65 s in, the album as the queue,
+                          tests/fixtures/lyrics.json as synced lyrics, the cover copied to
+                          where fetch_remote would put it) and opens the sheet on Lyrics or
+                          Up Next.
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
                           playlists. --signed-in [NAME] shows the account button signed in
                           (memory-backend settings only; no engine)
@@ -388,8 +434,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - The backend is reached only through `app.engine` (`src/engine.py`; coroutines: `await
   app.engine.item(kind, id)`, `api(path, params)`, `api_pages(path, params, page=100)`,
   `api_all(paths)`, `play(kind, id, start_with, shuffle)`, `control(action)`, `seek()`,
-  `volume()`, `shuffle()`, `repeat()`, `now_playing()`, `queue()`), spawned from signal
-  handlers with `app.spawn(coro)`; playback goes through `app.player` (`src/player.py`), whose
+  `volume()`, `shuffle()`, `repeat()`, `now_playing()`, `queue()`, `queue_jump()`,
+  `lyrics()`), spawned from signal handlers with `app.spawn(coro)`; playback goes through
+  `app.player` (`src/player.py`), whose
   commands are thin coroutines over those (`app.player_command(coro)` spawns one and toasts
   its EngineError) and whose properties change only from the engine's `event` signal (the
   bar and MPRIS follow `notify::*`; nothing polls MusicKit). Errors are
@@ -501,7 +548,8 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   the window's *capture* phase, before the focus widget, so a bare key (Space) or an editing
   chord (Ctrl+Left) must not be an accelerator: the playback keys are `window.PLAYBACK_KEYS`,
   handled by a capture-phase `Gtk.EventControllerKey` on the window that skips editables and
-  disabled actions, and listed in the shortcuts dialog by hand.
+  disabled actions, and listed in the shortcuts dialog by hand. `app.now-playing`
+  (`<primary>n`) toggles the Now Playing sheet; Escape closes it (the sheet's own).
 - Style: 4-space Python, single quotes, no type-annotation ceremony, a docstring where a module or
   function is not obvious. New `.py` files go in `src/meson.build`'s `install_data` list.
 
@@ -629,8 +677,32 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   Clicking or swiping the bar opens the sheet (`can-open`); Escape and the sheet's own close
   the sheet. `bottom-bar-height` is 0 while the sheet is open, so the content grows under it.
 - Several `Adw.Breakpoint`s on the window: only the *last* matching one applies, so the
-  narrower breakpoint (600sp: `player_bar.compact`) repeats the wider one's setters
-  (640sp: the collapsed split view).
+  narrower breakpoint (600sp: `player_bar.compact`, `now_playing.compact`) repeats the wider
+  one's setters (640sp: the collapsed split view). The `min-width: 900sp` one
+  (`now_playing.wide`) is disjoint from both.
+- `Adw.BottomSheet` sizing (phase 14, measured with a probe): the sheet gets its child's
+  *natural* height, clamped to the window less a 30 px top margin (and never under its
+  minimum), so a full-height sheet asks for a tall natural height (`NowPlayingSheet`,
+  `SHEET_NATURAL_HEIGHT`). The sheet child is mapped and laid out (at that minimum) while
+  the sheet is closed, and keeps that geometry for a frame or two after `open` is set, so
+  work that depends on the open size waits for the adjustment's `changed`. Escape is a
+  local-scope `Gtk.ShortcutController` on the sheet's inner gizmo (`observe_controllers()`
+  down the tree), which the modal sheet's focus satisfies.
+- A Python `do_measure` on an `Adw.Bin` (or any widget with a layout manager) is never
+  called: `gtk_widget_measure` asks the layout manager first. Drop it
+  (`set_layout_manager(None)`) and implement both `do_measure` and `do_size_allocate`.
+- CSS padding on a `Gtk.ListView` scrolls with its rows and is outside the adjustment's page
+  (`get_height()` is the content box: 615 px of scrolled window gave a 443 px page with
+  172 px of padding), so a list whose geometry is computed from (`compute_bounds` to the
+  list, the page size) carries no padding; pad with margins around it. A `scroll_to` asked
+  from inside the adjustment's `changed` handler (the list's allocation) is lost: defer it
+  to an idle.
+- A `Gtk.Stack` will not switch to a child that is not visible (make it visible first);
+  `Gtk.Inscription` has the `label` CSS name, so a `label` selector styles it too;
+  `Adw.ToggleGroup { Adw.Toggle { name: …; label: …; } }` compiles with Blueprint 0.22;
+  GtkBuilder never runs a Python widget's `__init__`, so a template's custom children that
+  build themselves in Python (the sheet's LyricsView and QueueView) are made in the
+  template class's `__init__` and added there.
 - `screenshot.py --signed-in` also turns `engine-autostart` off in its memory settings: with
   it on, the shot's app started a real headless Chrome on the *release* profile and port
   (`profile` is `default` there), which is never wanted from a screenshot.

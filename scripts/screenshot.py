@@ -3,6 +3,7 @@
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
+                          [--now-playing [lyrics|queue]]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -23,12 +24,17 @@ sidebar (the expanded-folders setting); "first" is the library's first folder.
 --signed-in shows the account button as signed in (the signed-in and account-name
 settings, in the memory backend only), with NAME on it when given; the engine is
 never started here.
+--now-playing puts an invented item on the Player (the first track of the demo
+library's first album, playing, its queue the album, the synced lyrics of
+tests/fixtures/lyrics.json, the album's cover as its artwork) and opens the Now
+Playing sheet on its Lyrics tab, or on Up Next with "queue". With --demo only.
 """
 
 import argparse
 import gettext
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -48,7 +54,12 @@ parser.add_argument('--expand', metavar='ID[,ID…]', default='',
                     help='expand these playlist folders in the sidebar ("first": the first one)')
 parser.add_argument('--signed-in', metavar='NAME', nargs='?', const='',
                     help='show the account as signed in, as NAME when given')
+parser.add_argument('--now-playing', metavar='TAB', nargs='?', const='lyrics',
+                    choices=['lyrics', 'queue'],
+                    help='an invented item playing, the Now Playing sheet open on TAB')
 args = parser.parse_args()
+if args.now_playing and not args.demo:
+    parser.error('--now-playing needs --demo')
 width, height = (int(n) for n in args.size.split('x'))
 
 demo_dir = os.path.join(root, 'build', 'demo')  # what the launcher passes as DEMO_DIR
@@ -118,6 +129,49 @@ def on_activate(_app):
 SECTIONS = {'album': 'albums', 'artist': 'artists', 'playlist': 'playlists', 'station': 'radio',
             'video': 'videos'}
 opened = False
+sheet_opened = False
+
+# --now-playing: the invented item's artwork URL. Its cover is copied to where
+# Artwork.fetch_remote would put this URL's 640 px image, so nothing is fetched.
+DEMO_ART_URL = 'https://example.invalid/demo-art/{w}x{h}bb.jpg'
+NOW_PLAYING_POSITION = 65.0  # seconds in: a line of the fixture is current, mid-song
+
+
+def now_playing_state():
+    """The Player.apply() dict for --now-playing: the demo library's first album as the
+    queue, its first track playing, with the lyrics fixture."""
+    from applemusic.backend import config
+    from applemusic.widgets.artwork import remote_art_path
+
+    album = app.library.albums.get_item(0)
+    if album is None:
+        sys.exit('screenshot: the demo library has no album')
+    groups = album.raw.get('groups') or []
+    entries = [dict(entry) for group in groups for entry in group.get('entries') or []]
+    if not entries:
+        sys.exit('screenshot: the demo album has no tracks')
+    for position, entry in enumerate(entries):
+        entry['artUrl'] = DEMO_ART_URL
+        entry['index'] = position
+    art_path = remote_art_path(DEMO_ART_URL, config.COVER_SIZE)
+    if album.art and art_path and not os.path.exists(art_path):
+        os.makedirs(os.path.dirname(art_path), exist_ok=True)
+        shutil.copyfile(album.art, art_path)
+    with open(os.path.join(root, 'tests', 'fixtures', 'lyrics.json'), encoding='utf-8') as file:
+        lyrics = json.load(file)
+    return {
+        'state': 'playing', 'track': entries[0], 'position': NOW_PLAYING_POSITION,
+        'duration': entries[0].get('durationMs', 0) / 1000, 'shuffle': 'off',
+        'repeat': 'none', 'volume': 0.7, 'queue': {'index': 0, 'items': entries},
+        'lyrics': lyrics,
+    }
+
+
+def open_now_playing(window):
+    """--now-playing: the invented item on the Player and the sheet open on the tab."""
+    app.player.apply(now_playing_state())
+    window.now_playing.tabs.set_active_name(args.now_playing)
+    window.bottom_sheet.set_open(True)
 
 
 def open_item(window):
@@ -133,7 +187,7 @@ def open_item(window):
 
 
 def shoot():
-    global opened
+    global opened, sheet_opened
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -148,6 +202,11 @@ def shoot():
         opened = True
         open_item(window)
         GLib.timeout_add(1500, shoot)  # after the push, with the artwork decoded
+        return GLib.SOURCE_REMOVE
+    if args.now_playing and not sheet_opened:
+        sheet_opened = True
+        open_now_playing(window)
+        GLib.timeout_add(1500, shoot)  # the sheet open, the artwork decoded
         return GLib.SOURCE_REMOVE
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()
