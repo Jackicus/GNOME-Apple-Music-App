@@ -29,7 +29,6 @@ from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic pac
 
 from gi.events import GLibEventLoop
 
-from applemusic import cache as cache_module
 from applemusic import engine as engine_module
 from applemusic.backend import chrome, normalize, store
 from applemusic.backend import client as client_module
@@ -789,6 +788,9 @@ class LifecycleTest(EngineFixture):
                          ['Overpass'])
         self.assertEqual(fetched, [str(self.cache)])
         self.assertFalse((self.cache / 'items').exists())  # nothing reads an item back
+        # Its artwork goes where the library's pruning cannot take it from an open page.
+        self.assertEqual(os.path.dirname(item['art']), str(self.cache / 'remote-art'))
+        self.assertEqual(os.path.dirname(item['thumb']), str(self.cache / 'remote-art'))
 
     async def test_item_library_ids_go_to_the_library_and_a_miss_is_api(self):
         self.page.authorized = True
@@ -1001,13 +1003,36 @@ class PlaybackTest(EngineFixture):
             {'startMs': 4000, 'endMs': 6000, 'text': 'Out on the water'}]})
         path = self.cache / 'lyrics' / '1000000001.json'
         self.assertTrue(path.is_file())
-        self.assertEqual(json.loads(path.read_text(encoding='utf-8')), lyrics)
+        kept = json.loads(path.read_text(encoding='utf-8'))
+        self.assertIn('cached', kept)  # stamped: lyrics expire
+        self.assertEqual({key: kept[key] for key in ('synced', 'lines')}, lyrics)
         # Again: from the file, no bridge call, and no engine needed.
         self.page.bridge_answers['lyrics'] = {'synced': False, 'lines': []}
         self.assertEqual(await self.engine.lyrics('1000000001'), lyrics)
         await self.engine.stop()
         self.assertEqual(await self.engine.lyrics('1000000001'), lyrics)
         self.assertEqual(self.page.bridge_calls, [('lyrics', '1000000001')])
+
+    async def test_lyrics_expire_and_a_hit_marks_them_played(self):
+        await self.up()
+        answer = {'synced': False, 'lines': [{'startMs': 0, 'endMs': 0, 'text': 'Tide'}]}
+        self.page.bridge_answers['lyrics'] = answer
+        await self.engine.lyrics('1000000003')
+        path = self.cache / 'lyrics' / '1000000003.json'
+        os.utime(path, (1000, 1000))
+        await self.engine.lyrics('1000000003')  # kept: no new call, and marked as played
+        self.assertEqual(len(self.page.bridge_calls), 1)
+        self.assertGreater(path.stat().st_mtime, 1000)
+        # Fetched longer ago than a month: asked again.
+        kept = json.loads(path.read_text())
+        kept['cached'] = '2020-01-01T00:00:00Z'
+        path.write_text(json.dumps(kept))
+        await self.engine.lyrics('1000000003')
+        self.assertEqual(len(self.page.bridge_calls), 2)
+        # A file an older version wrote, without a stamp, is asked again too.
+        path.write_text(json.dumps(answer))
+        await self.engine.lyrics('1000000003')
+        self.assertEqual(len(self.page.bridge_calls), 3)
 
     async def test_no_lyrics_are_not_kept(self):
         await self.up()
@@ -1492,7 +1517,8 @@ class KeptAfterWipeTest(unittest.TestCase):
                                                str(cache / 'browse.json'), str(cache),
                                                generation)
         self.assertEqual(answer['shelves'], [])
-        cache_module.write_json(cache / 'lyrics' / '1.json', {'lines': []}, cache, generation)
+        normalize.write_answer(str(cache / 'lyrics' / '1.json'), {'lines': []}, str(cache),
+                               generation)
         self.assertEqual(list(cache.iterdir()), [])
 
 

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import UTC, datetime
 
 from . import config, store
@@ -24,8 +25,17 @@ log = logging.getLogger(__name__)
 Cancelled = store.Cancelled
 
 # How long a kept answer (landing, a category, the New page, Made for You) is answered from
-# the cache before Apple is asked again.
+# the cache before Apple is asked again, and a song's lyrics (Apple replaces plain lyrics with
+# synced ones, and corrects them).
 ANSWER_MAX_AGE = 24 * 60 * 60
+LYRICS_MAX_AGE = 30 * 24 * 60 * 60
+
+# What prune_caches() leaves of the caches that only grow: the covers the pages fetch
+# themselves, and the lyrics of the songs played last.
+REMOTE_ART_BUDGET = 32 * 1024 * 1024
+LYRICS_KEEP = 2000
+# The day-long answers in the cache's top folder, beside categories/.
+KEPT_ANSWERS = ('landing.json', 'browse.json', 'made-for-you.json')
 
 # Scaling a cached cover down to its thumbnail, without fetching it again,
 # takes an image library, and nothing in the backend imports gi. The app
@@ -345,6 +355,39 @@ class _FetchError(Exception):
 # names the file; nothing is fetched until download_art() runs over a finished library (or
 # download_item_art() over one item), so a sync's hundreds of downloads happen together, in
 # threads, rather than one at a time in the middle of building each item.
+
+
+def place_in_remote_art(item, art_urls, cache_dir):
+    """Point an item fetched on demand (the engine's item(): a catalog album, playlist or
+    artist, mostly not in the library) at <cache>/remote-art/ for the artwork the library
+    does not have on disk. art/ and thumb/ belong to library.json and are pruned against it
+    after every sync, which would take the files from under an open page; remote-art/ is
+    trimmed only to its budget. Each file is named after its URL's hash, as the pages' own
+    remote art is (widgets.artwork.remote_art_path), so the player bar and a page share one.
+    Rewrites the item's `art`, `thumb` and rows' `thumb` in place and returns the registry of
+    what it points at: {path: url}, for download_item_art."""
+    remote = os.path.join(cache_dir, 'remote-art')
+    placed = {}
+
+    def place(path):
+        url = art_urls.get(path) if path else None
+        if url is None:
+            return path
+        if not _art_missing(path):
+            placed[path] = url  # the library's copy, on disk already
+            return path
+        moved = os.path.join(remote, artwork_filename(url))
+        placed[moved] = url
+        return moved
+
+    for key in ('art', 'thumb'):
+        if item.get(key):
+            item[key] = place(item[key])
+    for group in item.get('groups') or []:
+        for entry in group.get('entries') or []:
+            if isinstance(entry, dict) and entry.get('thumb'):
+                entry['thumb'] = place(entry['thumb'])
+    return placed
 
 
 def _is_thumb_path(path, cache_dir):
@@ -1600,7 +1643,7 @@ def save_library(library_data, cache_dir, indent=2, generation=None):
 # ---------------------------------------------------------------------------
 
 
-def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
+def prune_remote_art(cache_dir, max_bytes=REMOTE_ART_BUDGET):
     """Trim <cache_dir>/remote-art/ — the covers the pages fetch themselves
     (a search hit's, the player's, a category's picture) — to `max_bytes`,
     keeping the newest by mtime. Nothing else ever removes them. Returns
@@ -1638,6 +1681,70 @@ def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
         except OSError as error:
             log.debug('remote art: %s', error)
     return pruned
+
+
+def prune_caches(cache_dir, now=None, remote_bytes=REMOTE_ART_BUDGET, lyrics_keep=LYRICS_KEEP,
+                 answer_age=ANSWER_MAX_AGE):
+    """Trim the caches nothing else trims (in a thread, at startup and after a sync):
+    remote-art/ to `remote_bytes` (prune_remote_art), lyrics/ to the
+    `lyrics_keep` played last (by mtime: a cache hit touches the file), the kept answers
+    (categories/, landing, New, Made for You) stamped longer than `answer_age` ago (by mtime,
+    when they were written), an items/ folder older versions kept, and the temporary files
+    of writes a crash cut short (store.is_stale_temp) in the cache and its folders. Returns
+    {what: how many went}. art/ and thumb/ are the library's: prune_art keeps them."""
+    now = time.time() if now is None else now
+    gone = {'remote-art': prune_remote_art(cache_dir, remote_bytes), 'lyrics': 0,
+            'answers': 0, 'items': 0, 'temps': 0}
+
+    def files(folder):
+        try:
+            with os.scandir(folder) as entries:
+                return [entry for entry in entries if entry.is_file(follow_symlinks=False)]
+        except FileNotFoundError:
+            return []
+        except OSError as error:
+            log.debug('prune: %s', error)
+            return []
+
+    for folder in (cache_dir, *(os.path.join(cache_dir, name) for name in
+                                ('art', 'thumb', 'remote-art', 'lyrics', 'categories'))):
+        for entry in files(folder):
+            if store.is_stale_temp(entry.path, now) and _remove(entry.path):
+                gone['temps'] += 1
+
+    lyrics = [entry for entry in files(os.path.join(cache_dir, 'lyrics'))
+              if not store.is_temp(entry.name)]
+    lyrics.sort(key=_mtime, reverse=True)
+    for entry in lyrics[max(0, lyrics_keep):]:
+        if _remove(entry.path):
+            gone['lyrics'] += 1
+
+    answers = [entry for entry in files(os.path.join(cache_dir, 'categories'))
+               if not store.is_temp(entry.name)]
+    answers += [entry for entry in files(cache_dir) if entry.name in KEPT_ANSWERS]
+    for entry in answers:
+        if now - _mtime(entry) > answer_age and _remove(entry.path):
+            gone['answers'] += 1
+
+    items = os.path.join(cache_dir, 'items')
+    if os.path.isdir(items) and not os.path.islink(items):
+        import shutil
+        try:
+            gone['items'] = sum(len(names) for _root, _dirs, names in os.walk(items))
+            shutil.rmtree(items)
+        except OSError as error:
+            log.debug('prune: %s', error)
+    if any(gone.values()):
+        log.info('caches pruned: %s', ', '.join(f'{count} {what}'
+                                               for what, count in gone.items() if count))
+    return gone
+
+
+def _mtime(entry):
+    try:
+        return entry.stat(follow_symlinks=False).st_mtime
+    except OSError:
+        return 0
 
 
 def _remove(path):

@@ -14,6 +14,7 @@ UI awaits.
     await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
     await engine.api_all(paths)         # several reads at once; a failed one is None
     await engine.item(kind, id)         # a full Item with its groups, its artwork fetched
+                                        # (into <cache>/remote-art/ unless the library has it)
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.account_name()         # the name on the page, or '' (best effort)
     await engine.play(kind, id, start_with=None, shuffle=False)   # mk.setQueue + mk.play
@@ -25,7 +26,7 @@ UI awaits.
     await engine.queue()         # {index, items: [Track…]}
     await engine.queue_jump(3)   # play the queue's entry at index 3 (mk.changeToMediaAtIndex)
     await engine.lyrics(catalog_song_id)   # {synced, lines: [{startMs, endMs, text}]},
-                                           # from <cache>/lyrics/ when fetched before
+                                           # from <cache>/lyrics/ when fetched this month
     await engine.love('song', id); await engine.unlove('album', id)   # the rating, set or gone
     await engine.rating('song', id)        # 1 loved, -1 disliked, 0 neither
     await engine.add_to_library('album', catalog_id)
@@ -203,11 +204,17 @@ def album_endpoint(album_id, storefront):
 
 
 def _shape_item(raw, cache_dir, generation):
-    """In a thread: the API's resource as an Item with groups, its artwork fetched (for the
-    cache of `generation`: store.py)."""
+    """In a thread: the API's resource as an Item with groups, its artwork fetched into
+    <cache>/remote-art/ (normalize.place_in_remote_art; for the cache of `generation`:
+    store.py)."""
     art_urls = {}
     item = normalize.normalize_item(raw, cache_dir, include_groups=True, art_urls=art_urls)
-    normalize.download_item_art(item, cache_dir, art_urls, generation=generation)
+    return _fetch_item_art(item, art_urls, cache_dir, generation)
+
+
+def _fetch_item_art(item, art_urls, cache_dir, generation):
+    placed = normalize.place_in_remote_art(item, art_urls, cache_dir)
+    normalize.download_item_art(item, cache_dir, placed, generation=generation)
     return item
 
 
@@ -223,8 +230,7 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir, generation):
         albums.append(data[0] if isinstance(data, list) and data else stub)
     art_urls = {}
     item = normalize.normalize_artist(artist, cache_dir, albums=albums, art_urls=art_urls)
-    normalize.download_item_art(item, cache_dir, art_urls, generation=generation)
-    return item
+    return _fetch_item_art(item, art_urls, cache_dir, generation)
 
 
 def _page_data(answer):
@@ -1091,24 +1097,26 @@ class Engine(GObject.Object):
 
     async def lyrics(self, catalog_song_id):
         """A catalog song's lyrics: {synced, lines: [{startMs, endMs, text}]} (lyrics_answer's
-        shape), from <cache>/lyrics/<id>.json when they were fetched before (no engine
-        needed then), else through the bridge (the catalog's TTML, parsed in the page) and
-        kept there when Apple had any. No lyrics ({synced: False, lines: []}) is also what
-        the page answers when Apple refuses (no subscription, a network failure), so an empty
-        answer is not kept: the next play asks again."""
+        shape), from <cache>/lyrics/<id>.json when they were fetched in the last
+        normalize.LYRICS_MAX_AGE (no engine needed then; the read marks the file as played,
+        for prune_caches), else through the bridge (the catalog's TTML, parsed in the page)
+        and kept there, stamped, when Apple had any. No lyrics ({synced: False, lines: []})
+        is also what the page answers when Apple refuses (no subscription, a network
+        failure), so an empty answer is not kept: the next play asks again."""
         generation = store.cache_generation()
         catalog_song_id = str(catalog_song_id or '')
         if not CATALOG_ID_RE.fullmatch(catalog_song_id):
             raise EngineError('usage', 'lyrics need a catalog song id')
         path = self.lyrics_path(catalog_song_id)
-        cached = await asyncio.to_thread(cache.read_json, path)
-        if isinstance(cached, dict) and cached.get('lines'):
+        cached = await asyncio.to_thread(cache.read_kept, path, normalize.LYRICS_MAX_AGE, True)
+        if cached is not None and cached.get('lines'):
             return lyrics_answer(cached)
         client = await self._ready()
         answer = lyrics_answer(
             await client.bridge('lyrics', catalog_song_id, timeout=LYRICS_TIMEOUT))
         if answer['lines']:
-            await asyncio.to_thread(cache.write_json, path, answer, self.cache_dir, generation)
+            await asyncio.to_thread(normalize.write_answer, str(path), answer,
+                                    str(self.cache_dir), generation)
         return answer
 
     # -- ratings and the library ---------------------------------------------------------

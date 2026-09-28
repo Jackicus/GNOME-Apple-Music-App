@@ -5,10 +5,10 @@ JSON answers kept in it. No GTK; every function blocks, so call it in a thread.
     removed = await asyncio.to_thread(clear, config.cache_dir())
     answer = await asyncio.to_thread(read_kept, path)   # a kept answer under a day old, or None
 
-Every file in it is written through backend/store.py; what is here reads and removes.
+Every file in it is written through backend/store.py (normalize.write_answer for the kept
+answers and lyrics); what is here reads and removes. normalize.prune_caches trims it.
 """
 
-import json
 import logging
 import os
 import shutil
@@ -77,27 +77,16 @@ def clear(path):
     return removed
 
 
-def read_json(path):
-    """The JSON at path, or None when it is not there or not JSON."""
-    try:
-        with open(path, encoding='utf-8') as file:
-            return json.load(file)
-    except (OSError, ValueError):
-        return None
-
-
-def write_json(path, data, root, generation=None):
-    """`data` as JSON at path (under the cache `root`), atomically, the directory made first,
-    unless the cache was cleared since `generation`; a failure is logged."""
-    try:
-        store.atomic_write(path, lambda file: json.dump(data, file, ensure_ascii=False),
-                           root=root, text=True, generation=generation)
-    except (OSError, ValueError) as error:
-        log.warning('could not keep %s: %s', path, error)
-
-
-def read_kept(path, max_age=normalize.ANSWER_MAX_AGE):
+def read_kept(path, max_age=normalize.ANSWER_MAX_AGE, touch=False):
     """The answer kept at path (normalize.write_answer's, stamped `cached`) when it is younger
-    than `max_age` seconds, else None."""
+    than `max_age` seconds, else None. With `touch`, a hit sets the file's mtime to now, so
+    the pruner keeps what was used last (the lyrics)."""
     answer = normalize.read_answer(path, max_age)
-    return answer if isinstance(answer, dict) else None
+    if not isinstance(answer, dict):
+        return None
+    if touch:
+        try:
+            os.utime(path)
+        except OSError as error:
+            log.debug('kept answer %s: %s', path, error)
+    return answer

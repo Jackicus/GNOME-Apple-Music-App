@@ -166,14 +166,20 @@ listing never lands ahead of its covers. Every file here is written through
 and the kept answers fsync'd first), so a reader never sees half a file. A track row plays `group.play`
 with `--start-with entry.index`.
 
-Beside these, `<cache>/remote-art/` holds what the shell fetches for itself
-(a search hit's cover, the player's, a category's picture; `lib/playerUtil.js`),
-trimmed to 32 MB by mtime at the end of each sync; `<cache>/landing.json`
+Beside these, `<cache>/remote-art/` holds the artwork the pages fetch for
+themselves (a search hit's cover, the player's, a category's picture) and that
+of an item fetched on demand (`Engine.item()`, through
+`normalize.place_in_remote_art`: art/ and thumb/ are pruned against
+library.json), each named after its URL's hash; `<cache>/landing.json`
 and `<cache>/categories/` hold the answers above,
 each stamped `cached` (the app adds `browse.json`, the New page's editorial
 groupings as shelves, and `made-for-you.json`, the recommendations made of
 personal mixes and stations, kept the same way); `<cache>/lyrics/` the
-lyrics fetched.
+lyrics fetched, stamped too and fetched again after 30 days.
+`normalize.prune_caches()` trims them: remote-art/ to 32 MB by mtime, lyrics/
+to the 2,000 played last (a cache hit touches the file), the kept answers once
+past their day, an `items/` folder older versions kept, and the temporary files
+of writes a crash cut short.
 
 Every `am.py` command is a process of its own, so what is imported at load
 is paid on every one: PyGObject, urllib and the thread pool are imported
