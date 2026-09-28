@@ -255,12 +255,13 @@ sit on it.
   (pending calls included); a bad message or payload, or a handler that
   raises, is logged and skipped. Answers of 512 KB and more are parsed in a
   thread, in order.
-- **`scripts/am.py`** — the debug CLI: `status`, `start [--visible]`,
-  `stop`, `eval <js>`, `now-playing`, `events`. Same configuration as the
-  app (`config.py`, so 9228 and `$XDG_DATA_HOME/apple-music/chrome` unless
-  overridden). Starts Chrome with a plain `Popen` in its own session: an
-  asyncio subprocess transport kills its child when garbage-collected, i.e.
-  when the command exits.
+- **`scripts/am.py`** — the debug CLI: `status`, `eval <js>`,
+  `now-playing`, `events`. By default each command starts a Chrome of its
+  own on the app's profile through the app's `Engine` (the pipe, on the
+  GLib-backed loop) and stops it at the end; it refuses while the app's
+  Chrome holds the profile. `--attach PORT` drives the running app through
+  the DevTools port `APPLE_MUSIC_DEBUG_PORT` opened, over
+  `WebSocketTransport`.
 
 ### Events
 

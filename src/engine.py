@@ -450,6 +450,12 @@ class Engine(GObject.Object):
         return self._pid
 
     @property
+    def client(self):
+        """The CDPClient while the engine is up (scripts/am.py drives the page through it),
+        else None."""
+        return self._client if self.state in ('up', 'signing-in') else None
+
+    @property
     def cache_dir(self):
         return config.cache_dir()
 
