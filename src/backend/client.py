@@ -24,12 +24,13 @@ events, the bridge.
 The client always talks to the browser endpoint and reaches the page through the session
 `Target.attachToTarget({flatten: true})` answers, so a pipe and a WebSocket behave alike. The
 connection counts as lost (pending calls fail, `wait_closed()` returns) when the transport
-closes, and also when the page goes away while Chrome runs on: the engine then goes down and
-the next command starts a fresh Chrome.
+closes, and also when the page crashes or goes away while Chrome runs on: the engine then goes
+down and the next command starts a fresh Chrome.
 
 Every failure is an EngineError: 'engine-down' for a lost or refused connection, 'timeout' when
 Chrome does not answer in time, 'api' for a CDP error or a JS exception. Nothing here blocks:
-the pipes and the socket are asyncio's, bridge.js is read in a thread.
+the pipes and the socket are asyncio's; bridge.js and big answers are read and parsed in a
+thread.
 """
 
 import asyncio
@@ -37,6 +38,7 @@ import collections
 import hashlib
 import json
 import logging
+import math
 import os
 
 from . import chrome, config
@@ -59,7 +61,11 @@ EVENT_PREFIX = 'am:'    # bridge events are dispatched as 'am:<MusicKit event na
 GLOBAL = 'window.__appleMusicLibrary'
 BRIDGE_TIMEOUT = 15.0   # how long the page gets to load MusicKit
 PAGE_WAIT = 15.0        # how long a new Chrome gets to show music.apple.com
+BIG_MESSAGE = 512 * 1024  # answers at least this long are parsed in a thread
 READ_CHUNK = 1 << 20
+
+# What evaluate() answers for the values JSON cannot carry (Runtime's unserializableValue).
+UNSERIALIZABLE = {'NaN': math.nan, 'Infinity': math.inf, '-Infinity': -math.inf, '-0': -0.0}
 
 
 def load_bridge():
@@ -68,6 +74,18 @@ def load_bridge():
     source = config.BRIDGE_JS.read_text(encoding='utf-8')
     version = hashlib.sha1(source.encode('utf-8')).hexdigest()[:12]
     return f'window.__appleMusicLibraryWanted = {json.dumps(version)};\n{source}', version
+
+
+def unserializable(text):
+    """A value Runtime.evaluate could only describe: NaN, ±Infinity, -0 or a BigInt ('5n')."""
+    if text in UNSERIALIZABLE:
+        return UNSERIALIZABLE[text]
+    if isinstance(text, str) and text.endswith('n'):
+        try:
+            return int(text[:-1])
+        except ValueError:
+            pass
+    return text
 
 
 # -- transports ------------------------------------------------------------------------------
@@ -325,6 +343,8 @@ class CDPClient:
 
     async def connect(self, transport):
         """Open `transport` (Chrome's browser endpoint) and start reading from it."""
+        if self._transport is not None or self._reader_task is not None:
+            raise RuntimeError('this CDPClient is connected already; make a new one')
         try:
             await transport.open()
         except BaseException:
@@ -338,17 +358,21 @@ class CDPClient:
         """Find the music.apple.com page, attach to it as a session and prepare it for the
         bridge. Chrome shows the page a moment after it starts, so it is waited for up to
         `wait` seconds; then a page showing something else is sent to music.apple.com, and
-        with no page at all one is opened."""
-        target_id, navigate = await self._find_page(wait)
-        answer = await self.call('Target.attachToTarget',
-                                 {'targetId': target_id, 'flatten': True}, browser=True)
-        session = answer.get('sessionId')
-        if not isinstance(session, str) or not session:
-            raise EngineError('engine-down', 'Chrome gave no session for the page')
-        self._target, self._session = target_id, session
-        await self._prepare()
-        if navigate:
-            await self.call('Page.navigate', {'url': chrome.START_URL})
+        with no page at all one is opened. The connection is closed on failure."""
+        try:
+            target_id, navigate = await self._find_page(wait)
+            answer = await self.call('Target.attachToTarget',
+                                     {'targetId': target_id, 'flatten': True}, browser=True)
+            session = answer.get('sessionId')
+            if not isinstance(session, str) or not session:
+                raise EngineError('engine-down', 'Chrome gave no session for the page')
+            self._target, self._session = target_id, session
+            await self._prepare()
+            if navigate:
+                await self.call('Page.navigate', {'url': chrome.START_URL})
+        except BaseException:
+            await self.close()
+            raise
 
     async def _find_page(self, wait):
         """(targetId, whether it must be sent to music.apple.com)."""
@@ -382,9 +406,10 @@ class CDPClient:
 
     async def _prepare(self):
         """The domains and the binding the bridge needs; the main frame, whose new documents
-        get the bridge again."""
+        get the bridge again. Inspector reports a crash of the page."""
         await self.call('Runtime.enable')
         await self.call('Page.enable')
+        await self.call('Inspector.enable')
         await self.call('Runtime.addBinding', {'name': BINDING})
         tree = await self.call('Page.getFrameTree')
         self._main_frame = ((tree.get('frameTree') or {}).get('frame') or {}).get('id')
@@ -417,8 +442,8 @@ class CDPClient:
                 future.set_exception(error)
 
     def _lost(self, reason):
-        """The connection went away under us: Chrome quit or was killed, or the page closed.
-        Pending calls fail and the reader ends."""
+        """The connection went away under us: Chrome quit or was killed, or the page crashed
+        or closed. Pending calls fail and the reader ends."""
         if self._transport is None:
             return
         self._closed = True
@@ -439,11 +464,17 @@ class CDPClient:
                 if payload is None:
                     break
                 try:
-                    message = json.loads(payload)
+                    if len(payload) >= BIG_MESSAGE:  # a big answer: the loop keeps drawing
+                        message = await asyncio.to_thread(json.loads, payload)
+                    else:
+                        message = json.loads(payload)
                 except ValueError:
                     log.warning('CDP: undecodable message of %d bytes', len(payload))
                     continue
-                self._dispatch(message)
+                try:
+                    self._dispatch(message)
+                except Exception:
+                    log.exception('CDP: a message could not be handled')
         except asyncio.CancelledError:
             raise
         except (OSError, EngineError) as e:
@@ -530,12 +561,38 @@ class CDPClient:
         if 'exceptionDetails' in result:
             raise EngineError('api', exception_message(result['exceptionDetails']))
         value = result.get('result')
-        return value.get('value') if isinstance(value, dict) else None
+        if not isinstance(value, dict):
+            return None
+        if 'unserializableValue' in value:
+            return unserializable(value['unserializableValue'])
+        return value.get('value')
 
     async def bridge(self, method, *args, timeout=None):
-        """`window.__appleMusicLibrary.<method>(*args)`, the arguments as JSON."""
-        call = ', '.join(json.dumps(arg) for arg in args)
-        return await self.evaluate(f'{GLOBAL}.{method}({call})', timeout=timeout)
+        """`window.__appleMusicLibrary.<method>(*args)`, the arguments as JSON. A call made
+        while the bridge is being put back after a navigation waits for it; one that finds
+        the bridge gone (a TypeError from the page before the re-injection began) is made
+        again once it is back."""
+        expression = f'{GLOBAL}.{method}({", ".join(json.dumps(arg) for arg in args)})'
+        if self._bridge_lock.locked():
+            async with self._bridge_lock:
+                pass
+        try:
+            return await self.evaluate(expression, timeout=timeout)
+        except EngineError as e:
+            if not (e.code == 'api' and self._bridge_wanted and e.message.startswith('TypeError')
+                    and await self._bridge_missing()):
+                raise
+            log.debug('bridge.%s: the bridge is gone (a navigation); again once it is back',
+                      method)
+        await self.ensure_bridge()
+        return await self.evaluate(expression, timeout=timeout)
+
+    async def _bridge_missing(self):
+        try:
+            return await self.evaluate(f'typeof {GLOBAL} === "undefined"', await_promise=False,
+                                       timeout=5) is True
+        except EngineError:
+            return False
 
     # -- events ----------------------------------------------------------------------------
 
@@ -557,8 +614,10 @@ class CDPClient:
         if method in ('Target.targetCreated', 'Target.targetInfoChanged'):
             self._targets_changed.set()
         elif self._target is not None:
-            if (method == 'Target.detachedFromTarget'
-                    and params.get('sessionId') == self._session):
+            if method == 'Target.targetCrashed' and params.get('targetId') == self._target:
+                self._lost('the page crashed')
+            elif (method == 'Target.detachedFromTarget'
+                  and params.get('sessionId') == self._session):
                 self._lost('the page was detached')
             elif method == 'Target.targetDestroyed' and params.get('targetId') == self._target:
                 self._lost('the page was closed')
@@ -566,16 +625,21 @@ class CDPClient:
 
     def _on_event(self, method, params):
         """An event of the attached page."""
-        if method == 'Runtime.bindingCalled' and params.get('name') == BINDING:
+        if method == 'Inspector.targetCrashed':
+            self._lost('the page crashed')
+        elif method == 'Inspector.detached':
+            self._lost(f'the page was detached ({params.get("reason") or "no reason"})')
+        elif method == 'Runtime.bindingCalled' and params.get('name') == BINDING:
             try:
                 event = json.loads(params.get('payload') or 'null')
-                name, data = event['name'], event.get('data')
-            except (ValueError, TypeError, KeyError):
-                log.warning('bridge: unreadable event %r', params.get('payload'))
+            except (ValueError, TypeError):
+                event = None
+            if not isinstance(event, dict) or not isinstance(event.get('name'), str):
+                log.warning('bridge: unreadable event %.200r', params.get('payload'))
                 return
-            self._emit(EVENT_PREFIX + name, data)
+            self._emit(EVENT_PREFIX + event['name'], event.get('data'))
             return
-        if method == 'Runtime.executionContextCreated':
+        elif method == 'Runtime.executionContextCreated':
             aux = (params.get('context') or {}).get('auxData') or {}
             if (aux.get('isDefault') and aux.get('frameId') == self._main_frame
                     and self._bridge_wanted):
@@ -672,21 +736,12 @@ class CDPClient:
         self._subscribed = True
         await self.ensure_bridge()
 
-    async def unsubscribe(self):
-        self._subscribed = False
-        if self.connected:
-            await self.evaluate(f'{GLOBAL} ? {GLOBAL}.unsubscribe() : null', await_promise=False)
-
 
 async def open_page(transport, timeout=30.0, wait=PAGE_WAIT):
     """A CDPClient on `transport`, attached to the music.apple.com page."""
     client = CDPClient(timeout=timeout)
     await client.connect(transport)
-    try:
-        await client.attach_page(wait)
-    except BaseException:
-        await client.close()
-        raise
+    await client.attach_page(wait)
     return client
 
 
