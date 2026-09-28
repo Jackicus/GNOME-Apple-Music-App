@@ -421,10 +421,12 @@ class PlaylistTree:
     Library.load() (the model: GObject only, no GTK).
     """
 
-    def __init__(self, folders=(), playlists=(), existing=None):
+    def __init__(self, folders=(), playlists=(), existing=None, stores=None):
         """folders: library.json's `folders` dicts; playlists: the playlist Items; existing:
         a {(kind, id): Item} index whose folder Items are reused (a reload keeps them; those
-        whose SORT_KEYS changed are listed in `changed`)."""
+        whose SORT_KEYS changed are listed in `changed`); stores: {folder id: Gio.ListStore},
+        the stores a folder still in the tree keeps, brought to its new contents with the
+        fewest changes (apply_diff: a reload keeps them, as a grid over one keeps its place)."""
         folders = [raw for raw in folders if _text(raw.get('id'))]
         raw_by_id = {}
         for raw in folders:
@@ -478,9 +480,15 @@ class PlaylistTree:
         for item in playlists:
             if ('playlist', item.id) not in placed:
                 add(self.root, item)
-        for node in self._folders.values():
-            node.store = Gio.ListStore(item_type=Item)
-            node.store.splice(0, 0, [child.item for child in node.children])
+        stores = stores or {}
+        for folder_id, node in self._folders.items():
+            items = [child.item for child in node.children]
+            node.store = stores.get(folder_id)
+            if node.store is None:
+                node.store = Gio.ListStore(item_type=Item)
+                node.store.splice(0, 0, items)
+            else:
+                apply_diff(node.store, items)
 
     def folder(self, folder_id):
         """The TreeNode of the folder with that id (ROOT_FOLDER for the top level), or None."""
@@ -491,8 +499,8 @@ class PlaylistTree:
         return [node for node in self.flat if node.kind == 'folder']
 
     def stores(self):
-        """Every folder's store, the root's first."""
-        return [node.store for node in self._folders.values()]
+        """Every folder's store by the folder's id, the root's (ROOT_FOLDER) first."""
+        return {folder_id: node.store for folder_id, node in self._folders.items()}
 
 
 def _folder_item(raw, existing=None, changed=None):
@@ -626,15 +634,16 @@ class Library(GObject.Object):
     def playlist_tree(self):
         """The playlists and folders as a PlaylistTree: `root` nested, `flat` depth first.
 
-        Built by each load() (a new tree, with new folder Items, each time); before the first,
-        an empty one.
+        A new tree for each load() and reload(): load() makes new folder Items and stores,
+        reload() keeps those of the folders still there. Before the first load, an empty one.
         """
         return self._tree
 
     def folder_items(self, folder_id):
         """A Gio.ListStore of the Items (folders and playlists) in the folder with that id, in
-        Apple's order, or None when there is no such folder. ROOT_FOLDER is the top level. A
-        load() makes new stores: follow the folder by its id."""
+        Apple's order, or None when there is no such folder. ROOT_FOLDER is the top level.
+        reload() keeps a folder's store, brought up to date; load() makes new stores: follow
+        the folder by its id."""
         node = self._tree.folder(folder_id)
         return node.store if node is not None else None
 
@@ -660,8 +669,8 @@ class Library(GObject.Object):
         Everything is matched by kind and id: an Item still in the library keeps its object
         (its properties set where they changed, its groups and Tracks kept unless they
         changed), what is gone leaves the stores, what is new goes in at its place, and the
-        shelves and folder Items keep theirs too (the folder stores are new). A page showing
-        an Item, a grid's scroll position and the sidebar's selection all survive.
+        shelves, the folder Items and the folders' stores keep theirs too. A page showing an
+        Item, a grid's scroll position and the sidebar's selection all survive.
 
         What changed is told as it is: a kept Item notifies each property that changed and
         emits `groups-changed` when its groups did (Item.merge()); a kept Shelf notifies its
@@ -774,7 +783,8 @@ class Library(GObject.Object):
             else:
                 shelf.update(title, items)
             shelves.append(shelf)
-        tree = PlaylistTree(_dicts(data.get('folders')), list(self.playlists), existing)
+        tree = PlaylistTree(_dicts(data.get('folders')), list(self.playlists), existing,
+                            self._tree.stores() if keep else None)
         for node in tree.folders():
             index.setdefault(('folder', node.id), node.item)
         index.setdefault(('folder', ROOT_FOLDER), tree.root.item)
@@ -804,7 +814,7 @@ class Library(GObject.Object):
         """
         stores = [getattr(self, name) for name in SECTIONS]
         stores += [shelf.items for shelf in self.shelves]
-        stores += self._tree.stores()
+        stores += self._tree.stores().values()
         for store in stores:
             positions = [position for position in range(store.get_n_items())
                          if store.get_item(position) in items]
