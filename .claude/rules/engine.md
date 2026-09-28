@@ -11,6 +11,8 @@ paths:
   - "tests/test_backend.py"
   - "tests/test_am_cli.py"
   - "tests/fake_chrome_relay.py"
+  - "tests/test_bridge.py"
+  - "tests/bridge_harness.js"
 ---
 
 # Engine and backend
@@ -112,6 +114,10 @@ paths:
   sign-in iframe has its own). Bridge events arrive as `am:<name>`; the Engine re-emits them as
   `event(name, data)` without the prefix. A bad payload or a raising handler is logged, never
   the end of the session.
+- bridge.js is tested by tests/test_bridge.py: gjs runs it unchanged against
+  tests/bridge_harness.js, a fake page (MusicKit and an instance that records its calls, a
+  `document` and a small `DOMParser`). A change to the bridge gets a scenario there; what only
+  Apple's MusicKit can show (what it accepts, what it answers) is a live check.
 - bridge.js writes (love, add to library, add to a playlist) through
   `mk.api.client.createRequest(...).send()`: `music()` cannot read Apple's empty 202/204 answers
   and would pass a 4xx off as success.

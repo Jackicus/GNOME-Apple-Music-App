@@ -17,7 +17,7 @@ importing the package imports none of its modules.
                   WebSocketTransport (the developer attach)
     bridge.js     injected into music.apple.com; drives the page's own MusicKit instance and
                   forwards its events (subscribe). Installed as data beside the Python, found
-                  through config.BRIDGE_JS
+                  through config.BRIDGE_JS; tests/test_bridge.py runs it under gjs
     normalize.py  Apple Music API answers as the library's Item, Track and shelf shapes; the
                   artwork cache (naming, fetching, pruning), library.json, the kept answers
     store.py      writing the cache: one atomic write (a temporary file, fsync'd, renamed

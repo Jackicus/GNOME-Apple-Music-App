@@ -53,10 +53,10 @@ jobs:
             git python python-gobject python-cairo gtk4 libadwaita glib2 gdk-pixbuf2 \
             meson ninja pkgconf blueprint-compiler gettext \
             appstream desktop-file-utils adwaita-icon-theme \
-            ruff xorg-server-xvfb xorg-xauth
+            ruff xorg-server-xvfb xorg-xauth gjs
           # Keep only the installed versions, so the saved cache does not grow.
           pacman -Sc --noconfirm
-          pacman -Q gtk4 libadwaita python python-gobject meson blueprint-compiler ruff
+          pacman -Q gtk4 libadwaita python python-gobject meson blueprint-compiler ruff gjs
 
       - name: Check out
         uses: actions/checkout@v7
