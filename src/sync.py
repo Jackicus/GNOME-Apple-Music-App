@@ -599,9 +599,13 @@ class LibrarySync(GObject.Object):
 
     def start(self):
         """Sync the library through the engine, starting it if it is down, unless a sync is
-        running already or held. Returns the task, or None."""
+        running already or held. Returns the task, or None. Signed out, nothing starts and
+        the sign-in is offered (app.report)."""
         app = self._app
         if app.refuse_in_demo():
+            return None
+        if not app.settings.get_boolean('signed-in'):
+            app.report(EngineError('not-signed-in', 'sign in to Apple Music to sync'))
             return None
         if self._holds:
             log.debug('no sync while the account or the cache changes')

@@ -79,6 +79,7 @@ def make_app(profile='default', demo=False):
     app.toast = lambda title, button_label=None, action_name=None: app.toasts.append(
         (title, button_label, action_name))
     app.library_sync = LibrarySync(app)
+    app._follow_account()
     return app
 
 
@@ -96,6 +97,31 @@ class StartSyncTest(AppTestCase):
         self.assertIsNone(self.app.start_sync())
         self.assertEqual(self.app.toasts, [('Not available with the demo library', None, None)])
         self.assertEqual(self.app.engine.calls, [])
+
+    def test_signed_out_starts_nothing_and_offers_the_sign_in(self):
+        asked = []
+        self.app.activate_action = lambda name, parameter=None: asked.append(name)
+        with self.assertLogs('applemusic.main', 'WARNING'):
+            self.assertIsNone(self.app.start_sync())
+        self.assertEqual(asked, ['sign-in'])
+        self.assertEqual(self.app.engine.calls, [])
+        self.assertFalse(self.app.library_sync.props.running)
+
+    def test_the_action_follows_the_account_the_demo_and_the_sync(self):
+        action = self.app.lookup_action('sync')
+        self.assertFalse(action.get_enabled())  # signed out
+        self.app.settings.set_boolean('signed-in', True)
+        self.assertTrue(action.get_enabled())
+        self.app.library_sync.props.running = True
+        self.assertFalse(action.get_enabled())
+        self.app.library_sync.props.running = False
+        self.assertTrue(action.get_enabled())
+        self.app.signing_out = True
+        self.assertFalse(action.get_enabled())
+        self.app.signing_out = False
+        self.app.demo = True
+        self.app._update_sync_action()
+        self.assertFalse(action.get_enabled())
 
 
 class ConstructionTest(unittest.TestCase):

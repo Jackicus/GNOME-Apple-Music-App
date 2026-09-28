@@ -145,6 +145,8 @@ class LibrarySyncTest(SyncTestCase):
         self.engine = FakeEngine(answers())
         self.app = FakeApp(self.engine, self.library)
         self.addCleanup(self.app.settings.reset, 'last-sync')
+        self.addCleanup(self.app.settings.reset, 'signed-in')
+        self.app.settings.set_boolean('signed-in', True)
         self.sync = app_sync.LibrarySync(self.app)
         self.progress = []
         self.sync.connect('progress', lambda _sync, *report: self.progress.append(report))
