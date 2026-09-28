@@ -69,6 +69,7 @@ install_data(
   'engine.py',
   'library.py',
   'main.py',
+  'mpris.py',
   'player.py',
   'player_bar.py',
   'sections.py',

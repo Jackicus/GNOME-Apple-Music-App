@@ -20,7 +20,7 @@ running and better than before.
 - [x] 10. Engine in the app: lifecycle, sign-in, account (2026-09-27)
 - [x] 11. Library sync and artwork cache (2026-09-28)
 - [x] 12. Playback: Player state and the player bar (2026-09-28)
-- [ ] 13. MPRIS
+- [x] 13. MPRIS (2026-09-28)
 - [ ] 14. Now Playing sheet, queue, lyrics
 - [ ] 15. Search
 - [ ] 16. Context menus and actions (play next, love, add, drag to playlist)
@@ -1553,6 +1553,68 @@ org.mpris.MediaPlayer2.Player.PlayPause toggles; GNOME Shell's calendar media se
 app's icon, title and artwork; keyboard media keys work; playerctl if installed. Update CLAUDE.md.
 Tick phase 13 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- Chrome's own player is absent: with the dev engine playing, `busctl --user list | grep -i
+  mpris` listed `org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel` (the app's
+  process) and no `chromium.instance<pid>` for the engine's Chrome pid, so
+  `--disable-features=HardwareMediaKeyHandling` is enough and `MediaSessionService` was not
+  added to `chrome.py`. The user's everyday Chrome (a PWA window) does publish
+  `chromium.instance<its pid>`; tell them apart by the pid column.
+- Verified live (the real Application with the Devel id in-process, as phases 11 and 12 did,
+  volume 0.2, the album's queue played for under two minutes, the engine stopped after):
+  `gdbus introspect` lists both interfaces with every method, property and `Seeked`; `GetAll`
+  answers the right types (Position `x`, Metadata `a{sv}` with `mpris:trackid` an
+  `objectpath`, `mpris:length`, `mpris:artUrl` a `file://` URL into `<cache>/remote-art/`,
+  `xesam:artist` a string array); Position advanced ~1 s per second while playing and froze
+  when paused; `PlayPause` toggled (PropertiesChanged `{PlaybackStatus}` only); `Seek` +10 s
+  moved the position and emitted `Seeked`; `Set Volume 0.15` then `0.2`, `Set Shuffle`,
+  `Set LoopStatus Track` each did what they say and answered with one PropertiesChanged of
+  that key (from the MusicKit event, not the set); `Set Rate` is taken and ignored;
+  `Set Position` is refused by GLib (read-only in the introspection); `Raise` returned;
+  `Next` past the end of a one-track queue went to Stopped with `Metadata {}` and the Can*s
+  false in one PropertiesChanged; `Quit` via `gapplication` stopped Chrome and released the
+  name (the object is unregistered in `do_shutdown`). 18 unit tests over a stand-in
+  connection.
+- Not verified, for Jack to confirm: GNOME Shell's calendar media section and the keyboard
+  media keys (no input synthesis here). The Shell shows a player while `CanPlay` is true and
+  looks up `<DesktopEntry>.desktop` in its own data directories: the dev build's desktop
+  file in `build/install` is invisible to it, so the entry may show the Identity without the
+  app icon until a system install (`meson install` to /usr). `playerctl` is not installed.
+- Design choices: `CanControl` is constant true (the spec says it is an intrinsic capability
+  that never changes; the prompt had it follow the track like the other Can*s, which do).
+  PlaybackStatus maps the ACTIVE_STATES (playing, loading, waiting, stalled) to Playing,
+  paused to Paused, and `seeking` keeps the status before it (MusicKit passes through it on
+  every seek and every new queue), the rest Stopped; no track is Stopped whatever the state.
+  Metadata's length is the track's own `duration_ms`; the Player's `duration` stands in only
+  for a track without one, and only once a duration has arrived for that track (the Player
+  resets `duration` *after* the track's notify, and not at all for a track without
+  `duration_ms`, so until then it is the previous item's; the first cut used it and sent
+  each new track once with the old length, then twice more). So a track change is one
+  Metadata change, seen live. `mpris:trackid` is `/io/github/jackicus/AppleMusic/track/<id with every non-
+  alphanumeric byte as _XX>`; a queue with the same song twice gives both entries one path.
+  The artwork is asked from `Artwork.fetch_remote` at the cover size (the bar's call and this
+  one share the download) and Metadata goes out again with `mpris:artUrl` when the file is
+  there; a track whose art is cached already carries it at once.
+- Seeked: emitted after a Seek/SetPosition asked for over the bus (with the target; the
+  hold and the note are set *before* the seek is awaited, since MusicKit's position at the
+  target can arrive during the await and counted as a jump of its own at first), and when a
+  position lands more than SEEK_JUMP (2 s) from where the last one led (a seek from the bar
+  or Apple's page), except for TRACK_HOLD (2 s) after a track change: seen live, MusicKit
+  reports the previous item's position once more with the state transitions of a skip, then
+  the new item's 0, which the first cut signalled as `Seeked <old>` and `Seeked 0` on every
+  Next and Previous. Still seen: MusicKit reports position 0 for a moment when a queue ends
+  or Stop is called, before the item goes null, which shows as one `Seeked 0`; harmless and
+  left alone.
+- The methods and the writable properties spawn Player coroutines through
+  `app.player_command`, so an EngineError becomes a toast, and the D-Bus reply goes out at
+  once (the MPRIS methods have no return values). Transport methods do nothing without a
+  track (CanPlay false), as the spec asks; the writable properties need only the engine
+  (Volume can be set before the first play, which is how the tests set it low).
+- `screenshot.py` and `--demo` own the name too (a `.Screenshot` or the Devel one), with
+  CanPlay false; two demo instances at once mean the second logs the name as owned
+  elsewhere and runs on.
 
 ## Phase 14: Now Playing sheet, queue and lyrics
 

@@ -24,6 +24,7 @@ from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .engine import Engine, engine_paths  # noqa: E402
 from .library import Library  # noqa: E402
+from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
 from .sync import install_scaler, sync_library  # noqa: E402
 from .window import Window  # noqa: E402
@@ -54,6 +55,7 @@ class Application(Adw.Application):
         self.library = None  # created in do_startup
         self.engine = None  # created in do_startup
         self.player = None  # created in do_startup, after the engine
+        self.mpris = None  # created in do_startup, after the player; released in do_shutdown
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
@@ -114,11 +116,18 @@ class Application(Adw.Application):
         self.player = Player(self)
         self.player.connect('notify::track', self._on_track_changed)
         self.player.connect('error', self._on_playback_error)
+        self.mpris = Mpris(self)  # the media controls and keys, as this app
+        self.mpris.start()
         install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
         # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
         # default, which would end the process with Chrome running on (reclaimed next time).
         for signum in (signal.SIGINT, signal.SIGTERM):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_signal, signum)
+
+    def do_shutdown(self):
+        if self.mpris is not None:
+            self.mpris.stop()  # the name released before the bus connection goes
+        Adw.Application.do_shutdown(self)
 
     def _make_engine(self):
         """The Engine on this build's profile directory and port (engine_paths: the .Devel build

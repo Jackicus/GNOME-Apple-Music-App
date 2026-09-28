@@ -22,6 +22,7 @@ else
   version = meson.project_version()
 endif
 
+dependency('glib-2.0', version: '>= 2.84')  # DBusConnection.register_object_with_closures2 (MPRIS)
 dependency('gtk4', version: '>= 4.20')
 dependency('libadwaita-1', version: '>= 1.9')
 dependency('pygobject-3.0', version: '>= 3.50')

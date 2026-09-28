@@ -11,7 +11,8 @@
     "--socket=wayland",
     "--device=dri",
     "--socket=pulseaudio",
-    "--talk-name=org.mpris.MediaPlayer2.*"
+    "--talk-name=org.mpris.MediaPlayer2.*",
+    "--own-name=org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel"
   ],
   "cleanup": [
     "/include",

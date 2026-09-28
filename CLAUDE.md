@@ -57,7 +57,9 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   item() (a shelf item's groups, on demand), signin(), account_name();           │
 │   play/play_next/play_later/control/seek/volume/shuffle/repeat/now_playing/queue │
 │   MusicKit events ─► `event` signal ─► app.player (player.py: state, track,      │
-│   position, duration, shuffle, repeat, volume; never polled) ─► PlayerBar / MPRIS*│
+│   position, duration, shuffle, repeat, volume; never polled) ─► PlayerBar and    │
+│   app.mpris (mpris.py: org.mpris.MediaPlayer2.<app id> on the session bus, the   │
+│   Shell's media controls and the media keys; its methods run the Player)         │
 │   Sign-in: dialogs/signin.py (visible Chrome, then headless); the account button │
 │   and the "Sign in to see your library" banner follow the signed-in key          │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
@@ -76,9 +78,10 @@ src/apple-music.in             launcher configured by Meson: gettext, loads the 
 src/main.py                    Application: app.* actions (quit, about, shortcuts, sign-in, sign-out,
                                sync; play-pause, next, previous, shuffle, repeat, enabled while
                                something plays), GSettings, logging and --debug, --demo
-                               (app.demo), app.library, app.engine and app.player (made in
-                               do_startup; the library loaded and the engine autostarted in
-                               do_activate), spawn(coro), toast(), report(error),
+                               (app.demo), app.library, app.engine, app.player and app.mpris
+                               (made in do_startup; the library loaded and the engine
+                               autostarted in do_activate; MPRIS released in do_shutdown),
+                               spawn(coro), toast(), report(error),
                                player_command(coro), start_sync()/sync_due() (the sync as a
                                task, one at a time, with the banner and the toasts), the quit
                                path (sync cancelled, engine stopped first), use_glib_event_loop()
@@ -105,6 +108,21 @@ src/player.py                  Player (GObject, no GTK): state (MusicKit Playbac
                                previous, stop, seek, set_volume, set_shuffle, toggle_shuffle,
                                set_repeat, cycle_repeat, play_next, play_later; `error` signal;
                                format_time()
+src/mpris.py                   Mpris(app): the org.mpris.MediaPlayer2.<application id> service
+                               (Gio.bus_own_name; /org/mpris/MediaPlayer2 registered from
+                               INTROSPECTION_XML with register_object_with_closures2), both
+                               interfaces read from app.player: PlaybackStatus, LoopStatus,
+                               Shuffle, Volume, Position (estimated_position(), microseconds),
+                               Metadata (metadata(track, art_path, duration): trackid from
+                               track_path(id), length, artUrl once the remote art is cached,
+                               title, artist as a list, album), the Can*s true with a track;
+                               PropertiesChanged from the Player's notify signals with only
+                               the keys that differ from what was last sent, Seeked after its
+                               own seeks and on a position jump (SEEK_JUMP); the methods and
+                               the writable properties run the Player through
+                               app.player_command; Raise presents the window, Quit is
+                               app.quit; start() in do_startup, stop() in do_shutdown; the
+                               name lost is logged and the app runs on
 src/dialogs/signin.py + .blp   $AppleMusicSignInDialog: the sign-in flow as a task while shown
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
@@ -374,7 +392,7 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   handlers with `app.spawn(coro)`; playback goes through `app.player` (`src/player.py`), whose
   commands are thin coroutines over those (`app.player_command(coro)` spawns one and toasts
   its EngineError) and whose properties change only from the engine's `event` signal (the
-  bar, and phase 13's MPRIS, follow `notify::*`; nothing polls MusicKit). Errors are
+  bar and MPRIS follow `notify::*`; nothing polls MusicKit). Errors are
   `EngineError(code)` with the README's codes (`engine-down`,
   `not-signed-in`, `api`, `timeout`); `app.report(error)` toasts a sentence for the code (with
   a Sign In button for `not-signed-in`), never a traceback. Library reads are synchronous
@@ -618,7 +636,10 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   (`profile` is `default` there), which is never wanted from a screenshot.
 - Chrome: `google-chrome-stable` 154 is installed. Its MPRIS player is
   `org.mpris.MediaPlayer2.chromium.instance<pid>`, disabled by
-  `--disable-features=HardwareMediaKeyHandling`. The extension's engine uses port 9227 and profile
+  `--disable-features=HardwareMediaKeyHandling` (confirmed in phase 13: with the engine
+  playing, `busctl --user list | grep -i mpris` shows this app's name and no entry for the
+  engine's pid; `MediaSessionService` did not need disabling. The user's everyday Chrome may
+  show an `instance<pid>` of its own: compare the pid). The extension's engine uses port 9227 and profile
   `$XDG_DATA_HOME/apple-music-library/chrome`; this app uses 9228 and `$XDG_DATA_HOME/apple-music/chrome`
   (the `.Devel` build 9229 and `chrome-devel`) so they can run side by side, which also means a
   separate sign-in per profile.
@@ -653,6 +674,27 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   input synthesis. Apple's page is Svelte with hashed class names; signed out, the sidebar
   footer holds `div.auth-content > button.signin`; `Engine.account_name()` tries known
   selectors under it and returns '' rather than guessing (the signed-in markup is unverified).
+- MPRIS (phase 13, `src/mpris.py`): PyGObject 3.56 marks `Gio.DBusConnection.register_object`
+  deprecated (GLib 2.84 replaced the closures variant); `register_object_with_closures2` takes
+  the same three callables: `method_call(connection, sender, path, interface, method,
+  parameters, invocation)` answering with `invocation.return_value(GLib.Variant or None)`,
+  `get_property(…, name)` returning a `GLib.Variant`, `set_property(…, name, value)` returning
+  True. GLib serves `Get`/`GetAll`/`Set`, introspection and the "not writable" errors from the
+  `Gio.DBusNodeInfo` itself. `Gio.bus_own_name` calls `bus_acquired` (register there) before
+  `name_acquired`; `name_lost` with a None connection means no bus at all. PropertiesChanged
+  is emitted by hand (`(sa{sv}as)`); Position never appears in it (the spec's annotation),
+  clients read it, so `Player.estimated_position()` runs it on between events. The service
+  keeps what it last sent and emits only the keys that differ, seeded from the values on the
+  bus at registration. Live checks: `gdbus introspect --session --dest
+  org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel --object-path
+  /org/mpris/MediaPlayer2`; `gdbus monitor` on the same shows PropertiesChanged and Seeked;
+  `gdbus call … --method org.freedesktop.DBus.Properties.Set org.mpris.MediaPlayer2.Player
+  Volume "<0.2>"` sets the engine's volume before a test play; gdbus spells an object path
+  argument `"objectpath '/…'"`. GNOME Shell's media section lists a player while its
+  `CanPlay` is true (so "Not Playing" shows no entry) and looks the app up by
+  `<DesktopEntry>.desktop` in the Shell's own data directories, which the dev build's
+  `build/install` is not in (the entry shows the Identity; a system install gives the icon).
+  `playerctl` is not installed on this machine.
 - Python 3.14 deprecates `asyncio.set_event_loop_policy` (removal in 3.16), but it is still how
   PyGObject 3.56 puts asyncio on the GLib loop; `main.use_glib_event_loop()` filters the
   DeprecationWarning and sets the policy. PyGObject's `Gio.Application.run` marks the GLib loop as
