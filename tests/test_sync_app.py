@@ -139,7 +139,7 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         engine = FakeEngine(answers())
         counts = await app_sync.sync_library(engine, self.library, self.report)
         data = self.read_json()
-        self.assertEqual(data['version'], 1)
+        self.assertEqual(data['version'], app_sync.LIBRARY_VERSION)
         self.assertEqual(data['storefront'], 'gb')
         self.assertEqual(set(data['sections']), {'albums', 'artists', 'playlists', 'songs',
                                                  'videos', 'radio'})

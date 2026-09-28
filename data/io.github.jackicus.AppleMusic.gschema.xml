@@ -62,7 +62,7 @@
       <range min="0" max="168"/>
       <default>6</default>
       <summary>Hours between automatic library syncs</summary>
-      <description>The library is synced again when the app starts (or the engine comes up) and the last sync is older than this many hours. 0 syncs only when asked (Refresh Library).</description>
+      <description>While the app runs, the library is synced again whenever the last sync is older than this many hours and the engine is running and signed in (it is not started for a sync). 0 syncs only when asked (Refresh Library). A library missing or damaged on disk is synced as soon as the engine is up, whatever this says.</description>
     </key>
   </schema>
 </schemalist>

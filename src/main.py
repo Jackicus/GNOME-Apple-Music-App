@@ -172,6 +172,8 @@ class Application(Adw.Application):
         self.player.connect('error', self._on_playback_error)
         self.library_sync = LibrarySync(self)
         self._follow_account()
+        if not self.demo:
+            self.library_sync.schedule()  # the timed refresh, and a sync when the engine is up
         self.background = BackgroundPlayback(
             self.player, hold=self.hold, release=self.release,
             quit=lambda: self.activate_action('quit'))
@@ -231,9 +233,8 @@ class Application(Adw.Application):
             self.spawn(self._log_event_loop())
             if self._autostart_wanted():
                 self.spawn(self._autostart())
-        elif (self.engine.state == 'up' and self.engine.authorized
-              and self.library_sync.due()):
-            self.start_sync()  # launched again: a sync when the last is old
+        else:
+            self.library_sync.check()  # launched again: a sync when one is due
         self.library.resume_reading()  # present() waits for the compositor
         window.present()
 
@@ -260,8 +261,8 @@ class Application(Adw.Application):
                 and self.settings.get_boolean('engine-autostart'))
 
     async def _autostart(self):
-        """Chrome headless on launch, as the settings ask, and a word when the sign-in it
-        expected is gone."""
+        """Chrome on launch, as the settings ask (headless unless engine-headless is off),
+        and a word when the sign-in it expected is gone."""
         try:
             await self.engine.start()
         except EngineError as error:
@@ -271,8 +272,7 @@ class Application(Adw.Application):
             log.warning('the engine is up but Apple Music is not signed in')
             self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
             return
-        if self.library_sync.due():
-            self.start_sync()
+        # The engine up started a sync if one was due (LibrarySync.schedule()).
         if not self.settings.get_string('account-name'):
             # Sign-in may have missed the name (the page renders it late); try again now.
             try:

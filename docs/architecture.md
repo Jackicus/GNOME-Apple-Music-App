@@ -60,18 +60,21 @@ widgets.
 ## Flows
 
 - **Startup.** `do_startup` starts reading library.json in a thread, then makes the engine,
-  the player and MPRIS; `do_activate` builds the window, awaits the library and, when the account
-  is signed in and `engine-autostart` is on, starts the engine and syncs if the last sync is
-  older than the chosen interval.
+  the player, the sync and MPRIS; `do_activate` builds the window, awaits the library (then
+  trims the caches in a thread) and, when the account is signed in and `engine-autostart` is
+  on, starts the engine, whose coming up starts a sync when one is due.
 - **Playing.** A tile, row or button calls `window.play_request()`, which calls
   `app.player.play()`. The player starts the engine if it is down and the account is signed in,
   then asks the engine, which asks MusicKit through the bridge. Nothing comes back from the
   command itself: MusicKit's events arrive through the binding, the engine re-emits them, the
   player updates its properties, and the bar, the sheet and MPRIS follow.
-- **Syncing.** Refresh (Ctrl+R), a finished sign-in, or the engine coming up with an old sync
-  starts `sync_library()`. Progress shows in a banner; the end is a toast with the counts, a
-  failure a toast with Retry. Pages keep their scroll positions, because the reload keeps every
-  object that is still in the library.
+- **Syncing.** Refresh (Ctrl+R) and a finished sign-in start `sync_library()`; so does the
+  scheduler (`LibrarySync.schedule()`) whenever a sync is due while the engine is up and signed
+  in: the last one older than the chosen interval, or no current library on disk (missing,
+  unreadable, or of an older version), looked at by a timer, when the engine comes up and when
+  the library has been read. A timer never starts Chrome. Progress shows in a banner; the end
+  is a toast with the counts, a failure a toast with Retry. Pages keep their scroll positions,
+  because the reload keeps every object that is still in the library.
 - **Losing the engine.** Chrome crashing or being killed, the page crashing or closing, and a
   page that no longer answers after a call timed out (the engine probes it) all end the
   connection: the engine emits `lost(reason)` and goes down, the app offers to restart it in a

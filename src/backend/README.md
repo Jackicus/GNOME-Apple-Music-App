@@ -106,7 +106,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 
 ```jsonc
 {
-  "version": 1, "generated": "2026-09-25T12:00:00Z", "storefront": "us",
+  "version": 2, "generated": "2026-09-25T12:00:00Z", "storefront": "us",
   "sections": {"albums": [Item], "artists": [Item], "playlists": [Item], "radio": [Item]},
   "shelves": [{"key": "rec-<id>", "title": "New Releases for You", "items": [Item]}, …,  // Apple's home
               {"key": "heavy-rotation", "title": "Heavy Rotation", …}, {"key": "recently-added", …}]
@@ -142,8 +142,10 @@ Track = {"id": "i.xyz", "catalogId": "…" /* or null */, "title": "…", "artis
                                                   // (now playing, the queue) carry it too
 ```
 
-**This app's additions** (`src/sync.py` writes them; all optional, version
-stays 1; the demo library has the first two):
+**This app's additions** (`src/sync.py` writes them; all optional; the demo library
+has the first two). The version is 2 since an album's tracks are indexed across its discs
+(`index` counts on from disc 1 into disc 2): the app syncs a file of version 1 again at
+once.
 
 ```jsonc
 {
