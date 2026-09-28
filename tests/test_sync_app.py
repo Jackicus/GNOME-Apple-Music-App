@@ -357,9 +357,10 @@ class ReloadTest(unittest.TestCase):
         self.assertEqual([t.id for t in after[5].groups[0].entries], ['i.5', 'i.55'])
         self.assertIsNot(after[5].groups[0].entries.get_item(0), tracks[5])
         # The diff's two splices (the insertion at its old position, applied first, then the
-        # removal) and one each for the renamed item and the one whose tracks changed, told
-        # about in place; nothing for the unchanged runs.
-        self.assertEqual(sorted(events), [(1, 1, 1), (2, 1, 0), (4, 0, 1), (5, 1, 1)])
+        # removal), and the renamed item spliced over itself so that sorted views place it
+        # again (a view's rows follow their Item's notify signals, not this splice); nothing
+        # for the unchanged runs or for l.a5, whose title stayed (tests/test_reload.py).
+        self.assertEqual(sorted(events), [(1, 1, 1), (2, 1, 0), (4, 0, 1)])
         self.assertIsNone(self.library.by_id('album', 'l.a2'))
         self.assertIs(self.library.shelf('recently-added'), shelf)
         self.assertEqual([item.id for item in shelf.items], ['l.a9', 'l.a1'])

@@ -74,6 +74,11 @@ EDITABLE = 'canEdit'
 # The id of the folders entry that lists the top level: the playlists and folders in no folder.
 ROOT_FOLDER = 'root'
 
+# The Item properties that views over the stores sort and filter by (pages/grid.py's SORTS,
+# the search page's filters). When a reload changes one, the stores holding the Item splice
+# it over itself so that those models place it again.
+SORT_KEYS = frozenset(('title', 'subtitle', 'year'))
+
 
 def _text(value):
     """A string property's value: None stays None (JSON null), anything else becomes a str."""
@@ -205,9 +210,17 @@ class Item(GObject.Object):
     Group, wrapped from raw on first access. A playlist folder is an Item too, of kind 'folder'
     (made by PlaylistTree from a `folders` entry, with no artwork and no groups), so a grid of a
     folder's contents shows folders and playlists alike.
+
+    A reload keeps the Item and merge()s the new dict into it: each property that changed is
+    notified, and `groups-changed` says the groups are new (`groups` is then a new list of new
+    Groups), so a widget or page showing the Item follows it by those signals.
     """
 
     __gtype_name__ = 'AppleMusicItem'
+
+    __gsignals__ = {
+        'groups-changed': (GObject.SignalFlags.RUN_FIRST, None, ()),
+    }
 
     id = raw_property('id', str, writable=True)
     kind = raw_property('kind', str, writable=True)
@@ -267,10 +280,11 @@ class Item(GObject.Object):
     def merge(self, data, replace=False):
         """Take a fresh Item dict for this item into this object: the raw dict updated (or
         replaced by `data`, for a reload's complete dict), the properties that changed
-        notified (so bound widgets follow), and the groups wrapped again on the next access
-        when they differ from the ones in hand (the same groups keep their Group and Track
-        objects). An engine item() answer (the same shape, with `groups`) merges; a sync's
-        dict replaces. True when a property changed."""
+        notified (so bound widgets follow), and, when the groups differ from the ones in
+        hand, the groups wrapped again on the next access and `groups-changed` emitted, last
+        (the same groups keep their Group and Track objects). An engine item() answer (the
+        same shape, with `groups`) merges; a sync's dict replaces. Returns the names of the
+        properties that changed (empty when none did)."""
         groups_changed = 'groups' in data and data.get('groups') != self.raw.get('groups')
         names = [name for name, key in self._MERGED if replace or key in data]
         before = [self.get_property(name) for name in names]
@@ -289,7 +303,8 @@ class Item(GObject.Object):
             self.play = data['play']
         if groups_changed:
             self._groups = None
-        return bool(changed)
+            self.emit('groups-changed')
+        return changed
 
 
 class Shelf(GObject.Object):
@@ -376,7 +391,8 @@ class PlaylistTree:
 
     def __init__(self, folders=(), playlists=(), existing=None):
         """folders: library.json's `folders` dicts; playlists: the playlist Items; existing:
-        a {(kind, id): Item} index whose folder Items are reused (a reload keeps them)."""
+        a {(kind, id): Item} index whose folder Items are reused (a reload keeps them; those
+        whose SORT_KEYS changed are listed in `changed`)."""
         folders = [raw for raw in folders if _text(raw.get('id'))]
         raw_by_id = {}
         for raw in folders:
@@ -390,9 +406,11 @@ class PlaylistTree:
                 {'kind': 'folder', 'id': _text(raw.get('id'))} for raw in folders
                 if raw.get('parent') is None]}
         existing = existing or {}
+        self.changed = []
 
         def folder_item(raw):
-            return _folder_item(raw, existing.get(('folder', _text(raw.get('id')))))
+            return _folder_item(raw, existing.get(('folder', _text(raw.get('id')))),
+                                self.changed)
 
         self.root = TreeNode(folder_item(root_raw), -1, None)
         self.flat = []
@@ -440,15 +458,21 @@ class PlaylistTree:
         """Every folder's TreeNode but the root's, depth first."""
         return [node for node in self.flat if node.kind == 'folder']
 
+    def stores(self):
+        """Every folder's store, the root's first."""
+        return [node.store for node in self._folders.values()]
 
-def _folder_item(raw, existing=None):
-    """A folders entry as an Item of kind 'folder': `existing` brought up to date, or a new one."""
+
+def _folder_item(raw, existing=None, changed=None):
+    """A folders entry as an Item of kind 'folder': `existing` brought up to date (added to the
+    list `changed` when its SORT_KEYS changed), or a new one."""
     folder_id = _text(raw.get('id'))
     data = {'id': folder_id, 'kind': 'folder', 'title': _text(raw.get('title')) or '',
             'play': {}, 'groups': [], 'parent': raw.get('parent'),
             'children': raw.get('children')}
     if existing is not None and existing.kind == 'folder' and existing.id == folder_id:
-        existing.merge(data, replace=True)
+        if not SORT_KEYS.isdisjoint(existing.merge(data, replace=True)) and changed is not None:
+            changed.append(existing)
         return existing
     return Item(data)
 
@@ -602,8 +626,16 @@ class Library(GObject.Object):
         Everything is matched by kind and id: an Item still in the library keeps its object
         (its properties set where they changed, its groups and Tracks kept unless they
         changed), what is gone leaves the stores, what is new goes in at its place, and the
-        shelves and folders keep theirs too. A page showing an Item, a grid's scroll position
-        and the sidebar's selection all survive. As load() otherwise.
+        shelves and folder Items keep theirs too (the folder stores are new). A page showing
+        an Item, a grid's scroll position and the sidebar's selection all survive.
+
+        What changed is told as it is: a kept Item notifies each property that changed and
+        emits `groups-changed` when its groups did (Item.merge()); a kept Shelf notifies its
+        title. Stores emit `items-changed` only where Items came, went or moved, and where a
+        kept Item's title, subtitle or year changed (SORT_KEYS), so that the sort and filter
+        models over them place it again (_notify_changed). A view's rows are not rebound by
+        that on GTK 4.22: a widget bound to an Item follows its notify signals. As load()
+        otherwise.
         """
         return self._load(keep=True, reading=self._read())
 
@@ -670,23 +702,21 @@ class Library(GObject.Object):
         sections = data.get('sections') if isinstance(data.get('sections'), dict) else {}
         existing = self._index if keep else {}
         index = {}
-        changed = []  # kept Items whose properties changed: their views are told
+        changed = {}  # kept Items whose SORT_KEYS changed, in order (a dict as an ordered set)
 
         def wrap(raw):
             key = (_text(raw.get('kind')), _text(raw.get('id')))
             item = existing.get(key)
             if item is None:
                 item = Item(raw)
-            elif item.merge(raw, replace=True):
-                changed.append(item)
+            elif not SORT_KEYS.isdisjoint(item.merge(raw, replace=True)):
+                changed[item] = None
             index.setdefault(key, item)
             return item
 
         for name in SECTIONS:
             await self._splice(getattr(self, name), _dicts(sections.get(name)), wrap, generation,
                                keep)
-        if changed:
-            self._notify_changed(changed)
 
         def shelf_item(raw):
             # The same album or playlist on a shelf and in a section is one object.
@@ -714,22 +744,32 @@ class Library(GObject.Object):
         self._tree = tree
         self._index = index
         self._favourites = next((item for item in self.playlists if item.favourites), None)
+        for item in tree.changed:
+            changed[item] = None
+        if changed:
+            self._notify_changed(changed)
         if self._songs_wanted:
             await self._fill_songs(generation)
 
     def _notify_changed(self, items):
-        """Tell the stores' views about kept Items whose properties changed, so bound rows are
-        rebound: each is spliced over itself where it sits."""
-        positions = {}
-        for name in SECTIONS:
-            store = getattr(self, name)
-            for position in range(store.get_n_items()):
-                positions[store.get_item(position)] = (store, position)
-        for item in items:
-            found = positions.get(item)
-            if found is not None:
-                store, position = found
-                store.splice(position, 1, [item])
+        """Make the sort and filter models over the stores place again the kept Items whose
+        SORT_KEYS changed (`items`, a set or dict): in every store holding them (the sections,
+        the shelves and the folders), each run of them is spliced over itself, one splice a
+        run.
+
+        That is all a same-object splice does on GTK 4.22: a view's bound rows are not rebound
+        by it (the list item manager keeps the widget of an item removed and added back in one
+        change), so widgets follow their Item's notify signals for what they show.
+        """
+        stores = [getattr(self, name) for name in SECTIONS]
+        stores += [shelf.items for shelf in self.shelves]
+        stores += self._tree.stores()
+        for store in stores:
+            positions = [position for position in range(store.get_n_items())
+                         if store.get_item(position) in items]
+            for start, end in reversed(_runs(positions)):
+                store.splice(start, end - start,
+                             [store.get_item(position) for position in range(start, end)])
 
     async def _splice(self, store, dicts, wrap, generation, keep=False):
         """Replace the store's contents with the wrapped dicts, a batch at a time.
@@ -912,6 +952,17 @@ def collation_key(text):
 def _dicts(value):
     """The dicts of a JSON list, or nothing when it is not one."""
     return [raw for raw in value if isinstance(raw, dict)] if isinstance(value, list) else []
+
+
+def _runs(positions):
+    """Ascending positions as runs of consecutive ones: [(start, end)], end excluded."""
+    runs = []
+    for position in positions:
+        if runs and runs[-1][1] == position:
+            runs[-1][1] = position + 1
+        else:
+            runs.append([position, position + 1])
+    return [(start, end) for start, end in runs]
 
 
 # The longest a parse waits for resume_reading() in all, in seconds: a hold never released
