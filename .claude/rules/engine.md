@@ -79,6 +79,12 @@ paths:
   temporary file beside the target, fsync'd (not artwork, a copy that counts as missing when
   empty), renamed over it; a failure removes the temporary file and raises. Never
   `open(path, 'w')` a cache file. The pruners leave a dot temp alone until it is an hour old.
+- The cache's generation: a job that writes the cache (a sync, `item()`'s artwork, a kept
+  answer, lyrics, a cover the pages fetch) takes `store.cache_generation()` on the main thread
+  when it starts and passes `generation=` to every write. Clearing the cache or signing out
+  calls `store.bump_cache_generation()` first; from then on that job's writes land nowhere and
+  make no directory, and a job that must stop (a sync's artwork, save_library) raises
+  `store.CacheGone`.
 - Chrome's argv (`chrome.chrome_args()`): `--disable-features=HardwareMediaKeyHandling` keeps
   Chrome's own MPRIS player off the bus (the app owns MPRIS); `--headless=new`; the visible
   window is an `--app=` window. In a Flatpak sandbox `find_chrome()` asks the host (blocking:

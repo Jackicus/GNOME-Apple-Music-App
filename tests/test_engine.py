@@ -30,7 +30,7 @@ from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic pac
 from gi.events import GLibEventLoop
 
 from applemusic import engine as engine_module
-from applemusic.backend import chrome, normalize
+from applemusic.backend import chrome, normalize, store
 from applemusic.backend import client as client_module
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine, item_endpoint, resource_type
@@ -776,7 +776,8 @@ class LifecycleTest(EngineFixture):
         await self.engine.start()
         fetched = []
         with mock.patch.object(normalize, 'download_item_art',
-                               lambda item, cache_dir: fetched.append(cache_dir) or item):
+                               lambda item, cache_dir, generation: fetched.append(cache_dir)
+                               or item):
             item = await self.engine.item('album', '1724040700')
         self.assertEqual(self.page.api_calls,
                          ['/v1/catalog/us/albums/1724040700?include=tracks,artists'])
@@ -809,7 +810,8 @@ class LifecycleTest(EngineFixture):
                  'attributes': {'name': 'Unreachable'}}]}}}]}
         self.page.api_answers['/v1/catalog/us/albums/1724040700?include=tracks'] = album
         await self.engine.start()
-        with mock.patch.object(normalize, 'download_item_art', lambda item, cache_dir: item):
+        with mock.patch.object(normalize, 'download_item_art',
+                               lambda item, cache_dir, generation: item):
             item = await self.engine.item('artist', '42')
         self.assertEqual(self.page.api_calls, [
             '/v1/catalog/us/artists/42?include=albums',
@@ -1512,6 +1514,23 @@ class CacheTest(unittest.TestCase):
         self.assertEqual(engine_module.cache_size(self.cache), 5)
         self.assertEqual(engine_module.clear_cache(self.cache), 0)  # nothing left to clear
         self.assertEqual(engine_module.clear_cache(self.root / 'missing'), 0)
+
+
+class KeptAfterWipeTest(unittest.TestCase):
+    """The engine's writers keep nothing for a cache cleared since their command began."""
+
+    def test_kept_answers_and_lyrics(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        cache = pathlib.Path(tmp.name)
+        generation = store.cache_generation()
+        store.bump_cache_generation()
+        answer = engine_module._shape_and_keep(lambda raw, cache_dir: {'shelves': []}, {},
+                                               str(cache / 'browse.json'), str(cache),
+                                               generation)
+        self.assertEqual(answer['shelves'], [])
+        engine_module._write_json(cache / 'lyrics' / '1.json', {'lines': []}, generation)
+        self.assertEqual(list(cache.iterdir()), [])
 
 
 class EndpointTest(unittest.TestCase):

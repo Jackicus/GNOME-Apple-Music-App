@@ -109,6 +109,106 @@ class AtomicWriteTest(StoreTest):
         self.assertFalse(store.is_stale_temp(self.cache / '.gone.tmp'))
 
 
+class GenerationTest(StoreTest):
+    """Nothing a job of a wiped cache writes lands, not even a directory."""
+
+    def old_generation(self):
+        generation = store.cache_generation()
+        store.bump_cache_generation()
+        return generation
+
+    def test_the_bump(self):
+        generation = store.cache_generation()
+        self.assertTrue(store.current(generation))
+        self.assertTrue(store.current(None))  # a writer that does not ask
+        self.assertEqual(store.bump_cache_generation(), generation + 1)
+        self.assertFalse(store.current(generation))
+        self.assertTrue(store.current(store.cache_generation()))
+
+    def test_a_current_write_lands(self):
+        path = self.cache / 'lyrics' / '1.json'
+        generation = store.cache_generation()
+        self.assertEqual(store.atomic_write(path, lambda f: f.write('{}'), text=True,
+                                            generation=generation), path)
+        self.assertEqual(path.read_text(), '{}')
+
+    def test_an_old_write_makes_nothing(self):
+        generation = self.old_generation()
+        path = self.cache / 'lyrics' / '1.json'
+        self.assertIsNone(store.atomic_write(path, lambda f: f.write('{}'), text=True,
+                                             generation=generation))
+        self.assertIsNone(store.atomic_create(self.cache / 'thumb' / 'x.jpg', lambda temp: None,
+                                              generation=generation))
+        self.assertFalse(store.make_dirs(self.cache / 'art', generation))
+        self.assertEqual(self.names(), [])
+
+    def test_a_bump_during_the_write_drops_it(self):
+        path = self.cache / 'answer.json'
+        path.write_text('old')
+        generation = store.cache_generation()
+
+        def write(file):
+            file.write('new')
+            store.bump_cache_generation()  # Clear Cache, while this one was writing
+        self.assertIsNone(store.atomic_write(path, write, text=True, generation=generation))
+        self.assertEqual(path.read_text(), 'old')
+        self.assertEqual(self.names(), ['answer.json'])  # and no temporary file
+
+    def test_a_directory_wiped_under_the_write(self):
+        generation = store.cache_generation()
+        folder = self.cache / 'categories'
+        real = store.os.makedirs
+
+        def makedirs_then_wipe(path, exist_ok=False):
+            real(path, exist_ok=exist_ok)
+            store._generation += 1  # the bump, and the wipe right after it
+            folder.rmdir()
+        with mock.patch.object(store.os, 'makedirs', makedirs_then_wipe):
+            self.assertIsNone(store.atomic_write(folder / 'c1.json', lambda f: None,
+                                                 generation=generation))
+        self.assertEqual(self.names(), [])
+
+    def test_the_cache_writers_after_a_wipe(self):
+        generation = self.old_generation()
+        cache = str(self.cache)
+        answer = normalize.write_answer(str(self.cache / 'landing.json'), {'categories': []},
+                                        generation=generation)
+        self.assertIn('cached', answer)  # the answer is the caller's, only not kept
+        with self.assertRaises(store.CacheGone):
+            normalize.save_library({'version': 1}, cache, generation=generation)
+        with mock.patch('urllib.request.urlopen') as urlopen:
+            self.assertIsNone(normalize.cache_artwork('https://x.invalid/a.jpg', cache,
+                                                      generation=generation))
+            with self.assertRaises(store.CacheGone):
+                normalize.download_art({str(self.cache / 'thumb' / 'b.jpg'): 'https://x/b.jpg'},
+                                       cache, generation=generation)
+        urlopen.assert_not_called()
+        self.assertEqual(self.names(), [])
+
+    def test_a_download_the_wipe_overtakes(self):
+        generation = store.cache_generation()
+
+        class Answer:
+            status = 200
+
+            def __init__(self):
+                self.chunks = [b'part of a cover', b'']
+
+            def read(self, size=-1):
+                store.bump_cache_generation()  # signed out while the cover came in
+                return self.chunks.pop(0)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        with mock.patch('urllib.request.urlopen', lambda request, timeout: Answer()):
+            self.assertIsNone(normalize.cache_artwork('https://x.invalid/a.jpg', str(self.cache),
+                                                      generation=generation))
+        self.assertEqual(self.names(self.cache / 'art'), [])
+
+
 class WritersTest(StoreTest):
     """The cache's writers go through the one write."""
 

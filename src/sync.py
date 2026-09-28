@@ -52,7 +52,7 @@ gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import GdkPixbuf  # noqa: E402
 
 from .backend import config  # noqa: E402
-from .backend import normalize  # noqa: E402
+from .backend import normalize, store  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .library import EDITABLE, FAVOURITES, ROOT_FOLDER  # noqa: E402
 
@@ -161,6 +161,7 @@ async def sync_library(engine, library, progress=None):
     """The whole sync (see the module). Returns the counts: {albums, artists, playlists,
     songs, videos, radio, folders, shelves, art: {wanted, fetched, failed}}."""
     report = progress or (lambda section, done, total: None)
+    generation = store.cache_generation()  # a wipe from here on leaves this sync's files out
     status = await engine.status()
     if not status.get('authorized'):
         raise EngineError('not-signed-in', 'sign in to Apple Music to sync your library')
@@ -170,7 +171,7 @@ async def sync_library(engine, library, progress=None):
     # wipes the old thumbnails), and what library.json holds now: a fetch that fails keeps
     # its old entry rather than emptying its section.
     await asyncio.to_thread(normalize.apply_art_sizes, cache_dir, config.COVER_SIZE,
-                            config.THUMB_SIZE)
+                            config.THUMB_SIZE, generation)
     previous = await asyncio.to_thread(_previous_library, cache_dir)
     old_sections = previous.get('sections') if isinstance(previous.get('sections'), dict) else {}
     old_shelves = [shelf for shelf in previous.get('shelves') or [] if isinstance(shelf, dict)]
@@ -221,7 +222,7 @@ async def sync_library(engine, library, progress=None):
     build = asyncio.to_thread(
         _build_and_write, cache_dir, storefront, raw_songs, raw_playlists, playlist_tracks,
         folders, raw_videos, raw_stations, shelves_raw, old_sections, old_shelves,
-        art_progress, lambda: stop['cancelled'])
+        art_progress, lambda: stop['cancelled'], generation)
     try:
         counts = await build
     except asyncio.CancelledError:
@@ -320,7 +321,7 @@ async def _fetch_shelves(engine, report):
 
 def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_tracks, folders,
                      raw_videos, raw_stations, shelves_raw, old_sections, old_shelves,
-                     art_progress, cancelled):
+                     art_progress, cancelled, generation=None):
     """In a thread: normalise, fetch the missing thumbnails, write library.json, prune."""
     counts = {}
     albums, artists = normalize.group_songs_into_albums_and_artists(raw_songs, cache_dir)
@@ -388,11 +389,15 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     # placeholders for artwork that is about to arrive. A failure is logged, nothing more.
     try:
         counts['art'] = normalize.download_art(thumb_urls(library_data, cache_dir), cache_dir,
-                                               progress=art_progress, cancelled=cancelled)
+                                               progress=art_progress, cancelled=cancelled,
+                                               generation=generation)
+    except store.CacheGone:
+        raise  # the cache was cleared: nothing more is written
     except Exception as error:
         log.warning('sync: artwork: %s', error)
         counts['art'] = {'wanted': 0, 'fetched': 0, 'failed': 0}
-    normalize.save_library(library_data, cache_dir, indent=None)  # compact: a third the size
+    normalize.save_library(library_data, cache_dir, indent=None,  # compact: a third the size
+                           generation=generation)
     normalize.prune_art(library_data, cache_dir)
     normalize.prune_remote_art(cache_dir)
     log.info('library synced: %s', ', '.join(
