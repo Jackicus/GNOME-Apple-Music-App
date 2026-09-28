@@ -925,6 +925,9 @@ class Engine(GObject.Object):
                         raise
                     log.debug('sign-in poll: %s', e)  # the page is navigating, mostly
                     status = None
+                    # The event that woke the loop is spent: the next read waits for another
+                    # event or the poll, not a loop as fast as the page can fail.
+                    authorized.clear()
                 if isinstance(status, dict) and status.get('authorized'):
                     self._take_status(status)
                     log.info('signed in')
