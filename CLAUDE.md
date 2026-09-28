@@ -639,19 +639,27 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   library.json's optional top-level `folders` is a list of {id, title, parent, children: [{kind:
   folder|playlist, id}]} in Apple's order, the entry with id `root` listing the top level
   (playlists in no folder included); the children lists decide, `parent` is informational.
-  `library.playlist_tree()` (a new PlaylistTree per load) has `root` (nested TreeNodes: item,
-  depth, parent, children, store) and `flat` (depth first, with depth); whatever no list reaches
-  goes at the end of the top level, so a library without `folders` is all playlists at the top.
+  `library.playlist_tree()` (a new PlaylistTree per load and reload) has `root` (nested
+  TreeNodes: item, depth, parent, children, store) and `flat` (depth first, with depth);
+  whatever no list reaches goes at the end of the top level, so a library without `folders` is
+  all playlists at the top.
   Folders are Items of kind `folder` (`by_id('folder', id)`, no art, no groups);
   `folder_items(id)` is a folder's Gio.ListStore of folder and playlist Items (`root`: All
-  Playlists), replaced by each load, so pages follow a folder by id. `item.groups` (Group:
-  `name`, `play`, `entries` store of Track) is wrapped on first access. `library.songs` stays
-  empty until `await library.build_songs()` (the Songs page asks when first shown; batched with
-  `yield_to_frames()`, one splice at the end), and every load after that refills it;
-  `songs-ready` says it is filled, `library.song_count()` counts without building. Track's and
-  Item's properties are `library.raw_property`s, read from the object's `raw` dict at each access
-  (an Item's are writable into it; `merge()` notifies what changed): nothing is copied, so a
-  Track is 455 bytes and 3,000 Items wrap in 9 ms. Group and Shelf use `library.model_property`
+  Playlists), replaced by each load() (a reload() keeps it, brought up to date), so pages follow
+  a folder by id. `item.groups` (Group: `name`, `play`, `entries` store of Track) is wrapped on
+  first access. `library.songs` stays empty until `await library.build_songs()` (the Songs page
+  asks when first shown; batched with `yield_to_frames()`, one splice at the end), and every
+  load after that brings it up to date with the fewest splices (`apply_diff`); `songs-ready`
+  says it is filled, `library.song_count()` counts without building. Track's and Item's
+  properties are `library.raw_property`s, read from the object's `raw` dict at each access (an
+  Item's are writable into it; `merge()` notifies what changed): nothing is copied, so a Track
+  is 455 bytes and 3,000 Items wrap in 9 ms. The parse keeps each track dict of library.json
+  as a `library.TrackRecord`, a tuple that reads as the dict (`get()`, `[]`, `in`, `keys()`,
+  `dict(record)`): 15 MB less on 40,000 tracks, so code reading a Track's `raw` (or an Item's
+  groups' entries) must not assume a dict. Two Item properties are the model's words
+  (translated there, never written by the backend): `title` is "Unknown Album"/"Unknown
+  Artist" when empty, and `count-label` is made once from the sync's counts (`count_text()`)
+  and kept; Home's fixed shelves are titled by key. Group and Shelf use `library.model_property`
   (kept in `_<name>` attributes, assigned directly when wrapping). Never pass properties to
   `GObject.Object.__init__` when wrapping: about 4 µs each, 5-10x slower.
 - Sorting: `Gtk.StringSorter`/`Gtk.NumericSorter` (combined with `Gtk.MultiSorter`) over
@@ -715,10 +723,12 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   `pages.mark_bound(self)` at their first bind. A page that builds many widgets builds what
   shows first and the rest a frame apart (Home's `FIRST_SHELVES`).
 - Garbage collection: `library.paused_gc()` pauses it around bursts of long-lived objects (a
-  load, the Songs build) and freezes the heap after (`gc.freeze()`), so full collections never
-  scan the library again (53 ms each over 3,000 albums and 40,000 songs). What is alive at a
-  freeze is never collected if it later dies in a reference cycle, so freeze only after
-  `load()` and `build_songs()`, not after `reload()` (every sync) or at arbitrary moments.
+  load, from the call of `load()`/`reload()` so the parse runs without it; the Songs build)
+  and freezes the heap after (`gc.freeze()`), so full collections never scan the library again
+  (53 ms each over 3,000 albums and 40,000 songs). A freezing pause collects first, and again
+  before any freeze but the first load's, so no garbage is frozen. What is alive at a freeze
+  is never collected if it later dies in a reference cycle, so freeze only after `load()` and
+  `build_songs()`, not after `reload()` (every sync) or at arbitrary moments.
 - Grid pages set `max-columns` to what fits (`grid.columns_for`): `Gtk.GridView` keeps about 32
   rows of `max-columns` tiles alive whatever it shows (385 tiles for 12 columns at 1100 px, 129
   for 4). `COLUMN_WIDTH` is a tile plus Adwaita's grid child padding; change them together.
@@ -793,12 +803,16 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   time's entry for it; a failed songs or playlists listing, or a lost engine, fails the sync.
   Quitting cancels the sync task (the download thread gives up at its next fetch).
 - `library.reload()` (after a sync) matches everything by kind and id: kept Items get
-  `merge(raw, replace=True)` (properties set where changed, groups and Tracks kept when the
-  group dicts are equal), stores get `apply_diff` (difflib over object ids, so unchanged runs
-  are not spliced), changed Items are spliced over themselves (GTK 4.22 does not rebind a
-  same-object splice: bound rows keep their old values, a known bug), Shelf
-  objects are kept by key, folder Items by id, the Songs store is left alone when nothing
-  moved. `load()` still makes new objects (sign-out, the first load).
+  `merge(raw, replace=True)` (nothing at all for an equal dict, which is kept; otherwise each
+  property that changed notified, `groups-changed` emitted when the groups changed, and groups
+  and Tracks kept when the group dicts are equal), stores get `apply_diff` (unchanged runs are
+  not spliced), Shelf objects are kept by key, folder Items and their stores by id, and the
+  Songs store gets `apply_diff` too. A kept Item is spliced over itself only when its title,
+  subtitle or year changed (`library.SORT_KEYS`), so that sort and filter models place it
+  again: GTK 4.22 does not rebind a same-object splice, so a widget showing an Item follows its
+  notify signals and `groups-changed`. The whole load shares one frame budget
+  (`FRAME_BUDGET`, `Library._pause()`): no stretch over about 10 ms on 3,000 albums and 40,000
+  songs. `load()` still makes new objects (sign-out, the first load).
 - Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
   `APPLE_MUSIC_CACHE` at the launcher's `DEMO_DIR` unless the variable is already set, so
   `APPLE_MUSIC_CACHE=DIR scripts/demo.sh` shows another generated library. `DEMO_DIR` is the
