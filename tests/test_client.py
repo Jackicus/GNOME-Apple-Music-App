@@ -760,6 +760,8 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_bridge_is_put_back_after_a_navigation(self):
         page = await self.open_with_page()
+        resets = []
+        self.client.on('am:bridgeReset', lambda name, data: resets.append(data))
         await self.client.subscribe()
         self.assertEqual((page.injections, page.subscriptions), (1, 1))
         # A context for another frame (an iframe), or an isolated one: nothing.
@@ -774,6 +776,7 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         await until(lambda: page.subscriptions == 1)
         self.assertEqual(page.bridge, load_bridge()[1])
         self.assertEqual(page.injections, 2)
+        await until(lambda: resets == [{}])  # the page's state went with the document
 
     async def test_no_bridge_until_asked(self):
         page = await self.open_with_page()
@@ -834,6 +837,20 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         page.bridge = None  # navigated; the re-injection has not begun
         self.assertEqual((await self.client.bridge('status'))['ready'], True)
         self.assertEqual(page.injections, 2)
+
+    async def test_a_page_that_never_comes_back_loses_the_connection(self):
+        page = await self.open_with_page()
+        await self.client.subscribe()
+        self.client.reinject_timeout = 0.1
+        navigated = []
+        self.chrome.responders['Page.navigate'] = lambda m: navigated.append(m) or {}
+        page.bridge = None
+        page.ready = False
+        with self.assertLogs(client_module.log, 'WARNING'):
+            await self.chrome.send_event(*context_created(9))
+            await asyncio.wait_for(self.client.wait_closed(), 3)
+        self.assertEqual(len(navigated), 1)  # sent to music.apple.com before the last try
+
 
 class WebSocketClientTest(unittest.IsolatedAsyncioTestCase):
     """The same client through a DevTools WebSocket (scripts/am.py --attach)."""

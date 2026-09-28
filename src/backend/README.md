@@ -244,7 +244,9 @@ sit on it.
   `'*'`), `await ensure_bridge()` (injects `bridge.js` when the page's
   `__version` differs from the file's hash, waits for MusicKit, and from then
   on puts the bridge back after every navigation of the page's main frame,
-  seen as `Runtime.executionContextCreated`), `await subscribe()` (bridge
+  seen as `Runtime.executionContextCreated`: up to four tries, the last after
+  reloading the page, then `am:bridgeReset`, or the connection given up so the
+  engine goes down rather than on without events), `await subscribe()` (bridge
   events on, re-done after navigations), `await close()`, `await
   wait_closed()`, `connected`. `await open_page(transport)` connects and
   attaches; `await attach_devtools(port)` does it through a DevTools port.

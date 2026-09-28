@@ -437,6 +437,7 @@ class Engine(GObject.Object):
         self._relay = None     # the task relaying Chrome's stderr to the log (DEBUG only)
         self._lock = asyncio.Lock()
         self._starting = None  # (Future, headless) of the start under way
+        self._tasks = set()    # small tasks of the engine's own, held until they end
 
     @property
     def pid(self):
@@ -784,7 +785,23 @@ class Engine(GObject.Object):
             authorized = bool(data.get('authorized'))
             if authorized != self.authorized:
                 self.authorized = authorized
+        elif name == 'bridgeReset':
+            # The page loaded a new document, and the bridge is back in it: what MusicKit
+            # held (the sign-in, the queue) may have changed with it. The Player hears it too.
+            self._in_background(self._reread_status())
         self.emit('event', name, data)
+
+    async def _reread_status(self):
+        try:
+            await self.status()  # keeps `authorized` current
+        except EngineError as e:
+            log.debug('status after the bridge came back: %s', e)
+
+    def _in_background(self, coro):
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     # -- commands ----------------------------------------------------------------------------
 

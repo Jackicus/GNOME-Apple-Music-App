@@ -61,6 +61,7 @@ EVENT_PREFIX = 'am:'    # bridge events are dispatched as 'am:<MusicKit event na
 GLOBAL = 'window.__appleMusicLibrary'
 BRIDGE_TIMEOUT = 15.0   # how long the page gets to load MusicKit
 PAGE_WAIT = 15.0        # how long a new Chrome gets to show music.apple.com
+REINJECT_ATTEMPTS = 4   # tries at the bridge after a navigation (the last after reloading)
 BIG_MESSAGE = 512 * 1024  # answers at least this long are parsed in a thread
 READ_CHUNK = 1 << 20
 
@@ -315,6 +316,7 @@ class CDPClient:
 
     def __init__(self, timeout=30.0):
         self.timeout = timeout
+        self.reinject_timeout = BRIDGE_TIMEOUT
         self._transport = None
         self._reader_task = None
         self._next_id = 1
@@ -723,12 +725,27 @@ class CDPClient:
             await self.evaluate(f'{GLOBAL}.subscribe()', await_promise=False, timeout=5)
 
     async def _reinject(self):
+        """The bridge back after a navigation: a few tries of ensure_bridge(), the last after
+        sending the page to music.apple.com again; `am:bridgeReset` once it is back (the
+        page's state was lost with the document), the connection given up when it never is,
+        so the engine goes down rather than on without events."""
         log.debug('bridge: a new document in the page; putting the bridge back')
-        try:
-            await self.ensure_bridge()
-        except EngineError as e:
-            if e.code != 'engine-down':
-                log.warning('bridge after navigation: %s', e)
+        for attempt in range(1, REINJECT_ATTEMPTS + 1):
+            if not self.connected:
+                return
+            try:
+                if attempt == REINJECT_ATTEMPTS:
+                    await self.call('Page.navigate', {'url': chrome.START_URL})
+                await self.ensure_bridge(self.reinject_timeout)
+            except EngineError as e:
+                if e.code == 'engine-down':
+                    return
+                log.warning('bridge after a navigation (try %d of %d): %s', attempt,
+                            REINJECT_ATTEMPTS, e)
+                continue
+            self._emit(EVENT_PREFIX + 'bridgeReset', {})
+            return
+        self._lost('music.apple.com did not come back after a navigation')
 
     async def subscribe(self):
         """Have the bridge forward MusicKit's events (the am:* events), now and after every
