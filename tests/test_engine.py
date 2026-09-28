@@ -568,17 +568,26 @@ class LifecycleTest(EngineFixture):
     # -- the connection --------------------------------------------------------------------
 
     async def test_losing_the_connection_takes_the_engine_down(self):
+        lost = []
+        self.engine.connect('lost', lambda e, reason: lost.append((reason, e.state)))
         await self.engine.start()
-        process, _ = self.engine.spawned[0]
-        await self.chrome.drop()
-        await until(lambda: self.engine.state == 'down', timeout=3)
+        await self.engine.restart()
+        await self.engine.stop()
+        await self.engine.start()
+        self.assertEqual(lost, [])  # asked for: not lost
+        process, _ = self.engine.spawned[-1]
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            await self.chrome.drop()
+            await until(lambda: self.engine.state == 'down', timeout=3)
         await self.wait_exited(process)
         self.assertFalse(self.engine.authorized)
+        self.assertEqual(lost, [('closed by Chrome', 'up')])  # once, before the stop
 
     async def test_a_crashed_page_takes_the_engine_down(self):
         await self.engine.start()
-        await self.chrome.send_event('Inspector.targetCrashed', {})
-        await until(lambda: self.engine.state == 'down', timeout=3)
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            await self.chrome.send_event('Inspector.targetCrashed', {})
+            await until(lambda: self.engine.state == 'down', timeout=3)
         await self.wait_exited(self.engine.spawned[0][0])
 
     async def test_the_bridge_comes_back_after_a_slow_navigation(self):
@@ -606,7 +615,7 @@ class LifecycleTest(EngineFixture):
         self.engine._client.reinject_timeout = 0.1
         self.page.bridge = None
         self.page.ready = False
-        with self.assertLogs(client_module.log, 'WARNING'):
+        with self.assertLogs(level='WARNING'):  # the client's tries, then the engine's end
             await self.chrome.send_event(*context_created(9))
             await until(lambda: self.engine.state == 'down', timeout=3)
         await self.wait_exited(self.engine.spawned[0][0])
@@ -622,6 +631,8 @@ class LifecycleTest(EngineFixture):
         self.engine.probe_timeout = 0.2
 
     async def test_a_wedged_page_takes_the_engine_down(self):
+        lost = []
+        self.engine.connect('lost', lambda e, reason: lost.append(reason))
         await self.engine.start()
         process, _ = self.engine.spawned[0]
         await self.wedge(lambda expression: True)
@@ -631,6 +642,7 @@ class LifecycleTest(EngineFixture):
             self.assertEqual(ctx.exception.code, 'timeout')
             await until(lambda: self.engine.state == 'down', timeout=3)
         await self.wait_exited(process)
+        self.assertEqual(lost, ['the page stopped answering'])
 
     async def test_a_slow_api_read_leaves_a_page_that_answers_up(self):
         await self.engine.start()

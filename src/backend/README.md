@@ -247,8 +247,9 @@ sit on it.
   seen as `Runtime.executionContextCreated`: up to four tries, the last after
   reloading the page, then `am:bridgeReset`, or the connection given up so the
   engine goes down rather than on without events), `await subscribe()` (bridge
-  events on, re-done after navigations), `await close()`, `await
-  wait_closed()`, `connected`. `await open_page(transport)` connects and
+  events on, re-done after navigations), `await close(reason)`, `await
+  wait_closed()`, `connected`, `lost_reason` (why the connection went),
+  `on_timeout(method)` (called when a call runs out of time). `await open_page(transport)` connects and
   attaches; `await attach_devtools(port)` does it through a DevTools port.
   Timeouts are `EngineError('timeout')`, a lost connection `'engine-down'`
   (pending calls included); a bad message or payload, or a handler that
