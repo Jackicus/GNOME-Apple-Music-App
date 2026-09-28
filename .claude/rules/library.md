@@ -86,6 +86,10 @@ them before changing either. What matters most:
   fetches missing thumbnails (covers are fetched on demand by the pages that show them), writes
   library.json atomically, prunes, then `reload()`s. A failed optional section keeps last
   time's entry; a failed songs or playlists listing, or a lost engine, fails the sync.
+- A cancelled sync's task ends only after its build thread has (`sync_library()` waits it
+  out), so once `await app.library_sync.cancel()` returns nothing more of it is written.
+  Sign-out and Clear Cache (account.py) bump the cache's generation first, then cancel, then
+  wipe, with the sync held (`LibrarySync.hold()`) so none starts meanwhile.
 - The library.json shape lives in `src/backend/README.md` (with this app's additions) and
   library.py's docstring. A new key or kind touches the sync's writer, `scripts/demo_library.py`,
   tests/test_demo_schema.py and the README together.

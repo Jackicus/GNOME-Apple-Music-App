@@ -383,6 +383,23 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(art_url, GLib.filename_to_uri(self.art_path, None))
         asyncio.run(go())
 
+    def test_refresh_art_after_the_cache_is_cleared(self):
+        async def go():
+            self.make()
+            self.play()
+            await self.app.settle()
+            self.connection.changed()
+            # The cache cleared: the file the Metadata named is not there (it never was
+            # here), so it goes from the Metadata, and is fetched again.
+            self.service.refresh_art()
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            self.assertNotIn('mpris:artUrl',
+                             self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack())
+            await self.app.settle()
+            self.assertEqual(self.artwork.urls, [TRACK['artUrl']] * 2)
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+        asyncio.run(go())
+
     def test_state_and_modes(self):
         async def go():
             self.make()

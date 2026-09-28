@@ -47,6 +47,7 @@ class SignInDialog(Adw.Dialog):
         settings = app.settings
         try:
             self.status_page.set_description(_('Starting Chrome…'))
+            await app.library_sync.cancel()  # its engine is about to be restarted
             await engine.restart(visible=True)
             self.status_page.set_description(
                 _('Sign in with your Apple ID in the Chrome window'))

@@ -379,13 +379,7 @@ class Mpris:
         self._changed('PlaybackStatus')
 
     def _on_track(self, *_args):
-        track = self._player.track
-        if self._art_task is not None and not self._art_task.done():
-            self._art_task.cancel()
-        self._art_task = None
-        self._art_path = self._cached_art(track)
-        if track is not None and track.artwork_url and self._art_path is None:
-            self._art_task = self._app.spawn(self._fetch_art(track))
+        self._follow_art()
         self._status = self._playback_status()
         self._duration_known = False  # the Player resets it after this notify, or MusicKit does
         self._hold_until = time.monotonic() + TRACK_HOLD  # the reset to 0 is not a seek
@@ -433,6 +427,24 @@ class Mpris:
 
     def _seeked(self, seconds):
         self._emit(PLAYER_INTERFACE, 'Seeked', GLib.Variant('(x)', (microseconds(seconds),)))
+
+    def refresh_art(self):
+        """The artwork file of the track shown may be gone (the cache was cleared, or the
+        account signed out): look for it again, fetch it when it is missing, and put the
+        Metadata on the bus again, without a file that is no longer there."""
+        self._follow_art()
+        self._changed('Metadata')
+
+    def _follow_art(self):
+        """The track's artwork file, when it is on disk; else a fetch of it, which puts the
+        Metadata on the bus again once it arrives."""
+        track = self._player.track
+        if self._art_task is not None and not self._art_task.done():
+            self._art_task.cancel()
+        self._art_task = None
+        self._art_path = self._cached_art(track)
+        if track is not None and track.artwork_url and self._art_path is None:
+            self._art_task = self._app.spawn(self._fetch_art(track))
 
     @staticmethod
     def _cached_art(track):

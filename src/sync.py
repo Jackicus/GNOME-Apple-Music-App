@@ -45,6 +45,7 @@ last_sync_text() saying how long ago the last one was.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -220,25 +221,41 @@ async def sync_library(engine, library, progress=None):
     shelves_raw = await _fetch_shelves(engine, report)
 
     # 7. Everything into the Item shapes, the missing thumbnails fetched, the file written and
-    # the artwork pruned: all in a thread, the artwork's progress relayed to this loop.
+    # the caches pruned: all in a thread, the artwork's progress relayed to this loop. The
+    # thread cannot be stopped from here: cancelled, the sync tells it to give up and waits
+    # for it, so that once the sync's task has ended nothing more of it is written.
     loop = asyncio.get_running_loop()
     stop = {'cancelled': False}
 
     def art_progress(done, total):
         loop.call_soon_threadsafe(report, 'artwork', done, total)
 
-    build = asyncio.to_thread(
+    build = asyncio.ensure_future(asyncio.to_thread(
         _build_and_write, cache_dir, storefront, raw_songs, raw_playlists, playlist_tracks,
         folders, raw_videos, raw_stations, shelves_raw, old_sections, old_shelves,
-        art_progress, lambda: stop['cancelled'], generation)
+        art_progress, lambda: stop['cancelled'], generation))
     try:
-        counts = await build
+        await asyncio.wait([build])  # cancelling this wait leaves the build running
     except asyncio.CancelledError:
-        stop['cancelled'] = True  # the thread gives up its fetches at the next one
+        stop['cancelled'] = True  # the thread gives up at its next fetch, or before writing
+        await _wait_out(build)
         raise
+    counts = build.result()
     # 8. The models follow, in place.
     await library.reload()
     return counts
+
+
+async def _wait_out(future):
+    """Wait until `future` has ended, however often the waiting task is cancelled meanwhile
+    (the caller raises its CancelledError after); its outcome is only logged."""
+    while not future.done():
+        try:
+            await asyncio.wait([future])
+        except asyncio.CancelledError:
+            continue
+    if not future.cancelled() and future.exception() is not None:
+        log.debug('sync: the build ended with %r', future.exception())
 
 
 def _keep_going(error):
@@ -411,14 +428,25 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     except Exception as error:
         log.warning('sync: artwork: %s', error)
         counts['art'] = {'wanted': 0, 'fetched': 0, 'failed': 0}
+    _stop_if(cancelled, generation, cache_dir)  # with nothing to fetch, download_art did not ask
     normalize.save_library(library_data, cache_dir, indent=None,  # compact: a third the size
                            generation=generation)
+    _stop_if(cancelled, generation, cache_dir)
     normalize.prune_art(library_data, cache_dir)
-    normalize.prune_remote_art(cache_dir)
+    normalize.prune_caches(cache_dir)
     log.info('library synced: %s', ', '.join(
         f'{counts[name]} {name}' for name in ('albums', 'artists', 'playlists', 'songs',
                                                'videos', 'radio', 'folders')))
     return counts
+
+
+def _stop_if(cancelled, generation, cache_dir):
+    """Raise Cancelled when the sync was cancelled, CacheGone when the cache was wiped since
+    it began (store.py): the build writes and prunes nothing more."""
+    if not store.current(generation):
+        raise store.CacheGone(cache_dir)
+    if cancelled():
+        raise normalize.Cancelled('sync')
 
 
 def loose_songs(raw_songs, cache_dir, art_urls=None):
@@ -528,8 +556,10 @@ class LibrarySync(GObject.Object):
     """The app's sync: sync_library() through `app.engine` into `app.library`, one at a time.
 
     `running` is true from start() until the run has ended; `progress(section, done, total)`
-    relays the run's reports (section '' as it starts, total None until known). `app` gives
-    the engine, the library, the settings, `demo`, `spawn()`, `toast()` and `report()`."""
+    relays the run's reports (section '' as it starts, total None until known). cancel()
+    returns once nothing more of the run will be written, and hold() keeps any run from
+    starting (signing out, clearing the cache) until release(). `app` gives the engine, the
+    library, the settings, `demo`, `spawn()`, `toast()` and `report()`."""
 
     __gtype_name__ = 'AppleMusicLibrarySync'
 
@@ -543,6 +573,23 @@ class LibrarySync(GObject.Object):
         super().__init__()
         self._app = app
         self._task = None
+        self._holds = 0
+
+    def hold(self):
+        """Start no sync until release(): the account or the cache is changing under it."""
+        self._holds += 1
+
+    def release(self):
+        self._holds = max(0, self._holds - 1)
+
+    @contextlib.contextmanager
+    def held(self):
+        """hold() for the length of a `with` block."""
+        self.hold()
+        try:
+            yield
+        finally:
+            self.release()
 
     def due(self):
         """Whether the library should be synced now: never yet, or the last sync is older
@@ -552,10 +599,13 @@ class LibrarySync(GObject.Object):
 
     def start(self):
         """Sync the library through the engine, starting it if it is down, unless a sync is
-        running already. Returns the task, or None."""
+        running already or held. Returns the task, or None."""
         app = self._app
         if app.demo:
             app.toast(_('Not available with the demo library'))
+            return None
+        if self._holds:
+            log.debug('no sync while the account or the cache changes')
             return None
         if self._task is not None and not self._task.done():
             log.debug('a sync is running already')
@@ -570,7 +620,8 @@ class LibrarySync(GObject.Object):
             self.running = False  # however it ended, cancelled before it began included
 
     async def cancel(self):
-        """Stop the sync running, if one is, and wait for it to end."""
+        """Stop the sync running, if one is, and wait for it to end: its task ends only
+        once its thread has, so nothing more of it is written after this returns."""
         task = self._task
         if task is not None and not task.done():
             task.cancel()
@@ -580,11 +631,22 @@ class LibrarySync(GObject.Object):
         app = self._app
         engine = app.engine
         started = time.monotonic()
+        live = [True]
+
+        def progress(section, done, total):
+            # A report the build thread queued before the run ended arrives after it: the
+            # banner is not shown again for it.
+            if live[0]:
+                self.emit('progress', section, done, total)
+
         try:
             if engine.state == 'down':
                 await engine.start()
-            self.emit('progress', '', 0, None)
-            counts = await sync_library(engine, app.library, self._on_progress)
+            progress('', 0, None)
+            counts = await sync_library(engine, app.library, progress)
+        except store.Cancelled as error:
+            log.info('sync stopped: %s', error)  # the cache was cleared under it
+            return
         except EngineError as error:
             log.warning('sync: %s', error)
             if error.code == 'not-signed-in':
@@ -593,6 +655,8 @@ class LibrarySync(GObject.Object):
                 app.toast(_('Could not sync your library: {message}').format(
                     message=error.message), _('Retry'), 'app.sync')
             return
+        finally:
+            live[0] = False
         app.settings.set_string('last-sync', datetime.now(UTC).isoformat(timespec='seconds'))
         log.info('sync done in %.0f s', time.monotonic() - started)
         albums, playlists = counts.get('albums', 0), counts.get('playlists', 0)
@@ -604,6 +668,3 @@ class LibrarySync(GObject.Object):
             ngettext('{count} song', '{count} songs', songs).format(count=f'{songs:n}'),
         ])
         app.toast(_('Library synced: {summary}').format(summary=summary))
-
-    def _on_progress(self, section, done, total):
-        self.emit('progress', section, done, total)

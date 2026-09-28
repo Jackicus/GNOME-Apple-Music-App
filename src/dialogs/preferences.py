@@ -80,6 +80,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
             (settings, settings.connect('changed::last-sync', self._on_last_sync)),
             (settings, settings.connect('changed::signed-in', self._update_account)),
             (settings, settings.connect('changed::account-name', self._update_account)),
+            (app, app.connect('notify::signing-out', self._update_account)),
             (engine, engine.connect('notify::state', self._update_engine)),
             (engine, engine.connect('notify::authorized', self._update_engine)),
             (engine, engine.connect('notify::headless', self._update_engine)),
@@ -241,4 +242,4 @@ class PreferencesDialog(Adw.PreferencesDialog):
         else:
             description = _('Signed in')
         self.account_group.set_description(description)
-        self.sign_out_row.set_sensitive(signed_in)
+        self.sign_out_row.set_sensitive(signed_in and not self._app.signing_out)

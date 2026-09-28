@@ -63,6 +63,7 @@ class Window(Adw.ApplicationWindow):
     content_page = Gtk.Template.Child()
     navigation_view = Gtk.Template.Child()
     account_stack = Gtk.Template.Child()
+    account_button = Gtk.Template.Child()
     account_avatar = Gtk.Template.Child()
     account_label = Gtk.Template.Child()
     sign_in_banner = Gtk.Template.Child()
@@ -96,18 +97,21 @@ class Window(Adw.ApplicationWindow):
         self._restore_window_state()
         self._restore_page(self._settings.get_string('last-page'))
 
-        # The account button and the banner follow the signed-in and account-name keys.
+        # The account button and the banner follow the signed-in and account-name keys, and
+        # the button is off while signing out; the sync banner follows the app's sync
+        # (sync.LibrarySync).
         self._settings_handlers = [
             self._settings.connect('changed::signed-in', self._update_account),
             self._settings.connect('changed::account-name', self._update_account),
         ]
-        self._update_account()
-        # The sync banner follows the app's sync (sync.LibrarySync).
-        library_sync = self.get_application().library_sync
-        self._sync_handlers = [
-            library_sync.connect('progress', self._on_sync_progress),
-            library_sync.connect('notify::running', self._on_sync_running),
+        app = self.get_application()
+        self._app_handlers = [
+            (app, app.connect('notify::signing-out', self._update_account)),
+            (app.library_sync, app.library_sync.connect('progress', self._on_sync_progress)),
+            (app.library_sync,
+             app.library_sync.connect('notify::running', self._on_sync_running)),
         ]
+        self._update_account()
 
         # The window's actions (their keys are shortcuts.ACCELS, set in main.py). Alt+Left:
         # the navigation views pop on their own only while the focus is in them; this goes
@@ -227,6 +231,7 @@ class Window(Adw.ApplicationWindow):
         self.account_label.set_label(name or _('Signed In'))
         self.account_avatar.set_text(name)
         self.account_avatar.set_show_initials(bool(name))
+        self.account_button.set_sensitive(not self.get_application().signing_out)
         self.sign_in_banner.set_revealed(not signed_in and not self.get_application().demo)
 
     @Gtk.Template.Callback()
@@ -796,10 +801,9 @@ class Window(Adw.ApplicationWindow):
         for handler in self._settings_handlers:
             self._settings.disconnect(handler)
         self._settings_handlers = []
-        library_sync = self.get_application().library_sync
-        for handler in self._sync_handlers:
-            library_sync.disconnect(handler)
-        self._sync_handlers = []
+        for source, handler in self._app_handlers:
+            source.disconnect(handler)
+        self._app_handlers = []
         self.set_visible(False)
 
     def hide_for_background(self):

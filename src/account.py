@@ -1,10 +1,16 @@
 """The account's lifecycle on this computer: signing out, and clearing the cache.
 
-    await account.sign_out(app)      # the engine stopped, the profile and cache wiped
+    await account.sign_out(app)      # the Apple session revoked, the profile and cache wiped
     await account.clear_cache(app)   # the cache wiped, the library synced again
 
-`app` is the Application: its settings, engine, library, library_sync and toast(). No
-widgets: the window and the dialogs call these.
+Both race every job that writes the cache (the sync and its thread, an item's artwork, the
+kept answers, lyrics, the covers the pages fetch), so both begin the same way: the cache's
+generation bumped (store.bump_cache_generation: from then on no write of those jobs lands),
+the sync cancelled and waited for (its thread included), and only then the wipe. No sync
+starts meanwhile (LibrarySync.hold()).
+
+`app` is the Application: its settings, engine, library, library_sync, mpris, toast() and
+the active window. No widgets: the window and the dialogs call these.
 """
 
 import asyncio
@@ -12,42 +18,104 @@ import logging
 from gettext import gettext as _
 
 from . import cache
-from .backend import config
+from .backend import config, store
 from .backend.errors import EngineError
+from .sidebar import parse_key
 from .widgets import artwork
 
 log = logging.getLogger(__name__)
 
+# Signing out revokes the Apple session through the engine. A stopped engine is started for
+# that (headless), for this long at most; whatever happens, the wipe follows.
+REVOKE_TIMEOUT = 20.0
+
 
 async def sign_out(app):
-    """Stop the engine, forget the account, wipe the Chrome profile and the cache, and
-    empty the library."""
+    """Sign out: revoke the session at Apple's (MusicKit's unauthorize()), stop the engine,
+    wipe the Chrome profile and the cache, forget the account's settings and pages, and
+    empty the library. The account's actions are off meanwhile (`app.signing_out`)."""
     if app.demo:
         return
     engine = app.engine
+    app.signing_out = True
     try:
-        await engine.stop()
-    except EngineError as error:
-        log.warning('stopping the engine before signing out: %s', error)
-    app.settings.set_boolean('signed-in', False)
-    app.settings.set_string('account-name', '')
-    await asyncio.to_thread(cache.remove_trees, engine.profile_dir, config.cache_dir())
-    await app.library.load()  # nothing left to read: the models empty
+        with app.library_sync.held():
+            await _revoke(app)
+            store.bump_cache_generation()  # before anything is cancelled or wiped
+            await app.library_sync.cancel()
+            try:
+                await engine.stop()
+            except EngineError as error:
+                log.warning('stopping the engine before signing out: %s', error)
+            await asyncio.to_thread(_wipe, engine.profile_dir, config.cache_dir())
+            _forget(app)
+            await app.library.load()  # nothing left to read: the models empty
+            window = app.get_active_window()
+            if window is not None and hasattr(window, 'forget_account_pages'):
+                window.forget_account_pages()
+    finally:
+        app.signing_out = False
     app.toast(_('Signed out'))
 
 
+async def _revoke(app):
+    """MusicKit's unauthorize() in the engine, best effort (it logs what fails): an engine
+    that is down is started for it when the account is signed in, REVOKE_TIMEOUT at most."""
+    engine = app.engine
+    if engine.state == 'down':
+        if not app.settings.get_boolean('signed-in'):
+            return
+        try:
+            await asyncio.wait_for(engine.start(visible=False), REVOKE_TIMEOUT)
+        except (EngineError, TimeoutError) as error:
+            log.warning('could not start the engine to sign out of Apple Music: %s',
+                        error or 'it took too long')
+            return
+    try:
+        await asyncio.wait_for(engine.unauthorize(), REVOKE_TIMEOUT)
+    except TimeoutError:
+        log.warning('could not sign out of Apple Music: the engine took too long')
+
+
+def _wipe(profile_dir, cache_dir):
+    """In a thread: the Chrome profile, and what the cache holds (its known entries and
+    temporary files: cache.clear; never the directory or anything else in it)."""
+    cache.remove_trees(profile_dir)
+    cache.clear(cache_dir)
+
+
+def _forget(app):
+    """The settings that name the account or its library: the sign-in, the name, the last
+    sync, the expanded folders, and the last page when it is a playlist or a folder."""
+    settings = app.settings
+    for key in ('signed-in', 'account-name', 'last-sync', 'expanded-folders'):
+        settings.reset(key)
+    if parse_key(settings.get_string('last-page')) is not None:
+        settings.reset('last-page')
+    _forget_artwork(app)
+
+
+def _forget_artwork(app):
+    """The decoded artwork, and the file MPRIS names, may be the wiped cache's."""
+    artwork.get_default().clear()
+    if app.mpris is not None:
+        app.mpris.refresh_art()
+
+
 async def clear_cache(app):
-    """Clear the cache (cache.CACHE_ENTRIES: library.json, the artwork, items, lyrics and
-    the day-long answers), after stopping a sync that is running; the library empties and
-    `last-sync` is forgotten, and the library is synced again when signed in. Answers False
-    (nothing done) in demo mode, whose library is the cache."""
+    """Clear the cache (cache.CACHE_ENTRIES: library.json, the artwork, lyrics and the
+    day-long answers, and temporary files) with every job writing it stopped first; the
+    library empties and `last-sync` is forgotten, and the library is synced again when
+    signed in. Answers False (nothing done) in demo mode, whose library is the cache."""
     if app.demo:
         return False
-    await app.library_sync.cancel()  # it would write library.json and artwork into what is cleared
-    await asyncio.to_thread(cache.clear, config.cache_dir())
-    artwork.get_default().clear()
-    app.settings.set_string('last-sync', '')
-    await app.library.load()  # nothing left to read: the models empty
+    with app.library_sync.held():
+        store.bump_cache_generation()  # before anything is cancelled or wiped
+        await app.library_sync.cancel()
+        await asyncio.to_thread(cache.clear, config.cache_dir())
+        _forget_artwork(app)
+        app.settings.reset('last-sync')
+        await app.library.load()  # nothing left to read: the models empty
     if app.settings.get_boolean('signed-in'):
         app.library_sync.start()
     return True

@@ -80,8 +80,12 @@ widgets.
   connection is given up the same way.
 - **Signing in and out.** Sign-in restarts Chrome visible on music.apple.com, waits until
   MusicKit is authorized, records it, reads the account name if it can, restarts Chrome
-  headless (if `engine-headless` is on) and syncs. Sign-out asks first, then stops Chrome,
-  deletes the profile and the cache, and empties the library.
+  headless (if `engine-headless` is on) and syncs. Sign-out asks first, then revokes the Apple
+  session through MusicKit (starting a stopped engine for it, 20 seconds at most), stops every
+  job that writes the cache (the cache's generation is bumped, the sync cancelled and waited
+  for, its thread included), stops Chrome, deletes the profile and what the cache holds,
+  forgets the account's settings and pages, and empties the library. Clear Cache stops the
+  cache's writers the same way before it deletes anything.
 - **Quitting.** Every way out (Ctrl+Q, closing the window, MPRIS Quit, SIGINT or SIGTERM)
   activates `app.quit`: the windows save their state, the sync is cancelled, and Chrome is
   stopped (given 6 seconds, then killed) before the app exits. If the app dies any other way,

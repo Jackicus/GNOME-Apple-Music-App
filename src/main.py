@@ -31,9 +31,9 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
 
-from .backend import config  # noqa: E402
+from .backend import config, normalize  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .background import BackgroundPlayback  # noqa: E402
 from .engine import Engine  # noqa: E402
@@ -56,7 +56,10 @@ QUIT_TIMEOUT = 6.0
 class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library: the development
     launcher passes the source tree's build/demo, where scripts/demo_library.py writes it; a
-    release launcher passes '' and --demo reads build/demo under the working directory."""
+    release launcher passes '' and --demo reads build/demo under the working directory.
+    `signing-out` is true while account.sign_out() runs: the account's actions are off."""
+
+    signing_out = GObject.Property(type=bool, default=False)
 
     def __init__(self, version, app_id, base_id, profile, demo_dir=None):
         super().__init__(
@@ -91,8 +94,11 @@ class Application(Adw.Application):
         self._add_action('about', self._on_about)
         self._add_action('shortcuts', self._on_shortcuts)
         self._add_action('preferences', lambda *_args: self.show_preferences())
-        self._add_action('sign-in', self._on_sign_in)
-        self._add_action('sign-out', self._on_sign_out)
+        self._account_actions = [
+            self._add_action('sign-in', self._on_sign_in),
+            self._add_action('sign-out', self._on_sign_out),
+        ]
+        self.connect('notify::signing-out', self._on_signing_out)
         self._add_action('sync', lambda *_args: self.start_sync())
         self._add_action('now-playing', self._on_now_playing)
         # Playback, enabled while something plays (the bar's buttons follow). Their keys
@@ -232,6 +238,10 @@ class Application(Adw.Application):
         await (load or self.library.load())
         if self.library.state == 'ready':
             self.mark('library-ready')
+        if not self.demo:
+            # What only grows (remote art, lyrics, day-old answers, crash leftovers), trimmed
+            # once the window is up; each sync trims it too.
+            await asyncio.to_thread(normalize.prune_caches, str(config.cache_dir()))
 
     # -- the engine ----------------------------------------------------------------------
 
@@ -332,6 +342,10 @@ class Application(Adw.Application):
         dialog.connect('response', self._on_sign_out_response)
         parent = self._preferences  # over Preferences, when it asks from there
         dialog.present(parent if parent is not None else self.get_active_window())
+
+    def _on_signing_out(self, *_args):
+        for action in self._account_actions:
+            action.set_enabled(not self.signing_out)
 
     def _on_sign_out_response(self, _dialog, response):
         if response == 'sign-out':
