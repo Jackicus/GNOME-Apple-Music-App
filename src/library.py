@@ -90,6 +90,15 @@ def _number(value):
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def _reader(type, default=None):
+    """The function turning a raw value into a raw_property's value, as its getter does."""
+    if type is bool:
+        return bool
+    if type is int:
+        return _number
+    return lambda value: _text(value) or default
+
+
 def model_property(name, type, default=None):
     """A read-write GObject property kept in the plain attribute `_<name>`.
 
@@ -186,7 +195,10 @@ class Track(GObject.Object):
 class Group(GObject.Object):
     """A disc of an album, a playlist's one list, an album of an artist: {name, play, entries}.
 
-    `entries` is a Gio.ListStore of Track.
+    `entries` is a Gio.ListStore of Track. The library walks the store rather than a list of
+    the Tracks kept beside it: a Track's Python wrapper goes while no Python reference holds
+    it (its state stays with the object, and a read makes a new wrapper), and a list would
+    keep 40,000 wrappers alive, 2.4 MB.
     """
 
     __gtype_name__ = 'AppleMusicGroup'
@@ -270,12 +282,15 @@ class Item(GObject.Object):
             self._groups = [Group(group, thumb) for group in _dicts(self.raw.get('groups'))]
         return self._groups
 
-    # The properties an `item` answer refreshes, with the raw key each reads.
-    _MERGED = (('title', 'title'), ('subtitle', 'subtitle'), ('genre', 'genre'),
-               ('summary', 'summary'), ('art', 'art'), ('thumb', 'thumb'),
-               ('art-color', 'artColor'), ('count-label', 'countLabel'),
-               ('catalog-id', 'catalogId'), ('url', 'url'), ('year', 'year'),
-               ('explicit', 'explicit'))
+    # The properties an `item` answer refreshes: the name, the raw key it reads, and how its
+    # getter reads the value (merge() compares the raw values so, without a GObject call).
+    _MERGED = tuple((name, key, _reader(type, default)) for name, key, type, default in (
+        ('title', 'title', str, ''), ('subtitle', 'subtitle', str, ''),
+        ('genre', 'genre', str, None), ('summary', 'summary', str, None),
+        ('art', 'art', str, None), ('thumb', 'thumb', str, None),
+        ('art-color', 'artColor', str, None), ('count-label', 'countLabel', str, ''),
+        ('catalog-id', 'catalogId', str, None), ('url', 'url', str, None),
+        ('year', 'year', int, 0), ('explicit', 'explicit', bool, False)))
 
     def merge(self, data, replace=False):
         """Take a fresh Item dict for this item into this object: the raw dict updated (or
@@ -284,19 +299,34 @@ class Item(GObject.Object):
         hand, the groups wrapped again on the next access and `groups-changed` emitted, last
         (the same groups keep their Group and Track objects). An engine item() answer (the
         same shape, with `groups`) merges; a sync's dict replaces. Returns the names of the
-        properties that changed (empty when none did)."""
-        groups_changed = 'groups' in data and data.get('groups') != self.raw.get('groups')
-        names = [name for name, key in self._MERGED if replace or key in data]
-        before = [self.get_property(name) for name in names]
+        properties that changed (empty when none did).
+
+        A dict equal to the one in hand changes nothing, and the one in hand is kept; so are
+        its groups when the new ones are equal (`data`'s are replaced by them): the Groups and
+        Tracks hold those, and a second, equal copy would be kept alive beside them.
+        """
+        old = self.raw
+        if replace and data == old:
+            return []
+        groups_changed = False
+        if 'groups' in data:
+            if data['groups'] == old.get('groups'):
+                if 'groups' in old:
+                    data['groups'] = old['groups']
+            else:
+                groups_changed = True
+        merged = [entry for entry in self._MERGED if replace or entry[1] in data]
+        before = [read(old.get(key)) for _name, key, read in merged]
         if replace:
             self.raw = data
         else:
             for key, value in data.items():
                 if key in ('id', 'kind'):
                     continue
-                self.raw[key] = value
-        changed = [name for name, old in zip(names, before, strict=True)
-                   if self.get_property(name) != old]
+                old[key] = value
+        raw = self.raw
+        changed = [name for (name, key, read), value in zip(merged, before, strict=True)
+                   if read(raw.get(key)) != value]
         for name in changed:
             self.notify(name)
         if data.get('play'):
@@ -541,6 +571,7 @@ class Library(GObject.Object):
         self._loose_tracks = {}  # id -> Track, for the loose songs wrapped so far
         self._tree = PlaylistTree()
         self._generation = 0
+        self._paused = 0.0  # when a load or Songs build last paused for a frame (_pause())
         self._reader = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix='library')  # its own: never behind a decode
         self._reading = threading.Event()  # clear: the parse waits (hold_reading())
@@ -575,6 +606,7 @@ class Library(GObject.Object):
             return
         with paused_gc():
             try:
+                self._paused = time.monotonic()
                 await self._fill_songs(self._generation)
             except _Superseded:
                 pass  # the load that overtook it fills the store
@@ -672,6 +704,8 @@ class Library(GObject.Object):
         with paused_gc(freeze=not keep):
             try:
                 data, song_count, file_state = await asyncio.wrap_future(reading)
+                reading = None  # the Future holds the parse too
+                self._paused = time.monotonic()
                 self._check(generation)
                 log.debug('Library parsed in %.0f ms', (time.monotonic() - started) * 1000)
                 if self.file_state != file_state:
@@ -679,7 +713,11 @@ class Library(GObject.Object):
                 version = _number(data.get('version')) if data is not None else 0
                 if self.version != version:
                     self.version = version
+                found = data is not None
                 await self._fill(data or {}, generation, keep)
+                # What the models did not take goes now, while collections are paused: after
+                # the pause, the first collection would have to scan it all.
+                del data
             except _Superseded:
                 return
             except BaseException:
@@ -691,7 +729,7 @@ class Library(GObject.Object):
                     self.emit('changed')
                 raise
         self._song_count = song_count
-        self._set_state('ready' if data is not None else 'empty')
+        self._set_state('ready' if found else 'empty')
         log.debug('Library %s in %.0f ms: %s, %d shelves, %d songs%s', self.state,
                   (time.monotonic() - started) * 1000,
                   ', '.join(f'{getattr(self, name).get_n_items()} {name}' for name in SECTIONS),
@@ -717,8 +755,9 @@ class Library(GObject.Object):
             return item
 
         for name in SECTIONS:
-            await self._splice(getattr(self, name), _dicts(sections.get(name)), wrap, generation,
-                               keep)
+            raws = sections.get(name)
+            await self._splice(getattr(self, name), raws if isinstance(raws, list) else [], wrap,
+                               generation, keep)
 
         def shelf_item(raw):
             # The same album or playlist on a shelf and in a section is one object.
@@ -773,21 +812,29 @@ class Library(GObject.Object):
                 store.splice(start, end - start,
                              [store.get_item(position) for position in range(start, end)])
 
-    async def _splice(self, store, dicts, wrap, generation, keep=False):
-        """Replace the store's contents with the wrapped dicts, a batch at a time.
+    async def _splice(self, store, raws, wrap, generation, keep=False):
+        """Replace the store's contents with the wrapped dicts of the list `raws`, a batch at
+        a time.
 
         Each batch overwrites the old items at its position, so a reload never shows an empty
         store; whatever old items are left over go at the end. Keeping (reload), the wrapped
-        items are diffed against the store instead, so unchanged runs are not touched.
+        items are diffed against the store instead, so unchanged runs are not touched, and
+        wrapping (a merge for each kept Item) pauses for a frame every FRAME_BUDGET. `raws`
+        lets each dict go as it is wrapped: a kept Item that has not changed keeps the dict it
+        holds, and the new copy is freed then, a little at a time, rather than all at once
+        with the parse.
         """
         if keep:
             items = []
-            for start in range(0, len(dicts), self.batch_size):
-                items.extend(wrap(raw) for raw in dicts[start:start + self.batch_size])
-                await yield_to_frames()
-                self._check(generation)
+            for position, raw in enumerate(raws):
+                if isinstance(raw, dict):
+                    items.append(wrap(raw))
+                    raws[position] = None
+                if time.monotonic() - self._paused > FRAME_BUDGET:
+                    await self._pause(generation)
             apply_diff(store, items)
             return
+        dicts = _dicts(raws)
         position = 0
         for start in range(0, len(dicts), self.batch_size):
             started = time.monotonic()
@@ -799,14 +846,21 @@ class Library(GObject.Object):
             log.debug("Library: %d items wrapped in %.0f ms, spliced in %.0f ms (the views' "
                       'work)', len(batch), (wrapped - started) * 1000,
                       (time.monotonic() - wrapped) * 1000)
-            await yield_to_frames()
-            self._check(generation)
+            await self._pause(generation)
         store.splice(position, store.get_n_items() - position, [])
+
+    async def _pause(self, generation):
+        """Let GTK paint a frame (yield_to_frames), then carry on unless a newer load has
+        started. The loops of a load and a Songs build call it when FRAME_BUDGET has passed
+        since the last pause (`_paused`), one budget across all of them."""
+        await yield_to_frames()
+        self._check(generation)
+        self._paused = time.monotonic()
 
     async def _fill_songs(self, generation):
         seen = set()
         tracks = []
-        started = paused = time.monotonic()
+        started = time.monotonic()
         for item in list(self.albums):
             for group in item.groups:
                 for track in group.entries:
@@ -814,14 +868,12 @@ class Library(GObject.Object):
                     if track_id not in seen:
                         seen.add(track_id)
                         tracks.append(track)
-            if time.monotonic() - paused > FRAME_BUDGET:
-                await yield_to_frames()
-                self._check(generation)
-                paused = time.monotonic()
+            if time.monotonic() - self._paused > FRAME_BUDGET:
+                await self._pause(generation)
         # The loose songs after the albums', by id; a loose song wrapped before keeps its Track
-        # while its dict is the same.
+        # while its dict is the same, and the dict it holds replaces the new, equal one.
         loose_tracks = {}
-        for raw in self._loose:
+        for position, raw in enumerate(self._loose):
             track_id = _text(raw.get('id'))
             if not track_id or track_id in seen:
                 continue
@@ -829,19 +881,35 @@ class Library(GObject.Object):
             track = self._loose_tracks.get(track_id)
             if track is None or track.raw != raw:
                 track = Track(raw, {'kind': 'song', 'id': track_id})
+            else:
+                self._loose[position] = track.raw
             loose_tracks[track_id] = track
             tracks.append(track)
         self._loose_tracks = loose_tracks
-        current = [self._songs.get_item(position) for position in range(self._songs.get_n_items())]
         wrapped = time.monotonic()
-        if len(current) != len(tracks) or any(
-                a is not b for a, b in zip(current, tracks, strict=True)):
+        if not await self._holds(self._songs, tracks, generation):
             self._songs.splice(0, self._songs.get_n_items(), tracks)
         if not self.songs_ready:
             self.songs_ready = True
         log.debug('Songs built in %.0f ms: %d songs (wrapped in %.0f ms, spliced in %.0f ms: '
                   "the views' sort and rows)", (time.monotonic() - started) * 1000,
                   len(tracks), (wrapped - started) * 1000, (time.monotonic() - wrapped) * 1000)
+
+    async def _holds(self, store, items, generation):
+        """Whether the store holds the objects `items`, in that order: read with a pause for a
+        frame every FRAME_BUDGET (reading a store from Python costs about a microsecond an
+        item, 40 ms for 40,000 songs) and no list of what it holds kept (a Track wrapper
+        that no Python reference holds goes, and its state stays with the object)."""
+        count = store.get_n_items()
+        if count != len(items):
+            return False
+        for start in range(0, count, 1000):
+            for position in range(start, min(start + 1000, count)):
+                if store.get_item(position) is not items[position]:
+                    return False
+            if time.monotonic() - self._paused > FRAME_BUDGET:
+                await self._pause(generation)
+        return True
 
     def _check(self, generation):
         if generation != self._generation:

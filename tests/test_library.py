@@ -461,7 +461,8 @@ class TestLoading(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await reloading
 
-        with mock.patch.object(library_module, 'yield_to_frames', pause_for_good):
+        with mock.patch.object(library_module, 'FRAME_BUDGET', 0), \
+                mock.patch.object(library_module, 'yield_to_frames', pause_for_good):
             asyncio.run(cancel_reload())
         self.assertEqual(states, ['loading', 'empty'])
         self.assertEqual(len(changed), 1)
