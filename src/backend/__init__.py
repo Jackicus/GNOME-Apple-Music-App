@@ -3,7 +3,8 @@
 Pure Python and the standard library: nothing here imports gi (GTK stays in the app), and
 importing the package imports none of its modules.
 
-    errors.py   EngineError(code, message): engine-down, not-signed-in, api, timeout, usage
+    errors.py   EngineError(code, message): engine-down, no-browser, not-signed-in, api,
+                timeout, usage
     chrome.py   finding Chrome, its argv (--remote-debugging-pipe; the host's Chrome through
                 flatpak-spawn from a Flatpak sandbox), which Chrome holds a profile
                 (profile_owner: its SingletonLock), select_page() (the music.apple.com

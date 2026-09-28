@@ -614,7 +614,8 @@ class CDPClient:
     async def ensure_bridge(self, timeout=BRIDGE_TIMEOUT):
         """bridge.js in the page and MusicKit ready, injecting when the page has no bridge or
         an older one. From now on the bridge is put back after every navigation of the page.
-        EngineError('timeout') when MusicKit does not come up in `timeout` seconds."""
+        EngineError('timeout') when MusicKit does not come up in `timeout` seconds, with the
+        last error the page gave (a SyntaxError in the bridge, say)."""
         self._bridge_wanted = True
         async with self._bridge_lock:
             await self._inject(timeout)
@@ -626,28 +627,34 @@ class CDPClient:
         # A page that already has this bridge answers the probe alone, which spares it the
         # source; one that has none, or an older one, gets it. The page navigates on its own
         # while it starts, which wipes window, so keep going until the bridge reports MusicKit
-        # ready (injection is idempotent).
+        # ready (injection is idempotent). Each evaluate gets what is left of `timeout`.
         probe = (f'({GLOBAL} && {GLOBAL}.__version === {json.dumps(version)})'
                  f' ? {GLOBAL}.status() : null')
         status = f'{GLOBAL} ? {GLOBAL}.status() : null'
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
+        last = None
         while True:
             try:
-                state = await self.evaluate(probe, await_promise=False, timeout=5)
+                step = max(0.5, min(5.0, deadline - loop.time()))
+                state = await self.evaluate(probe, await_promise=False, timeout=step)
                 if not (state and state.get('ready')):
-                    await self.evaluate(source, await_promise=False, timeout=5)
-                    state = await self.evaluate(status, await_promise=False, timeout=5)
+                    await self.evaluate(source, await_promise=False, timeout=step)
+                    step = max(0.5, min(5.0, deadline - loop.time()))
+                    state = await self.evaluate(status, await_promise=False, timeout=step)
                 if state and state.get('ready'):
                     break
+                last = None  # the page answers; MusicKit is still loading
             except EngineError as e:
                 if e.code == 'engine-down':
                     raise
+                last = e
                 log.debug('bridge not ready: %s', e)  # a navigation in progress, mostly
-            if loop.time() >= deadline:
-                raise EngineError(
-                    'timeout', 'music.apple.com did not become ready (MusicKit not loaded)')
-            await asyncio.sleep(0.3)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                why = last.message if last is not None else 'MusicKit not loaded'
+                raise EngineError('timeout', f'music.apple.com did not become ready: {why}')
+            await asyncio.sleep(min(0.3, remaining))
         if self._subscribed:
             await self.evaluate(f'{GLOBAL}.subscribe()', await_promise=False, timeout=5)
 

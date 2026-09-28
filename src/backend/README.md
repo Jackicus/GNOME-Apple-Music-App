@@ -206,11 +206,13 @@ no gi; the app's `Engine` (`src/engine.py`, phase 10: Chrome as a
 sit on it.
 
 - **`errors.py`** — `EngineError(code, message)` with the codes above
-  (`engine-down`, `not-signed-in`, `api`, `timeout`, `usage`). Everything
+  (`engine-down`, `not-signed-in`, `api`, `timeout`, `usage`, and this app's
+  `no-browser`: no Google Chrome to start, or it could not be started). Everything
   in this layer raises it and nothing else.
 - **`chrome.py`** — `find_chrome(command)` (the configured command, then
   `google-chrome-stable`, `google-chrome`, `/opt/google/chrome/chrome`;
-  None if absent), `chrome_args(binary, profile, headless, debug_port)` (the
+  None if absent; a configured command that is missing is logged),
+  `chrome_args(binary, profile, headless, debug_port)` (the
   argv: `--remote-debugging-pipe`, so CDP runs over Chrome's descriptors 3
   and 4 and no port listens, and a port on 127.0.0.1 as well only with
   `debug_port`; `--disable-features=HardwareMediaKeyHandling` so Chrome

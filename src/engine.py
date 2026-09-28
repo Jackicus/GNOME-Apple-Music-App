@@ -80,6 +80,7 @@ STATES = ('down', 'starting', 'up', 'signing-in')
 
 PAGE_WAIT = 20.0          # a new Chrome showing music.apple.com
 BRIDGE_WAIT = 15.0        # a fresh page loading MusicKit
+EXIT_GRACE = 1.0          # Chrome's pipe closing to its exit being seen, when it fails
 CDP_TIMEOUT = 30.0        # a CDP call without a timeout of its own
 CLOSE_WAIT = 2.0          # Chrome closing on Browser.close, before SIGTERM
 STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
@@ -364,6 +365,15 @@ def _write_json(path, data):
         log.warning('could not keep %s: %s', path, error)
 
 
+def _exit_status(process):
+    """How an exited Gio.Subprocess ended, for a message: 'status 3', 'signal 9'."""
+    if process.get_if_signaled():
+        return f'signal {process.get_term_sig()}'
+    if process.get_if_exited():
+        return f'status {process.get_exit_status()}'
+    return 'status unknown'
+
+
 async def _process_exit(process):
     """Until the Gio.Subprocess has exited (a task can wait on it and be cancelled cleanly:
     a cancelled wait_async() raises GLib.Error, not CancelledError)."""
@@ -442,7 +452,8 @@ class Engine(GObject.Object):
         running engine is kept whatever its mode, and a stopped one starts headless unless
         `prefer_headless` is off. Asked for a mode, a running Chrome in the other mode is
         stopped first; one in the same mode is kept. EngineError when Chrome or the page will
-        not come up."""
+        not come up, and only EngineError: anything unexpected is logged and becomes
+        'engine-down'."""
         if self.demo:
             return
         async with self._lock:
@@ -463,8 +474,11 @@ class Engine(GObject.Object):
             self.headless = headless
             try:
                 await self._start(headless)
-            except BaseException:
+            except BaseException as e:
                 await self._stop()
+                if isinstance(e, Exception) and not isinstance(e, EngineError):
+                    log.error('the engine could not start', exc_info=e)
+                    raise EngineError('engine-down', str(e) or type(e).__name__) from e
                 raise
 
     async def _start(self, headless):
@@ -472,10 +486,14 @@ class Engine(GObject.Object):
         binary = await asyncio.to_thread(chrome.find_chrome, self.browser_command)
         if binary is None:
             raise EngineError(
-                'engine-down', 'Google Chrome was not found (google-chrome-stable, '
+                'no-browser', 'Google Chrome was not found (google-chrome-stable, '
                 'google-chrome or /opt/google/chrome/chrome; the browser-command setting '
                 'names another)')
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            await asyncio.to_thread(self.profile_dir.mkdir, parents=True, exist_ok=True)
+        except OSError as e:
+            raise EngineError('engine-down',
+                              f'could not prepare {self.profile_dir}: {e.strerror or e}') from e
         # A Chrome already on the profile (scripts/am.py's, or one an app crash left behind)
         # would take the new one's arguments and let it exit at once.
         await self._end_owner()
@@ -492,7 +510,7 @@ class Engine(GObject.Object):
         log.info('Chrome %d started %s', self._pid, 'headless' if headless else 'visible')
         client = self._client = CDPClient(timeout=CDP_TIMEOUT)
         client.on(EVENT_PREFIX + '*', self._on_bridge_event)
-        await self._connect(client, transport)
+        await self._open(client, transport, self._process)
         await client.ensure_bridge(timeout=BRIDGE_WAIT)
         await client.subscribe()  # finds the bridge in place; events from now on
         status = await client.bridge('status')
@@ -518,7 +536,7 @@ class Engine(GObject.Object):
         except GLib.Error as e:
             os.close(chrome_in)
             os.close(chrome_out)
-            raise EngineError('engine-down',
+            raise EngineError('no-browser',
                               f'could not start {name or argv[0]}: {e.message}') from e
         finally:
             launcher.close()  # Chrome's ends are Chrome's alone now
@@ -552,6 +570,30 @@ class Engine(GObject.Object):
                 stream.close(None)
             except GLib.Error:
                 pass
+
+    async def _open(self, client, transport, process):
+        """_connect(), raced against Chrome's exit: a Chrome that exits first (a wrong browser
+        command, a crash, a profile another Chrome holds) is EngineError('engine-down') at
+        once with its exit status, not a timeout after the page wait."""
+        opening = asyncio.ensure_future(self._connect(client, transport))
+        exited = asyncio.ensure_future(_process_exit(process))
+        try:
+            done, _ = await asyncio.wait({opening, exited}, return_when=asyncio.FIRST_COMPLETED)
+            if opening in done and opening.exception() is None:
+                return
+            if exited not in done:
+                # The connection failed first; a Chrome that is going closes its pipe a
+                # moment before it is reaped.
+                await asyncio.wait({exited}, timeout=EXIT_GRACE)
+            if exited.done():
+                raise EngineError('engine-down', f'Chrome exited at once ({_exit_status(process)})')
+            raise opening.exception()
+        finally:
+            for task in (opening, exited):
+                if not task.done():
+                    task.cancel()
+                elif not task.cancelled():
+                    task.exception()  # retrieved: its error, if any, is ours or superseded
 
     async def _connect(self, client, transport):
         """The client on Chrome's pipe, attached to the music.apple.com page."""

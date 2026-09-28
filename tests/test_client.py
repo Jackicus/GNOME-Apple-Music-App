@@ -19,6 +19,7 @@ import re
 import socket
 import struct
 import threading
+import time
 import unittest
 
 from tests import SRC  # noqa: F401  (registers src/ as the applemusic package)
@@ -666,6 +667,17 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.code, 'timeout')
         self.assertIn('MusicKit not loaded', ctx.exception.message)
         self.assertGreaterEqual(page.injections, 2)  # it kept trying
+
+    async def test_ensure_bridge_names_the_page_s_error_and_keeps_to_its_time(self):
+        page = await self.open_with_page()
+        page.inject_error = 'SyntaxError: Unexpected token }\n    at <anonymous>:12:3'
+        started = time.monotonic()
+        with self.assertRaises(EngineError) as ctx:
+            await self.client.ensure_bridge(timeout=0.5)
+        elapsed = time.monotonic() - started
+        self.assertEqual(ctx.exception.code, 'timeout')
+        self.assertIn('SyntaxError: Unexpected token }', ctx.exception.message)
+        self.assertLess(elapsed, 1.0)
 
     async def test_ensure_bridge_retries_a_failing_evaluate(self):
         page = FakePage()

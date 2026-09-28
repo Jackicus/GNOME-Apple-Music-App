@@ -400,17 +400,60 @@ class LifecycleTest(EngineFixture):
             with self.assertRaises(EngineError) as ctx:
                 await self.engine.start()
         self.assertEqual(ctx.exception.code, 'timeout')
+        self.assertIn('MusicKit not loaded', ctx.exception.message)
         self.assertEqual(self.engine.state, 'down')
         await self.wait_exited(self.engine.spawned[0][0])
 
-    async def test_no_chrome_is_engine_down(self):
+    async def test_no_chrome_is_no_browser(self):
         with mock.patch.object(chrome, 'find_chrome', lambda command: None):
             with self.assertRaises(EngineError) as ctx:
                 await self.engine.start()
-        self.assertEqual(ctx.exception.code, 'engine-down')
+        self.assertEqual(ctx.exception.code, 'no-browser')
         self.assertIn('not found', ctx.exception.message)
         self.assertEqual(self.engine.state, 'down')
         self.assertEqual(self.engine.spawned, [])
+
+    async def test_a_browser_that_cannot_be_started_is_no_browser(self):
+        missing = str(self.profile.parent / 'no-such-chrome')
+        with mock.patch.object(chrome, 'find_chrome', lambda command: missing), \
+                mock.patch.object(engine_module, 'with_pdeathsig', list):
+            with self.assertRaises(EngineError) as ctx:
+                await self.engine.start()
+        self.assertEqual(ctx.exception.code, 'no-browser')
+        self.assertIn('could not start', ctx.exception.message)
+        self.assertEqual(self.engine.state, 'down')
+
+    async def test_a_chrome_that_exits_at_once_is_reported_at_once(self):
+        self.chrome_mode('exit:3')
+        started = time.monotonic()
+        with self.assertRaises(EngineError) as ctx:
+            await self.engine.start()
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(ctx.exception.code, 'engine-down')
+        self.assertIn('Chrome exited at once (status 3)', ctx.exception.message)
+        self.assertEqual(self.engine.state, 'down')
+
+    async def test_a_profile_that_cannot_be_made_is_engine_down(self):
+        blocker = self.profile.parent / 'a-file'
+        blocker.write_text('not a directory')
+        self.engine.profile_dir = blocker / 'chrome'
+        with self.assertRaises(EngineError) as ctx:
+            await self.engine.start()
+        self.assertEqual(ctx.exception.code, 'engine-down')
+        self.assertIn('could not prepare', ctx.exception.message)
+        self.assertEqual(self.engine.state, 'down')
+        self.assertEqual(self.engine.spawned, [])
+
+    async def test_anything_unexpected_becomes_engine_down(self):
+        def broken(*args, **kwargs):
+            raise RuntimeError('a bug in the argv')
+        with mock.patch.object(chrome, 'chrome_args', broken):
+            with self.assertLogs(engine_module.log, 'ERROR'):
+                with self.assertRaises(EngineError) as ctx:
+                    await self.engine.start()
+        self.assertEqual((ctx.exception.code, ctx.exception.message),
+                         ('engine-down', 'a bug in the argv'))
+        self.assertEqual(self.engine.state, 'down')
 
     async def test_browser_command_is_tried_first(self):
         self.engine.browser_command = 'my-chrome'

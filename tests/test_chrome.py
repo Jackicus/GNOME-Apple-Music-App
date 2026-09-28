@@ -31,7 +31,7 @@ SAMPLE_TARGETS = [
 
 class EngineErrorTest(unittest.TestCase):
     def test_codes(self):
-        for code in ('engine-down', 'not-signed-in', 'api', 'timeout', 'usage'):
+        for code in ('engine-down', 'no-browser', 'not-signed-in', 'api', 'timeout', 'usage'):
             error = EngineError(code, 'why')
             self.assertEqual((error.code, error.message, str(error)), (code, 'why', f'{code}: why'))
         self.assertEqual(str(EngineError('timeout')), 'timeout')
@@ -157,7 +157,9 @@ class FindChromeTest(unittest.TestCase):
 
     def test_candidates_in_order(self):
         second = self.executable(self.bin / 'google-chrome')
-        self.assertEqual(chrome.find_chrome('missing', path=str(self.bin)), second)
+        with self.assertLogs(chrome.log, 'WARNING') as logs:  # the configured one is missing
+            self.assertEqual(chrome.find_chrome('missing', path=str(self.bin)), second)
+        self.assertIn("'missing' was not found", logs.output[0])
         first = self.executable(self.bin / 'google-chrome-stable')
         self.assertEqual(chrome.find_chrome(None, path=str(self.bin)), first)
 
@@ -167,7 +169,8 @@ class FindChromeTest(unittest.TestCase):
 
     def test_none_when_absent(self):
         (self.bin / 'google-chrome').write_text('not executable')
-        self.assertIsNone(chrome.find_chrome('missing', path=str(self.bin)))
+        with self.assertLogs(chrome.log, 'WARNING'):
+            self.assertIsNone(chrome.find_chrome('missing', path=str(self.bin)))
         self.assertIsNone(chrome.find_chrome(None, path=str(self.bin)))
 
 
