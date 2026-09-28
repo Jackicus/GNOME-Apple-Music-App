@@ -373,6 +373,28 @@ async def _process_exit(process):
         pass
 
 
+_setpriv_missing_told = False
+
+
+def with_pdeathsig(argv):
+    """argv run through `setpriv --pdeathsig TERM --`, so the kernel sends Chrome SIGTERM when
+    the app ends however it ends (a crash, SIGKILL, a lost display): its pid and command line
+    are Chrome's through setpriv's exec. Not in a Flatpak sandbox, whose flatpak-spawn
+    --watch-bus ends Chrome already; argv as it is (and a warning, once) without util-linux's
+    setpriv, when only a clean quit stops Chrome and the next start ends one left behind."""
+    global _setpriv_missing_told
+    if chrome.in_flatpak():
+        return list(argv)
+    setpriv = shutil.which('setpriv')
+    if setpriv is None:
+        if not _setpriv_missing_told:
+            _setpriv_missing_told = True
+            log.warning('setpriv (util-linux) was not found: Chrome may outlive the app if it '
+                        'crashes')
+        return list(argv)
+    return [setpriv, '--pdeathsig', 'TERM', '--', *argv]
+
+
 class Engine(GObject.Object):
     """Chrome and the bridge, as one object the UI talks to. See the module."""
 
@@ -462,9 +484,10 @@ class Engine(GObject.Object):
             log.warning("APPLE_MUSIC_DEBUG_PORT is set: Chrome's DevTools listen on "
                         '127.0.0.1:%d and any local program can control the signed-in '
                         'session', debug_port)
-        argv = chrome.chrome_args(binary, self.profile_dir, headless, debug_port=debug_port)
+        argv = with_pdeathsig(
+            chrome.chrome_args(binary, self.profile_dir, headless, debug_port=debug_port))
         log.debug('exec %s', ' '.join(argv))
-        self._process, transport = self._spawn(argv)
+        self._process, transport = self._spawn(argv, binary)
         self._pid = int(self._process.get_identifier())
         log.info('Chrome %d started %s', self._pid, 'headless' if headless else 'visible')
         client = self._client = CDPClient(timeout=CDP_TIMEOUT)
@@ -478,7 +501,7 @@ class Engine(GObject.Object):
         self._watch = asyncio.create_task(self._watch_connection(client), name='engine-watch')
         log.info('engine up: %s', 'authorized' if self.authorized else 'not signed in')
 
-    def _spawn(self, argv):
+    def _spawn(self, argv, name=None):
         """Chrome as a Gio.Subprocess, the DevTools pipe on its descriptors 3 (it reads) and 4
         (it writes); its output silenced, or its stderr relayed to the log when that is at
         DEBUG. Answers the process and the PipeTransport over this end of the pipe."""
@@ -495,7 +518,8 @@ class Engine(GObject.Object):
         except GLib.Error as e:
             os.close(chrome_in)
             os.close(chrome_out)
-            raise EngineError('engine-down', f'could not start {argv[0]}: {e.message}') from e
+            raise EngineError('engine-down',
+                              f'could not start {name or argv[0]}: {e.message}') from e
         finally:
             launcher.close()  # Chrome's ends are Chrome's alone now
         if debug:

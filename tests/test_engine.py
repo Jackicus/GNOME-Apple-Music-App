@@ -14,6 +14,7 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -158,8 +159,8 @@ class TestEngine(Engine):
         super().__init__(**kwargs)
         self.spawned = []   # [(process, argv)]
 
-    def _spawn(self, argv):
-        process, transport = super()._spawn(argv)
+    def _spawn(self, argv, name=None):
+        process, transport = super()._spawn(argv, name)
         self.spawned.append((process, argv))
         return process, transport
 
@@ -267,6 +268,14 @@ class LifecycleTest(EngineFixture):
         self.assertFalse(self.engine.authorized)
         self.assertEqual(self.engine.pid, self.chrome.chromes[-1]['pid'])
         self.assertFalse((self.profile / 'engine.json').exists())
+
+    @unittest.skipUnless(shutil.which('setpriv'), 'needs setpriv (util-linux)')
+    async def test_chrome_is_spawned_through_setpriv(self):
+        await self.engine.start()
+        argv = self.engine.spawned[0][1]
+        self.assertEqual(argv[1:4], ['--pdeathsig', 'TERM', '--'])
+        self.assertTrue(argv[0].endswith('setpriv'))
+        self.assertEqual(argv[4], str(self.binary))
 
     async def test_the_debug_port_is_opt_in_and_warned_about(self):
         os.environ['APPLE_MUSIC_DEBUG_PORT'] = '9300'
@@ -1143,6 +1152,72 @@ class SearchTest(EngineFixture):
         self.assertTrue((self.cache / 'made-for-you.json').is_file())
         await self.engine.stop()
         self.assertEqual(len((await self.engine.made_for_you())['shelves']), 1)
+
+
+class PdeathsigTest(unittest.TestCase):
+    """Chrome tied to the app's life through setpriv --pdeathsig TERM."""
+
+    def which(self, found):
+        return mock.patch.object(engine_module.shutil, 'which',
+                                 lambda name: found if name == 'setpriv' else None)
+
+    def test_argv_goes_through_setpriv(self):
+        with self.which('/usr/bin/setpriv'), \
+                mock.patch.object(chrome, 'in_flatpak', lambda: False):
+            self.assertEqual(engine_module.with_pdeathsig(['chrome', '--x']),
+                             ['/usr/bin/setpriv', '--pdeathsig', 'TERM', '--', 'chrome', '--x'])
+
+    def test_not_in_a_flatpak(self):
+        with self.which('/usr/bin/setpriv'), \
+                mock.patch.object(chrome, 'in_flatpak', lambda: True):
+            self.assertEqual(engine_module.with_pdeathsig(['flatpak-spawn', '--host']),
+                             ['flatpak-spawn', '--host'])
+
+    def test_without_setpriv_a_warning_once(self):
+        patcher = mock.patch.object(engine_module, '_setpriv_missing_told', False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.which(None), mock.patch.object(chrome, 'in_flatpak', lambda: False):
+            with self.assertLogs(engine_module.log, 'WARNING'):
+                self.assertEqual(engine_module.with_pdeathsig(['chrome']), ['chrome'])
+            with self.assertNoLogs(engine_module.log, 'WARNING'):
+                self.assertEqual(engine_module.with_pdeathsig(['chrome']), ['chrome'])
+
+    @unittest.skipUnless(shutil.which('setpriv') and os.path.isdir('/proc'),
+                         'needs setpriv (util-linux) and /proc')
+    def test_the_child_goes_when_its_parent_is_killed(self):
+        # The "app" spawns the "Chrome" through setpriv, says its pid, then is SIGKILLed.
+        read, write = os.pipe()
+        app = subprocess.Popen([sys.executable, '-S', '-c', (
+            'import os, subprocess, sys, time\n'
+            'child = subprocess.Popen(["setpriv", "--pdeathsig", "TERM", "--", sys.executable,'
+            ' "-S", "-c", "import time; time.sleep(30)"])\n'
+            f'os.write({write}, str(child.pid).encode())\n'
+            'time.sleep(30)\n')], pass_fds=(write,))
+        os.close(write)
+        try:
+            child = int(os.read(read, 32))
+        finally:
+            os.close(read)
+        self.assertFalse(gone_within(child, 0))
+        app.kill()
+        app.wait()
+        self.assertTrue(gone_within(child, 1.0), 'the grandchild outlived its parent')
+
+
+def gone_within(pid, timeout):
+    """Whether `pid` has exited (gone, or a zombie nobody reaps) within `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            state = pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1][0]
+        except (OSError, IndexError):
+            return True
+        if state in 'ZX':
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
 
 
 class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
