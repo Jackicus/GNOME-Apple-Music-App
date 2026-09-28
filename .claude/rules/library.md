@@ -83,7 +83,7 @@ them before changing either. What matters most:
 - The sync (`sync_library()`, run one at a time by `Application.start_sync()`) fetches through
   the engine only, normalises in a thread with `backend.normalize`'s pure functions, fetches missing
   thumbnails (covers are fetched on demand by the pages that show them), writes library.json
-  atomically under the backend's lock, prunes, then `reload()`s. A failed optional section keeps
+  atomically, prunes, then `reload()`s. A failed optional section keeps
   last time's entry; a failed songs or playlists listing, or a lost engine, fails the sync.
 - The library.json shape lives in `src/backend/README.md` (with this app's additions) and
   library.py's docstring. A new key or kind touches the sync's writer, `scripts/demo_library.py`,

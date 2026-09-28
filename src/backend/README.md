@@ -1,7 +1,7 @@
 # The backend
 
-> **Vendored** from the GNOME Shell extension; `__init__.py` records where
-> from, when, and every edit. Most of this file still describes the
+> **A fork** of the GNOME Shell extension's backend, owned by this app (its history is
+> `git log -- src/backend`). Most of this file still describes the
 > extension's process-per-command `am.py` (and the shell code around it),
 > which this app kept as a reference until its sync and commands were
 > ported (`src/engine.py`, `src/sync.py`; the file is gone). What carries
@@ -75,8 +75,8 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 | `engine start [--visible\|--headless]`, `engine stop`, `engine status` | `{running, pid, port, headless}` |
 | `signin` | Restarts the engine visible at music.apple.com and calls `mk.authorize()`. `{authorized}` |
 | `status` | `{engine, authorized, storefront, bitrate}` |
-| `sync [--only albums\|artists\|playlists\|radio\|shelves]` | Fetches the missing artwork in threads at the `cover-size`/`thumb-size` settings, then writes library.json once (merged per section, under `flock`), then prunes: the artwork nothing names, and `remote-art/` to a budget. `{counts, generated}` |
-| `item <kind> <id>` | One full item with its `groups`, for a shelf or search result picked on demand; fetches its artwork too, and keeps the answer at `<cache>/items/<kind>-<id>.json` for the shell to read back without a process |
+| `sync [--only albums\|artists\|playlists\|radio\|shelves]` | Fetches the missing artwork in threads at the `cover-size`/`thumb-size` settings, then writes library.json once (atomically: a temporary file renamed over it), then prunes: the artwork nothing names, and `remote-art/` to a budget. `{counts, generated}` |
+| `item <kind> <id>` | One full item with its `groups`, for a shelf or search result picked on demand; fetches its artwork too |
 | `play <kind> <id> [--start-with N] [--shuffle]` | `{ok: true}`. kind ∈ `album playlist station song musicVideo artist` |
 | `play-next <kind> <id>`, `play-later <kind> <id>` | `{ok: true}` |
 | `control play\|pause\|toggle\|next\|previous\|stop`, `seek <sec>` | `{ok: true}` |
@@ -88,7 +88,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 | `love\|unlove <kind> <id>`, `add-to-library <kind> <id>` | `{ok: true}` |
 | `playlists`, `add-to-playlist <playlistId> <songId>` | `{items: [{id, title}]}`, `{ok: true}` |
 | `lyrics <catalogSongId>` | `{synced, lines: [{startMs, endMs, text}]}`, cached under `<cache>/lyrics/` |
-| `search <term> [--library] [--limit N] [--suggest N]` | `{shelves: [{key, title, items: [Item without groups]}], items: [the same, flat, no repeats]}` — the shelves in Apple's own order (`meta.results.order`: Top Results, then Artists, Songs, Albums, Playlists, Stations; `--limit` is per kind), for the search in the library; the flat list for the overview's provider. A music video is an Item of kind `video`, played as MusicKit's `musicVideo`. A hit's `art` is its cached cover or, unfetched, a thumbnail-sized catalog URL; its `thumb` is null unless on disk. `--suggest N` adds `terms`, the first N of what `suggest` would answer, asked in the same round trip — one process for the shell's search rather than two |
+| `search <term> [--library] [--limit N] [--suggest N]` | `{shelves: [{key, title, items: [Item without groups]}]}` — the shelves in Apple's own order (`meta.results.order`: Top Results, then Artists, Songs, Albums, Playlists, Stations; `--limit` is per kind). A music video is an Item of kind `video`, played as MusicKit's `musicVideo`. A hit's `art` is its cached cover or, unfetched, a thumbnail-sized catalog URL; its `thumb` is null unless on disk. `--suggest N` adds `terms`, the first N of what `suggest` would answer, asked in the same round trip — one process for the shell's search rather than two |
 | `suggest <term> [--limit N]` | `{terms: [{term, display}], items: [Item without groups]}` — Apple's own autocomplete for a term half typed (`search/suggestions`): the few searches it would complete it to, and its best few hits for it as it stands, art as `search` has it |
 | `landing` | `{categories: [{id, kind: "category", title, subtitle, art, artColor, url}]}` — the "Browse Categories" of Apple Music's own search page before anything is typed (the `search-landing` recommendation set): Apple's curators, Rock to Wellbeing, in Apple's order; `art` a 320px catalog URL the shell fetches itself, `artColor` the tile's colour. Kept at `<cache>/landing.json` and answered from there for a day without touching the engine |
 | `category <id>` | `{id, title, shelves: [{key, title, items: [Item without groups]}]}` — a category's page: the curator's grouping as shelves (Best New Songs, New Releases, Playlists, Stations…), items as `search` has them. Kept at `<cache>/categories/<id>.json` for a day, as `landing` is |
@@ -158,16 +158,16 @@ painted, so the thumbnail size is what a page of tiles costs to show.
 `<cache>/art/.sizes` records what the cache was built at: a sync applies the
 sizes and writes it (a changed thumbnail size wipes `thumb/`, the files
 keeping their names whatever the size; a changed cover size is a new URL
-and so new names, the old pruned), and every other command reads it so the
-URLs it names agree with the files. A path that is not on disk counts as
+and so new names, the old pruned), and the app reads it once at startup so
+the URLs it names agree with the files. A path that is not on disk counts as
 no artwork. A sync fetches the artwork *before* writing library.json, so a
 listing never lands ahead of its covers. A track row plays `group.play`
 with `--start-with entry.index`.
 
 Beside these, `<cache>/remote-art/` holds what the shell fetches for itself
 (a search hit's cover, the player's, a category's picture; `lib/playerUtil.js`),
-trimmed to 32 MB by mtime at the end of each sync; `<cache>/items/`,
-`<cache>/landing.json` and `<cache>/categories/` hold the answers above,
+trimmed to 32 MB by mtime at the end of each sync; `<cache>/landing.json`
+and `<cache>/categories/` hold the answers above,
 each stamped `cached` (the app adds `browse.json`, the New page's editorial
 groupings as shelves, and `made-for-you.json`, the recommendations made of
 personal mixes and stations, kept the same way); `<cache>/lyrics/` the

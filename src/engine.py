@@ -13,7 +13,7 @@ UI awaits.
     await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
     await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
     await engine.api_all(paths)         # several reads at once; a failed one is None
-    await engine.item(kind, id)         # a full Item with its groups, kept under <cache>/items/
+    await engine.item(kind, id)         # a full Item with its groups, its artwork fetched
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.account_name()         # the name on the page, or '' (best effort)
     await engine.play(kind, id, start_with=None, shuffle=False)   # mk.setQueue + mk.play
@@ -32,7 +32,7 @@ UI awaits.
     await engine.playlists()               # [{id, title}]: the library playlists one can edit
     await engine.catalog_url('album', library_id)   # its music.apple.com page, or None
     await engine.add_to_playlist(playlist_id, song_id)
-    await engine.search(term, library=False, limit=20, suggest=0)   # {shelves, items[, terms]}
+    await engine.search(term, library=False, limit=20, suggest=0)   # {shelves[, terms]}
     await engine.suggest(term, limit=10)   # {terms: [{term, display}], items}
     await engine.landing()       # {categories}: the search page's Browse Categories
     await engine.category(id)    # {id, title, shelves}: a category's page
@@ -109,11 +109,11 @@ RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
 RECOMMENDATIONS_PARAMS = {'limit': 25}
 
 # What the cache directory holds (config.cache_dir()), all of it fetched again as needed: the
-# library, its artwork (covers, thumbnails, remote art), items' groups, lyrics, and the
-# day-long answers (landing, categories, the New page, Made for You). library.lock, the
-# sync's flock, stays.
-CACHE_ENTRIES = ('library.json', 'art', 'thumb', 'remote-art', 'items', 'lyrics',
-                 'landing.json', 'categories', 'browse.json', 'made-for-you.json')
+# library, its artwork (covers, thumbnails, remote art), lyrics, and the day-long answers
+# (landing, categories, the New page, Made for You). `items` and `library.lock` are what older
+# versions kept there (items' answers, the sync's lock), cleared with the rest.
+CACHE_ENTRIES = ('library.json', 'art', 'thumb', 'remote-art', 'lyrics', 'landing.json',
+                 'categories', 'browse.json', 'made-for-you.json', 'items', 'library.lock')
 
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
@@ -194,7 +194,7 @@ def cache_size(path):
 
 def clear_cache(path, entries=CACHE_ENTRIES):
     """In a thread: delete `entries` (CACHE_ENTRIES) under `path`, the cache directory,
-    leaving anything else there (the sync's lock). Answers how many were there to delete;
+    leaving anything else there. Answers how many were there to delete;
     what cannot be deleted is logged and left."""
     removed = 0
     for name in entries:
@@ -254,17 +254,15 @@ def album_endpoint(album_id, storefront):
 
 
 def _shape_item(raw, cache_dir):
-    """In a thread: the API's resource as an Item with groups, its artwork fetched, the answer
-    kept under <cache>/items/."""
-    normalize.load_art_sizes(cache_dir)
+    """In a thread: the API's resource as an Item with groups, its artwork fetched."""
     item = normalize.normalize_item(raw, cache_dir, include_groups=True)
-    return _keep_item(item, cache_dir)
+    normalize.download_item_art(item, cache_dir)
+    return item
 
 
 def _shape_artist(raw, item_id, stubs, answers, cache_dir):
     """In a thread: an artist resource plus its albums' answers (apiAll's list, a failed one
     None in its place, the stub standing in) as an artist Item, one group per album."""
-    normalize.load_art_sizes(cache_dir)
     artist = {'id': item_id, 'type': raw.get('type', 'artists'),
               'attributes': raw.get('attributes') or {}}
     albums = []
@@ -273,13 +271,8 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir):
         data = answer.get('data') if isinstance(answer, dict) else None
         albums.append(data[0] if isinstance(data, list) and data else stub)
     item = normalize.normalize_artist(artist, cache_dir, albums=albums)
-    return _keep_item(item, cache_dir)
-
-
-def _keep_item(item, cache_dir):
     normalize.download_item_art(item, cache_dir)
-    path = normalize.item_cache_path(cache_dir, item['kind'], item['id'])
-    return normalize.write_answer(path, item)
+    return item
 
 
 def _page_data(answer):
@@ -322,9 +315,8 @@ def _raise_api_errors(answer, what):
 
 
 def _shape_search(raw, suggestions, suggest, cache_dir):
-    """In a thread: a search answer as {shelves, items}, plus `terms` when suggestions were
-    asked for in the same round trip."""
-    normalize.load_art_sizes(cache_dir)
+    """In a thread: a search answer as {shelves}, plus `terms` when suggestions were asked for
+    in the same round trip."""
     answer = normalize.search_results(raw, cache_dir)
     if suggest:
         answer['terms'] = normalize.search_suggestions(suggestions, cache_dir)['terms'][:suggest]
@@ -332,13 +324,11 @@ def _shape_search(raw, suggestions, suggest, cache_dir):
 
 
 def _shape_suggestions(raw, cache_dir):
-    normalize.load_art_sizes(cache_dir)
     return normalize.search_suggestions(raw, cache_dir)
 
 
 def _shape_and_keep(shaper, raw, path, cache_dir):
     """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)."""
-    normalize.load_art_sizes(cache_dir)
     return normalize.write_answer(path, shaper(raw, cache_dir))
 
 
@@ -962,8 +952,8 @@ class Engine(GObject.Object):
 
     async def item(self, kind, item_id):
         """One full Item of `kind` with its `groups` (an album's discs, a playlist's list, an
-        artist's albums), its artwork fetched, the answer kept at <cache>/items/. Needs a
-        signed-in engine: EngineError('not-signed-in') otherwise."""
+        artist's albums), its artwork fetched. Needs a signed-in engine:
+        EngineError('not-signed-in') otherwise."""
         client = await self._ready()
         if not self.authorized:
             raise EngineError('not-signed-in', 'sign in to load items')
@@ -1303,8 +1293,8 @@ class Engine(GObject.Object):
 
     async def search(self, term, library=False, limit=SEARCH_LIMIT, suggest=0):
         """A search of the catalog (or, with `library`, of the library): {shelves: [{key,
-        title, items: [Item without groups]}], items: [the same, flat]}, the shelves in
-        Apple's order (Top Results first); with `suggest` > 0, `terms` too: that many of
+        title, items: [Item without groups]}]}, the shelves in Apple's order (Top Results
+        first); with `suggest` > 0, `terms` too: that many of
         suggest()'s completions, asked in the same round trip. `limit` is per kind. A hit's
         `art` is its cached cover or a thumbnail-sized catalog URL (widgets.artwork.remote_item
         gives it a place under <cache>/remote-art/); `thumb` is on disk or None."""

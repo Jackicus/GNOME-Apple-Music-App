@@ -786,10 +786,7 @@ class LifecycleTest(EngineFixture):
         self.assertEqual([entry['title'] for entry in item['groups'][0]['entries']][:1],
                          ['Overpass'])
         self.assertEqual(fetched, [str(self.cache)])
-        self.assertIn('cached', item)
-        kept = self.cache / 'items' / 'album-1724040700.json'
-        self.assertTrue(kept.is_file())
-        self.assertEqual(json.loads(kept.read_text())['id'], '1724040700')
+        self.assertFalse((self.cache / 'items').exists())  # nothing reads an item back
 
     async def test_item_library_ids_go_to_the_library_and_a_miss_is_api(self):
         self.page.authorized = True
@@ -821,7 +818,6 @@ class LifecycleTest(EngineFixture):
         self.assertEqual((item['kind'], item['title']), ('artist', 'Paper Parachutes'))
         names = [group['name'] for group in item['groups']]
         self.assertIn('Static Skyline (Deluxe Edition)', names)
-        self.assertTrue((self.cache / 'items' / 'artist-42.json').is_file())
 
     async def test_signin_waits_for_the_event(self):
         await self.engine.start()
@@ -1209,9 +1205,7 @@ class SearchTest(EngineFixture):
         self.assertEqual([shelf['key'] for shelf in answer['shelves']],
                          ['artists', 'songs', 'albums', 'playlists'])
         self.assertEqual(answer['shelves'][2]['title'], 'Albums')
-        self.assertEqual([item['kind'] for item in answer['items']],
-                         ['artist', 'song', 'album', 'playlist'])
-        self.assertNotIn('terms', answer)
+        self.assertEqual(set(answer), {'shelves'})
         album = answer['shelves'][2]['items'][0]
         self.assertEqual(album['groups'], [])
         self.assertTrue(album['art'].startswith('https://'))  # not on disk: a catalog URL
@@ -1252,7 +1246,7 @@ class SearchTest(EngineFixture):
         self.assertIn('400 Bad', raised.exception.message)
         # An answer that is not one: nothing found.
         self.page.bridge_answers['search'] = None
-        self.assertEqual(await self.engine.search('x'), {'shelves': [], 'items': []})
+        self.assertEqual(await self.engine.search('x'), {'shelves': []})
 
     async def test_suggest(self):
         await self.up()
@@ -1513,8 +1507,7 @@ class CacheTest(unittest.TestCase):
     def test_clear_removes_the_cache_and_leaves_the_rest(self):
         removed = engine_module.clear_cache(self.cache)
         self.assertEqual(removed, len(engine_module.CACHE_ENTRIES))
-        self.assertEqual(sorted(p.name for p in self.cache.iterdir()),
-                         ['library.lock', 'notes.txt'])
+        self.assertEqual(sorted(p.name for p in self.cache.iterdir()), ['notes.txt'])
         self.assertTrue((self.outside / 'big.bin').is_file())  # the link's target stays
         self.assertEqual(engine_module.cache_size(self.cache), 5)
         self.assertEqual(engine_module.clear_cache(self.cache), 0)  # nothing left to clear
