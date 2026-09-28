@@ -803,9 +803,10 @@ def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
 
     sorted_tracks = sorted(raw_tracks, key=track_sort_key)
 
-    # Group raw tracks by discNumber first, so each group's tracks are
-    # indexed from 0 within that group (a group is played on its own, so
-    # "index" is the position in *that* group's queue, not the whole album).
+    # One group per disc, the entries numbered on from the discs before: every
+    # disc's group plays the whole album (setQueue({album, startWith}), which
+    # MusicKit queues in disc and track order), so an entry's `index` is its
+    # position in the album, not in its disc.
     raw_discs = {}
     for t in sorted_tracks:
         t_attrs = t.get('attributes') or {}
@@ -823,7 +824,7 @@ def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
     for d in sorted(raw_discs.keys()):
         disc_label = f'Disc {d if d > 0 else 1}'
         disc_entries = [
-            normalize_track(t, index=idx)
+            normalize_track(t, index=len(normalized_tracks) + idx)
             for idx, t in enumerate(raw_discs[d])
         ]
         normalized_tracks.extend(disc_entries)
