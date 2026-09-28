@@ -77,6 +77,12 @@ class ChromeArgsTest(unittest.TestCase):
         self.assertEqual(args[6:], chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome',
                                                       headless=True, host=False)[1:])
 
+    def test_describe_argv_leaves_the_profile_out(self):
+        argv = chrome.chrome_args('chrome', '/home/someone/.local/share/apple-music/chrome')
+        line = chrome.describe_argv(argv)
+        self.assertNotIn('/home/someone', line)
+        self.assertIn('--user-data-dir=<profile> --remote-debugging-pipe', line)
+
     def test_host_follows_the_sandbox(self):
         with mock.patch.object(chrome, 'in_flatpak', lambda: True):
             self.assertEqual(chrome.chrome_args('chrome', '/p')[0], 'flatpak-spawn')

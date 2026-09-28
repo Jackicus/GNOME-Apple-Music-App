@@ -551,7 +551,7 @@ class Engine(GObject.Object):
                         'session', debug_port)
         argv = with_pdeathsig(
             chrome.chrome_args(binary, self.profile_dir, headless, debug_port=debug_port))
-        log.debug('exec %s', ' '.join(argv))
+        log.debug('exec %s', chrome.describe_argv(argv))  # the profile's path left out
         self._process, transport = self._spawn(argv, binary)
         self._pid = int(self._process.get_identifier())
         log.info('Chrome %d started %s', self._pid, 'headless' if headless else 'visible')
