@@ -651,6 +651,15 @@ class TestTrack(unittest.TestCase):
         with self.assertRaises(TypeError):
             entry.set_property('title', 'Other')  # read-only: the dict is the truth
 
+    def test_kind_by_the_api_type(self):
+        for kind, types in (('song', ('songs', 'library-songs')),
+                            ('video', ('music-videos', 'library-music-videos')),
+                            ('', ('stations', 'uploaded-videos', None, 7, ['songs']))):
+            for value in types:
+                with self.subTest(type=value):
+                    self.assertEqual(Track({'id': 'i.1', 'type': value}).kind, kind)
+        self.assertEqual(Track({'id': 'i.1'}).kind, '')  # an entry without a type
+
 
 class TestPausedGc(unittest.TestCase):
     def setUp(self):
@@ -838,12 +847,12 @@ class TestBuildSongs(unittest.TestCase):
             pauses.append(True)
             await yield_to_frames()
 
-        # A zero budget pauses after every album.
+        # A zero budget pauses after every album; the splice gets a frame of its own.
         with mock.patch.object(library_module, 'FRAME_BUDGET', 0), \
                 mock.patch.object(library_module, 'yield_to_frames', counting_yield):
             build_songs(library)
         self.assertEqual([t.id for t in library.songs], self.ids)
-        self.assertEqual(len(pauses), 10)
+        self.assertEqual(len(pauses), 10 + 2)
         self.assertEqual(spliced, [(0, 0, 30)])
         self.assertTrue(library.songs_ready)
         build_songs(library)  # filled already: nothing happens
@@ -901,11 +910,83 @@ class TestBuildSongs(unittest.TestCase):
         self.assertEqual([t.id for t in build_songs(library)], self.ids)
         self.assertTrue(library.songs_ready)
 
+    def test_a_reload_changes_the_songs_store_only_where_it_changed(self):
+        library = load(self.cache)
+        songs = build_songs(library)
+        before = list(songs)
+        spliced = []
+        songs.connect('items-changed', lambda _store, *change: spliced.append(change))
+        # l.a4 gets a fourth song, and l.a8 goes.
+        albums = [album(f'l.a{n}', f'A{n}', self.ids[n * 3:n * 3 + 3] + (['i.new'] if n == 4
+                                                                           else []))
+                  for n in range(10) if n != 8]
+        write_library(self.cache, albums)
+        with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
+            asyncio.run(library.reload())
+        after = list(songs)
+        self.assertEqual([t.id for t in after],
+                         self.ids[:15] + ['i.new'] + self.ids[15:24] + self.ids[27:])
+        # l.a4's tracks are new Tracks (its groups changed), l.a8's gone; the rest stay put.
+        self.assertEqual(sorted(spliced), [(12, 3, 4), (24, 3, 0)])
+        kept = after[:12] + after[16:]
+        self.assertTrue(all(a is b for a, b in zip(kept, before[:12] + before[15:24] + before[27:],
+                                                   strict=True)))
+
     def test_nothing_to_load_is_ready_and_empty(self):
         library = Library()
         load(tempfile.gettempdir() + '/no-such-apple-music-cache', library)
         self.assertEqual(build_songs(library).get_n_items(), 0)
         self.assertTrue(library.songs_ready)
+
+
+class TestApplyDiff(unittest.TestCase):
+    """apply_diff(): a store brought to a new list with the fewest splices."""
+
+    def setUp(self):
+        self.objects = [Item({'id': f'l.{n}'}) for n in range(8)]
+
+    def check(self, before, after, splices, old=False):
+        from gi.repository import Gio
+        store = Gio.ListStore(item_type=Item)
+        store.splice(0, 0, [self.objects[n] for n in before])
+        seen = []
+        store.connect('items-changed', lambda _store, *change: seen.append(change))
+        items = [self.objects[n] for n in after]
+        library_module.apply_diff(store, items, list(store) if old else None)
+        self.assertEqual([store.get_item(n) for n in range(store.get_n_items())], items)
+        if splices is not None:
+            self.assertEqual(seen, splices)
+        return seen
+
+    def test_the_same_list_changes_nothing(self):
+        self.check([0, 1, 2], [0, 1, 2], [])
+        self.check([], [], [])
+
+    def test_the_unchanged_ends_are_left_alone(self):
+        self.check([0, 1, 2, 3, 4], [0, 1, 2, 7, 4], [(3, 1, 1)])
+        self.check([0, 1, 2, 3, 4], [0, 1, 5, 2, 3, 4], [(2, 0, 1)])
+        self.check([0, 1, 2, 3, 4], [0, 3, 4], [(1, 2, 0)], old=True)
+        self.check([], [0, 1], [(0, 0, 2)])
+        self.check([0, 1], [], [(0, 2, 0)])
+
+    def test_a_middle_sharing_objects_is_diffed(self):
+        # 2 goes, 5 comes after 3: two splices, the later first (5 at its old position), and
+        # 3 untouched.
+        self.check([0, 1, 2, 3, 4], [0, 1, 3, 5, 4], [(4, 0, 1), (2, 1, 0)])
+
+    def test_runs_that_went_and_came_are_found_in_one_walk(self):
+        # Changes at both ends and in the middle, nothing moved: a splice for each.
+        self.check([0, 1, 2, 3, 4, 5], [6, 1, 2, 4, 5, 7],
+                   [(6, 0, 1), (3, 1, 0), (0, 1, 1)])
+
+    def test_moves_and_repeats_are_still_diffed(self):
+        seen = self.check([0, 1, 2, 3, 4], [0, 3, 2, 1, 4], None)  # 1 and 3 swapped
+        self.assertTrue(all(0 < position and position + removed < 5
+                            for position, removed, _added in seen))  # 0 and 4 untouched
+        self.check([0, 1, 2], [0, 1, 1, 2], None)  # the same object twice
+
+    def test_a_wholly_new_list_is_one_splice(self):
+        self.check([0, 1, 2], [3, 4, 5, 6], [(0, 3, 4)])
 
 
 class TestSongOrder(unittest.TestCase):
