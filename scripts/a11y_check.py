@@ -6,7 +6,7 @@
 Runs the installed build (meson install -C build, or scripts/run.sh, first) on the demo
 library, as screenshot.py --demo does (scripts/harness.py: memory settings, animations off,
 no engine), and walks the
-keyboard checklist of prompts.md's phase 18 key by key, printing PASS or FAIL for each step;
+keyboard walkthrough in docs/accessibility.md key by key, printing PASS or FAIL for each step;
 the exit status is 1 when a step fails. Use --size 360x640 for the narrow layout.
 
 Keys cannot be sent to a window on this Wayland desktop, so each press is dispatched through
