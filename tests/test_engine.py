@@ -1810,6 +1810,31 @@ class KeptAfterWipeTest(unittest.TestCase):
         self.assertEqual(list(cache.iterdir()), [])
 
 
+class BrowserVersionTest(unittest.IsolatedAsyncioTestCase):
+    """Engine.browser_version(): the About dialog's line on Chrome, from a stand-in client."""
+
+    async def test_the_product_while_up_none_otherwise(self):
+        answers = []
+
+        class Client:
+            async def call(self, method, params=None, timeout=None, browser=False):
+                answers.append((method, browser))
+                answer = answers_to_give.pop(0)
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
+
+        answers_to_give = [{'product': 'Chrome/154.0.0.0'}, EngineError('timeout', 'slow'), {}]
+        engine = Engine()
+        self.assertIsNone(await engine.browser_version())  # down: nothing asked
+        engine._client = Client()
+        engine.state = 'up'
+        self.assertEqual(await engine.browser_version(), 'Chrome/154.0.0.0')
+        self.assertIsNone(await engine.browser_version())
+        self.assertIsNone(await engine.browser_version())
+        self.assertEqual(answers, [('Browser.getVersion', True)] * 3)
+
+
 class BrowserPathTest(unittest.IsolatedAsyncioTestCase):
     """Engine.browser_path(): Preferences' check of a browser program, no Chrome needed."""
 

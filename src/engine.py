@@ -686,6 +686,20 @@ class Engine(GObject.Object):
         await self.stop()
         await self.start(visible=visible)
 
+    async def browser_version(self):
+        """Chrome's product and version ('Chrome/154.0.…', 'HeadlessChrome/…') while the
+        engine is up, else None: for the About dialog's debug information."""
+        client = self.client
+        if client is None:
+            return None
+        try:
+            answer = await client.call('Browser.getVersion', browser=True, timeout=5)
+        except EngineError as e:
+            log.debug('Browser.getVersion: %s', e)
+            return None
+        product = answer.get('product') if isinstance(answer, dict) else None
+        return product if isinstance(product, str) and product else None
+
     @staticmethod
     async def browser_path(command):
         """Where the program `command` (a name on PATH, or a path) is, or None: on the host

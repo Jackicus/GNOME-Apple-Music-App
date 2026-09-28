@@ -19,8 +19,9 @@ paths:
   list (one `custom_target` per `.blp`, its `.ui` flat in build/src) and its `install_data`
   lists (the app's modules; `pages/`, `widgets/`, `dialogs/` and `backend/`, bridge.js included,
   each their own); `src/applemusic.gresource.xml` (every `.ui` by bare name, style.css, the
-  icons, aliased into `icons/scalable/actions/`); `po/POTFILES.in` (every `.py` and `.blp` with
-  `_()`, `ngettext` or `C_`).
+  icons, aliased into `icons/scalable/actions/`, and `metainfo.xml`, the generated metainfo
+  copied in by src/meson.build, which the About dialog is built from); `po/POTFILES.in`
+  (every `.py` and `.blp` with `_()`, `ngettext` or `C_`).
 - `-Dprofile=development` gives the `.Devel` app ID (desktop file, icons, metainfo, MPRIS name),
   the version with the git revision, and a `DEMO_DIR` pointing at the source tree's build/demo.
   A release build hides `--demo` from `--help`, and there it needs `APPLE_MUSIC_CACHE`.

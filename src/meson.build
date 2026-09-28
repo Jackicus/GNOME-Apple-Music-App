@@ -42,16 +42,25 @@ foreach blueprint : files(
   )
 endforeach
 
+python3 = python.find_installation('python3')
+
+# The metainfo data/ generates, under a name of its own in the gresource: the About dialog is
+# built from it (its release notes included).
+metainfo_resource = custom_target(
+  input: metainfo_file,
+  output: 'metainfo.xml',
+  command: [python3, '-c', 'import shutil, sys; shutil.copyfile(sys.argv[1], sys.argv[2])',
+            '@INPUT@', '@OUTPUT@'],
+)
+
 gnome.compile_resources(
   'applemusic',
   'applemusic.gresource.xml',
   gresource_bundle: true,
   install: true,
   install_dir: pkgdatadir,
-  dependencies: blueprints,
+  dependencies: blueprints + [metainfo_resource],
 )
-
-python3 = python.find_installation('python3')
 
 # Where --demo reads its invented library when APPLE_MUSIC_CACHE is unset. The development
 # profile points at the source tree's build/demo (scripts/demo_library.py's default output,
@@ -121,6 +130,7 @@ install_data(
 
 install_data(
   'dialogs/__init__.py',
+  'dialogs/about.py',
   'dialogs/preferences.py',
   'dialogs/shortcuts.py',
   'dialogs/signin.py',
