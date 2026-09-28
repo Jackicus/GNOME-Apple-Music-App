@@ -75,6 +75,21 @@ class KeptTest(unittest.TestCase):
         path.write_text('{not json')
         self.assertIsNone(cache.read_kept(path))
 
+    def test_an_old_answer_when_asked_for_is_marked_stale(self):
+        path = self.cache / 'browse.json'
+        self.assertIsNone(cache.read_kept(path, allow_stale=True))
+        normalize.write_answer(str(path), {'shelves': []}, str(self.cache))
+        self.assertNotIn('stale', cache.read_kept(path, allow_stale=True))  # a fresh one
+        kept = json.loads(path.read_text())
+        kept['cached'] = '2020-01-01T00:00:00Z'
+        path.write_text(json.dumps(kept))
+        self.assertIsNone(cache.read_kept(path))
+        answer = cache.read_kept(path, allow_stale=True)
+        self.assertEqual((answer['shelves'], answer['stale'], answer['cached']),
+                         ([], True, '2020-01-01T00:00:00Z'))
+        path.write_text('{"shelves": []}')  # no stamp: not an answer the cache knows
+        self.assertIsNone(cache.read_kept(path, allow_stale=True))
+
     def test_a_touched_hit_is_the_newest(self):
         path = self.cache / 'lyrics' / '1.json'
         normalize.write_answer(str(path), {'lines': [{'text': 'x'}]}, str(self.cache))

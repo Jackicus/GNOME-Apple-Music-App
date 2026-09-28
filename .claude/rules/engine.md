@@ -91,7 +91,11 @@ paths:
   entries and `*.tmp` leftovers, never an unrelated file) and reads the kept answers.
   `normalize.prune_caches()` trims what only grows (remote-art/ to 32 MB, the 2,000 lyrics
   played last, kept answers past their day, crash leftovers); nothing in the app calls it
-  yet. Lyrics are kept answers too, stamped, fetched again after 30 days. `item()`'s artwork
+  yet. The day-long answers (the landing, a category, New, Made for You) all go through
+  `Engine._kept_answer()`: the file while it is under a day old, else Apple, else (the engine
+  down or signed out, Apple failing, but not on a refresh) the older file marked
+  `stale: True` (`cache.read_kept(allow_stale=True)`); every answer carries its `cached`
+  stamp. Lyrics are kept answers too, stamped, fetched again after 30 days. `item()`'s artwork
   goes to remote-art/ (`place_in_remote_art`): art/ and thumb/ are the library's, pruned
   against library.json after every sync.
 - Cache writes: every file in the cache goes through `backend/store.py` (`atomic_write`, or
