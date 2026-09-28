@@ -1,0 +1,194 @@
+"""The app's sync (sync.LibrarySync) and sync_library()'s ending: a cancelled sync ends only
+once its thread has, and writes nothing after. The engine is test_sync_app's FakeEngine over
+invented fixtures; no network, no display.
+"""
+
+import asyncio
+import os
+import shutil
+import tempfile
+import threading
+import time
+import unittest
+from unittest import mock
+
+from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
+from tests.gtk import SCHEMA_ID
+from tests.test_sync_app import FakeEngine, answers
+
+from gi.repository import Gio
+
+from applemusic import sync as app_sync
+from applemusic.backend import normalize, store
+from applemusic.library import Library
+
+
+class FakeApp:
+    """What LibrarySync asks of the Application."""
+
+    def __init__(self, engine, library):
+        self.engine = engine
+        self.library = library
+        self.settings = Gio.Settings.new(SCHEMA_ID)
+        self.demo = False
+        self.toasts = []
+        self.reported = []
+
+    def spawn(self, coro):
+        return asyncio.get_running_loop().create_task(coro)
+
+    def toast(self, title, button_label=None, action_name=None):
+        self.toasts.append((title, button_label, action_name))
+
+    def report(self, error):
+        self.reported.append(error.code)
+
+
+class SyncTestCase(unittest.IsolatedAsyncioTestCase):
+    """A temporary cache; thumbnails 'fetched' by writing a few bytes (the first at once,
+    the rest once `gate` is set, when `slow` is on); a cover never fetched."""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = os.path.join(self.tmp.name, 'cache')
+        patcher = mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.gate = threading.Event()
+        self.addCleanup(self.gate.set)  # never leave a fetch waiting
+        self.slow = False
+        self.fetched = []
+
+        def thumbnail(url, cache_dir, dest_path, generation=None):
+            self.fetched.append(url)
+            if self.slow and len(self.fetched) > 1:
+                self.gate.wait(5)
+            store.atomic_write(dest_path, lambda file: file.write(b'img'), root=cache_dir,
+                               generation=generation)
+            return dest_path
+
+        def no_cover(url, cache_dir, timeout=10.0, dest_path=None, generation=None):
+            self.fail(f'a sync fetched a cover: {url}')
+
+        for name, fake in (('cache_thumbnail', thumbnail), ('cache_artwork', no_cover)):
+            patcher = mock.patch.object(normalize, name, fake)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # When the build thread ends.
+        self.ended = []
+        build = app_sync._build_and_write
+
+        def recorded_build(*args, **kwargs):
+            try:
+                return build(*args, **kwargs)
+            finally:
+                self.ended.append(time.monotonic())
+
+        patcher = mock.patch.object(app_sync, '_build_and_write', recorded_build)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.library = Library()
+
+    @property
+    def library_json(self):
+        return os.path.join(self.cache, 'library.json')
+
+
+class CancelTest(SyncTestCase):
+    async def test_a_cancelled_sync_ends_after_its_thread_and_writes_nothing(self):
+        self.slow = True
+        loop = asyncio.get_running_loop()
+        task = None
+
+        def report(section, done, total):
+            if section == 'artwork' and done and not task.done() and not self.gate.is_set():
+                task.cancel()  # during the artwork, the thread still running
+                loop.call_later(0.2, self.gate.set)
+
+        task = asyncio.ensure_future(
+            app_sync.sync_library(FakeEngine(answers()), self.library, report))
+        await asyncio.wait([task])
+        finished = time.monotonic()
+        self.assertTrue(task.cancelled())
+        self.assertEqual(len(self.ended), 1, 'the task ended before its thread')
+        self.assertLessEqual(self.ended[0], finished)
+        self.assertFalse(os.path.exists(self.library_json))
+        # Wiped now (a sign-out would): nothing of the sync comes back.
+        shutil.rmtree(self.cache)
+        await asyncio.sleep(0.3)
+        self.assertFalse(os.path.exists(self.cache))
+
+    async def test_a_wipe_during_the_artwork_stops_the_sync(self):
+        self.slow = True
+        loop = asyncio.get_running_loop()
+        bumped = []
+
+        def report(section, done, total):
+            if section == 'artwork' and done and not bumped:
+                bumped.append(store.bump_cache_generation())
+                loop.call_later(0.1, self.gate.set)
+
+        with self.assertRaises(store.CacheGone):
+            await app_sync.sync_library(FakeEngine(answers()), self.library, report)
+        self.assertFalse(os.path.exists(self.library_json))
+
+
+class LibrarySyncTest(SyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.engine = FakeEngine(answers())
+        self.app = FakeApp(self.engine, self.library)
+        self.addCleanup(self.app.settings.reset, 'last-sync')
+        self.sync = app_sync.LibrarySync(self.app)
+        self.progress = []
+        self.sync.connect('progress', lambda _sync, *report: self.progress.append(report))
+
+    async def test_a_sync_runs_once_and_says_so(self):
+        task = self.sync.start()
+        self.assertTrue(self.sync.props.running)
+        self.assertIsNone(self.sync.start())  # one at a time
+        await task
+        await asyncio.sleep(0)
+        self.assertFalse(self.sync.props.running)
+        self.assertEqual(self.progress[0], ('', 0, None))
+        self.assertEqual(self.progress[-1][0], 'artwork')
+        self.assertTrue(self.app.settings.get_string('last-sync'))
+        self.assertTrue(self.app.toasts[-1][0].startswith('Library synced'))
+        self.assertTrue(os.path.exists(self.library_json))
+
+    async def test_cancel_returns_after_the_thread_and_no_report_follows(self):
+        self.slow = True
+        loop = asyncio.get_running_loop()
+        cancelled = []
+
+        def on_progress(_sync, section, done, _total):
+            if section == 'artwork' and done and not cancelled:
+                cancelled.append(asyncio.ensure_future(self.sync.cancel()))
+                loop.call_later(0.2, self.gate.set)
+
+        self.sync.connect('progress', on_progress)
+        self.sync.start()
+        while not cancelled:
+            await asyncio.sleep(0.01)
+        await cancelled[0]
+        finished = time.monotonic()
+        self.assertEqual(len(self.ended), 1)
+        self.assertLessEqual(self.ended[0], finished)
+        reports = len(self.progress)
+        await asyncio.sleep(0.2)  # a report the thread queued arrives after the end
+        self.assertEqual(len(self.progress), reports)
+        self.assertFalse(self.sync.props.running)
+        self.assertFalse(os.path.exists(self.library_json))
+        self.assertEqual(self.app.settings.get_string('last-sync'), '')
+        self.assertEqual(self.app.toasts, [])
+
+    async def test_held_starts_nothing(self):
+        with self.sync.held():
+            self.assertIsNone(self.sync.start())
+        self.assertIsNotNone(self.sync.start())
+        await self.sync.cancel()
+
+
+if __name__ == '__main__':
+    unittest.main()

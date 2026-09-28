@@ -95,8 +95,8 @@ paths:
 - The cache: src/cache.py knows what it holds (`CACHE_ENTRIES`), measures and clears it (the
   entries and `*.tmp` leftovers, never an unrelated file) and reads the kept answers.
   `normalize.prune_caches()` trims what only grows (remote-art/ to 32 MB, the 2,000 lyrics
-  played last, kept answers past their day, crash leftovers); nothing in the app calls it
-  yet. The day-long answers (the landing, a category, New, Made for You) all go through
+  played last, kept answers past their day, crash leftovers), once the library has loaded at
+  startup and at the end of every sync. The day-long answers (the landing, a category, New, Made for You) all go through
   `Engine._kept_answer()`: the file while it is under a day old, else Apple, else (the engine
   down or signed out, Apple failing, but not on a refresh) the older file marked
   `stale: True` (`cache.read_kept(allow_stale=True)`); every answer carries its `cached`

@@ -145,15 +145,26 @@ def _classes():
             self.calls.append('item')
             raise EngineError('engine-down')
 
+    class LibrarySync(GObject.Object):
+        """The app's sync as the dialogs see it: never running."""
+
+        running = GObject.Property(type=bool, default=False)
+
+        async def cancel(self):
+            pass
+
     class App(Adw.Application):
         """Gio.Application.get_default() while the tests run: spawn(), the engine, the
         settings (memory backend), and a record of what the widgets asked."""
+
+        signing_out = GObject.Property(type=bool, default=False)
 
         def __init__(self):
             super().__init__(application_id='io.github.jackicus.AppleMusic.LifetimeTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.set_default()  # the pages' app, whichever application another test made first
             self.engine = Engine()
+            self.library_sync = LibrarySync()
             self.settings = Gio.Settings.new(SCHEMA_ID)
             self.demo = False
             self.profile = 'default'
