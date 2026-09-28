@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+import weakref
 from pathlib import Path
 from unittest import mock
 
@@ -810,6 +811,55 @@ class TestPausedGc(unittest.TestCase):
             kept = [object() for _ in range(10)]  # noqa: F841
         self.assertTrue(gc.isenabled())
         self.assertGreater(gc.get_freeze_count(), frozen)
+
+    def cycle(self):
+        """A weak reference to a reference cycle that is garbage, not collected yet."""
+        class Node:
+            pass
+
+        node = Node()
+        node.self = node
+        dead = weakref.ref(node)
+        del node
+        return dead
+
+    def test_garbage_from_before_the_pause_is_not_frozen(self):
+        gc.disable()
+        dead = self.cycle()
+        with paused_gc():
+            pass
+        gc.enable()
+        gc.collect()
+        self.assertIsNone(dead())
+
+    def test_garbage_made_during_a_later_pause_is_not_frozen(self):
+        gc.enable()
+        gc.freeze()  # as after the first load
+        with paused_gc():
+            dead = self.cycle()
+        gc.collect()
+        self.assertIsNone(dead())
+
+    def test_a_load_pauses_from_its_call_to_its_end(self):
+        gc.enable()
+        with tempfile.TemporaryDirectory() as cache:
+            write_library(cache, [album('l.a1', 'A1', ['i.1'])])
+            library = Library()
+            with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': cache}):
+                loading = library.load()
+                self.assertFalse(gc.isenabled())  # the parse runs without collections
+                asyncio.run(loading)
+                self.assertTrue(gc.isenabled())
+                # A load closed before it ever ran (an app never activated) lets go too.
+                never = library.load()
+                self.assertFalse(gc.isenabled())
+                never.close()
+                del never
+                self.assertTrue(gc.isenabled())
+                reloading = library.reload()
+                self.assertFalse(gc.isenabled())
+                asyncio.run(reloading)
+                self.assertTrue(gc.isenabled())
 
     def test_no_freeze_when_not_asked_and_disabled_stays_disabled(self):
         gc.unfreeze()
