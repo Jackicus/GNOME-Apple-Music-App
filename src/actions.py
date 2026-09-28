@@ -41,7 +41,7 @@ from gettext import gettext as _
 from gi.repository import Gio, GLib, GObject
 
 from .backend.errors import EngineError
-from .engine import is_library_id
+from .backend.api import is_library_id
 from .library import Item, Track
 
 log = logging.getLogger(__name__)

@@ -33,7 +33,7 @@ from applemusic import engine as engine_module
 from applemusic.backend import chrome, normalize, store
 from applemusic.backend import client as client_module
 from applemusic.backend.errors import EngineError
-from applemusic.engine import Engine, item_endpoint, resource_type
+from applemusic.engine import Engine
 from tests.test_client import FakeBrowser, FakePage, context_created, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
@@ -1522,42 +1522,6 @@ class KeptAfterWipeTest(unittest.TestCase):
         normalize.write_answer(str(cache / 'lyrics' / '1.json'), {'lines': []}, str(cache),
                                generation)
         self.assertEqual(list(cache.iterdir()), [])
-
-
-class EndpointTest(unittest.TestCase):
-    def test_library_and_catalog(self):
-        self.assertEqual(item_endpoint('album', 'l.abc', 'gb'),
-                         '/v1/me/library/albums/l.abc?include=tracks,artists')
-        self.assertEqual(item_endpoint('album', '123', 'gb'),
-                         '/v1/catalog/gb/albums/123?include=tracks,artists')
-        self.assertEqual(item_endpoint('playlist', 'p.xyz', 'us'),
-                         '/v1/me/library/playlists/p.xyz?include=tracks')
-        self.assertEqual(item_endpoint('playlist', 'pl.u-1', 'us'),
-                         '/v1/catalog/us/playlists/pl.u-1?include=tracks')
-        self.assertEqual(item_endpoint('artist', 'r.1', 'us'),
-                         '/v1/me/library/artists/r.1?include=albums')
-        self.assertEqual(item_endpoint('artist', '9', 'us'),
-                         '/v1/catalog/us/artists/9?include=albums')
-        self.assertEqual(item_endpoint('station', 'ra.1', 'us'), '/v1/catalog/us/stations/ra.1')
-        self.assertEqual(item_endpoint('song', 'l.s', 'us'), '/v1/me/library/songs/l.s')
-        self.assertEqual(item_endpoint('song', 'i.s', 'us'), '/v1/me/library/songs/i.s')
-        self.assertEqual(item_endpoint('song', '5', 'us'), '/v1/catalog/us/songs/5')
-        self.assertEqual(item_endpoint('video', '7', 'us'), '/v1/catalog/us/videos/7')
-
-
-class ResourceTypeTest(unittest.TestCase):
-    def test_types(self):
-        self.assertEqual(resource_type('song', '1'), 'song')
-        self.assertEqual(resource_type('song', 'i.1'), 'library-song')
-        self.assertEqual(resource_type('album', 'l.1'), 'library-album')
-        self.assertEqual(resource_type('playlist', 'p.1'), 'library-playlist')
-        self.assertEqual(resource_type('playlist', 'pl.1'), 'playlist')
-        self.assertEqual(resource_type('video', 'i.1'), 'library-music-video')
-        self.assertEqual(resource_type('musicVideo', '1'), 'music-video')
-        self.assertEqual(resource_type('station', 'ra.1'), 'station')
-        for kind, item_id in (('artist', '1'), ('category', '1'), ('song', None)):
-            with self.assertRaises(EngineError):
-                resource_type(kind, item_id)
 
 
 if __name__ == '__main__':

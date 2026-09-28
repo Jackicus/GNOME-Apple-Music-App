@@ -23,7 +23,9 @@ paths:
   the commands; `src/backend/README.md` has the bridge's calls, the events and the library.json
   shapes. Keep the three in step when you add a command.
 - The backend is a fork this app owns, in the app's style like the rest of the code.
-  `normalize.py` turns Apple's answers into the library's shapes; `cdp.py` is only the
+  `normalize.py` turns Apple's answers into the library's shapes; `api.py` is what the app
+  knows of the API apart from any connection (library ids, endpoints, resource types, Apple's
+  `{errors}` answers as an EngineError, through `api_error()` only); `cdp.py` is only the
   WebSocket codec, for the developer attach.
 - Only `EngineError(code, message)` leaves the backend and the Engine. A new failure kind gets a
   code in `backend/errors.py` and a sentence in `Application.report()` (`no-browser`, no Chrome

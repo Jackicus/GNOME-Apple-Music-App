@@ -5,6 +5,8 @@ importing the package imports none of its modules.
 
     errors.py     EngineError(code, message): engine-down, no-browser, not-signed-in, api,
                   timeout, usage
+    api.py        the Apple Music API apart from any connection: library ids, an item's
+                  endpoint, resource types, a page's data, Apple's error answers
     chrome.py     finding Chrome, its argv (--remote-debugging-pipe; the host's Chrome through
                   flatpak-spawn from a Flatpak sandbox), which Chrome holds a profile
                   (profile_owner: its SingletonLock), select_page() (the music.apple.com

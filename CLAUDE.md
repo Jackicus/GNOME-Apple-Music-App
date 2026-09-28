@@ -120,7 +120,7 @@ sudo meson install -C _build --skip-subprojects
   nothing.
 - **Chrome and MusicKit only through `app.engine`**: engine.py is the one module that imports
   `backend.chrome` and `backend.client`; the rest of the app may import the backend's pure parts
-  (`config`, `errors`, `normalize`). Playback goes through `app.player`.
+  (`api`, `config`, `errors`, `normalize`). Playback goes through `app.player`.
 - **Errors**: engine failures are `EngineError(code)`, codes in `src/backend/errors.py`
   (`engine-down`, `no-browser`, `not-signed-in`, `api`, `timeout`, `usage`). The user sees a
   toast (`app.report(error)`), never a traceback.
