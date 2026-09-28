@@ -476,9 +476,12 @@ class Library(GObject.Object):
     """The whole library: one store per section, the shelves, and the Songs store.
 
     The stores are created once and filled in place, so a page can bind them before anything
-    is loaded. `state` is 'empty' (nothing loaded, or no library.json), 'loading' or 'ready';
-    'changed' is emitted when a load() finishes, whatever it found. `songs-ready` is true once
-    the Songs store has been filled (build_songs()).
+    is loaded. `state` is 'empty' (nothing loaded, no library.json, or a load that failed or
+    was cancelled), 'loading' or 'ready'; 'changed' is emitted when a load() finishes, whatever
+    it found. `songs-ready` is true once the Songs store has been filled (build_songs()).
+    `file-state` is what the last load found on disk: 'ok', 'missing' or 'unreadable' ('' until
+    a load has read the file), and `version` that file's `version` (0 when it has none): a
+    missing, unreadable or outdated library is due a sync.
     """
 
     __gtype_name__ = 'AppleMusicLibrary'
@@ -488,6 +491,8 @@ class Library(GObject.Object):
     }
 
     state = GObject.Property(type=str, default='empty')
+    file_state = GObject.Property(type=str, default='')
+    version = GObject.Property(type=int, default=0)
     generated = GObject.Property(type=str)
     storefront = GObject.Property(type=str)
     songs_ready = GObject.Property(type=bool, default=False)
@@ -546,7 +551,10 @@ class Library(GObject.Object):
             try:
                 await self._fill_songs(self._generation)
             except _Superseded:
-                pass
+                pass  # the load that overtook it fills the store
+            except BaseException:
+                self._songs_wanted = self.songs_ready  # failed or cancelled: ask again
+                raise
 
     def by_id(self, kind, item_id):
         """The Item of that kind and id, from a section, a shelf or the playlist folders
@@ -601,7 +609,7 @@ class Library(GObject.Object):
 
     def _read(self):
         """Start reading library.json in the library's thread, now: the Future of
-        (data, song count)."""
+        _read_library's (data, song count, file state)."""
         return self._reader.submit(_read_library, config.cache_dir() / 'library.json',
                                    self._reading)
 
@@ -629,15 +637,24 @@ class Library(GObject.Object):
         self._set_state('loading')
         with paused_gc(freeze=not keep):
             try:
-                data, song_count = await asyncio.wrap_future(reading)
+                data, song_count, file_state = await asyncio.wrap_future(reading)
                 self._check(generation)
                 log.debug('Library parsed in %.0f ms', (time.monotonic() - started) * 1000)
+                if self.file_state != file_state:
+                    self.file_state = file_state
+                version = _number(data.get('version')) if data is not None else 0
+                if self.version != version:
+                    self.version = version
                 await self._fill(data or {}, generation, keep)
             except _Superseded:
                 return
-            except Exception:
-                self._set_state('empty')  # a page waiting on 'loading' would wait forever
-                self.emit('changed')
+            except BaseException:
+                # Failed, or cancelled (a sync stopped during its reload): a page waiting on
+                # 'loading' would wait forever, and a Songs build it was to do is asked again.
+                if generation == self._generation:
+                    self._songs_wanted = self._songs_wanted and self.songs_ready
+                    self._set_state('empty')
+                    self.emit('changed')
                 raise
         self._song_count = song_count
         self._set_state('ready' if data is not None else 'empty')
@@ -903,9 +920,9 @@ HOLD_LIMIT = 1.0
 
 
 def _read_library(path, reading=None):
-    """Parse library.json (in a thread). Returns (data or None, the Songs page's count).
-    `reading`, a threading.Event, holds the parse between list elements while it is clear, for
-    HOLD_LIMIT seconds at most in all."""
+    """Parse library.json (in a thread). Returns (data or None, the Songs page's count, the
+    file's state: 'ok', 'missing' or 'unreadable'). `reading`, a threading.Event, holds the
+    parse between list elements while it is clear, for HOLD_LIMIT seconds at most in all."""
     albums = set()
     strings = {}
     held = [0.0]  # seconds waited for `reading` so far
@@ -940,13 +957,13 @@ def _read_library(path, reading=None):
                   (time.monotonic() - started) * 1000)
     except FileNotFoundError:
         log.info('No library at %s', path)
-        return None, 0
-    except (OSError, ValueError) as error:
+        return None, 0, 'missing'
+    except (OSError, ValueError, RecursionError) as error:  # RecursionError: nested too deep
         log.warning('Cannot read %s: %s', path, error)
-        return None, 0
+        return None, 0, 'unreadable'
     if not isinstance(data, dict):
         log.warning('Cannot read %s: not a JSON object', path)
-        return None, 0
+        return None, 0, 'unreadable'
     sections = data.get('sections') if isinstance(data.get('sections'), dict) else {}
     songs = {entry.get('id')
              for album in _dicts(sections.get('albums'))
@@ -954,7 +971,7 @@ def _read_library(path, reading=None):
              for entry in _dicts(group.get('entries'))}
     songs |= {entry.get('id') for entry in _dicts(sections.get('songs')) if entry.get('id')}
     _drop_artist_tracks(sections)
-    return data, len(songs)
+    return data, len(songs), 'ok'
 
 
 def _drop_artist_tracks(sections, albums=None):
