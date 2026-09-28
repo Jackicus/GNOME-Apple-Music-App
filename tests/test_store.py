@@ -118,6 +118,10 @@ class GenerationTest(StoreTest):
         store.bump_cache_generation()
         return generation
 
+    def test_a_wiped_cache_is_a_cancellation(self):
+        self.assertTrue(issubclass(store.CacheGone, store.Cancelled))
+        self.assertIs(normalize.Cancelled, store.Cancelled)
+
     def test_the_bump(self):
         generation = store.cache_generation()
         self.assertTrue(store.current(generation))

@@ -391,8 +391,8 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
         counts['art'] = normalize.download_art(thumb_urls(library_data, cache_dir), cache_dir,
                                                progress=art_progress, cancelled=cancelled,
                                                generation=generation)
-    except store.CacheGone:
-        raise  # the cache was cleared: nothing more is written
+    except normalize.Cancelled:
+        raise  # cancelled, or the cache was cleared: nothing more is written
     except Exception as error:
         log.warning('sync: artwork: %s', error)
         counts['art'] = {'wanted': 0, 'fetched': 0, 'failed': 0}

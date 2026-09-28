@@ -44,7 +44,12 @@ TEMP_MAX_AGE = 60 * 60  # a temporary file this old is no write in progress
 DIR_MODE = 0o700  # and files 0600: mkstemp's
 
 
-class CacheGone(Exception):
+class Cancelled(Exception):
+    """A job that writes the cache gave up before it was done: asked to stop, or its cache
+    was wiped (CacheGone). Nothing more of it is written."""
+
+
+class CacheGone(Cancelled):
     """The cache was wiped while a job ran (its generation moved): the job stops."""
 
 
