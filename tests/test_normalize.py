@@ -1,8 +1,11 @@
+import http.server
 import json
 import os
 import shutil
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from tests import SRC  # noqa: F401  (registers src/ as the applemusic package)
 
@@ -279,10 +282,7 @@ class TestSync(unittest.TestCase):
         top = out['shelves'][0]['items']
         self.assertEqual([it['kind'] for it in top], ['song', 'album'])
         self.assertEqual(top[0]['groups'], [])
-        # Flat, no repeats, the top results first.
-        self.assertEqual([(it['kind'], it['id']) for it in out['items']],
-                         [('song', song['id']), ('album', album['id']), ('artist', '123456'),
-                          ('playlist', 'pl.rock-essentials')])
+        self.assertEqual(set(out), {'shelves'})
         # The album's thumbnail is on disk and stays; its cover is not, so a
         # small catalog URL stands in. The song carries no artwork at all.
         hit_album = out['shelves'][3]['items'][0]
@@ -294,10 +294,10 @@ class TestSync(unittest.TestCase):
         self.assertIsNone(hit_song['art'])
 
     def test_search_results_with_nothing(self):
-        self.assertEqual(normalize.search_results(None, self.tmp_dir), {'shelves': [], 'items': []})
+        self.assertEqual(normalize.search_results(None, self.tmp_dir), {'shelves': []})
         self.assertEqual(normalize.search_results({'results': {'albums': {'data': []}}},
                                                   self.tmp_dir),
-                         {'shelves': [], 'items': []})
+                         {'shelves': []})
 
     def test_search_results_without_apples_order_take_the_usual(self):
         raw = {'results': {
@@ -532,52 +532,17 @@ class TestSync(unittest.TestCase):
         self.assertTrue(artists[0]['thumb'].startswith(os.path.join(self.tmp_dir, 'thumb')))
         self.assertEqual(artists[0]['artColor'], '#123456')
 
-    def test_save_library_and_merge(self):
-        initial = {
-            'version': 1,
-            'generated': '2026-09-25T12:00:00Z',
-            'storefront': 'us',
-            'sections': {
-                'albums': [{'id': 'a1', 'title': 'Album 1'}],
-                'artists': [{'id': 'art1', 'title': 'Artist 1'}],
-                'playlists': [{'id': 'p1', 'title': 'Playlist 1'}],
-                'radio': [{'id': 'r1', 'title': 'Radio 1'}],
-            },
-            'shelves': [{'key': 'heavy-rotation', 'title': 'Heavy Rotation', 'items': []}],
-        }
-        normalize.save_library(initial, self.tmp_dir)
-
+    def test_save_library_replaces_the_file(self):
+        library = {'version': 1, 'sections': {'albums': [{'id': 'a1', 'title': 'Album 1'}]},
+                   'shelves': []}
+        normalize.save_library(library, self.tmp_dir)
+        normalize.save_library(dict(library, sections={}), self.tmp_dir, indent=None)
         lib_file = os.path.join(self.tmp_dir, 'library.json')
-        self.assertTrue(os.path.exists(lib_file))
         with open(lib_file) as f:
-            data = json.load(f)
-        self.assertEqual(len(data['sections']['albums']), 1)
-
-        # Merge with only albums updated
-        updated = {
-            'version': 1,
-            'generated': '2026-09-25T13:00:00Z',
-            'storefront': 'us',
-            'sections': {
-                'albums': [
-                    {'id': 'a1', 'title': 'Album 1'},
-                    {'id': 'a2', 'title': 'Album 2'},
-                ],
-                'artists': [],
-                'playlists': [],
-                'radio': [],
-            },
-            'shelves': [],
-        }
-        normalize.save_library(updated, self.tmp_dir, only='albums')
-
-        with open(lib_file) as f:
-            merged = json.load(f)
-
-        self.assertEqual(len(merged['sections']['albums']), 2)
-        # playlists still preserved
-        self.assertEqual(len(merged['sections']['playlists']), 1)
-        self.assertEqual(len(merged['shelves']), 1)
+            text = f.read()
+        self.assertEqual(json.loads(text), {'version': 1, 'sections': {}, 'shelves': []})
+        self.assertNotIn('\n', text)  # the compact form
+        self.assertEqual(os.listdir(self.tmp_dir), ['library.json'])  # no lock, no temp
 
     def test_prune_art(self):
         art_dir = os.path.join(self.tmp_dir, 'art')
@@ -675,7 +640,7 @@ class TestArtworkDownload(unittest.TestCase):
         real = normalize.cache_artwork, normalize.cache_thumbnail
         normalize.cache_artwork, normalize.cache_thumbnail = fake_cache, fake_thumb
         try:
-            counts = normalize.download_art(lib, self.tmp_dir, log=lambda m: None)
+            counts = normalize.download_art(lib, self.tmp_dir)
         finally:
             normalize.cache_artwork, normalize.cache_thumbnail = real
         # The one missing cover, then the thumbnails of both, in that order.
@@ -690,17 +655,22 @@ class TestArtworkDownload(unittest.TestCase):
         item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
                                          cache_dir=self.tmp_dir)
         lib = {'sections': {'albums': [item]}, 'shelves': []}
-        logged = []
         real = normalize.cache_artwork, normalize.cache_thumbnail
         normalize.cache_artwork = lambda url, cache_dir, timeout=10.0, dest_path=None: None
-        normalize.cache_thumbnail = lambda url, cache_dir, dest_path: None
+
+        def broken(url, cache_dir, dest_path):
+            raise OSError('no space left')
+        normalize.cache_thumbnail = broken
         try:
-            counts = normalize.download_art(lib, self.tmp_dir, log=logged.append)
+            with self.assertLogs('applemusic.backend.normalize', 'WARNING') as logs:
+                counts = normalize.download_art(lib, self.tmp_dir)
         finally:
             normalize.cache_artwork, normalize.cache_thumbnail = real
-        # The cover and its thumbnail.
+        # The cover and its thumbnail; the one that raised is logged with its reason (the one
+        # that answered None logs its own).
         self.assertEqual(counts['failed'], 2)
-        self.assertEqual(len(logged), 2)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('no space left', logs.output[0])
 
     @unittest.skipIf(GdkPixbuf is None, 'GdkPixbuf not available')
     def test_thumbnail_is_scaled_from_the_cached_cover(self):
@@ -788,6 +758,60 @@ class TestArtworkDownload(unittest.TestCase):
         self.assertEqual(artists[0]['title'], 'Isla Marren')
 
 
+class CannedHandler(http.server.BaseHTTPRequestHandler):
+    """Answers /ok.jpg with a few bytes and anything else with 404."""
+
+    def do_GET(self):
+        if self.path == '/ok.jpg':
+            body = b'not really a jpeg'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_error(404)
+
+    def log_message(self, *args):
+        pass
+
+
+class TestCacheArtwork(unittest.TestCase):
+    """cache_artwork against a server on the loopback interface."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_dir)
+        self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), CannedHandler)
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f'http://127.0.0.1:{self.server.server_address[1]}'
+        # No proxy between this test and its server.
+        patcher = mock.patch.dict(os.environ, {'no_proxy': '*', 'NO_PROXY': '*'})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def files(self):
+        return sorted(os.path.relpath(os.path.join(folder, name), self.tmp_dir)
+                      for folder, _dirs, names in os.walk(self.tmp_dir) for name in names)
+
+    def test_a_download_lands_under_the_urls_name(self):
+        url = f'{self.base}/ok.jpg'
+        path = normalize.cache_artwork(url, self.tmp_dir)
+        self.assertEqual(path, normalize.artwork_cache_path(url, self.tmp_dir))
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), b'not really a jpeg')
+        self.assertEqual(self.files(), [os.path.join('art', normalize.artwork_filename(url))])
+
+    def test_a_404_is_none_logged_with_its_reason_and_leaves_nothing(self):
+        with self.assertLogs('applemusic.backend.normalize', 'WARNING') as logs:
+            self.assertIsNone(normalize.cache_artwork(f'{self.base}/missing.jpg', self.tmp_dir))
+        self.assertIn('404', logs.output[0])
+        self.assertEqual(self.files(), [])  # no temp file left
+
+
 class TestArtSizes(unittest.TestCase):
     """The cover and thumbnail sizes: set per sync, recorded beside the
     covers, read back by every other command."""
@@ -871,15 +895,13 @@ class TestOtherCaches(unittest.TestCase):
         self.assertEqual(normalize.prune_remote_art(os.path.join(self.tmp_dir, 'nowhere')), 0)
 
     def test_answer_paths_are_safe_names(self):
-        self.assertEqual(normalize.item_cache_path(self.tmp_dir, 'album', 'l.abc/../x'),
-                         os.path.join(self.tmp_dir, 'items', 'album-l.abc_.._x.json'))
-        self.assertEqual(normalize.category_cache_path(self.tmp_dir, '98 85/81'),
-                         os.path.join(self.tmp_dir, 'categories', '98_85_81.json'))
+        self.assertEqual(normalize.category_cache_path(self.tmp_dir, '98 85/../81'),
+                         os.path.join(self.tmp_dir, 'categories', '98_85_.._81.json'))
         self.assertEqual(normalize.landing_cache_path(self.tmp_dir),
                          os.path.join(self.tmp_dir, 'landing.json'))
 
     def test_answers_are_kept_and_age_out(self):
-        path = normalize.item_cache_path(self.tmp_dir, 'album', '1')
+        path = normalize.category_cache_path(self.tmp_dir, '1')
         self.assertIsNone(normalize.read_answer(path, 60))
         kept = normalize.write_answer(path, {'id': '1', 'groups': []})
         self.assertIn('cached', kept)

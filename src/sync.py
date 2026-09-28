@@ -8,7 +8,7 @@ the music videos, the recently played radio stations and the Home shelves (Apple
 recommendations, Heavy Rotation, Recently Added); normalises them with the backend's pure
 functions in a thread; fetches the thumbnails that are missing (covers are fetched on demand
 by the pages that show them: widgets.artwork.Artwork.fetch_cover); writes library.json
-atomically under the backend's lock; prunes the artwork nothing names; and finally has the
+atomically; prunes the artwork nothing names; and finally has the
 Library reload() itself in place. `progress(section, done, total)` is called as it goes
 (section one of PROGRESS_SECTIONS; total None until known). Every failure is an EngineError.
 
@@ -151,8 +151,10 @@ def scale_image(src_path, dest_path, size):
 
 
 def install_scaler():
-    """Hand the backend the scaler (once, at startup)."""
+    """Hand the backend the scaler, and the artwork sizes the cache was built at (once, at
+    startup: a tiny file read)."""
     normalize.scale_image = scale_image
+    normalize.load_art_sizes(str(config.cache_dir()))
 
 
 async def sync_library(engine, library, progress=None):
@@ -386,8 +388,7 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     # placeholders for artwork that is about to arrive. A failure is logged, nothing more.
     try:
         counts['art'] = normalize.download_art(thumb_urls(library_data, cache_dir), cache_dir,
-                                             log=log.warning, progress=art_progress,
-                                             cancelled=cancelled)
+                                               progress=art_progress, cancelled=cancelled)
     except Exception as error:
         log.warning('sync: artwork: %s', error)
         counts['art'] = {'wanted': 0, 'fetched': 0, 'failed': 0}

@@ -95,12 +95,13 @@ class ConfigTest(unittest.TestCase):
 
 
 class PackageTest(unittest.TestCase):
-    def test_importing_loads_neither_am_nor_gi(self):
-        code = ('import sys, tests\n'
-                'import applemusic.backend, applemusic.backend.cdp, applemusic.backend.config\n'
-                'import applemusic.backend.normalize\n'
-                "print(sorted(m for m in sys.modules\n"
-                "             if m.endswith('.am') or m.split('.')[0] == 'gi'))\n")
+    def test_importing_the_backend_loads_no_gi(self):
+        modules = sorted(path.stem for path in BACKEND.glob('*.py') if path.stem != '__init__')
+        self.assertIn('normalize', modules)
+        code = ('import importlib, sys, tests\n'
+                f'for name in {modules!r}:\n'
+                "    importlib.import_module('applemusic.backend.' + name)\n"
+                "print(sorted(m for m in sys.modules if m.split('.')[0] == 'gi'))\n")
         result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True,
                                 text=True, check=True)
         self.assertEqual(result.stdout.strip(), '[]')

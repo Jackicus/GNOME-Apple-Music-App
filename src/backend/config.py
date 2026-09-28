@@ -58,7 +58,7 @@ def build_profile():
 
 
 def cache_dir():
-    """library.json, art/, thumb/, remote-art/, items/, lyrics/: apple-music, or
+    """library.json, art/, thumb/, remote-art/, lyrics/: apple-music, or
     apple-music-devel for the development build, under $XDG_CACHE_HOME."""
     name = APP_DIR + ('-devel' if _build_profile == DEVELOPMENT else '')
     return _override('APPLE_MUSIC_CACHE') or _xdg_dir('XDG_CACHE_HOME', '.cache') / name

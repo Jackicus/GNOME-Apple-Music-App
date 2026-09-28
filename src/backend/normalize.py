@@ -1,23 +1,24 @@
-"""Library synchronization, Apple Music API normalization, and artwork caching.
+"""Apple's answers as the library's data, and the artwork cache.
 
-Transforms Apple Music API JSON into the Item and Track shapes README.md
-describes, manages artwork caching and pruning, and builds library.json.
-Python standard library only.
+Pure functions turn Apple Music API answers into the Item, Track and shelf shapes that
+README.md describes: normalize_album() and the other normalize_* functions, the search and
+shelf shapers the engine's commands answer with, and group_songs_into_albums_and_artists() for
+the sync. Beside them, the artwork cache (a file name for each artwork URL, fetching what is
+missing, pruning what nothing names), library.json, and the answers the engine keeps for a
+day. The standard library only; the thread pool and urllib are imported where they are used.
 """
 
-from datetime import datetime, UTC
 import hashlib
 import html
 import json
+import logging
 import os
 import re
+from datetime import UTC, datetime
 
 from . import config
 
-# Only what normalising an answer needs is imported here. This module is
-# loaded by every am.py command — a search, the player's half-minute poll —
-# and PyGObject alone is fifty milliseconds of a run that should take ten;
-# the thread pool, the fetch and the lock are imported where they are used.
+log = logging.getLogger(__name__)
 
 # Scaling a cached cover down to its thumbnail, without fetching it again,
 # takes an image library, and nothing in the backend imports gi. The app
@@ -157,16 +158,12 @@ def artwork_cache_path(url, cache_dir):
     return os.path.join(cache_dir, 'art', artwork_filename(url))
 
 
-# The two sizes artwork is kept at, in pixels. The cover is the hero in the
-# detail pane; the thumbnail is the copy the tiles and the track rows draw —
-# a cover is drawn at around a hundred logical pixels on a tile and a few
-# dozen on a row, and the shell decodes a background image whole, on the
-# compositor thread, the first time a tile is painted, so a page of tiles
-# costs a page of decodes at this size. Named after the same URL as the
-# full-size file, so <cache>/thumb/<x>.jpg is the thumbnail of
-# <cache>/art/<x>.jpg. These are the defaults, from config; a sync sets
-# them with apply_art_sizes, and the marker file beside the covers tells
-# every other command what a cache was built at.
+# The two sizes artwork is kept at, in pixels. The cover is the hero of a detail page; the
+# thumbnail is the copy the tiles and the track rows draw, so a page of tiles decodes small
+# files. Named after the same URL as the full-size file, so <cache>/thumb/<x>.jpg is the
+# thumbnail of <cache>/art/<x>.jpg. These are the defaults, from config; a sync sets them
+# with apply_art_sizes, and the marker file beside the covers records what a cache was built
+# at (load_art_sizes reads it once, at startup).
 DEFAULT_ART_SIZES = {'cover': config.COVER_SIZE, 'thumb': config.THUMB_SIZE}
 ART_SIZES = dict(DEFAULT_ART_SIZES)
 ART_SIZE_LIMITS = {'cover': (256, 1024), 'thumb': (96, 512)}
@@ -182,18 +179,22 @@ def _read_art_sizes_marker(cache_dir):
     try:
         with open(_art_sizes_marker(cache_dir), encoding='utf-8') as f:
             marker = json.load(f)
+    except FileNotFoundError:
+        return sizes
+    except (OSError, ValueError) as error:
+        log.debug('art sizes marker: %s', error)
+        return sizes
+    if isinstance(marker, dict):
         for key in sizes:
             if isinstance(marker.get(key), int) and marker[key] > 0:
                 sizes[key] = marker[key]
-    except Exception:
-        pass
     return sizes
 
 
 def load_art_sizes(cache_dir):
-    """The sizes the cache at `cache_dir` was built at, from its marker,
-    taken as this process's ART_SIZES so every URL it names agrees with
-    the files on disk. A tiny file read, nothing more."""
+    """The sizes the cache at `cache_dir` was built at, from its marker, taken as this
+    process's ART_SIZES so every URL it names agrees with the files on disk. A tiny file read,
+    once at startup (the app's install_scaler)."""
     ART_SIZES.update(_read_art_sizes_marker(cache_dir))
     return dict(ART_SIZES)
 
@@ -221,10 +222,10 @@ def apply_art_sizes(cache_dir, cover, thumb):
             for entry in os.listdir(thumb_dir):
                 try:
                     os.remove(os.path.join(thumb_dir, entry))
-                except OSError:
-                    pass
-        except OSError:
-            pass
+                except OSError as error:
+                    log.debug('stale thumbnail: %s', error)
+        except OSError as error:
+            log.debug('stale thumbnails: %s', error)
     marker = _art_sizes_marker(cache_dir)
     try:
         os.makedirs(os.path.dirname(marker), exist_ok=True)
@@ -232,8 +233,8 @@ def apply_art_sizes(cache_dir, cover, thumb):
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(wanted, f)
         os.replace(tmp, marker)
-    except OSError:
-        pass
+    except OSError as error:
+        log.warning('could not write the art sizes marker: %s', error)
     ART_SIZES.update(wanted)
     return dict(ART_SIZES)
 
@@ -260,7 +261,8 @@ def make_thumbnail(src_path, dest_path, size=None):
         os.replace(temp_path, dest_path)
         temp_path = None
         return True
-    except Exception:
+    except Exception as error:  # the scaler's own errors (GLib.Error) as well as OSError
+        log.debug('could not scale %s: %s', src_path, error)
         return False
     finally:
         if temp_path and os.path.exists(temp_path):
@@ -289,7 +291,8 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
 
     Accepts either an artwork URL string or an Apple Music artwork dictionary.
     Writes to a temporary file in the art directory, flushes, fsyncs, and replaces atomically.
-    Returns the absolute local file path on success, or None on error.
+    Returns the absolute local file path on success, or None when it failed (logged, with the
+    reason).
     """
     if not url_or_obj or not cache_dir:
         return None
@@ -310,10 +313,12 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
 
     try:
         os.makedirs(art_dir, exist_ok=True)
-    except OSError:
+    except OSError as error:
+        log.warning('artwork: could not fetch %s: %s', url, error)
         return None
 
     import tempfile
+    import urllib.error
     import urllib.request
 
     req = urllib.request.Request(
@@ -328,6 +333,7 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 status = getattr(resp, 'status', 200)
                 if status != 200:
+                    log.warning('artwork: could not fetch %s: HTTP %s', url, status)
                     return None
                 while True:
                     chunk = resp.read(64 * 1024)
@@ -340,7 +346,10 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
         os.replace(temp_path, dest_path)
         temp_path = None
         return dest_path
-    except Exception:
+    except Exception as error:  # urllib's HTTPError, URLError and timeouts, OSError
+        if isinstance(error, urllib.error.HTTPError):
+            error.close()  # it holds the answer's connection
+        log.warning('artwork: could not fetch %s: %s', url, error)
         return None
     finally:
         if temp_path and os.path.exists(temp_path):
@@ -376,13 +385,12 @@ def collect_art_urls(library_data):
     return {p: ART_URLS[p] for p in collect_art_paths(library_data) if p in ART_URLS}
 
 
-def download_art(library_data_or_urls, cache_dir, workers=8, log=None,
-                 progress=None, cancelled=None):
+def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, cancelled=None):
     """Fetch every artwork the library refers to that is not in the cache yet.
 
     Takes a library dict (paths resolved through ART_URLS) or a {path: url}
-    map. Returns {"wanted", "fetched", "failed"}. Failures are logged through
-    `log` (a callable taking a string) and otherwise ignored: the UI treats a
+    map. Returns {"wanted", "fetched", "failed"}. Failures are logged (by
+    cache_artwork, with the reason) and otherwise ignored: the UI treats a
     path that is not on disk as no artwork. `progress(done, total)` is called
     (on this thread) after each fetch, and `cancelled()` is asked before each
     result is waited for: True gives up the fetches not started yet.
@@ -417,14 +425,12 @@ def download_art(library_data_or_urls, cache_dir, workers=8, log=None,
                 ok = False
                 try:
                     ok = bool(fut.result())
-                except Exception:
-                    ok = False
+                except Exception as error:
+                    log.warning('artwork: could not fetch %s: %s', futures[fut], error)
                 if ok:
                     counts['fetched'] += 1
                 else:
                     counts['failed'] += 1
-                    if log:
-                        log(f'artwork: could not fetch {futures[fut]}')
                 done += 1
                 if progress:
                     progress(done, len(todo))
@@ -495,10 +501,10 @@ def prune_art(library_data, cache_dir):
                         if os.path.isfile(file_path) or os.path.islink(file_path):
                             os.remove(file_path)
                             pruned += 1
-                    except OSError:
-                        pass
-        except OSError:
-            pass
+                    except OSError as error:
+                        log.debug('prune: %s', error)
+        except OSError as error:
+            log.debug('prune: %s', error)
 
     return pruned
 
@@ -1137,17 +1143,15 @@ SEARCH_SHELF_ORDER = [
 
 
 def search_results(raw, cache_dir):
-    """`am.py search`'s answer from MusicKit's: `shelves`, one per kind that
+    """Engine.search()'s answer from MusicKit's: `shelves`, one per kind that
     answered, each `{key, title, items}`, in the order Apple's own search
     page shows them (`meta.results.order`, or SEARCH_SHELF_ORDER without
-    it) with Top Results first; and `items`, the same hits as one flat list
-    with no repeats (a top result is also among its kind's), for the
-    overview's own search provider.
+    it) with Top Results first.
 
     A search never waits on a download, so a hit's `art` is its cached
     cover when the sync has fetched it and a small catalog URL otherwise,
-    which the shell fetches on its own; its `thumb` only ever names a file
-    that is on disk."""
+    which the Search page fetches on its own; its `thumb` only ever names a
+    file that is on disk."""
     results = (raw or {}).get('results') or {}
     order = ((raw or {}).get('meta') or {}).get('results', {}).get('order')
     if not isinstance(order, list):
@@ -1155,8 +1159,6 @@ def search_results(raw, cache_dir):
     keys = [k for k in order if k in SEARCH_SHELF_TITLES]
     keys += [k for k in SEARCH_SHELF_ORDER if k not in keys]
     shelves = []
-    items = []
-    seen = set()
     for key in keys:
         section = results.get(key)
         if not isinstance(section, dict):
@@ -1168,17 +1170,14 @@ def search_results(raw, cache_dir):
             item = normalize_item(raw_item, cache_dir, include_groups=False)
             _settle_search_art(item, raw_item)
             hits.append(item)
-            if (item['kind'], item['id']) not in seen:
-                seen.add((item['kind'], item['id']))
-                items.append(item)
         if hits:
             shelf_key = 'top' if key == 'topResults' else key.removeprefix('library-')
             shelves.append({'key': shelf_key, 'title': SEARCH_SHELF_TITLES[key], 'items': hits})
-    return {'shelves': shelves, 'items': items}
+    return {'shelves': shelves}
 
 
 def search_suggestions(raw, cache_dir):
-    """`am.py suggest`'s answer from MusicKit's `search/suggestions`:
+    """Engine.suggest()'s answer from MusicKit's `search/suggestions`:
     `terms`, the few searches Apple would complete the typed one to, each
     `{term, display}` — `term` what to search for, `display` as Apple
     shows it — with no repeats; and `items`, its best few hits for what is
@@ -1214,14 +1213,14 @@ def search_suggestions(raw, cache_dir):
 
 
 def search_landing(raw, cache_dir):
-    """`am.py landing`'s answer from Apple's search-landing recommendations:
+    """Engine.landing()'s answer from Apple's search-landing recommendations:
     `categories`, the rooms Apple Music's own search page offers to browse
     before anything is typed (Rock, Hip-Hop, Chill, the decades…), in
     Apple's order across every recommendation in the set, each
     `{id, kind: "category", title, subtitle, art, artColor, url}` — `title`
     the short name on the tile ("Rock"), `subtitle` the curator's own
-    ("Apple Music Rock"), `art` a small catalog URL the shell fetches on
-    its own, `artColor` the tile's colour behind it. Only Apple's curators
+    ("Apple Music Rock"), `art` a small catalog URL the Search page fetches
+    on its own, `artColor` the tile's colour behind it. Only Apple's curators
     are categories: an editorial item in the set is a banner with nothing
     behind it, and is left out."""
     categories = []
@@ -1262,13 +1261,13 @@ def normalize_category(raw):
     }
 
 
-# A category tile's picture, wide but not big: the shell draws it cropped
+# A category tile's picture, wide but not big: the Search page draws it cropped
 # over the tile's colour.
 CATEGORY_ART_SIZE = 320
 
 
 def category_page(raw, cache_dir):
-    """`am.py category`'s answer from a curator with its grouping: the
+    """Engine.category()'s answer from a curator with its grouping: the
     category's `id` and `title`, and its `shelves` — the grouping's one
     tab's editorial elements, each `{key, title, items}` in Apple's order,
     items normalised as a search hit is (no groups, art as it stands);
@@ -1581,48 +1580,25 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None):
     return albums_list, artists_list
 
 
-def save_library(library_data, cache_dir, only=None, indent=2):
-    """Atomically save library.json under flock, merging sections if only is specified.
-    `indent` is json.dump's: None writes the compact form."""
-    import fcntl
+def save_library(library_data, cache_dir, indent=2):
+    """Write library.json atomically: a temporary file, then a rename over the old one, so a
+    reader sees the old file or the new one, never half of one. `indent` is json.dump's: None
+    writes the compact form."""
     os.makedirs(cache_dir, exist_ok=True)
-    lock_path = os.path.join(cache_dir, 'library.lock')
     lib_path = os.path.join(cache_dir, 'library.json')
-
-    with open(lock_path, 'w') as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            target_data = library_data
-            if only and os.path.exists(lib_path):
-                try:
-                    with open(lib_path, encoding='utf-8') as f:
-                        existing = json.load(f)
-                    if only in ('albums', 'artists', 'playlists', 'radio'):
-                        section = library_data.get('sections', {}).get(only, [])
-                        existing.setdefault('sections', {})[only] = section
-                    elif only == 'shelves':
-                        existing['shelves'] = library_data.get('shelves', [])
-                    now = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
-                    existing['generated'] = library_data.get('generated', now)
-                    target_data = existing
-                except Exception:
-                    target_data = library_data
-
-            tmp_path = lib_path + '.tmp'
-            with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(target_data, f, indent=indent)
-            os.replace(tmp_path, lib_path)
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    tmp_path = lib_path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(library_data, f, indent=indent)
+    os.replace(tmp_path, lib_path)
 
 
 # ---------------------------------------------------------------------------
-# The other caches: what the shell fetches on its own, and answers kept
+# The other caches: artwork the pages fetch on their own, and answers kept
 # ---------------------------------------------------------------------------
 
 
 def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
-    """Trim <cache_dir>/remote-art/ — the covers the shell fetches itself
+    """Trim <cache_dir>/remote-art/ — the covers the pages fetch themselves
     (a search hit's, the player's, a category's picture) — to `max_bytes`,
     keeping the newest by mtime. Nothing else ever removes them. Returns
     how many went."""
@@ -1637,7 +1613,10 @@ def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
                 continue
             if os.path.isfile(path):
                 entries.append((st.st_mtime, st.st_size, path))
-    except OSError:
+    except FileNotFoundError:
+        return 0
+    except OSError as error:
+        log.debug('remote art: %s', error)
         return 0
     entries.sort(reverse=True)
     kept = 0
@@ -1649,19 +1628,13 @@ def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
         try:
             os.remove(path)
             pruned += 1
-        except OSError:
-            pass
+        except OSError as error:
+            log.debug('remote art: %s', error)
     return pruned
 
 
 def _safe_id(value):
     return re.sub(r'[^A-Za-z0-9._-]', '_', str(value or ''))
-
-
-def item_cache_path(cache_dir, kind, item_id):
-    """Where `am.py item` keeps the full item it answered with, for the
-    shell to read back without a process: <cache>/items/<kind>-<id>.json."""
-    return os.path.join(cache_dir, 'items', f'{_safe_id(kind)}-{_safe_id(item_id)}.json')
 
 
 def landing_cache_path(cache_dir):
@@ -1693,8 +1666,8 @@ def write_answer(path, answer):
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(answer, f)
         os.replace(tmp, path)
-    except OSError:
-        pass
+    except OSError as error:
+        log.warning('could not keep %s: %s', path, error)
     return answer
 
 
@@ -1704,9 +1677,16 @@ def read_answer(path, max_age_seconds):
     try:
         with open(path, encoding='utf-8') as f:
             answer = json.load(f)
-        stamp = answer.get('cached') if isinstance(answer, dict) else None
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as error:
+        log.debug('kept answer %s: %s', path, error)
+        return None
+    stamp = answer.get('cached') if isinstance(answer, dict) else None
+    try:
         when = datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=UTC)
-    except Exception:
+    except (TypeError, ValueError):
+        log.debug('kept answer %s: no stamp', path)
         return None
     if (datetime.now(UTC) - when).total_seconds() > max_age_seconds:
         return None

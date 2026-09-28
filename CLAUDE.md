@@ -54,7 +54,7 @@ Pages reach the app through the window's seams (`self.get_root()`): `open_item(i
 `open_shelf(shelf)`, `open_songs(text)`, `play_request(play, start_with=None, shuffle=False)`
 (every "play this"), `add_toast(toast)` and `item_actions`, not its internals.
 
-On disk: `$XDG_CACHE_HOME/apple-music/` (library.json, art/, thumb/, remote-art/, items/,
+On disk: `$XDG_CACHE_HOME/apple-music/` (library.json, art/, thumb/, remote-art/,
 lyrics/, day-long page answers; `apple-music-devel/` for .Devel);
 `$XDG_DATA_HOME/apple-music/chrome/` (the Chrome profile; `chrome-devel/` for .Devel);
 GSettings, one schema, so both builds share every setting, `signed-in` included.
