@@ -33,13 +33,6 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
         };
       }
 
-      Adw.ButtonRow refresh_row {
-        title: _("_Refresh Now");
-        use-underline: true;
-        start-icon-name: "view-refresh-symbolic";
-        action-name: "app.sync";
-      }
-
       Adw.ActionRow cache_row {
         title: _("Cache");
         subtitle: _("Calculating…");
@@ -50,6 +43,13 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
           use-underline: true;
           valign: center;
         }
+      }
+
+      Adw.ButtonRow refresh_row {
+        title: _("_Refresh Now");
+        use-underline: true;
+        start-icon-name: "view-refresh-symbolic";
+        action-name: "app.sync";
       }
     }
   }
@@ -77,15 +77,16 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
 
     Adw.PreferencesGroup {
       title: _("Browser");
-      description: _("Changes to the browser command apply the next time the engine starts.");
+      description: _("The browser program is a program name or path, without arguments. Changes here apply the next time the engine starts.");
 
       Adw.EntryRow browser_row {
-        title: _("Browser command");
+        title: _("Browser Program");
+        show-apply-button: true;
       }
 
       Adw.SwitchRow headless_row {
         title: _("Run the browser hidden");
-        subtitle: _("Turn off to see the Chrome window, which helps with debugging; applies the next time the engine starts");
+        subtitle: _("Turn off to show the Chrome window, for debugging");
       }
 
       Adw.SwitchRow autostart_row {
@@ -97,8 +98,13 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
     Adw.PreferencesGroup account_group {
       title: _("Account");
 
-      // Runs app.sign-out, though not through action-name: an actionable's sensitivity is
-      // its action's, and this one is off while signed out.
+      // Neither runs its action through action-name: Sign In closes Preferences first, and
+      // Sign Out is insensitive while it runs, which an actionable row would undo.
+      Adw.ButtonRow sign_in_row {
+        title: _("Sign _In…");
+        use-underline: true;
+      }
+
       Adw.ButtonRow sign_out_row {
         title: _("Sign _Out");
         use-underline: true;

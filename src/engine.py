@@ -686,6 +686,15 @@ class Engine(GObject.Object):
         await self.stop()
         await self.start(visible=visible)
 
+    @staticmethod
+    async def browser_path(command):
+        """Where the program `command` (a name on PATH, or a path) is, or None: on the host
+        in a Flatpak sandbox, where Chrome runs. For Preferences to check a browser program
+        before it is kept; unlike a start, it tries no other name."""
+        if chrome.in_flatpak():
+            return await asyncio.to_thread(chrome.find_host_chrome, [command])
+        return await asyncio.to_thread(shutil.which, command)
+
     # -- events --------------------------------------------------------------------------
 
     def _on_bridge_event(self, name, data):

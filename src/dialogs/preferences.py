@@ -1,14 +1,20 @@
 """AppleMusicPreferencesDialog: app.preferences (Ctrl+,).
 
-General: background playback (background-playback), how often the library refreshes
-(sync-interval, with when it last did), Refresh Now (app.sync), and the cache's size,
-measured in a thread, with Clear (asked first; Application.clear_cache()). Engine: the
-engine's state with Start and Stop, the browser command (browser-command), whether Chrome runs
-hidden (engine-headless) and starts with the app (engine-autostart), and Sign Out
-(app.sign-out). The rows are bound to their settings with
-Gio.Settings.bind (the refresh interval by hand: a choice of four values); what the engine
-reads applies when it next starts (Application._make_engine). Everything the dialog connects
-to outside itself is let go when it closes.
+General: background playback (background-playback); how often the library refreshes
+(sync-interval, with when it last did, or "Refreshing…" while it does); the cache's size,
+measured in a thread and again after each sync, with Clear (asked first:
+Application.clear_cache()); Refresh Now (app.sync, off while it cannot run). Engine: the
+engine's state with Start and Stop; the browser program (browser-command, kept when it is
+applied and found); whether Chrome runs hidden (engine-headless) and starts with the app
+(engine-autostart); Sign In while signed out, Sign Out while signed in (app.sign-out).
+
+The switches are bound to their settings with Gio.Settings.bind, the browser program one way
+(the setting into the row: the row's text is kept only on apply), the refresh interval by
+hand (a choice of four values). What the engine reads applies when it next starts
+(Application._make_engine). A button whose work is under way (Start, Stop, Clear) stays
+sensitive, so the focus stays on it, and says it is busy to assistive technologies; a click
+meanwhile does nothing. Everything the dialog connects to outside itself is let go when it
+closes.
 """
 
 import asyncio
@@ -28,7 +34,6 @@ log = logging.getLogger(__name__)
 # The rows bound one to one to their settings: (template child, property, key).
 BINDINGS = (
     ('background_row', 'active', 'background-playback'),
-    ('browser_row', 'text', 'browser-command'),
     ('headless_row', 'active', 'engine-headless'),
     ('autostart_row', 'active', 'engine-autostart'),
 )
@@ -51,6 +56,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
     headless_row = Gtk.Template.Child()
     autostart_row = Gtk.Template.Child()
     account_group = Gtk.Template.Child()
+    sign_in_row = Gtk.Template.Child()
     sign_out_row = Gtk.Template.Child()
 
     def __init__(self, app):
@@ -70,7 +76,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
 
         for child, prop, key in BINDINGS:
             settings.bind(key, getattr(self, child), prop, Gio.SettingsBindFlags.DEFAULT)
-        # Start or Stop, as the engine's state says (the button is off while it changes).
+        settings.bind('browser-command', self.browser_row, 'text', Gio.SettingsBindFlags.GET)
+        # Start or Stop, as the engine's state says.
         start, stop = _('_Start'), _('_Stop')  # one button, one mnemonic: Alt+S
         self._label_binding = engine.bind_property(
             'state', self.engine_button, 'label', GObject.BindingFlags.SYNC_CREATE,
@@ -96,6 +103,9 @@ class PreferencesDialog(Adw.PreferencesDialog):
         connect_weak(self.interval_row, 'notify::selected', self._on_interval_selected)
         connect_weak(self.clear_button, 'clicked', self._on_clear_clicked)
         connect_weak(self.engine_button, 'clicked', self._on_engine_clicked)
+        connect_weak(self.browser_row, 'apply', self._on_browser_apply)
+        connect_weak(self.browser_row, 'changed', self._on_browser_changed)
+        connect_weak(self.sign_in_row, 'activated', self._on_sign_in_activated)
         connect_weak(self.sign_out_row, 'activated', self._on_sign_out_activated)
         self.connect('closed', self._on_closed)
 
@@ -116,6 +126,12 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._label_binding.unbind()
         for child, prop, _key in BINDINGS:
             Gio.Settings.unbind(getattr(self, child), prop)
+        Gio.Settings.unbind(self.browser_row, 'text')
+
+    @staticmethod
+    def _busy(widget, busy):
+        """Say that `widget`'s work is under way (or over), for assistive technologies."""
+        widget.update_state([Gtk.AccessibleState.BUSY], [busy])
 
     # -- the library -----------------------------------------------------------------------
 
@@ -159,14 +175,14 @@ class PreferencesDialog(Adw.PreferencesDialog):
             self.cache_row.set_subtitle(GLib.format_size(size) if size else _('Empty'))
 
     def _on_clear_clicked(self, _button):
-        if self._app.refuse_in_demo():
+        if self._clearing or self._app.refuse_in_demo():
             return
         if self._settings.get_boolean(self._key('signed-in')):
             body = _('The library, artwork and lyrics kept on this computer are removed, '
                      'then your library is fetched again from Apple Music.')
         else:
             body = _('The library, artwork and lyrics kept on this computer are removed.')
-        dialog = Adw.AlertDialog(heading=_('Clear the Cache?'), body=body)
+        dialog = Adw.AlertDialog(heading=_('Clear Cache?'), body=body)
         dialog.add_response('cancel', _('_Cancel'))
         dialog.add_response('clear', _('C_lear'))
         dialog.set_response_appearance('clear', Adw.ResponseAppearance.DESTRUCTIVE)
@@ -183,7 +199,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         """Clear the cache (Application.clear_cache: a sync follows when signed in), then
         measure it again."""
         self._clearing = True
-        self.clear_button.set_sensitive(False)
+        self._busy(self.clear_button, True)
         self.cache_row.set_subtitle(_('Clearing…'))
         try:
             cleared = await self._app.clear_cache()
@@ -192,7 +208,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
             cleared = False
         finally:
             self._clearing = False
-            self.clear_button.set_sensitive(True)
+            self._busy(self.clear_button, False)
         if self._closed:
             return
         if cleared:
@@ -219,13 +235,15 @@ class PreferencesDialog(Adw.PreferencesDialog):
         else:
             subtitle = _('Running in a window')
         self.engine_row.set_subtitle(subtitle)
-        # Start while it is down, Stop while it is up; nothing while it changes, or while
-        # the sign-in dialog has it.
-        self.engine_button.set_sensitive(
-            not self._app.demo and not self._engine_busy and state in ('down', 'up'))
+        self.engine_button.set_sensitive(not self._app.demo)
+        self._busy(self.engine_button, self._engine_busy or state in ('starting', 'signing-in'))
 
     def _on_engine_clicked(self, _button):
+        """Start while it is down, Stop while it is up; nothing while it changes (the button
+        says it is busy), or while the sign-in has it."""
         engine = self._engine
+        if self._engine_busy:
+            return
         if engine.state == 'down':
             command = self._app.start_engine()  # a task quitting cancels; it reports its errors
             if command is None:
@@ -248,13 +266,44 @@ class PreferencesDialog(Adw.PreferencesDialog):
             if not self._closed:
                 self._update_engine()
 
+    def _on_browser_changed(self, row):
+        row.remove_css_class('error')
+
+    def _on_browser_apply(self, row):
+        self._app.spawn(self._apply_browser(row.get_text().strip()))
+
+    async def _apply_browser(self, text):
+        """Keep the browser program when it is found (on the host, in a Flatpak sandbox);
+        empty, the default again. One that is not found is not kept: the row says so."""
+        settings = self._settings
+        if not text:
+            settings.reset('browser-command')
+            return
+        path = await self._engine.browser_path(text)
+        if self._closed:
+            return
+        if path is None:
+            self.browser_row.add_css_class('error')
+            self._app.toast(_('No program called “{name}” was found').format(name=text))
+            return
+        self.browser_row.remove_css_class('error')
+        settings.set_string('browser-command', text)
+        self.browser_row.set_text(text)  # stripped, as kept
+
+    # -- the account -----------------------------------------------------------------------
+
+    def _on_sign_in_activated(self, _row):
+        self.close()  # the sign-in shows over the window
+        self._app.activate_action('sign-in')
+
     def _on_sign_out_activated(self, _row):
         self._app.activate_action('sign-out')  # asks first, over this dialog
 
     def _update_account(self, *_args):
-        signed_in = self._settings.get_boolean(self._key('signed-in')) and not self._app.demo
+        demo = self._app.demo
+        signed_in = self._settings.get_boolean(self._key('signed-in')) and not demo
         name = self._settings.get_string(self._key('account-name'))
-        if self._app.demo:
+        if demo:
             description = _('Not used with the demo library')
         elif not signed_in:
             description = _('Not signed in')
@@ -263,4 +312,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
         else:
             description = _('Signed in')
         self.account_group.set_description(description)
-        self.sign_out_row.set_sensitive(signed_in and not self._app.signing_out)
+        self.sign_in_row.set_visible(not signed_in and not demo)
+        self.sign_out_row.set_visible(signed_in)
+        self.sign_out_row.set_sensitive(not self._app.signing_out)
