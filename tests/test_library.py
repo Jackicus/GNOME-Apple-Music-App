@@ -395,6 +395,78 @@ class TestLoading(unittest.TestCase):
         self.assertIsNone(library.by_id('album', 'l.a3'))
         self.assertIsNone(library.shelf('recently-added'))
 
+    def test_file_state_and_version(self):
+        library = Library()
+        self.assertEqual((library.file_state, library.version), ('', 0))  # nothing read yet
+        load(self.cache, library)
+        self.assertEqual((library.file_state, library.version), ('missing', 0))
+        write_library(self.cache, [album('l.a1', 'A1', [])])  # version 1
+        load(self.cache, library)
+        self.assertEqual((library.file_state, library.version), ('ok', 1))
+        path = Path(self.cache, 'library.json')
+        path.write_text(json.dumps({'sections': {}}), encoding='utf-8')
+        load(self.cache, library)
+        self.assertEqual((library.file_state, library.version, library.state), ('ok', 0, 'ready'))
+        # Nested past the decoder's recursion limit: unreadable like any damaged file.
+        path.write_text('{"sections": {"albums": [' + '[' * 100_000 + ']' * 100_000 + ']}}',
+                        encoding='utf-8')
+        with self.assertLogs('applemusic.library', 'WARNING'):
+            load(self.cache, library)
+        self.assertEqual((library.file_state, library.version, library.state),
+                         ('unreadable', 0, 'empty'))
+        for text in ('', '[1, 2]', '{"version": 2, "sect'):
+            with self.subTest(text=text), self.assertLogs('applemusic.library', 'WARNING'):
+                path.write_text(text, encoding='utf-8')
+                load(self.cache, library)
+                self.assertEqual(library.file_state, 'unreadable')
+
+    def test_a_failed_load_is_empty_and_songs_are_asked_again(self):
+        write_library(self.cache, [album('l.a1', 'A1', ['i.1', 'i.2'])])
+        library = Library()
+        states, changed = self.watch(library)
+
+        async def load_and_ask():
+            with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
+                loading = asyncio.ensure_future(library.load())
+                await asyncio.sleep(0)
+            await library.build_songs()  # the load is to fill the Songs store
+            await loading
+
+        with mock.patch.object(Library, '_fill_songs', side_effect=RuntimeError('broken')), \
+                self.assertRaises(RuntimeError):
+            asyncio.run(load_and_ask())
+        self.assertEqual(states, ['loading', 'empty'])
+        self.assertEqual(len(changed), 1)
+        self.assertFalse(library.songs_ready)
+        load(self.cache, library)
+        self.assertEqual([t.id for t in build_songs(library)], ['i.1', 'i.2'])
+        self.assertTrue(library.songs_ready)
+
+    def test_a_cancelled_reload_is_not_left_loading(self):
+        write_library(self.cache, [album(f'l.a{n}', f'A{n}', [f'i.{n}']) for n in range(6)])
+        library = load(self.cache)
+        states, changed = self.watch(library)
+        paused = []
+
+        async def pause_for_good():  # the reload's first pause for a frame never ends
+            paused.append(True)
+            await asyncio.Event().wait()
+
+        async def cancel_reload():
+            with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
+                reloading = asyncio.ensure_future(library.reload())
+            while not paused:
+                await asyncio.sleep(0.001)
+            reloading.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await reloading
+
+        with mock.patch.object(library_module, 'yield_to_frames', pause_for_good):
+            asyncio.run(cancel_reload())
+        self.assertEqual(states, ['loading', 'empty'])
+        self.assertEqual(len(changed), 1)
+        self.assertTrue(gc.isenabled())  # the pause ended with it
+
     def test_a_newer_load_wins(self):
         write_library(self.cache, [album('l.old', 'Old', [])])
         other = tempfile.TemporaryDirectory()
@@ -499,7 +571,8 @@ class TestReadLibrary(unittest.TestCase):
         for order in (('albums', 'artists'), ('artists', 'albums')):  # either order in the file
             with self.subTest(order=order):
                 sections = {'albums': albums, 'artists': artists}
-                data, count = self.read({key: sections[key] for key in order})
+                data, count, state = self.read({key: sections[key] for key in order})
+                self.assertEqual(state, 'ok')
                 groups = data['sections']['artists'][0]['groups']
                 self.assertEqual(groups[0]['entries'], [])
                 self.assertEqual([entry['id'] for entry in groups[1]['entries']], ['i.l.gone'])
@@ -507,7 +580,7 @@ class TestReadLibrary(unittest.TestCase):
                 self.assertEqual(count, 2)
 
     def test_repeated_track_strings_are_one_object(self):
-        data, _count = self.read({'albums': [album('l.a1', 'A1', ['i.1']),
+        data, _count, _state = self.read({'albums': [album('l.a1', 'A1', ['i.1']),
                                              album('l.a2', 'A2', ['i.2'])],
                                   'playlists': [dict(album('p.1', 'P', ['i.3']), kind='playlist')],
                                   'songs': [track('i.4', 'Loose', 0)]})
@@ -522,7 +595,7 @@ class TestReadLibrary(unittest.TestCase):
 
     def test_a_byte_order_mark_is_read_as_json_load_reads_it(self):
         self.path.write_bytes(b'\xef\xbb\xbf' + json.dumps({'version': 1}).encode())
-        self.assertEqual(library_module._read_library(self.path), ({'version': 1}, 0))
+        self.assertEqual(library_module._read_library(self.path), ({'version': 1}, 0, 'ok'))
 
     def test_load_starts_reading_before_it_is_awaited(self):
         write_library(self.temp_dir.name, [album('l.a1', 'A1', ['i.1'])])
@@ -550,13 +623,13 @@ class TestReadLibrary(unittest.TestCase):
             reading = library._read()
             self.assertRaises(TimeoutError, reading.result, 0.2)  # held at the first album
             library.resume_reading()
-            data, _count = reading.result(5)
+            data, _count, _state = reading.result(5)
         self.assertEqual(len(data['sections']['albums']), 3)
         with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.temp_dir.name}), \
                 mock.patch.object(library_module, 'HOLD_LIMIT', 0.3):
             library.hold_reading()  # never resumed: HOLD_LIMIT in all, not an element
             started = time.monotonic()
-            data, _count = library._read().result(5)
+            data, _count, _state = library._read().result(5)
         self.assertLess(time.monotonic() - started, 0.6)
         self.assertEqual(len(data['sections']['albums']), 3)
 
@@ -768,6 +841,22 @@ class TestBuildSongs(unittest.TestCase):
         with mock.patch.object(library_module, 'FRAME_BUDGET', 0):
             asyncio.run(build_then_reload())
         self.assertEqual([t.id for t in library.songs], ['i.x', 'i.y'])
+        self.assertTrue(library.songs_ready)
+
+    def test_a_cancelled_build_is_asked_again(self):
+        library = load(self.cache)
+
+        async def cancel_build():
+            build = asyncio.ensure_future(library.build_songs())
+            await asyncio.sleep(0)  # paused after its first album
+            build.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await build
+
+        with mock.patch.object(library_module, 'FRAME_BUDGET', 0):
+            asyncio.run(cancel_build())
+        self.assertFalse(library.songs_ready)
+        self.assertEqual([t.id for t in build_songs(library)], self.ids)
         self.assertTrue(library.songs_ready)
 
     def test_nothing_to_load_is_ready_and_empty(self):
