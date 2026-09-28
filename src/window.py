@@ -187,7 +187,8 @@ class Window(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def toast(self, title):
-        self.add_toast(Adw.Toast(title=title))
+        """A plain toast (never markup): Application.toast() is the app's way to make one."""
+        self.add_toast(Adw.Toast(title=title, use_markup=False))
 
     def add_toast(self, toast):
         """Show a toast over the content, or inside the Now Playing sheet while that is open
@@ -282,7 +283,7 @@ class Window(Adw.ApplicationWindow):
             self.play_request(item.play)
             return
         else:
-            self.toast(item.title)
+            self.get_application().toast(item.title)
             return
         self.navigation_view.push(page)
 
@@ -324,11 +325,10 @@ class Window(Adw.ApplicationWindow):
         sign-in flow opens instead; a failure is toasted. The bar follows the engine's events.
         """
         app = self.get_application()
-        if app.demo:
-            self.toast(_('Not available with the demo library'))
+        if app.refuse_in_demo():
             return
         if not play or not play.get('kind') or not play.get('id'):
-            self.toast(_('This cannot be played'))
+            app.toast(_('This cannot be played'))
             return
         app.spawn(self._play(play, start_with, shuffle))
 
@@ -337,11 +337,7 @@ class Window(Adw.ApplicationWindow):
         try:
             await app.player.play(play, start_with=start_with, shuffle=shuffle)
         except EngineError as error:
-            if error.code == 'not-signed-in' and not app.settings.get_boolean('signed-in'):
-                log.info('play while signed out: opening sign-in')
-                app.activate_action('sign-in')
-            else:
-                app.report(error)
+            app.report(error)  # signed out, that opens the sign-in
 
     # The sidebar. The first sections are fixed items; the Playlists section is bound to a
     # store of SidebarEntry: its two destinations, then the library's folders and playlists.

@@ -37,6 +37,7 @@ from .backend import config, normalize  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .background import BackgroundPlayback  # noqa: E402
 from .engine import Engine  # noqa: E402
+from .errors import error_message  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
@@ -57,8 +58,10 @@ class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library: the development
     launcher passes the source tree's build/demo, where scripts/demo_library.py writes it; a
     release launcher passes '' and --demo reads build/demo under the working directory.
-    `signing-out` is true while account.sign_out() runs: the account's actions are off."""
+    `signing-out` is true while account.sign_out() runs: the account's actions are off.
+    `signing-in` is true while the sign-in flow runs, to its end after the dialog closed."""
 
+    signing_in = GObject.Property(type=bool, default=False)
     signing_out = GObject.Property(type=bool, default=False)
 
     def __init__(self, version, app_id, base_id, profile, demo_dir=None):
@@ -82,6 +85,7 @@ class Application(Adw.Application):
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
+        self._engine_start = None  # a start the app asked for (app.start-engine)
         self._preferences = None  # the Preferences dialog while it is open
         self._first_load = None  # the library's first load(), reading since do_startup
         # Startup timing (timing.py): name -> GLib.get_monotonic_time(), for scripts/bench.py.
@@ -101,6 +105,9 @@ class Application(Adw.Application):
         self.connect('notify::signing-out', self._on_signing_out)
         self._add_action('sync', lambda *_args: self.start_sync())
         self._add_action('now-playing', self._on_now_playing)
+        self._add_action('start-engine', lambda *_args: self.start_engine())
+        self._add_action('show-engine-preferences',
+                         lambda *_args: self.show_preferences('engine'))
         # Playback, enabled while something plays (the bar's buttons follow). Their keys
         # (Space, Ctrl+Right, Ctrl+Left) are the window's (shortcuts.PLAYBACK), not
         # accelerators, which GTK 4 would fire before a focused entry gets them.
@@ -158,6 +165,7 @@ class Application(Adw.Application):
         # with the parse: it waits meanwhile (Library.hold_reading()).
         self.library.hold_reading()
         self.engine = self._make_engine()
+        self.engine.connect('lost', self._on_engine_lost)
         self.player = Player(self)
         self.player.connect('notify::track', self._on_track_changed)
         self.player.connect('error', self._on_playback_error)
@@ -274,6 +282,22 @@ class Application(Adw.Application):
                 self.settings.set_string('account-name', name)
                 log.info('account name read from the page after autostart')
 
+    def start_engine(self):
+        """Start the engine (app.start-engine: a toast's Start or Restart) as a task that
+        quitting cancels first, its failure reported; the task, or None in demo mode."""
+        if self.refuse_in_demo():
+            return None
+        task = self._engine_start
+        if task is None or task.done():
+            task = self._engine_start = self.spawn(self._start_engine())
+        return task
+
+    async def _start_engine(self):
+        try:
+            await self.engine.start()
+        except EngineError as error:
+            self.report(error)
+
     # -- playback ------------------------------------------------------------------------
 
     def _on_track_changed(self, player, _pspec):
@@ -311,8 +335,7 @@ class Application(Adw.Application):
         return await account.clear_cache(self)
 
     def _on_sign_in(self, *_args):
-        if self.demo:
-            self.toast(_('Not available with the demo library'))
+        if self.refuse_in_demo():
             return
         if self._signin is not None:
             return  # the dialog is open already
@@ -374,32 +397,49 @@ class Application(Adw.Application):
     # -- messages ------------------------------------------------------------------------
 
     def toast(self, title, button_label=None, action_name=None):
-        """A toast on the active window, or in Preferences while that is open over it, with
-        a button running an action when given."""
+        """Tell the user something: a toast on the active window, or in Preferences while
+        that is open over it, with a button running an action when given. The one way the
+        app makes a toast; its title is plain text, never markup."""
         target = self._preferences
         if target is None:
             target = self.get_active_window()
         if target is None:
             return
-        toast = Adw.Toast(title=title)
+        toast = Adw.Toast(title=title, use_markup=False)
         if button_label and action_name:
             toast.set_button_label(button_label)
             toast.set_action_name(action_name)
         target.add_toast(toast)
 
     def report(self, error):
-        """An EngineError as a toast: a sentence for its code, never a traceback."""
+        """An EngineError for the user: the sentence and the button errors.error_message()
+        gives its code, the detail in the log only, never a traceback. 'not-signed-in' opens
+        the sign-in while the account is not signed in here; with the demo library, which
+        has no engine, 'engine-down' says so."""
         log.warning('engine: %s', error)
-        code = getattr(error, 'code', 'api')
-        if code == 'engine-down':
-            self.toast(_('The engine is not running'))
-        elif code == 'not-signed-in':
-            self.toast(_('Sign in to Apple Music first'), _('Sign In'), 'app.sign-in')
-        elif code == 'timeout':
-            self.toast(_('Apple Music did not answer in time'))
-        else:
-            self.toast(_('Apple Music could not do that: {message}').format(
-                message=getattr(error, 'message', error)))
+        code = getattr(error, 'code', None)
+        if self.demo and code == 'engine-down':
+            self.refuse_in_demo()
+            return
+        if code == 'not-signed-in' and not self.settings.get_boolean('signed-in'):
+            self.activate_action('sign-in')
+            return
+        self.toast(*error_message(code))
+
+    def refuse_in_demo(self):
+        """True, with a toast saying so, when the demo library is shown: what needs the
+        engine or the account is not available then."""
+        if self.demo:
+            self.toast(_('Not available with the demo library'))
+        return self.demo
+
+    def _on_engine_lost(self, _engine, reason):
+        """The engine went down on its own (Chrome crashed or was killed, the page crashed or
+        stopped answering): a toast offering to start it again. Not while quitting or while
+        the account changes, whose restarts are theirs."""
+        if self._quitting is not None or self.signing_in or self.signing_out:
+            return
+        self.toast(_('The playback engine stopped'), _('Restart'), 'app.start-engine')
 
     # -- background playback and quitting ------------------------------------------------
 

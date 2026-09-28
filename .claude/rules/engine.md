@@ -42,8 +42,8 @@ paths:
 - Only `EngineError(code, message)` leaves the backend and the Engine (with `status`, Apple's
   HTTP status, and `musickit_code`, MusicKit's code for a play it refused, when there is one;
   `mediaPlaybackError` events carry `{code, message}` the same way). A new failure kind gets a
-  code in `backend/errors.py` and a sentence in `Application.report()` (`no-browser`, no Chrome
-  to find or spawn, still has the generic one). `start()` raises nothing else: a Chrome that
+  code in `backend/errors.py` and a sentence (and a button, when one helps) in
+  `src/errors.py`'s `error_message()`, which `Application.report()` shows. `start()` raises nothing else: a Chrome that
   exits at once is `engine-down` with its exit status; anything unexpected is logged and raised
   as `engine-down`.
 - Transport: Chrome runs with `--remote-debugging-pipe`, CDP as NUL-terminated JSON on its
@@ -83,7 +83,8 @@ paths:
   client puts the bridge back (four tries, the last after reloading the page) and emits
   `am:bridgeReset`, or gives the connection up. `lost(reason)` (`client.lost_reason`) is
   emitted before the engine goes down, only when nobody asked: never for stop, restart,
-  sign-in's restarts, quitting or `kill()`. Nothing in the app answers it yet. `bridgeReset`
+  sign-in's restarts, quitting or `kill()`. The app answers it with a toast offering Restart
+  (`app.start-engine`), except while it quits or signs in or out. `bridgeReset`
   is re-emitted on `event`, and the engine reads `status()` again.
 - Under `--demo` the Engine has `demo=True`: start and stop do nothing and every command raises
   `engine-down`.

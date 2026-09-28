@@ -181,6 +181,9 @@ def _classes():
         def report(self, error):
             self.reported.append(error.code)
 
+        def refuse_in_demo(self):
+            return self.demo
+
         def toast(self, _title):
             pass
 

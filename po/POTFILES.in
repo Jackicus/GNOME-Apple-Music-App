@@ -4,6 +4,7 @@ data/io.github.jackicus.AppleMusic.gschema.xml
 src/main.py
 src/account.py
 src/actions.py
+src/errors.py
 src/dialogs/preferences.py
 src/dialogs/preferences.blp
 src/dialogs/shortcuts.py

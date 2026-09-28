@@ -43,6 +43,11 @@ class FakeApp:
     def report(self, error):
         self.reported.append(error.code)
 
+    def refuse_in_demo(self):
+        if self.demo:
+            self.toast('Not available with the demo library')
+        return self.demo
+
 
 class SyncTestCase(unittest.IsolatedAsyncioTestCase):
     """A temporary cache; thumbnails 'fetched' by writing a few bytes (the first at once,

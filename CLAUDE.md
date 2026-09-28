@@ -123,7 +123,8 @@ sudo meson install -C _build --skip-subprojects
   (`api`, `config`, `errors`, `normalize`). Playback goes through `app.player`.
 - **Errors**: engine failures are `EngineError(code)`, codes in `src/backend/errors.py`
   (`engine-down`, `no-browser`, `not-signed-in`, `api`, `timeout`, `usage`). The user sees a
-  toast (`app.report(error)`), never a traceback.
+  toast (`app.report(error)`: `errors.error_message()`'s sentence and button for the code, the
+  detail in the log), never a traceback. `app.toast()` makes every toast, as plain text.
 - **UI**: widget templates are Blueprint, `Gtk.Template` classes with
   `__gtype_name__ = 'AppleMusic<Name>'`. libadwaita widgets and style classes come before custom
   CSS, and CSS goes only in `src/style.css`. Follow the GNOME HIG. A widget that can be dropped
