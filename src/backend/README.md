@@ -187,7 +187,7 @@ Read by `config.py` on every call:
 
 | Variable | Overrides |
 |---|---|
-| `APPLE_MUSIC_PROFILE` | Chrome's profile directory (default `$XDG_DATA_HOME/apple-music/chrome`, `chrome-devel` for the development build); the engine state then lives in it too |
+| `APPLE_MUSIC_PROFILE` | Chrome's profile directory (default `$XDG_DATA_HOME/apple-music/chrome`, `chrome-devel` for the development build) |
 | `APPLE_MUSIC_DEBUG_PORT` | a DevTools port on 127.0.0.1 beside the engine's pipe, for `scripts/am.py --attach`; unset by default, and while it is set any local program can drive the signed-in session |
 | `APPLE_MUSIC_CACHE` | the cache directory (default `$XDG_CACHE_HOME/apple-music`, `apple-music-devel` for the development build) |
 
@@ -217,10 +217,10 @@ sit on it.
   publishes no MPRIS player; visible mode is an `--app=` window as before),
   `select_page(targets)` (the page target on `https://music.apple.com`, by
   parsed URL), `get_json(port, path)` (a DevTools port's `/json`, in a
-  thread: the developer attach only),
-  `EngineState` (engine.json: `{pid, port, headless, profile, started}`,
-  `load`/`save`/`remove`, `alive` checks the pid *and* that its command line
-  names the profile), `pid_alive`.
+  thread: the developer attach only), `profile_owner(profile)` (the pid
+  Chrome's own `SingletonLock` names, when `/proc` shows a Chrome browser
+  process on exactly that profile: `cmdline_names_profile` matches the flag
+  as a whole argument and rejects `--type=` helpers), `pid_alive`.
 - **`client.py`** — two transports carrying whole messages:
   `PipeTransport(read_fd, write_fd)` (Chrome's pipe, NUL-terminated JSON,
   asyncio pipe transports) and `WebSocketTransport(ws_url)` (a DevTools

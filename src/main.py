@@ -167,7 +167,7 @@ class Application(Adw.Application):
         self.mpris.start()
         install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
         # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
-        # default, which would end the process with Chrome running on (reclaimed next time).
+        # default, which would end the process at once, before the engine is stopped.
         for signum in (signal.SIGINT, signal.SIGTERM):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_signal, signum)
 
