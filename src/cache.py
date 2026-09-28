@@ -4,12 +4,14 @@ JSON answers kept in it. No GTK; every function blocks, so call it in a thread.
     size = await asyncio.to_thread(cache_size, config.cache_dir())
     removed = await asyncio.to_thread(clear, config.cache_dir())
     answer = await asyncio.to_thread(read_kept, path)   # a kept answer under a day old, or None
+    answer = await asyncio.to_thread(read_kept, path, allow_stale=True)   # older: `stale`
 
 Every file in it is written through backend/store.py (normalize.write_answer for the kept
 answers and lyrics); what is here reads and removes. normalize.prune_caches trims it.
 """
 
 import logging
+import math
 import os
 import shutil
 
@@ -77,11 +79,16 @@ def clear(path):
     return removed
 
 
-def read_kept(path, max_age=normalize.ANSWER_MAX_AGE, touch=False):
+def read_kept(path, max_age=normalize.ANSWER_MAX_AGE, touch=False, allow_stale=False):
     """The answer kept at path (normalize.write_answer's, stamped `cached`) when it is younger
-    than `max_age` seconds, else None. With `touch`, a hit sets the file's mtime to now, so
-    the pruner keeps what was used last (the lyrics)."""
+    than `max_age` seconds, else None. With `allow_stale`, an older one too, marked
+    `stale: True` (what the Engine answers when Apple cannot be asked). With `touch`, a hit
+    sets the file's mtime to now, so the pruner keeps what was used last (the lyrics)."""
     answer = normalize.read_answer(path, max_age)
+    if answer is None and allow_stale:
+        answer = normalize.read_answer(path, math.inf)
+        if isinstance(answer, dict):
+            answer['stale'] = True
     if not isinstance(answer, dict):
         return None
     if touch:

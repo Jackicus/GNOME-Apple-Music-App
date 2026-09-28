@@ -1482,6 +1482,64 @@ class SearchTest(EngineFixture):
         self.assertEqual(raised.exception.code, 'api')
         self.assertFalse((self.cache / 'browse.json').exists())
 
+    def expire(self, path):
+        kept = json.loads(path.read_text())
+        kept['cached'] = '2020-01-01T00:00:00Z'
+        path.write_text(json.dumps(kept))
+
+    async def test_an_old_answer_is_answered_when_apple_cannot_be_asked(self):
+        commands = {
+            'landing': (self.engine.landing, self.cache / 'landing.json'),
+            'category': (lambda **kw: self.engine.category('900000801', **kw),
+                         self.cache / 'categories' / '900000801.json'),
+            'browse': (self.engine.browse, self.cache / 'browse.json'),
+            'made_for_you': (self.engine.made_for_you, self.cache / 'made-for-you.json'),
+        }
+        for name, (_command, path) in commands.items():
+            normalize.write_answer(str(path), {'shelves': [], 'name': name}, str(self.cache))
+            self.expire(path)
+        # Down: each answers its old answer, marked stale, stamped when it was fetched.
+        for name, (command, _path) in commands.items():
+            answer = await command()
+            self.assertEqual((answer['name'], answer['stale'], answer['cached']),
+                             (name, True, '2020-01-01T00:00:00Z'), name)
+            # A refresh wants Apple's answer, and says why there is none.
+            with self.assertRaises(EngineError) as raised:
+                await command(refresh=True)
+            self.assertEqual(raised.exception.code, 'engine-down')
+        # Signed out: the same.
+        await self.up(authorized=False)
+        for name, (command, _path) in commands.items():
+            self.assertTrue((await command())['stale'], name)
+        await self.engine.stop()
+        # Up and signed in, but Apple fails (offline, say): the same.
+        await self.up()
+        self.page.bridge_answers['searchLanding'] = {'errors': [{'status': '503'}]}
+        self.page.bridge_answers['category'] = {'errors': [{'status': '503'}]}
+        for name, (command, _path) in commands.items():
+            self.assertTrue((await command())['stale'], name)
+        self.assertEqual(len(self.page.bridge_calls), 2)
+        # With nothing kept, the error.
+        for _name, (_command, path) in commands.items():
+            path.unlink()
+        await self.engine.stop()
+        for name, (command, _path) in commands.items():
+            with self.assertRaises(EngineError) as raised:
+                await command()
+            self.assertEqual(raised.exception.code, 'engine-down', name)
+
+    async def test_an_old_answer_is_asked_again_when_apple_can_be(self):
+        await self.up()
+        self.page.bridge_answers['searchLanding'] = {'data': []}
+        path = self.cache / 'landing.json'
+        normalize.write_answer(str(path), {'categories': [{'id': 'old'}]}, str(self.cache))
+        self.expire(path)
+        answer = await self.engine.landing()
+        self.assertEqual(self.page.bridge_calls, [('searchLanding',)])
+        self.assertEqual(answer['categories'], [])
+        self.assertNotIn('stale', answer)
+        self.assertNotEqual(answer['cached'], '2020-01-01T00:00:00Z')
+
     async def test_made_for_you_keeps_the_mixes_and_stations(self):
         await self.up()
         mixes = [{'id': f'pl.pm-{n}', 'type': 'playlists', 'attributes': {

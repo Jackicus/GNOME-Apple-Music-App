@@ -40,6 +40,8 @@ UI awaits.
     await engine.made_for_you()  # {shelves}: the personal mixes and stations
     # The last four are kept under the cache for a day (landing.json, categories/, browse.json,
     # made-for-you.json) and answered from there without the engine; refresh=True asks again.
+    # Each answer carries `cached`, when it was fetched; one older than a day, answered when
+    # Apple cannot be asked, carries `stale: True` too.
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
@@ -206,6 +208,10 @@ def _shape_and_keep(shaper, raw, path, cache_dir, generation):
     """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)
     unless the cache was cleared since `generation`."""
     return normalize.write_answer(path, shaper(raw, cache_dir), cache_dir, generation)
+
+
+def _made_for_you(raw, cache_dir):
+    return {'shelves': normalize.made_for_you_shelves(raw.get('data'), cache_dir)}
 
 
 def _exit_status(process):
@@ -1198,47 +1204,63 @@ class Engine(GObject.Object):
         _raise_api_errors(raw, 'suggestions')
         return await asyncio.to_thread(normalize.search_suggestions, raw, str(self.cache_dir))
 
-    def _kept_path(self, path):
-        """The path of a kept answer to read, or None in demo mode, where every command is
-        engine-down (a demo has no Apple answers to keep)."""
+    async def _kept_answer(self, path, refresh, fetch, shaper):
+        """A day-long answer, kept at `path`: from the file while it is younger than
+        normalize.ANSWER_MAX_AGE (no engine needed) unless `refresh`, else `await
+        fetch(client)`'s raw answer, shaped by `shaper(raw, cache_dir)` in a thread and kept
+        there, stamped `cached`. When Apple cannot be asked (the engine down or signed out,
+        the page or the network failing), an older answer kept there is answered instead,
+        marked `stale: True`; with none, or on a refresh, the error. Demo mode has no
+        answers of Apple's to keep: 'engine-down'."""
         if self.demo:
             raise EngineError('engine-down', 'the engine is not running')
-        return path
+        generation = store.cache_generation()
+        if not refresh:
+            kept = await asyncio.to_thread(cache.read_kept, path)
+            if kept is not None:
+                return kept
+        try:
+            client = await self._require_signed_in('browse')
+            raw = await fetch(client)
+        except EngineError as error:
+            stale = None
+            if not refresh and error.code != 'usage':
+                stale = await asyncio.to_thread(cache.read_kept, path, allow_stale=True)
+            if stale is None:
+                raise
+            log.info('answering a kept answer older than a day: %s', error)
+            return stale
+        return await asyncio.to_thread(_shape_and_keep, shaper, raw, path,
+                                       str(self.cache_dir), generation)
 
     async def landing(self, refresh=False):
         """The search page's Browse Categories: {categories: [{id, kind: 'category', title,
         subtitle, art, artColor, url}]} in Apple's order, `art` a small catalog URL. From
         <cache>/landing.json for a day (no engine needed then), else the bridge's
         searchLanding (the search-landing recommendation set) shaped by normalize.search_landing
-        and kept there. `refresh` asks Apple again."""
-        generation = store.cache_generation()
-        path = self._kept_path(normalize.landing_cache_path(str(self.cache_dir)))
-        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
-        if kept is not None:
-            return kept
-        client = await self._require_signed_in('browse')
-        raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
-        _raise_api_errors(raw, 'search landing')
-        return await asyncio.to_thread(_shape_and_keep, normalize.search_landing, raw, path,
-                                       str(self.cache_dir), generation)
+        and kept there (_kept_answer). `refresh` asks Apple again."""
+        async def fetch(client):
+            raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
+            _raise_api_errors(raw, 'search landing')
+            return raw
+        return await self._kept_answer(normalize.landing_cache_path(str(self.cache_dir)),
+                                       refresh, fetch, normalize.search_landing)
 
     async def category(self, category_id, refresh=False):
         """A category's page: {id, title, shelves: [{key, title, items}]}, the curator's
         grouping as shelves (Best New Songs, New Releases, Playlists, Stations…). From
         <cache>/categories/<id>.json for a day, else the bridge's category() and kept."""
-        generation = store.cache_generation()
         category_id = str(category_id or '')
         if not category_id:
             raise EngineError('usage', 'category needs an id')
-        path = self._kept_path(normalize.category_cache_path(str(self.cache_dir), category_id))
-        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
-        if kept is not None:
-            return kept
-        client = await self._require_signed_in('browse')
-        raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
-        _raise_api_errors(raw, f'category {category_id}')
-        return await asyncio.to_thread(_shape_and_keep, normalize.category_page, raw, path,
-                                       str(self.cache_dir), generation)
+
+        async def fetch(client):
+            raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
+            _raise_api_errors(raw, f'category {category_id}')
+            return raw
+        return await self._kept_answer(
+            normalize.category_cache_path(str(self.cache_dir), category_id), refresh, fetch,
+            normalize.category_page)
 
     async def browse(self, refresh=False):
         """The New page: {shelves: [{key, title, items}]}, the editorial groupings behind
@@ -1246,33 +1268,20 @@ class Engine(GObject.Object):
         shelves in Apple's order, the featured banners first ("Featured"), then Best New
         Songs, New Releases, playlists, stations, videos; items as search() has them. From
         <cache>/browse.json for a day, else fetched and kept."""
-        generation = store.cache_generation()
-        path = self._kept_path(normalize.browse_cache_path(str(self.cache_dir)))
-        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
-        if kept is not None:
-            return kept
-        client = await self._require_signed_in('browse')
-        storefront = await self._current_storefront()
-        raw = await self._api(client, api.BROWSE_ENDPOINT.format(storefront=storefront),
-                              api.BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
-        return await asyncio.to_thread(_shape_and_keep, normalize.editorial_shelves, raw, path,
-                                       str(self.cache_dir), generation)
+        async def fetch(client):
+            storefront = await self._current_storefront()
+            return await self._api(client, api.BROWSE_ENDPOINT.format(storefront=storefront),
+                                   api.BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
+        return await self._kept_answer(normalize.browse_cache_path(str(self.cache_dir)),
+                                       refresh, fetch, normalize.editorial_shelves)
 
     async def made_for_you(self, refresh=False):
         """Made for You: {shelves: [{key, title, items}]}, the recommendations
         (api.RECOMMENDATIONS_ENDPOINT) made only of the personal mixes and stations, each a
         shelf titled as Apple titles it. From <cache>/made-for-you.json for a day, else
         fetched and kept."""
-        generation = store.cache_generation()
-        path = self._kept_path(normalize.made_for_you_cache_path(str(self.cache_dir)))
-        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
-        if kept is not None:
-            return kept
-        client = await self._require_signed_in('browse')
-        raw = await self._api(client, api.RECOMMENDATIONS_ENDPOINT, api.RECOMMENDATIONS_PARAMS,
-                              timeout=BROWSE_TIMEOUT)
-        return await asyncio.to_thread(
-            _shape_and_keep,
-            lambda answer, cache_dir: {
-                'shelves': normalize.made_for_you_shelves(answer.get('data'), cache_dir)},
-            raw, path, str(self.cache_dir), generation)
+        async def fetch(client):
+            return await self._api(client, api.RECOMMENDATIONS_ENDPOINT,
+                                   api.RECOMMENDATIONS_PARAMS, timeout=BROWSE_TIMEOUT)
+        return await self._kept_answer(normalize.made_for_you_cache_path(str(self.cache_dir)),
+                                       refresh, fetch, _made_for_you)
