@@ -121,10 +121,9 @@ sudo meson install -C _build --skip-subprojects
 - **Chrome and MusicKit only through `app.engine`**: engine.py is the one module that imports
   `backend.chrome` and `backend.client`; the rest of the app may import the backend's pure parts
   (`api`, `config`, `errors`, `normalize`). Playback goes through `app.player`.
-- **Errors**: engine failures are `EngineError(code)`, codes in `src/backend/errors.py`
-  (`engine-down`, `no-browser`, `not-signed-in`, `api`, `timeout`, `usage`). The user sees a
-  toast (`app.report(error)`: `errors.error_message()`'s sentence and button for the code, the
-  detail in the log), never a traceback. `app.toast()` makes every toast, as plain text.
+- **Errors**: engine failures are `EngineError(code)`, codes in `src/backend/errors.py`. The
+  user sees a plain-text toast (`app.report(error)`: `errors.error_message()`'s sentence and
+  button for the code, the detail in the log; `app.toast()` makes every toast), no traceback.
 - **UI**: widget templates are Blueprint, `Gtk.Template` classes with
   `__gtype_name__ = 'AppleMusic<Name>'`. libadwaita widgets and style classes come before custom
   CSS, and CSS goes only in `src/style.css`. Follow the GNOME HIG. A widget that can be dropped
@@ -136,9 +135,8 @@ sudo meson install -C _build --skip-subprojects
   library. Rows and tiles are recycled, so bind has to be cheap (`.claude/rules/performance.md`).
 - **Strings**: every user-visible string goes through `_()` (or `ngettext`, `C_`), `_("…")` in
   Blueprint, and its file is in `po/POTFILES.in`. Source strings are en-GB ("Favourite").
-- **Settings**: one schema for both builds. A new key goes in
-  `data/io.github.jackicus.AppleMusic.gschema.xml` with a summary; read it through `app.settings`
-  (`signed-in`, `account-name`, `last-sync` through `app.account_key()`: `-devel` for .Devel).
+- **Settings**: one schema for both builds; a new key goes in the gschema with a summary. Read
+  it through `app.settings`; `signed-in`, `account-name`, `last-sync` by `app.account_key()`.
 - **Actions and shortcuts**: `app.*` in main.py, `win.*` in window.py (the item actions in
   actions.py). Every shortcut goes in `src/shortcuts.py`, which feeds the accelerators and the
   Keyboard Shortcuts dialog (tests/test_shortcuts.py). A bare key or an editing chord (Space,
@@ -146,9 +144,8 @@ sudo meson install -C _build --skip-subprojects
   so typing would trigger them.
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
   saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
-- **Demo mode** (`--demo`, `app.demo`) has no engine: every engine command raises
-  `engine-down`, and nothing in it may start Chrome or read the real cache. It keeps its
-  settings in the demo library (`settings.ini`), not the desktop's, and owns no MPRIS name.
+- **Demo mode** (`--demo`, `app.demo`): no engine (commands raise `engine-down`), no MPRIS, its
+  own settings (`settings.ini`); nothing in it may start Chrome or read the real cache.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
   ruff: 4-space indents, no type annotations, a docstring where a module or function is not
