@@ -766,7 +766,8 @@ class TestPlaylistTree(unittest.TestCase):
             self.assertIs(library.by_id('folder', 'a'), first.folder('a').item)
             self.assertEqual([item.id for item in library.folder_items('a')], ['p2', 'p1'])
             self.assertIs(library.folder_items('a').get_item(0), library.by_id('playlist', 'p2'))
-            # A reload makes a new tree; one without folders puts everything at the top.
+            # Another load makes a new tree, with new folder Items and stores; a library
+            # without folders puts everything at the top.
             write_library(cache, [], playlists=raw)
             load(cache, library)
             self.assertIsNot(library.playlist_tree(), first)
@@ -775,6 +776,46 @@ class TestPlaylistTree(unittest.TestCase):
             self.assertIsNone(library.by_id('folder', 'a'))
             self.assertIsNone(library.folder_items('a'))
         self.assertEqual(shape(Library().playlist_tree()), [])  # before any load
+
+    def test_a_reload_keeps_the_folder_stores(self):
+        raw = [{'id': f'p{n}', 'kind': 'playlist', 'title': f'P{n}',
+                'play': {'kind': 'playlist', 'id': f'p{n}'}, 'groups': []} for n in (1, 2, 3)]
+        library = Library()
+
+        def reload(cache, folders):
+            write_library(cache, [], playlists=raw, folders=folders)
+            with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': cache}):
+                asyncio.run(library.reload())
+
+        with tempfile.TemporaryDirectory() as cache:
+            folders = [folder('root', ['f:a', 'p3']), folder('a', ['p2', 'p1'])]
+            write_library(cache, [], playlists=raw, folders=folders)
+            load(cache, library)
+            top, inner = library.folder_items(ROOT_FOLDER), library.folder_items('a')
+            folder_a = library.by_id('folder', 'a')
+            events = []
+            for store in (top, inner):
+                store.connect('items-changed',
+                              lambda store, *change: events.append((store, change)))
+            reload(cache, folders)  # the same file: nothing to tell
+            self.assertIs(library.folder_items(ROOT_FOLDER), top)
+            self.assertIs(library.folder_items('a'), inner)
+            self.assertIs(library.by_id('folder', 'a'), folder_a)
+            self.assertEqual(events, [])
+            # p1 moves out of a, to the end of the top level: the same stores, in the new order.
+            reload(cache, [folder('root', ['f:a', 'p3', 'p1']), folder('a', ['p2'])])
+            self.assertIs(library.folder_items(ROOT_FOLDER), top)
+            self.assertIs(library.folder_items('a'), inner)
+            self.assertEqual([item.id for item in top], ['a', 'p3', 'p1'])
+            self.assertEqual([item.id for item in inner], ['p2'])
+            self.assertEqual(sorted((store is top, change) for store, change in events),
+                             [(False, (1, 1, 0)), (True, (2, 0, 1))])
+            # A renamed folder keeps its Item, spliced over itself where it is listed.
+            events.clear()
+            reload(cache, [folder('root', ['f:a', 'p3', 'p1']), folder('a', ['p2'], title='A!')])
+            self.assertIs(library.by_id('folder', 'a'), folder_a)
+            self.assertEqual(folder_a.title, 'A!')
+            self.assertEqual(events, [(top, (0, 1, 1))])
 
 
 class TestBuildSongs(unittest.TestCase):
