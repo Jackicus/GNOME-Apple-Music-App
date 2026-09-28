@@ -77,8 +77,11 @@ paths:
 - Cache writes: every file in the cache goes through `backend/store.py` (`atomic_write`, or
   `atomic_create` for a writer that wants a path, such as the thumbnail scaler): a dot-named
   temporary file beside the target, fsync'd (not artwork, a copy that counts as missing when
-  empty), renamed over it; a failure removes the temporary file and raises. Never
-  `open(path, 'w')` a cache file. The pruners leave a dot temp alone until it is an hour old.
+  empty), renamed over it; a failure removes the temporary file and raises. Each write names
+  its `root`, the cache directory: a path outside it raises ValueError (cache_artwork answers
+  None), so a path from an answer cannot land elsewhere. Directories are made 0700, files
+  0600. Never `open(path, 'w')` a cache file. The pruners leave a dot temp alone until it is an
+  hour old.
 - The cache's generation: a job that writes the cache (a sync, `item()`'s artwork, a kept
   answer, lyrics, a cover the pages fetch) takes `store.cache_generation()` on the main thread
   when it starts and passes `generation=` to every write. Clearing the cache or signing out

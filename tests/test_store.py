@@ -34,7 +34,8 @@ class AtomicWriteTest(StoreTest):
     def test_a_write_replaces_the_file(self):
         path = self.cache / 'answer.json'
         path.write_text('old')
-        self.assertEqual(store.atomic_write(path, lambda f: f.write('new'), text=True), path)
+        self.assertEqual(store.atomic_write(path, lambda f: f.write('new'), root=self.cache,
+                                            text=True), path)
         self.assertEqual(path.read_text(), 'new')
         self.assertEqual(self.names(), ['answer.json'])
 
@@ -46,7 +47,7 @@ class AtomicWriteTest(StoreTest):
             file.write('{"half": ')
             raise OSError(28, 'No space left on device')
         with self.assertRaises(OSError):
-            store.atomic_write(path, half, text=True)
+            store.atomic_write(path, half, root=self.cache, text=True)
         self.assertEqual(path.read_text(), 'old')
         self.assertEqual(self.names(), ['answer.json'])
 
@@ -55,7 +56,7 @@ class AtomicWriteTest(StoreTest):
             pathlib.Path(temp).write_bytes(b'part')
             raise ValueError('not an image')
         with self.assertRaises(ValueError):
-            store.atomic_create(self.cache / 'thumb' / 'x.jpg', scaler)
+            store.atomic_create(self.cache / 'thumb' / 'x.jpg', scaler, root=self.cache)
         self.assertEqual(self.names(self.cache / 'thumb'), [])
 
     def test_the_temporary_file_is_a_dot_temp_beside_the_target(self):
@@ -64,7 +65,7 @@ class AtomicWriteTest(StoreTest):
         def write(file):
             seen.extend(os.listdir(self.cache))
             file.write(b'x')
-        store.atomic_write(self.cache / 'x.jpg', write, fsync=False)
+        store.atomic_write(self.cache / 'x.jpg', write, root=self.cache, fsync=False)
         self.assertEqual(len(seen), 1)
         self.assertTrue(seen[0].startswith('.') and store.is_temp(seen[0]))
 
@@ -80,7 +81,7 @@ class AtomicWriteTest(StoreTest):
                 for _ in range(200):
                     file.write(f'{number}' * 50)
             try:
-                store.atomic_write(path, fill, text=True)
+                store.atomic_write(path, fill, root=self.cache, text=True)
             except Exception as error:  # reported below
                 errors.append(error)
 
@@ -128,18 +129,19 @@ class GenerationTest(StoreTest):
     def test_a_current_write_lands(self):
         path = self.cache / 'lyrics' / '1.json'
         generation = store.cache_generation()
-        self.assertEqual(store.atomic_write(path, lambda f: f.write('{}'), text=True,
-                                            generation=generation), path)
+        self.assertEqual(store.atomic_write(path, lambda f: f.write('{}'), root=self.cache,
+                                            text=True, generation=generation), path)
         self.assertEqual(path.read_text(), '{}')
 
     def test_an_old_write_makes_nothing(self):
         generation = self.old_generation()
         path = self.cache / 'lyrics' / '1.json'
-        self.assertIsNone(store.atomic_write(path, lambda f: f.write('{}'), text=True,
-                                             generation=generation))
+        self.assertIsNone(store.atomic_write(path, lambda f: f.write('{}'), root=self.cache,
+                                             text=True, generation=generation))
         self.assertIsNone(store.atomic_create(self.cache / 'thumb' / 'x.jpg', lambda temp: None,
-                                              generation=generation))
-        self.assertFalse(store.make_dirs(self.cache / 'art', generation))
+                                              root=self.cache, generation=generation))
+        self.assertFalse(store.make_dirs(self.cache / 'art', root=self.cache,
+                                         generation=generation))
         self.assertEqual(self.names(), [])
 
     def test_a_bump_during_the_write_drops_it(self):
@@ -150,29 +152,30 @@ class GenerationTest(StoreTest):
         def write(file):
             file.write('new')
             store.bump_cache_generation()  # Clear Cache, while this one was writing
-        self.assertIsNone(store.atomic_write(path, write, text=True, generation=generation))
+        self.assertIsNone(store.atomic_write(path, write, root=self.cache, text=True,
+                                             generation=generation))
         self.assertEqual(path.read_text(), 'old')
         self.assertEqual(self.names(), ['answer.json'])  # and no temporary file
 
     def test_a_directory_wiped_under_the_write(self):
         generation = store.cache_generation()
         folder = self.cache / 'categories'
-        real = store.os.makedirs
+        real = store.os.mkdir
 
-        def makedirs_then_wipe(path, exist_ok=False):
-            real(path, exist_ok=exist_ok)
+        def mkdir_then_wipe(path, mode=0o777):
+            real(path, mode)
             store._generation += 1  # the bump, and the wipe right after it
             folder.rmdir()
-        with mock.patch.object(store.os, 'makedirs', makedirs_then_wipe):
+        with mock.patch.object(store.os, 'mkdir', mkdir_then_wipe):
             self.assertIsNone(store.atomic_write(folder / 'c1.json', lambda f: None,
-                                                 generation=generation))
+                                                 root=self.cache, generation=generation))
         self.assertEqual(self.names(), [])
 
     def test_the_cache_writers_after_a_wipe(self):
         generation = self.old_generation()
         cache = str(self.cache)
         answer = normalize.write_answer(str(self.cache / 'landing.json'), {'categories': []},
-                                        generation=generation)
+                                        cache, generation=generation)
         self.assertIn('cached', answer)  # the answer is the caller's, only not kept
         with self.assertRaises(store.CacheGone):
             normalize.save_library({'version': 1}, cache, generation=generation)
@@ -209,6 +212,67 @@ class GenerationTest(StoreTest):
         self.assertEqual(self.names(self.cache / 'art'), [])
 
 
+class ConfinedTest(StoreTest):
+    """Every write stays in the cache, and keeps the user's files the user's own."""
+
+    def setUp(self):
+        super().setUp()
+        self.outside = self.cache.parent / 'outside'
+        self.outside.mkdir()
+
+    def test_a_path_outside_the_cache_is_refused(self):
+        for path in (self.outside / 'x.jpg', self.cache / '..' / 'outside' / 'x.jpg',
+                     self.cache):
+            with self.subTest(path=str(path)), self.assertRaises(ValueError):
+                store.atomic_write(path, lambda f: f.write(b'x'), root=self.cache)
+        with self.assertRaises(ValueError):
+            store.make_dirs(self.outside / 'art', root=self.cache)
+        self.assertEqual(self.names(self.outside), [])
+
+    def test_cache_artwork_writes_only_in_the_cache(self):
+        with mock.patch('urllib.request.urlopen') as urlopen:
+            with self.assertLogs('applemusic.backend.normalize', 'WARNING'):
+                self.assertIsNone(normalize.cache_artwork(
+                    'https://x.invalid/a.jpg', str(self.cache),
+                    dest_path=str(self.outside / 'autostart' / 'evil.desktop')))
+        urlopen.assert_not_called()
+        self.assertEqual(self.names(self.outside), [])
+
+    def test_a_remote_art_destination_is_fine(self):
+        class Answer:
+            status = 200
+
+            def __init__(self):
+                self.chunks = [b'a cover', b'']
+
+            def read(self, size=-1):
+                return self.chunks.pop(0)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        dest = self.cache / 'remote-art' / 'abc.jpg'
+        with mock.patch('urllib.request.urlopen', lambda request, timeout: Answer()):
+            self.assertEqual(normalize.cache_artwork('https://x.invalid/a.jpg', str(self.cache),
+                                                     dest_path=str(dest)), str(dest))
+        self.assertEqual(dest.read_bytes(), b'a cover')
+        self.assertEqual(dest.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(dest.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_a_new_cache_is_private(self):
+        cache = self.cache.parent / 'new' / 'cache'
+        path = cache / 'lyrics' / '1.json'
+        store.atomic_write(path, lambda f: f.write('{}'), root=cache, text=True)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        for folder in (cache, cache / 'lyrics'):
+            with self.subTest(folder=str(folder)):
+                self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+        normalize.save_library({'version': 1}, str(cache))
+        self.assertEqual((cache / 'library.json').stat().st_mode & 0o777, 0o600)
+
+
 class WritersTest(StoreTest):
     """The cache's writers go through the one write."""
 
@@ -234,7 +298,8 @@ class WritersTest(StoreTest):
             raise OSError(28, 'No space left on device')
         with mock.patch.object(normalize.json, 'dump', half_dump):
             with self.assertLogs('applemusic.backend.normalize', 'WARNING'):
-                answer = normalize.write_answer(str(path), {'categories': []})
+                answer = normalize.write_answer(str(path), {'categories': []},
+                                                str(self.cache))
         self.assertIn('cached', answer)  # the answer is still the caller's
         self.assertEqual(self.names(), [])
 

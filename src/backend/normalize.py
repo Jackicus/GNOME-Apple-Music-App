@@ -228,7 +228,7 @@ def apply_art_sizes(cache_dir, cover, thumb, generation=None):
             log.debug('stale thumbnails: %s', error)
     try:
         store.atomic_write(_art_sizes_marker(cache_dir), lambda f: json.dump(wanted, f),
-                           text=True, generation=generation)
+                           root=cache_dir, text=True, generation=generation)
     except OSError as error:
         log.warning('could not write the art sizes marker: %s', error)
     ART_SIZES.update(wanted)
@@ -240,16 +240,16 @@ def thumb_cache_path(url, cache_dir):
     return os.path.join(cache_dir, 'thumb', artwork_filename(url))
 
 
-def make_thumbnail(src_path, dest_path, size=None, generation=None):
-    """Scale the cover at `src_path` down to `dest_path`, atomically. False
-    without a scale_image installed, when the source is not an image, or when
-    `generation` moved (store.py)."""
+def make_thumbnail(src_path, dest_path, cache_dir, size=None, generation=None):
+    """Scale the cover at `src_path` down to `dest_path` (in the cache at
+    `cache_dir`), atomically. False without a scale_image installed, when the
+    source is not an image, or when `generation` moved (store.py)."""
     if scale_image is None:
         return False
     size = size or ART_SIZES['thumb']
     try:
         return store.atomic_create(dest_path, lambda temp: scale_image(src_path, temp, size),
-                                   generation=generation) is not None
+                                   root=cache_dir, generation=generation) is not None
     except Exception as error:  # the scaler's own errors (GLib.Error) as well as OSError
         log.debug('could not scale %s: %s', src_path, error)
         return False
@@ -263,14 +263,15 @@ def cache_thumbnail(url, cache_dir, dest_path, generation=None):
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         return dest_path
     full = os.path.join(cache_dir, 'art', os.path.basename(dest_path))
-    if not _art_missing(full) and make_thumbnail(full, dest_path, generation=generation):
+    if not _art_missing(full) and make_thumbnail(full, dest_path, cache_dir,
+                                                 generation=generation):
         return dest_path
     return cache_artwork(url, cache_dir, dest_path=dest_path, generation=generation)
 
 
 def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None, generation=None):
     """Download artwork via urllib.request and save it atomically to <cache_dir>/art/
-    (or to `dest_path`, for a thumbnail).
+    (or to `dest_path`, for a thumbnail; a `dest_path` outside the cache is refused).
 
     Accepts either an artwork URL string or an Apple Music artwork dictionary.
     Written through a temporary file renamed over the target (store.atomic_write), without an
@@ -290,6 +291,9 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None, generatio
         return None
 
     dest_path = os.path.abspath(dest_path or artwork_cache_path(url, cache_dir))
+    if not store.inside(dest_path, cache_dir):
+        log.warning('artwork: %s is outside the cache, not written', dest_path)
+        return None
 
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         return dest_path
@@ -313,7 +317,8 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None, generatio
             shutil.copyfileobj(resp, file, 64 * 1024)
 
     try:
-        return store.atomic_write(dest_path, fetch, fsync=False, generation=generation)
+        return store.atomic_write(dest_path, fetch, root=cache_dir, fsync=False,
+                                  generation=generation)
     except Exception as error:  # urllib's HTTPError, URLError and timeouts, OSError
         if isinstance(error, urllib.error.HTTPError):
             error.close()  # it holds the answer's connection
@@ -375,7 +380,8 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
         return counts
     import concurrent.futures
     for folder in ('art', 'thumb'):
-        if not store.make_dirs(os.path.join(cache_dir, folder), generation):
+        if not store.make_dirs(os.path.join(cache_dir, folder), root=cache_dir,
+                               generation=generation):
             raise store.CacheGone(cache_dir)
     # The covers first, the thumbnails after: a thumbnail is scaled from its
     # cover when that is on disk, and fetched only when it is not.
@@ -1572,7 +1578,7 @@ def save_library(library_data, cache_dir, indent=2, generation=None):
     cache was cleared since `generation` (nothing written)."""
     lib_path = os.path.join(cache_dir, 'library.json')
     written = store.atomic_write(lib_path, lambda f: json.dump(library_data, f, indent=indent),
-                                 text=True, generation=generation)
+                                 root=cache_dir, text=True, generation=generation)
     if written is None:
         raise store.CacheGone(cache_dir)
 
@@ -1656,14 +1662,15 @@ def made_for_you_cache_path(cache_dir):
     return os.path.join(cache_dir, 'made-for-you.json')
 
 
-def write_answer(path, answer, generation=None):
-    """Keep `answer` at `path`, atomically, stamped `cached` with when; not
-    once the cache's generation has moved from `generation` (store.py). Best
-    effort: a cache that cannot be written is only a cache."""
+def write_answer(path, answer, cache_dir, generation=None):
+    """Keep `answer` at `path` (in the cache at `cache_dir`), atomically,
+    stamped `cached` with when; not once the cache's generation has moved from
+    `generation` (store.py). Best effort: a cache that cannot be written is
+    only a cache."""
     answer = dict(answer)
     answer['cached'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
     try:
-        store.atomic_write(path, lambda f: json.dump(answer, f), text=True,
+        store.atomic_write(path, lambda f: json.dump(answer, f), root=cache_dir, text=True,
                            generation=generation)
     except (OSError, ValueError) as error:
         log.warning('could not keep %s: %s', path, error)

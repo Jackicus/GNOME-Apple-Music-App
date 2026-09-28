@@ -705,7 +705,7 @@ class TestArtworkDownload(unittest.TestCase):
         os.makedirs(os.path.dirname(item['art']), exist_ok=True)
         with open(item['art'], 'wb') as f:
             f.write(b'a cover')
-        self.assertFalse(normalize.make_thumbnail(item['art'], item['thumb']))
+        self.assertFalse(normalize.make_thumbnail(item['art'], item['thumb'], self.tmp_dir))
         fetched = []
         real = normalize.cache_artwork
         def fake_cache_artwork(url, cache_dir, dest_path=None, generation=None):
@@ -903,7 +903,7 @@ class TestOtherCaches(unittest.TestCase):
     def test_answers_are_kept_and_age_out(self):
         path = normalize.category_cache_path(self.tmp_dir, '1')
         self.assertIsNone(normalize.read_answer(path, 60))
-        kept = normalize.write_answer(path, {'id': '1', 'groups': []})
+        kept = normalize.write_answer(path, {'id': '1', 'groups': []}, self.tmp_dir)
         self.assertIn('cached', kept)
         self.assertEqual(normalize.read_answer(path, 60)['id'], '1')
         # Older than allowed: as good as none.

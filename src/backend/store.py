@@ -1,7 +1,7 @@
 """Writing the cache: every file through one atomic write.
 
-    store.atomic_write(path, lambda file: json.dump(data, file), text=True)
-    store.atomic_create(path, lambda temp: scale(src, temp))   # a writer that wants a path
+    store.atomic_write(path, lambda file: json.dump(data, file), root=cache_dir, text=True)
+    store.atomic_create(path, lambda temp: scale(src, temp), root=cache_dir)   # wants a path
 
 A write goes to a temporary file beside its target, with a name of its own that starts with
 a dot (so two writers of one path never share one, and the artwork pruners leave a file
@@ -17,6 +17,11 @@ thread when it starts and passes it to every write; a write whose generation has
 dropped (None) and makes no directory, so nothing fetched for the old cache lands in the new
 one. The check and the rename hold one lock, as does the bump: once the bump returns, no
 write of an older generation can land. A job that must stop there raises CacheGone.
+
+Every write is confined to the cache: `root`, the cache directory, is given with each one,
+and a path outside it (`..` included) is refused with ValueError, so a path that came from an
+answer can never name a file elsewhere. Directories are made 0700 and files 0600, whatever
+the umask would give, so the library and its artwork stay the user's own.
 
 The standard library only, and blocking: call these in a thread (the generation's two
 functions are cheap anywhere).
@@ -36,6 +41,7 @@ _generation = 0
 TEMP_PREFIX = '.'
 TEMP_SUFFIX = '.tmp'
 TEMP_MAX_AGE = 60 * 60  # a temporary file this old is no write in progress
+DIR_MODE = 0o700  # and files 0600: mkstemp's
 
 
 class CacheGone(Exception):
@@ -62,13 +68,36 @@ def current(generation):
     return generation is None or generation == _generation
 
 
-def make_dirs(directory, generation=None):
-    """Make `directory` and its parents, unless `generation` has moved: False then, and
-    nothing made (a job of a wiped cache must not bring its directories back)."""
+def inside(path, root, or_root=False):
+    """Whether `path` is under `root` (both made absolute and normalised, so `..` cannot
+    climb out); with `or_root`, `root` itself counts too."""
+    path, root = os.path.abspath(path), os.path.abspath(root)
+    return os.path.commonpath([path, root]) == root and (or_root or path != root)
+
+
+def make_dirs(directory, *, root, generation=None):
+    """Make `directory` (the cache `root` or a folder under it) and whatever of it is missing,
+    each DIR_MODE, unless `generation` has moved: False then, and nothing made (a job of a
+    wiped cache must not bring its directories back). ValueError outside `root`."""
+    directory, root = os.path.abspath(directory), os.path.abspath(root)
+    if not inside(directory, root, or_root=True):
+        raise ValueError(f'{directory} is outside the cache')
     with _lock:
         if not current(generation):
             return False
-        os.makedirs(directory, exist_ok=True)
+        missing = []
+        path = directory
+        while not os.path.isdir(path):
+            missing.append(path)
+            if path == root:
+                os.makedirs(os.path.dirname(root), exist_ok=True)  # the cache's parents
+                break
+            path = os.path.dirname(path)
+        for path in reversed(missing):
+            try:
+                os.mkdir(path, DIR_MODE)
+            except FileExistsError:
+                pass
     return True
 
 
@@ -90,23 +119,23 @@ def is_stale_temp(path, now=None):
     return (now if now is not None else time.time()) - mtime > TEMP_MAX_AGE
 
 
-def atomic_write(path, write, text=False, fsync=True, generation=None):
-    """Write `path` atomically: `write(file)` fills a temporary file beside it (opened for
-    bytes, or for UTF-8 text with `text`), which is flushed, fsync'd (unless `fsync` is off:
-    for files that are only a copy, such as artwork) and renamed over `path`. Returns `path`,
-    or None when `generation` moved first (nothing written). An exception from `write`, or
-    from the disk, is raised after the temporary file is removed; `path` is then as it
-    was."""
+def atomic_write(path, write, *, root, text=False, fsync=True, generation=None):
+    """Write `path`, under the cache `root`, atomically: `write(file)` fills a temporary file
+    beside it (opened for bytes, or for UTF-8 text with `text`), which is flushed, fsync'd
+    (unless `fsync` is off: for files that are only a copy, such as artwork) and renamed over
+    `path`. Returns `path`, or None when `generation` moved first (nothing written). An
+    exception from `write`, or from the disk, is raised after the temporary file is removed;
+    `path` is then as it was. ValueError for a path outside `root`."""
     def fill(temp, fd):
         with open(fd, 'w' if text else 'wb', **({'encoding': 'utf-8'} if text else {})) as file:
             write(file)
             file.flush()
             if fsync:
                 os.fsync(file.fileno())
-    return _replace(path, fill, generation)
+    return _replace(path, fill, root, generation)
 
 
-def atomic_create(path, make, fsync=False, generation=None):
+def atomic_create(path, make, *, root, fsync=False, generation=None):
     """Write `path` atomically through a writer that wants a file name: `make(temp_path)`
     writes the temporary file (a thumbnail scaler, say), which is then renamed over `path`,
     as atomic_write does. Not fsync'd unless asked. Returns `path`, or None when
@@ -116,12 +145,14 @@ def atomic_create(path, make, fsync=False, generation=None):
         make(temp)
         if fsync:
             _fsync_path(temp)
-    return _replace(path, fill, generation)
+    return _replace(path, fill, root, generation)
 
 
-def _replace(path, fill, generation):
+def _replace(path, fill, root, generation):
+    if not inside(path, root):
+        raise ValueError(f'{path} is outside the cache')
     directory = os.path.dirname(os.path.abspath(path))
-    if not make_dirs(directory, generation):
+    if not make_dirs(directory, root=root, generation=generation):
         log.debug('%s: the cache was cleared, not written', path)
         return None
     try:
