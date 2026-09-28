@@ -1461,7 +1461,8 @@ class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         # A kept answer is not served either: a demo has none of Apple's.
-        normalize.write_answer(normalize.landing_cache_path(tmp.name), {'categories': []})
+        normalize.write_answer(normalize.landing_cache_path(tmp.name), {'categories': []},
+                               tmp.name)
         engine = Engine(profile_dir='/nowhere/chrome', demo=True)
         await engine.start()
         await engine.start(visible=True)
@@ -1529,7 +1530,8 @@ class KeptAfterWipeTest(unittest.TestCase):
                                                str(cache / 'browse.json'), str(cache),
                                                generation)
         self.assertEqual(answer['shelves'], [])
-        engine_module._write_json(cache / 'lyrics' / '1.json', {'lines': []}, generation)
+        engine_module._write_json(cache / 'lyrics' / '1.json', {'lines': []}, cache,
+                                  generation)
         self.assertEqual(list(cache.iterdir()), [])
 
 

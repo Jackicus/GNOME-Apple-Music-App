@@ -331,7 +331,7 @@ def _shape_suggestions(raw, cache_dir):
 def _shape_and_keep(shaper, raw, path, cache_dir, generation):
     """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)
     unless the cache was cleared since `generation`."""
-    return normalize.write_answer(path, shaper(raw, cache_dir), generation=generation)
+    return normalize.write_answer(path, shaper(raw, cache_dir), cache_dir, generation)
 
 
 def _read_kept(path):
@@ -349,12 +349,12 @@ def _read_json(path):
         return None
 
 
-def _write_json(path, data, generation=None):
-    """In a thread: `data` as JSON at path, atomically, the directory made first, unless the
-    cache was cleared since `generation`; a failure is logged."""
+def _write_json(path, data, root, generation=None):
+    """In a thread: `data` as JSON at path (under the cache `root`), atomically, the directory
+    made first, unless the cache was cleared since `generation`; a failure is logged."""
     try:
         store.atomic_write(path, lambda file: json.dump(data, file, ensure_ascii=False),
-                           text=True, generation=generation)
+                           root=root, text=True, generation=generation)
     except (OSError, ValueError) as error:
         log.warning('could not keep %s: %s', path, error)
 
@@ -1182,7 +1182,7 @@ class Engine(GObject.Object):
         answer = lyrics_answer(
             await client.bridge('lyrics', catalog_song_id, timeout=LYRICS_TIMEOUT))
         if answer['lines']:
-            await asyncio.to_thread(_write_json, path, answer, generation)
+            await asyncio.to_thread(_write_json, path, answer, self.cache_dir, generation)
         return answer
 
     # -- ratings and the library ---------------------------------------------------------
