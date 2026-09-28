@@ -48,7 +48,7 @@ class TestDemoLibrarySchema(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     def test_top_level_schema(self):
-        self.assertEqual(self.data.get('version'), 1)
+        self.assertEqual(self.data.get('version'), 2)  # sync.LIBRARY_VERSION
         self.assertEqual(self.data.get('storefront'), 'us')
         self.assertIn('generated', self.data)
         self.assertTrue(isinstance(self.data['generated'], str))

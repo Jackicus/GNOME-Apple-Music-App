@@ -2084,7 +2084,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
     ]
 
     library = {
-        'version': 1,
+        'version': 2,  # sync.LIBRARY_VERSION
         'generated': '2026-09-25T12:00:00Z',
         'storefront': 'us',
         'sections': {

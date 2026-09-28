@@ -58,7 +58,7 @@ import gi
 
 gi.require_version('GdkPixbuf', '2.0')
 
-from gi.repository import GdkPixbuf, GObject  # noqa: E402
+from gi.repository import GdkPixbuf, GLib, GObject  # noqa: E402
 
 from .backend import config  # noqa: E402
 from .backend import normalize, store  # noqa: E402
@@ -92,10 +92,21 @@ SHELF_DEFS = (
 )
 
 
+# library.json's format: 2 since each album's tracks are numbered across its discs. A file of
+# an older version is synced again at once (sync_due's library_ok).
+LIBRARY_VERSION = 2
+
 # The sync-interval choices Preferences offers, in hours, in its order: every hour, every
 # 6 hours, every day, manually (0: only when asked).
 INTERVALS = (1, 6, 24, 0)
 DEFAULT_INTERVAL = 6
+
+# The scheduler (LibrarySync.schedule()): it looks at the clock at most CHECK_MAX seconds apart
+# (a laptop that slept, a clock that moved) and at least CHECK_MIN; after a failed sync, and
+# once after a sync some of whose thumbnails could not be fetched, it waits RETRY_DELAY.
+CHECK_MIN = 60
+CHECK_MAX = 60 * 60
+RETRY_DELAY = 15 * 60
 
 
 def interval_index(hours):
@@ -119,16 +130,34 @@ def parse_stamp(stamp):
     return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
-def sync_due(stamp, hours, now=None):
-    """Whether the library should be synced now: never yet (no stamp, or not one), or the
-    last sync (`stamp`) is older than `hours`; 0 hours means only when asked."""
-    if hours <= 0:
-        return False
-    last = parse_stamp(stamp)
-    if last is None:
+def sync_due(stamp, hours, now=None, library_ok=True):
+    """Whether the library should be synced now: whatever the interval when the library on
+    disk is not one to keep (`library_ok` false: missing, unreadable, or from before
+    LIBRARY_VERSION); else when it never was (no stamp, or not one), when the last sync
+    (`stamp`) is in the future (a clock set back) or `hours` old. 0 hours: only when asked."""
+    if not library_ok:
         return True
+    return next_sync_delay(stamp, hours, now) == 0
+
+
+def next_sync_delay(stamp, hours, now=None):
+    """Seconds until the library is due a sync by the clock (the last-sync stamp and the
+    sync-interval setting): 0 when it is due now, None when the interval is manual (0)."""
+    if hours <= 0:
+        return None
+    last = parse_stamp(stamp)
     now = now or datetime.now(UTC)
-    return (now - last).total_seconds() > hours * 3600
+    if last is None or last > now:
+        return 0
+    return max(0.0, hours * 3600 - (now - last).total_seconds())
+
+
+def library_ok(library):
+    """Whether the library on disk is one to keep until the interval says otherwise: read,
+    and written at LIBRARY_VERSION or later (an empty one too: an account with no music). A
+    library not read yet counts as one (its load's `changed` asks again)."""
+    state = library.props.file_state
+    return state == '' or (state == 'ok' and library.props.version >= LIBRARY_VERSION)
 
 
 def last_sync_text(stamp, now=None):
@@ -403,7 +432,7 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
         shelves.append({'key': key, 'title': title, 'items': items})
 
     library_data = {
-        'version': 1,
+        'version': LIBRARY_VERSION,
         'generated': datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'storefront': storefront,
         'sections': sections,
@@ -558,8 +587,18 @@ class LibrarySync(GObject.Object):
     `running` is true from start() until the run has ended; `progress(section, done, total)`
     relays the run's reports (section '' as it starts, total None until known). cancel()
     returns once nothing more of the run will be written, and hold() keeps any run from
-    starting (signing out, clearing the cache) until release(). `app` gives the engine, the
-    library, the settings, `spawn()`, `toast()`, `report()` and `refuse_in_demo()`."""
+    starting (signing in or out, clearing the cache) until release().
+
+    schedule() starts the timed refresh: a sync starts when one is due (due(): the
+    sync-interval setting, or a library on disk not to keep) and can run without starting
+    anything (check(): signed in, the engine up and authorized), looked at when the timer
+    fires, when the engine comes up or is signed in, and when the library has been read. A
+    timer never starts Chrome. After a failed sync the timer waits RETRY_DELAY; a sync some
+    of whose thumbnails failed is tried once more RETRY_DELAY later.
+
+    `app` gives the engine, the library, the settings, `demo`, `spawn()`, `toast()`,
+    `report()` and `refuse_in_demo()`; `add_timeout(seconds, callback)` and
+    `remove_timeout(id)` are GLib's unless a test passes its own, as `clock` (seconds)."""
 
     __gtype_name__ = 'AppleMusicLibrarySync'
 
@@ -569,11 +608,18 @@ class LibrarySync(GObject.Object):
 
     running = GObject.Property(type=bool, default=False)
 
-    def __init__(self, app):
+    def __init__(self, app, add_timeout=None, remove_timeout=None, clock=time.monotonic):
         super().__init__()
         self._app = app
+        self._add_timeout = add_timeout or GLib.timeout_add_seconds
+        self._remove_timeout = remove_timeout or GLib.source_remove
+        self._clock = clock
         self._task = None
         self._holds = 0
+        self._scheduled = False  # schedule() has been called
+        self._timer = None  # the scheduler's next look at the clock
+        self._retry = None  # the one retry after thumbnails failed
+        self._failed_at = None  # when the last sync failed (clock), until one succeeds
 
     def hold(self):
         """Start no sync until release(): the account or the cache is changing under it."""
@@ -581,6 +627,7 @@ class LibrarySync(GObject.Object):
 
     def release(self):
         self._holds = max(0, self._holds - 1)
+        self._arm()
 
     @contextlib.contextmanager
     def held(self):
@@ -592,15 +639,18 @@ class LibrarySync(GObject.Object):
             self.release()
 
     def due(self):
-        """Whether the library should be synced now: never yet, or the last sync is older
-        than the sync-interval setting (hours; 0 means only when asked)."""
+        """Whether the library should be synced now (sync_due): the last sync older than the
+        sync-interval setting (hours; 0 only when asked), or no library on disk to keep."""
         settings = self._app.settings
-        return sync_due(settings.get_string('last-sync'), settings.get_int('sync-interval'))
+        return sync_due(settings.get_string('last-sync'), settings.get_int('sync-interval'),
+                        library_ok=library_ok(self._app.library))
 
-    def start(self):
+    # -- running one -----------------------------------------------------------------------
+
+    def start(self, retry=False):
         """Sync the library through the engine, starting it if it is down, unless a sync is
         running already or held. Returns the task, or None. Signed out, nothing starts and
-        the sign-in is offered (app.report)."""
+        the sign-in is offered (app.report). `retry`: the one retry after thumbnails failed."""
         app = self._app
         if app.refuse_in_demo():
             return None
@@ -614,13 +664,14 @@ class LibrarySync(GObject.Object):
             log.debug('a sync is running already')
             return None
         self.running = True
-        task = self._task = app.spawn(self._run())
+        task = self._task = app.spawn(self._run(retry))
         task.add_done_callback(self._on_done)
         return task
 
     def _on_done(self, task):
         if task is self._task:
             self.running = False  # however it ended, cancelled before it began included
+            self._arm()
 
     async def cancel(self):
         """Stop the sync running, if one is, and wait for it to end: its task ends only
@@ -630,7 +681,7 @@ class LibrarySync(GObject.Object):
             task.cancel()
             await asyncio.wait([task])
 
-    async def _run(self):
+    async def _run(self, retry=False):
         app = self._app
         engine = app.engine
         started = time.monotonic()
@@ -651,6 +702,7 @@ class LibrarySync(GObject.Object):
             return
         except EngineError as error:
             log.warning('sync: %s', error)
+            self._failed_at = self._clock()
             if error.code == 'not-signed-in':
                 app.report(error)
             else:
@@ -659,8 +711,14 @@ class LibrarySync(GObject.Object):
             return
         finally:
             live[0] = False
+        self._failed_at = None
         app.settings.set_string('last-sync', datetime.now(UTC).isoformat(timespec='seconds'))
         log.info('sync done in %.0f s', time.monotonic() - started)
+        failed = (counts.get('art') or {}).get('failed', 0)
+        if failed and not retry:
+            log.info('%d thumbnails could not be fetched: trying again in %d minutes', failed,
+                     RETRY_DELAY // 60)
+            self._retry_later()
         albums, playlists = counts.get('albums', 0), counts.get('playlists', 0)
         songs = app.library.song_count()
         summary = ', '.join([
@@ -670,3 +728,84 @@ class LibrarySync(GObject.Object):
             ngettext('{count} song', '{count} songs', songs).format(count=f'{songs:n}'),
         ])
         app.toast(_('Library synced: {summary}').format(summary=summary))
+
+    # -- the timed refresh -------------------------------------------------------------------
+
+    def schedule(self):
+        """Look after the library from now on (see the class): the app calls it once, in
+        do_startup, except in demo mode."""
+        if self._scheduled:
+            return
+        self._scheduled = True
+        app = self._app
+        app.settings.connect('changed::sync-interval', self._arm)
+        app.settings.connect('changed::last-sync', self._arm)
+        app.engine.connect('notify::state', self.check)
+        app.engine.connect('notify::authorized', self.check)
+        app.library.connect('changed', self._on_library_changed)
+        self._arm()
+
+    def check(self, *_args):
+        """Start a sync when one is due and can run without starting anything."""
+        if self._can_run() and self.due():
+            log.info('the library is due a sync')
+            self.start()
+
+    def _can_run(self):
+        """Signed in, the engine up and authorized, no sync held or running, no failure in
+        the last RETRY_DELAY seconds."""
+        app = self._app
+        engine = app.engine
+        return (not app.demo and not self._holds and not self.running
+                and app.settings.get_boolean('signed-in')
+                and engine.state == 'up' and engine.authorized
+                and not self._backing_off())
+
+    def _backing_off(self):
+        return (self._failed_at is not None
+                and self._clock() - self._failed_at < RETRY_DELAY)
+
+    def _on_library_changed(self, _library):
+        self.check()
+        self._arm()
+
+    def _arm(self, *_args):
+        """The scheduler's next look: when the library will be due (next_sync_delay; at once
+        for a library not to keep), no sooner than CHECK_MIN nor later than CHECK_MAX
+        seconds from now, and not before a failed sync's RETRY_DELAY is over. None while the
+        interval is manual and the library fine."""
+        if not self._scheduled:
+            return
+        if self._timer is not None:
+            self._remove_timeout(self._timer)
+            self._timer = None
+        settings = self._app.settings
+        delay = next_sync_delay(settings.get_string('last-sync'),
+                                settings.get_int('sync-interval'))
+        if not library_ok(self._app.library):
+            delay = 0
+        if delay is None:
+            return
+        if self._backing_off():
+            delay = max(delay, RETRY_DELAY - (self._clock() - self._failed_at))
+        self._timer = self._add_timeout(int(min(max(delay, CHECK_MIN), CHECK_MAX)),
+                                        self._on_timer)
+
+    def _on_timer(self):
+        self._timer = None
+        self.check()
+        self._arm()
+        return GLib.SOURCE_REMOVE
+
+    def _retry_later(self):
+        if self._retry is not None:
+            self._remove_timeout(self._retry)
+        self._retry = self._add_timeout(RETRY_DELAY, self._on_retry)
+
+    def _on_retry(self):
+        """The one retry of a sync whose thumbnails failed, when it can run now; either way
+        the interval rules after it."""
+        self._retry = None
+        if self._can_run():
+            self.start(retry=True)
+        return GLib.SOURCE_REMOVE

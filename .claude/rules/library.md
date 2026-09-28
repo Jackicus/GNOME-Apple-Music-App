@@ -86,6 +86,13 @@ them before changing either. What matters most:
   fetches missing thumbnails (covers are fetched on demand by the pages that show them), writes
   library.json atomically, prunes, then `reload()`s. A failed optional section keeps last
   time's entry; a failed songs or playlists listing, or a lost engine, fails the sync.
+- When to sync: `LibrarySync.schedule()` (not in demo mode) starts one when `due()` (the
+  last sync older than `sync-interval`, or `library_ok()` false: library.json missing,
+  unreadable or older than `LIBRARY_VERSION`, whatever the interval) and it can run without
+  starting anything (signed in, the engine up and authorized): at its timer, when the engine
+  comes up or is authorized, when the library has been read. After a failure it waits
+  `RETRY_DELAY`; failed thumbnails are retried once. A change to library.json's shape that
+  old files lack bumps `LIBRARY_VERSION` (and demo_library.py's), so they are synced again.
 - A cancelled sync's task ends only after its build thread has (`sync_library()` waits it
   out), so once `await app.library_sync.cancel()` returns nothing more of it is written.
   Sign-out and Clear Cache (account.py) bump the cache's generation first, then cancel, then
