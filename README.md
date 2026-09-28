@@ -121,8 +121,8 @@ scripts/am.py status    # drive the engine without the GUI (start, stop, eval, e
 
 The development build installs beside a release build, with its own app ID,
 Chrome profile and port, and shares the release build's settings. `--demo`
-never starts Chrome. `CLAUDE.md` describes the architecture and conventions, and
-`prompts.md` holds the plan the app was built from.
+never starts Chrome. `docs/architecture.md` describes the architecture, `CLAUDE.md`
+the conventions, and `docs/history/build-plan.md` holds the plan the app was built from.
 
 GNOME Builder can build and run the development profile through the Flatpak
 manifest in `build-aux/flatpak/`. That manifest is for development only: from
