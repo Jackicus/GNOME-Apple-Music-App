@@ -22,8 +22,8 @@ them before changing either. What matters most:
   identity for the life of the app: pages bind them once and watch `notify::state` and
   `changed`. `state` is `empty`, `loading` or `ready`; a load that fails or is cancelled ends
   `empty` and still emits `changed`. `file-state` (`ok`, `missing`, `unreadable`) and `version`
-  say what the last load found on disk. `syncing` is for the sync to set while it runs, so a
-  page can show an empty library as on its way; main.py does not set it yet.
+  say what the last load found on disk. `syncing` is true while a sync runs (`LibrarySync`
+  sets it), so a page can show an empty library as on its way.
 - `load()` (the first load, after sign-out) makes new objects. `reload()` (after a sync) matches
   everything by kind and id and keeps every object still in the library: Items (with their
   Groups and Tracks when the groups are unchanged), Shelf objects by key, folder Items and the

@@ -669,8 +669,9 @@ def progress_text(section, done, total):
 class LibrarySync(GObject.Object):
     """The app's sync: sync_library() through `app.engine` into `app.library`, one at a time.
 
-    `running` is true from start() until the run has ended; `progress(section, done, total)`
-    relays the run's reports (section '' as it starts, total None until known). cancel()
+    `running` is true from start() until the run has ended, and the library's `syncing` while
+    it runs; `progress(section, done, total)` relays the run's reports (section '' as it
+    starts, total None until known). cancel()
     returns once nothing more of the run will be written, and hold() keeps any run from
     starting (signing in or out, clearing the cache) until release().
 
@@ -778,6 +779,7 @@ class LibrarySync(GObject.Object):
             if live[0]:
                 self.emit('progress', section, done, total)
 
+        app.library.syncing = True  # an empty library is on its way, not empty (the pages)
         try:
             progress('', 0, None)  # the banner, while Chrome may take seconds to come up
             await engine.start()  # a start under way is joined; a running engine is kept
@@ -800,6 +802,7 @@ class LibrarySync(GObject.Object):
             return
         finally:
             live[0] = False
+            app.library.syncing = False
         self._failed_at = None
         app.settings.set_string('last-sync', datetime.now(UTC).isoformat(timespec='seconds'))
         log.info('sync done in %.0f s', time.monotonic() - started)

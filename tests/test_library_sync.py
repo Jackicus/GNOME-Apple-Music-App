@@ -215,6 +215,20 @@ class LibrarySyncTest(SyncTestCase):
         self.assertIsNotNone(self.sync.start())
         await self.sync.cancel()
 
+    async def test_the_library_says_it_is_syncing_while_a_sync_runs(self):
+        seen = []
+        self.library.connect('notify::syncing', lambda library, _p: seen.append(
+            (library.props.syncing, library.props.state)))
+        await self.sync.start()
+        # On during the run (the library still empty then), off once it has reloaded.
+        self.assertEqual(seen, [(True, 'empty'), (False, 'ready')])
+
+    async def test_the_library_stops_syncing_when_the_sync_fails(self):
+        del self.engine.answers[app_sync.SONGS_ENDPOINT]
+        with self.assertLogs('applemusic.sync', 'WARNING'):
+            await self.sync.start()
+        self.assertFalse(self.library.props.syncing)
+
     async def test_an_unexpected_failure_is_toasted_with_retry(self):
         async def broken(engine, library, progress=None):
             raise OSError(28, 'No space left on device')
