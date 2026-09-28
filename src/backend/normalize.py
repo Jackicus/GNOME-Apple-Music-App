@@ -117,11 +117,15 @@ def format_color(bg_color):
 
 
 def strip_html(text):
-    """Convert HTML snippet to plain text or None."""
+    """An HTML snippet (Apple's editorial notes) as plain text, or None: a <br> is a line
+    break and a paragraph a blank line, so the words of two never run together."""
     if not text:
         return None
-    cleaned = re.sub(r'<[^>]+>', '', text)
-    cleaned = html.unescape(cleaned).strip()
+    cleaned = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'</?p(\s[^>]*)?>', '\n\n', cleaned, flags=re.IGNORECASE)
+    cleaned = html.unescape(re.sub(r'<[^>]+>', '', cleaned))
+    cleaned = re.sub(r'[ \t]*\n[ \t]*', '\n', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
     return cleaned if cleaned else None
 
 
@@ -765,7 +769,7 @@ def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
     attrs = raw_album.get('attributes') or {}
     item_id = str(raw_album.get('id') or '')
     title = attrs.get('name') or raw_album.get('title') or ''
-    subtitle = attrs.get('artistName') or raw_album.get('subtitle') or 'Apple Music'
+    subtitle = attrs.get('artistName') or raw_album.get('subtitle') or ''
     year = _extract_year(attrs, raw_album)
     genre = _extract_genre(attrs, raw_album)
     summary = _extract_summary(attrs, raw_album)
@@ -880,12 +884,13 @@ def normalize_artist(raw_artist, cache_dir=None, albums=None, art_urls=None):
 
     `albums` are the artist's albums (raw, or already normalized) when the
     caller fetched them; otherwise the `albums` relationship is read.
-    subtitle='Artist', groups=[one group per album].
+    subtitle '' (the data has no words: an artist is shown as one), groups=[one group per
+    album].
     """
     attrs = raw_artist.get('attributes') or {}
     item_id = str(raw_artist.get('id') or '')
     title = attrs.get('name') or raw_artist.get('title') or ''
-    subtitle = 'Artist'
+    subtitle = ''
     year = None
     genre = _extract_genre(attrs, raw_artist)
     summary = _extract_summary(attrs, raw_artist)
@@ -966,7 +971,7 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None, art_urls=None)
         attrs.get('curatorName')
         or attrs.get('artistName')
         or raw_playlist.get('subtitle')
-        or 'Apple Music'
+        or ''  # the user's own playlists have no curator
     )
     year = _extract_year(attrs, raw_playlist)
     genre = _extract_genre(attrs, raw_playlist)
@@ -1051,7 +1056,7 @@ def normalize_station(raw_station, cache_dir=None, art_urls=None):
         or attrs.get('curatorName')
         or attrs.get('artistName')
         or raw_station.get('subtitle')
-        or 'Apple Music Radio'
+        or ''
     )
     year = None
     genre = _extract_genre(attrs, raw_station)
@@ -1154,7 +1159,11 @@ def normalize_item(raw_item, cache_dir=None, include_groups=True, art_urls=None)
         if 'trackCount' in attrs or 'artistName' in attrs:
             item = normalize_album(raw_item, cache_dir=cache_dir, art_urls=art_urls)
         else:
+            # Something the app has no page or queue for (an editorial item, an uploaded
+            # video): its name and artwork, and nothing to play.
             item = normalize_station(raw_item, cache_dir=cache_dir, art_urls=art_urls)
+            item['kind'] = 'unknown'
+            item['play'] = {}
 
     if not include_groups:
         item['groups'] = []
@@ -1337,21 +1346,23 @@ SHELF_RESOURCE_TYPES = {
 }
 
 
-def _shelf_item(raw_item, cache_dir):
-    """An editorial element's content as a shelf item: an Apple curator as
-    a category tile (its page is its grouping, as on the search page), a
-    known resource with a name as a search hit is (no groups, art as it
-    stands); anything else None."""
+def _shelf_item(raw_item, cache_dir, settle=True, curators=True, art_urls=None):
+    """An editorial element's or a recommendation's content as a shelf item:
+    an Apple curator as a category tile (its page is its grouping, as on the
+    search page; None without `curators`), a known resource with a name
+    without its groups (its art as a search hit's with `settle`, or the
+    files a sync fetches, registered in `art_urls`); anything else None."""
     if not isinstance(raw_item, dict):
         return None
     if raw_item.get('type') == 'apple-curators':
-        return normalize_category(raw_item)
+        return normalize_category(raw_item) if curators else None
     if raw_item.get('type') not in SHELF_RESOURCE_TYPES:
         return None
     if not (raw_item.get('attributes') or {}).get('name'):
         return None
-    item = normalize_item(raw_item, cache_dir, include_groups=False)
-    _settle_search_art(item, raw_item)
+    item = normalize_item(raw_item, cache_dir, include_groups=False, art_urls=art_urls)
+    if settle:
+        _settle_search_art(item, raw_item)
     return item
 
 
@@ -1452,6 +1463,18 @@ def made_for_you_shelves(raw_recs, cache_dir=None):
 
     Shelf = {"key": "rec-<id>", "title": "…", "items": [Item]}
     """
+    return _recommendation_shelves(
+        raw_recs, cache_dir, accept=lambda contents: all(map(_is_made_for_you, contents)),
+        settle=True, fallback='Made for You')
+
+
+def _recommendation_shelves(raw_recs, cache_dir, accept, settle, fallback, art_urls=None):
+    """The shelves of Apple's recommendations, in Apple's order: one per
+    recommendation whose contents `accept(contents)` takes, a group's members
+    each a shelf of their own, its items through _shelf_item (no curators:
+    a category tile is the Search page's) with `settle`; a recommendation
+    with nothing in it is left out. Titled as Apple titles it, `fallback`
+    when it does not."""
     shelves = []
 
     def walk(rec):
@@ -1465,20 +1488,17 @@ def made_for_you_shelves(raw_recs, cache_dir=None):
                 walk(member)
             return
         contents = [c for c in (rel.get('contents') or {}).get('data') or [] if isinstance(c, dict)]
-        if not contents or not all(_is_made_for_you(c) for c in contents):
+        if not contents or not accept(contents):
             return
-        items = []
-        for raw_item in contents:
-            item = normalize_item(raw_item, cache_dir, include_groups=False)
-            if item and item.get('title'):
-                _settle_search_art(item, raw_item)
-                items.append(item)
+        items = [_shelf_item(raw_item, cache_dir, settle=settle, curators=False,
+                             art_urls=art_urls) for raw_item in contents]
+        items = [item for item in items if item is not None]
         if not items:
             return
         title = attrs.get('title') or {}
         title = title.get('stringForDisplay') if isinstance(title, dict) else str(title)
-        title = title or 'Made for You'
-        shelves.append({'key': f"rec-{rec.get('id')}", 'title': title, 'items': items})
+        key = rec.get('id') or len(shelves)
+        shelves.append({'key': f'rec-{key}', 'title': title or fallback, 'items': items})
 
     for rec in raw_recs or []:
         walk(rec)
@@ -1502,37 +1522,15 @@ def recommendation_shelves(raw_recs, cache_dir=None, art_urls=None):
     the API sends them, titled as Apple titles it ("New Releases for You",
     "Stations for You", "More from …", a genre, a decade). A group
     recommendation is its members, each a shelf of its own. Items are
-    normalised without their track lists, as a shelf's are; a
-    recommendation with nothing in it is left out.
+    normalised without their track lists, as a shelf's are, their artwork
+    the files the sync fetches (registered in `art_urls`); what the app has
+    no tile for (a curator, an editorial item) is left out, as is a
+    recommendation with nothing in it.
 
     Shelf = {"key": "rec-<id>", "title": "…", "items": [Item]}
     """
-    shelves = []
-
-    def walk(rec):
-        if not isinstance(rec, dict):
-            return
-        attrs = rec.get('attributes') or {}
-        rel = rec.get('relationships') or {}
-        members = (rel.get('recommendations') or {}).get('data') or []
-        if members:
-            for member in members:
-                walk(member)
-            return
-        contents = (rel.get('contents') or {}).get('data') or []
-        items = [normalize_item(it, cache_dir, include_groups=False, art_urls=art_urls)
-                 for it in contents if isinstance(it, dict)]
-        items = [it for it in items if it and it.get('title')]
-        if not items:
-            return
-        title = attrs.get('title') or {}
-        title = title.get('stringForDisplay') if isinstance(title, dict) else str(title)
-        title = title or 'For You'
-        shelves.append({'key': f"rec-{rec.get('id')}", 'title': title, 'items': items})
-
-    for rec in raw_recs or []:
-        walk(rec)
-    return shelves
+    return _recommendation_shelves(raw_recs, cache_dir, accept=lambda contents: True,
+                                   settle=False, fallback='For You', art_urls=art_urls)
 
 
 def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
@@ -1540,8 +1538,9 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
     albums_map = {}
     for s in songs:
         s_attrs = s.get('attributes') or {}
-        album_name = s_attrs.get('albumName', 'Unknown Album')
-        artist_name = s_attrs.get('artistName', 'Unknown Artist')
+        # A missing name stays '': the app has the words for it (library.unknown_title).
+        album_name = s_attrs.get('albumName') or ''
+        artist_name = s_attrs.get('artistName') or ''
 
         rel_albums = s.get('relationships', {}).get('albums', {}).get('data', [])
         if rel_albums:
@@ -1590,7 +1589,7 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
                                    art_urls=art_urls)
         albums_list.append(alb_norm)
 
-        art_name = alb_norm['subtitle'] or 'Unknown Artist'
+        art_name = alb_norm['subtitle']
         artists_map.setdefault(art_name, []).append(alb_norm)
 
     albums_list.sort(key=lambda a: a.get('title', '').lower())
