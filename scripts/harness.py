@@ -74,14 +74,19 @@ def installed_icon():
                  if name.startswith(BASE_ID) and name.endswith('.svg')), None)
 
 
+def require_install():
+    """Exit with a message unless the build is installed (build/install)."""
+    if not os.path.exists(GRESOURCE):
+        sys.exit(f'{os.path.basename(sys.argv[0])}: no installed build in {PREFIX}: '
+                 'run meson install -C build first')
+
+
 def make_app(suffix, demo=True, light=False, animations=False, stock_look=True, size=None,
              demo_dir=DEMO_DIR, name=None):
     """The installed app's main.Application, set up as the module says, not yet run (run_app()
     runs it). `size` (width, height) is written to the window-size settings; `name` is the
     program name (argv[0] and GLib's prgname), the suffix lower-cased by default."""
-    if not os.path.exists(GRESOURCE):
-        sys.exit(f'{os.path.basename(sys.argv[0])}: no installed build in {PREFIX}: '
-                 'run meson install -C build first')
+    require_install()
     if demo:
         ensure_demo_library()
     os.environ['GSETTINGS_SCHEMA_DIR'] = SCHEMA_DIR

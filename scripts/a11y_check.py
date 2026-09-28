@@ -17,17 +17,19 @@ window (the widgets' own keys: Tab, the arrows, Enter, Escape, the context-menu 
 popover's own key handler. Typing into an entry is not emulated (the text is set).
 
 --names also starts a private accessibility bus (a dbus-daemon with at-spi's configuration on
-an abstract socket, and at-spi2-registryd, stopped at the end; nothing on the desktop's own
-buses) and, on each page, lists the focusable controls that have no accessible name, as
-libatspi reads them: what Orca would find, and what the GTK inspector's Accessibility tab
-shows. Anything listed there is a gap (libadwaita's own widgets included).
+an abstract socket, and at-spi2-registryd, stopped when the script exits, however it exits;
+nothing on the desktop's own buses) and, on each page, lists the focusable controls that
+have no accessible name, as libatspi reads them: what Orca would find, and what the GTK
+inspector's Accessibility tab shows. Anything listed there is a gap (libadwaita's own
+widgets included).
 """
 
 import argparse
 import asyncio
+import atexit
 import os
+import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -42,6 +44,13 @@ parser.add_argument('--names', action='store_true',
                     help='list focusable controls without an accessible name (libatspi)')
 parser.add_argument('--dump', action='store_true', help=argparse.SUPPRESS)  # the lister
 args = parser.parse_args()
+
+# Where distributions put at-spi's registry daemon and its bus configuration.
+REGISTRYD = ('/usr/libexec/at-spi2-registryd', '/usr/lib/at-spi2-registryd',
+             '/usr/lib/at-spi2-core/at-spi2-registryd')
+BUS_CONFIGS = ('/usr/share/defaults/at-spi2/accessibility.conf',
+               '/etc/at-spi2/accessibility.conf')
+REGISTRY_NAME = 'org.a11y.atspi.Registry'
 
 # Roles whose focusable objects need a name of their own.
 NAMED_ROLES = {'push button', 'toggle button', 'check box', 'slider', 'spin button',
@@ -84,26 +93,89 @@ if args.dump:
     list_unnamed()
     sys.exit(0)
 
-width, height = (int(n) for n in args.size.split('x'))
-bus_processes = []
-if args.names:
-    # A private accessibility bus: GTK and libatspi take AT_SPI_BUS_ADDRESS over the
-    # desktop's, so nothing here touches the session.
-    config_dir = tempfile.mkdtemp(prefix='a11y-check-')
-    config = os.path.join(config_dir, 'accessibility.conf')
-    address = f'unix:abstract=apple-music-a11y-check-{os.getpid()}'
-    with open('/usr/share/defaults/at-spi2/accessibility.conf', encoding='utf-8') as file:
+
+
+def stop(process):
+    """End a daemon this script started: SIGTERM, then SIGKILL after 5 s."""
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def start_daemon(argv, **kwargs):
+    """Start a daemon, stopped when this script exits (atexit: also after an exception or
+    sys.exit())."""
+    process = subprocess.Popen(argv, **kwargs)
+    atexit.register(stop, process)
+    return process
+
+
+def wait_for_name(address, name, timeout=5.0):
+    """Whether `name` gets an owner on the bus at address within timeout seconds."""
+    from gi.repository import Gio, GLib
+
+    connection = Gio.DBusConnection.new_for_address_sync(
+        address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+        | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            reply = connection.call_sync(
+                'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                'NameHasOwner', GLib.Variant('(s)', (name,)), GLib.VariantType('(b)'),
+                Gio.DBusCallFlags.NONE, 1000, None)
+            if reply.unpack()[0]:
+                return True
+            time.sleep(0.05)
+        return False
+    finally:
+        connection.close_sync(None)
+
+
+def start_accessibility_bus():
+    """A private accessibility bus (dbus-daemon with at-spi's configuration listening on an
+    abstract socket, and at-spi2-registryd on it), set as AT_SPI_BUS_ADDRESS, which GTK and
+    libatspi take over the desktop's: nothing here touches the session."""
+    registryd = next((path for path in REGISTRYD if os.access(path, os.X_OK)), None)
+    if registryd is None:
+        sys.exit('a11y_check: --names needs at-spi2-registryd (looked in '
+                 + ', '.join(REGISTRYD) + ')')
+    source = next((path for path in BUS_CONFIGS if os.path.exists(path)), None)
+    if source is None:
+        sys.exit("a11y_check: --names needs at-spi's accessibility.conf (looked in "
+                 + ', '.join(BUS_CONFIGS) + ')')
+    if shutil.which('dbus-daemon') is None:
+        sys.exit('a11y_check: --names needs dbus-daemon')
+    with open(source, encoding='utf-8') as file:
         text = file.read()
-    with open(config, 'w', encoding='utf-8') as file:
-        file.write(text.replace('<listen>unix:dir=/tmp</listen>', f'<listen>{address}</listen>'))
-    bus_processes.append(subprocess.Popen(['dbus-daemon', '--config-file', config, '--nofork'],
-                                          stdout=subprocess.DEVNULL))
-    time.sleep(0.5)
+    listen = f'<listen>unix:abstract=apple-music-a11y-check-{os.getpid()}</listen>'
+    config_text = re.sub(r'<listen>.*?</listen>', listen, text, count=1, flags=re.S)
+    if config_text == text:
+        sys.exit(f'a11y_check: no <listen> element to replace in {source}')
+    with tempfile.TemporaryDirectory(prefix='a11y-check-') as config_dir:
+        config = os.path.join(config_dir, 'accessibility.conf')
+        with open(config, 'w', encoding='utf-8') as file:
+            file.write(config_text)
+        daemon = start_daemon(['dbus-daemon', '--config-file', config, '--nofork',
+                               '--print-address'], stdout=subprocess.PIPE, text=True)
+        address = daemon.stdout.readline().strip()  # printed once it listens
+    if not address:
+        sys.exit('a11y_check: the private dbus-daemon did not start')
     os.environ['AT_SPI_BUS_ADDRESS'] = address
-    bus_processes.append(subprocess.Popen(['/usr/lib/at-spi2-registryd'],
-                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    time.sleep(0.5)
-    shutil.rmtree(config_dir, ignore_errors=True)  # read by now
+    start_daemon([registryd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not wait_for_name(address, REGISTRY_NAME):
+        sys.exit('a11y_check: at-spi2-registryd did not come up on the private bus')
+
+
+width, height = (int(n) for n in args.size.split('x'))
+harness.require_install()  # before any daemon starts
+if args.names:
+    start_accessibility_bus()
 
 # The program name is how the lister finds the app on the accessibility bus.
 app = harness.make_app('A11yCheck', light=args.light, size=(width, height), name='a11y_check')
@@ -385,11 +457,6 @@ def on_activate(_app):
 
 
 app.connect('activate', on_activate)
-try:
-    harness.run_app(app)
-finally:
-    for process in reversed(bus_processes):
-        process.send_signal(signal.SIGTERM)
-        process.wait(timeout=5)
+harness.run_app(app)
 print(f'{len(failures)} failed' if failures else 'all passed')
 sys.exit(1 if failures else 0)
