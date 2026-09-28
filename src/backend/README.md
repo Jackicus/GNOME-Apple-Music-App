@@ -5,7 +5,7 @@
 > extension's process-per-command `am.py` (and the shell code around it),
 > which this app kept as a reference until its sync and commands were
 > ported (`src/engine.py`, `src/sync.py`; the file is gone). What carries
-> over: `cdp.py` (its WebSocket codec only), `bridge.js`, `sync.py`, the command table (as the
+> over: `cdp.py` (its WebSocket codec only), `bridge.js`, `normalize.py` (was `sync.py`), the command table (as the
 > list of what the bridge can do), the error codes, and the `library.json`,
 > `Item` and `Track` shapes (with this app's additions, noted there). Here,
 > paths and the artwork sizes come from `config.py`, and nothing
@@ -32,7 +32,7 @@ Extension (src/lib, in the shell) ──spawn──► am.py <command> ──CDP
 - **`bridge.js`** — the only code that runs inside the page. Injected
   idempotently, it defines `window.__appleMusicLibrary` over the page's own
   `MusicKit` instance; `am.py`'s commands are thin calls into it.
-- **`sync.py`** — pure functions turning API responses into the `Item` and
+- **`normalize.py`** — pure functions turning API responses into the `Item` and
   `Track` shapes below, plus the artwork cache. Unit tested in `tests/`.
 
 ## The engine

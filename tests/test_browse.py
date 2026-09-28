@@ -9,7 +9,7 @@ import unittest
 
 from tests import SRC  # noqa: F401  (registers src/ as the applemusic package)
 
-from applemusic.backend import sync
+from applemusic.backend import normalize
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 
@@ -51,7 +51,7 @@ class EditorialShelvesTest(unittest.TestCase):
             self.raw = json.load(file)
 
     def test_the_groupings_elements_become_shelves_in_order(self):
-        out = sync.editorial_shelves(self.raw, self.tmp.name)
+        out = normalize.editorial_shelves(self.raw, self.tmp.name)
         shelves = out['shelves']
         self.assertEqual([(s['key'], s['title'], len(s['items'])) for s in shelves], [
             ('new-banners', 'Featured', 2),      # the banners' items, the uploaded video left out
@@ -61,7 +61,7 @@ class EditorialShelvesTest(unittest.TestCase):
         ])  # the rooms (links only) and the link row are not shelves
 
     def test_featured_holds_the_banners_items_as_their_kinds(self):
-        featured = sync.editorial_shelves(self.raw, self.tmp.name)['shelves'][0]
+        featured = normalize.editorial_shelves(self.raw, self.tmp.name)['shelves'][0]
         kinds = [(item['kind'], item['id'], item['title']) for item in featured['items']]
         self.assertEqual(kinds, [('album', '900000201', 'Lantern Season'),
                                  ('category', '900000301', 'Folk')])
@@ -71,7 +71,7 @@ class EditorialShelvesTest(unittest.TestCase):
         self.assertIn('320x320', category['art'])
 
     def test_items_are_shaped_as_search_hits(self):
-        shelves = sync.editorial_shelves(self.raw, self.tmp.name)['shelves']
+        shelves = normalize.editorial_shelves(self.raw, self.tmp.name)['shelves']
         song = shelves[1]['items'][0]
         self.assertEqual(song['kind'], 'song')
         self.assertEqual(song['play'], {'kind': 'song', 'id': '900000501'})
@@ -86,25 +86,25 @@ class EditorialShelvesTest(unittest.TestCase):
         self.assertEqual(shelves[3]['items'][0]['play'], {'kind': 'station', 'id': 'ra.900000601'})
 
     def test_nothing(self):
-        self.assertEqual(sync.editorial_shelves(None, self.tmp.name), {'shelves': []})
-        self.assertEqual(sync.editorial_shelves({'data': ['junk', {}]}, self.tmp.name),
+        self.assertEqual(normalize.editorial_shelves(None, self.tmp.name), {'shelves': []})
+        self.assertEqual(normalize.editorial_shelves({'data': ['junk', {}]}, self.tmp.name),
                          {'shelves': []})
-        self.assertEqual(sync.editorial_shelves({'errors': [{'status': '500'}]}, self.tmp.name),
-                         {'shelves': []})
+        answer = {'errors': [{'status': '500'}]}
+        self.assertEqual(normalize.editorial_shelves(answer, self.tmp.name), {'shelves': []})
 
     def test_a_category_page_keeps_its_keys_and_leaves_untitled_elements_out(self):
         grouping = self.raw['data'][0]
         raw = {'data': [{'id': '900000301', 'type': 'apple-curators',
                          'attributes': {'name': 'Apple Music Folk', 'shortName': 'Folk'},
                          'relationships': {'grouping': {'data': [grouping]}}}]}
-        out = sync.category_page(raw, self.tmp.name)
+        out = normalize.category_page(raw, self.tmp.name)
         self.assertEqual(out['title'], 'Folk')
         self.assertEqual([s['key'] for s in out['shelves']],
                          ['cat-best-new-songs', 'cat-new-releases', 'cat-stations'])
 
     def test_cache_paths(self):
-        self.assertEqual(sync.browse_cache_path('/c'), os.path.join('/c', 'browse.json'))
-        self.assertEqual(sync.made_for_you_cache_path('/c'),
+        self.assertEqual(normalize.browse_cache_path('/c'), os.path.join('/c', 'browse.json'))
+        self.assertEqual(normalize.made_for_you_cache_path('/c'),
                          os.path.join('/c', 'made-for-you.json'))
 
 
@@ -128,7 +128,7 @@ class MadeForYouShelvesTest(unittest.TestCase):
                            [mix('pl.df-1', 'Folk Essentials', 'editorial')]),
             recommendation('r-empty', 'Nothing', []),
         ]
-        shelves = sync.made_for_you_shelves(recs, self.tmp.name)
+        shelves = normalize.made_for_you_shelves(recs, self.tmp.name)
         self.assertEqual([(s['key'], s['title'], [i['title'] for i in s['items']])
                           for s in shelves], [
             ('rec-r-mixes', 'Made for You', ['Favourites Mix', 'Chill Mix']),
@@ -145,18 +145,18 @@ class MadeForYouShelvesTest(unittest.TestCase):
             recommendation('r-a', 'Mixes', [mix('pl.pm-1', 'Get Up! Mix')]),
             recommendation('r-b', 'Albums', [album('900000201', 'Lantern Season')]),
         ])]
-        shelves = sync.made_for_you_shelves(recs, self.tmp.name)
+        shelves = normalize.made_for_you_shelves(recs, self.tmp.name)
         self.assertEqual([s['key'] for s in shelves], ['rec-r-a'])
 
     def test_nothing(self):
-        self.assertEqual(sync.made_for_you_shelves(None, self.tmp.name), [])
-        self.assertEqual(sync.made_for_you_shelves(['junk', {}], self.tmp.name), [])
+        self.assertEqual(normalize.made_for_you_shelves(None, self.tmp.name), [])
+        self.assertEqual(normalize.made_for_you_shelves(['junk', {}], self.tmp.name), [])
 
     def test_the_recommendations_fixture(self):
         # The invented Home fixture's "Made for You" set has no playlistType: not mixes.
         with open(FIXTURES / 'recommendations.json', encoding='utf-8') as file:
             raw = json.load(file)
-        self.assertEqual(sync.made_for_you_shelves(raw['data'], self.tmp.name), [])
+        self.assertEqual(normalize.made_for_you_shelves(raw['data'], self.tmp.name), [])
 
 
 if __name__ == '__main__':

@@ -18,7 +18,7 @@ importing the package imports none of its modules.
     bridge.js   injected into music.apple.com; drives the page's own MusicKit instance and
                 forwards its events (subscribe). Installed as data beside the Python, found
                 through config.BRIDGE_JS
-    sync.py     Apple Music API answers -> the Item and Track shapes, the artwork cache,
+    normalize.py  Apple Music API answers -> the Item and Track shapes, the artwork cache,
                 library.json
     config.py   paths, the developer's DevTools port and artwork sizes (new here; replaces
                 the extension's GSettings)

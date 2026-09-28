@@ -72,7 +72,7 @@ from pathlib import Path
 
 from gi.repository import Gio, GLib, GObject
 
-from .backend import chrome, config, sync
+from .backend import chrome, config, normalize
 from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
 
@@ -256,15 +256,15 @@ def album_endpoint(album_id, storefront):
 def _shape_item(raw, cache_dir):
     """In a thread: the API's resource as an Item with groups, its artwork fetched, the answer
     kept under <cache>/items/."""
-    sync.load_art_sizes(cache_dir)
-    item = sync.normalize_item(raw, cache_dir, include_groups=True)
+    normalize.load_art_sizes(cache_dir)
+    item = normalize.normalize_item(raw, cache_dir, include_groups=True)
     return _keep_item(item, cache_dir)
 
 
 def _shape_artist(raw, item_id, stubs, answers, cache_dir):
     """In a thread: an artist resource plus its albums' answers (apiAll's list, a failed one
     None in its place, the stub standing in) as an artist Item, one group per album."""
-    sync.load_art_sizes(cache_dir)
+    normalize.load_art_sizes(cache_dir)
     artist = {'id': item_id, 'type': raw.get('type', 'artists'),
               'attributes': raw.get('attributes') or {}}
     albums = []
@@ -272,13 +272,14 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir):
         answer = answers[position] if position < len(answers) else None
         data = answer.get('data') if isinstance(answer, dict) else None
         albums.append(data[0] if isinstance(data, list) and data else stub)
-    item = sync.normalize_artist(artist, cache_dir, albums=albums)
+    item = normalize.normalize_artist(artist, cache_dir, albums=albums)
     return _keep_item(item, cache_dir)
 
 
 def _keep_item(item, cache_dir):
-    sync.download_item_art(item, cache_dir)
-    return sync.write_answer(sync.item_cache_path(cache_dir, item['kind'], item['id']), item)
+    normalize.download_item_art(item, cache_dir)
+    path = normalize.item_cache_path(cache_dir, item['kind'], item['id'])
+    return normalize.write_answer(path, item)
 
 
 def _page_data(answer):
@@ -323,27 +324,27 @@ def _raise_api_errors(answer, what):
 def _shape_search(raw, suggestions, suggest, cache_dir):
     """In a thread: a search answer as {shelves, items}, plus `terms` when suggestions were
     asked for in the same round trip."""
-    sync.load_art_sizes(cache_dir)
-    answer = sync.search_results(raw, cache_dir)
+    normalize.load_art_sizes(cache_dir)
+    answer = normalize.search_results(raw, cache_dir)
     if suggest:
-        answer['terms'] = sync.search_suggestions(suggestions, cache_dir)['terms'][:suggest]
+        answer['terms'] = normalize.search_suggestions(suggestions, cache_dir)['terms'][:suggest]
     return answer
 
 
 def _shape_suggestions(raw, cache_dir):
-    sync.load_art_sizes(cache_dir)
-    return sync.search_suggestions(raw, cache_dir)
+    normalize.load_art_sizes(cache_dir)
+    return normalize.search_suggestions(raw, cache_dir)
 
 
 def _shape_and_keep(shaper, raw, path, cache_dir):
     """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)."""
-    sync.load_art_sizes(cache_dir)
-    return sync.write_answer(path, shaper(raw, cache_dir))
+    normalize.load_art_sizes(cache_dir)
+    return normalize.write_answer(path, shaper(raw, cache_dir))
 
 
 def _read_kept(path):
     """In a thread: the answer kept at path when it is younger than ANSWER_MAX_AGE."""
-    answer = sync.read_answer(path, ANSWER_MAX_AGE)
+    answer = normalize.read_answer(path, ANSWER_MAX_AGE)
     return answer if isinstance(answer, dict) else None
 
 
@@ -1298,7 +1299,7 @@ class Engine(GObject.Object):
     # As am.py's search, suggest, landing and category commands were, plus browse (the New
     # page) and made_for_you. Every one needs a signed-in engine, but a kept answer (the
     # landing, a category, browse and made-for-you are kept for ANSWER_MAX_AGE) is answered
-    # without one. The shaping (backend.sync) runs in a thread: it stats the artwork cache.
+    # without one. The shaping (backend.normalize) runs in a thread: it stats the artwork cache.
 
     async def search(self, term, library=False, limit=SEARCH_LIMIT, suggest=0):
         """A search of the catalog (or, with `library`, of the library): {shelves: [{key,
@@ -1347,16 +1348,16 @@ class Engine(GObject.Object):
         """The search page's Browse Categories: {categories: [{id, kind: 'category', title,
         subtitle, art, artColor, url}]} in Apple's order, `art` a small catalog URL. From
         <cache>/landing.json for a day (no engine needed then), else the bridge's
-        searchLanding (the search-landing recommendation set) shaped by sync.search_landing
+        searchLanding (the search-landing recommendation set) shaped by normalize.search_landing
         and kept there. `refresh` asks Apple again."""
-        path = self._kept_path(sync.landing_cache_path(str(self.cache_dir)))
+        path = self._kept_path(normalize.landing_cache_path(str(self.cache_dir)))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
         client = await self._require_signed_in()
         raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'search landing')
-        return await asyncio.to_thread(_shape_and_keep, sync.search_landing, raw, path,
+        return await asyncio.to_thread(_shape_and_keep, normalize.search_landing, raw, path,
                                        str(self.cache_dir))
 
     async def category(self, category_id, refresh=False):
@@ -1366,14 +1367,14 @@ class Engine(GObject.Object):
         category_id = str(category_id or '')
         if not category_id:
             raise EngineError('usage', 'category needs an id')
-        path = self._kept_path(sync.category_cache_path(str(self.cache_dir), category_id))
+        path = self._kept_path(normalize.category_cache_path(str(self.cache_dir), category_id))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
         client = await self._require_signed_in()
         raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, f'category {category_id}')
-        return await asyncio.to_thread(_shape_and_keep, sync.category_page, raw, path,
+        return await asyncio.to_thread(_shape_and_keep, normalize.category_page, raw, path,
                                        str(self.cache_dir))
 
     async def browse(self, refresh=False):
@@ -1382,7 +1383,7 @@ class Engine(GObject.Object):
         shelves in Apple's order, the featured banners first ("Featured"), then Best New
         Songs, New Releases, playlists, stations, videos; items as search() has them. From
         <cache>/browse.json for a day, else fetched and kept."""
-        path = self._kept_path(sync.browse_cache_path(str(self.cache_dir)))
+        path = self._kept_path(normalize.browse_cache_path(str(self.cache_dir)))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
@@ -1390,7 +1391,7 @@ class Engine(GObject.Object):
         storefront = str((await self.status()).get('storefront') or 'us')
         raw = await self._api(client, BROWSE_ENDPOINT.format(storefront=storefront),
                               BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
-        return await asyncio.to_thread(_shape_and_keep, sync.editorial_shelves, raw, path,
+        return await asyncio.to_thread(_shape_and_keep, normalize.editorial_shelves, raw, path,
                                        str(self.cache_dir))
 
     async def made_for_you(self, refresh=False):
@@ -1398,7 +1399,7 @@ class Engine(GObject.Object):
         (RECOMMENDATIONS_ENDPOINT) made only of the personal mixes and stations, each a
         shelf titled as Apple titles it. From <cache>/made-for-you.json for a day, else
         fetched and kept."""
-        path = self._kept_path(sync.made_for_you_cache_path(str(self.cache_dir)))
+        path = self._kept_path(normalize.made_for_you_cache_path(str(self.cache_dir)))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
@@ -1408,5 +1409,5 @@ class Engine(GObject.Object):
         return await asyncio.to_thread(
             _shape_and_keep,
             lambda answer, cache_dir: {
-                'shelves': sync.made_for_you_shelves(answer.get('data'), cache_dir)},
+                'shelves': normalize.made_for_you_shelves(answer.get('data'), cache_dir)},
             raw, path, str(self.cache_dir))

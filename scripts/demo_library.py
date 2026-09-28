@@ -56,7 +56,7 @@ if "applemusic" not in sys.modules:
     sys.modules["applemusic"] = _module
     _spec.loader.exec_module(_module)
 
-from applemusic.backend import config, sync  # noqa: E402
+from applemusic.backend import config, normalize  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Visual styling and palettes
@@ -1560,7 +1560,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
     os.makedirs(art_dir, exist_ok=True)
     os.makedirs(thumb_dir, exist_ok=True)
     # Before drawing: a changed thumbnail size wipes thumb/.
-    sync.apply_art_sizes(out_dir, cover_size, thumb_size)
+    normalize.apply_art_sizes(out_dir, cover_size, thumb_size)
 
     # The covers are drawn together at the end (draw_covers), in parallel when
     # there are many; each draw_cover call below only queues one.

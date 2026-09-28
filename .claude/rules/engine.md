@@ -20,7 +20,7 @@ paths:
   a `Gio.Subprocess`, the one `CDPClient`, the commands as coroutines. engine.py's docstring lists
   the commands; `src/backend/README.md` has the bridge's calls, the events and the library.json
   shapes. Keep the three in step when you add a command.
-- The backend is a fork this app owns. `sync.py` (and its test, and `scripts/demo_library.py`)
+- The backend is a fork this app owns. `normalize.py` (and its test, and `scripts/demo_library.py`)
   still use the extension's style, exempted in `pyproject.toml`; new backend code follows the
   app's style. `cdp.py` is only the WebSocket codec, for the developer attach.
 - Only `EngineError(code, message)` leaves the backend and the Engine. A new failure kind gets a
