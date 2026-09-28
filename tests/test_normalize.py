@@ -672,6 +672,30 @@ class TestArtworkDownload(unittest.TestCase):
         self.assertEqual(len(logs.output), 1)
         self.assertIn('no space left', logs.output[0])
 
+    def test_a_cancelled_download_says_so(self):
+        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
+                                         cache_dir=self.tmp_dir)
+        urls = {path: normalize.ART_URLS[path] for path in (item['art'], item['thumb'])}
+        fetched = []
+        real = normalize.cache_artwork, normalize.cache_thumbnail
+        normalize.cache_artwork = lambda url, cache_dir, **kwargs: fetched.append(url)
+        normalize.cache_thumbnail = lambda url, cache_dir, dest, **kwargs: fetched.append(url)
+        try:
+            with self.assertRaises(normalize.Cancelled):
+                normalize.download_art(urls, self.tmp_dir, cancelled=lambda: True)
+            self.assertEqual(fetched, [])  # nothing started
+            # Cancelled while the covers come in: the thumbnails are never started.
+            asked = []
+
+            def cancelled():
+                asked.append(True)
+                return len(asked) > 1
+            with self.assertRaises(normalize.Cancelled):
+                normalize.download_art(urls, self.tmp_dir, cancelled=cancelled)
+            self.assertEqual(fetched, [urls[item['art']]])
+        finally:
+            normalize.cache_artwork, normalize.cache_thumbnail = real
+
     @unittest.skipIf(GdkPixbuf is None, 'GdkPixbuf not available')
     def test_thumbnail_is_scaled_from_the_cached_cover(self):
         self.addCleanup(setattr, normalize, 'scale_image', normalize.scale_image)

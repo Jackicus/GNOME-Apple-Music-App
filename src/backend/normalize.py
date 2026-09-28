@@ -20,6 +20,9 @@ from . import config, store
 
 log = logging.getLogger(__name__)
 
+# What download_art raises when it gives up (store.CacheGone, a wiped cache, is one too).
+Cancelled = store.Cancelled
+
 # Scaling a cached cover down to its thumbnail, without fetching it again,
 # takes an image library, and nothing in the backend imports gi. The app
 # installs one here: a callable scale_image(src_path, dest_path, size) that
@@ -365,10 +368,11 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
     cache_artwork, with the reason) and otherwise ignored: the UI treats a
     path that is not on disk as no artwork. `progress(done, total)` is called
     (on this thread) after each fetch, and `cancelled()` is asked before each
-    result is waited for: True gives up the fetches not started yet. When the
-    cache's generation moves from `generation` (it was cleared: store.py), the
-    fetches not started are given up, the running ones finish writing nothing,
-    and store.CacheGone is raised.
+    result is waited for: once it answers True, the fetches not started yet are
+    given up, the running ones finish, and Cancelled is raised, so a caller
+    never takes a cancelled download for a finished one. When the cache's
+    generation moves from `generation` (it was cleared: store.py), the same,
+    with store.CacheGone (a Cancelled), and the running ones write nothing.
     """
     if isinstance(library_data_or_urls, dict) and 'sections' not in library_data_or_urls:
         urls = library_data_or_urls
@@ -393,17 +397,14 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
                 (covers, lambda p, u: cache_artwork(u, cache_dir, generation=generation)),
                 (thumbs, lambda p, u: cache_thumbnail(u, cache_dir, p, generation=generation))):
             if cancelled and cancelled():
-                break
+                raise Cancelled('artwork')
             futures = {pool.submit(fetch, path, url): url for path, url in batch.items()}
             for fut in concurrent.futures.as_completed(futures):
-                if not store.current(generation):
+                gone = not store.current(generation)
+                if gone or (cancelled and cancelled()):
                     for pending in futures:
-                        pending.cancel()
-                    raise store.CacheGone(cache_dir)
-                if cancelled and cancelled():
-                    for pending in futures:
-                        pending.cancel()
-                    break
+                        pending.cancel()  # the pool still waits for the running ones
+                    raise store.CacheGone(cache_dir) if gone else Cancelled('artwork')
                 ok = False
                 try:
                     ok = bool(fut.result())

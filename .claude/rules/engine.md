@@ -87,7 +87,9 @@ paths:
   when it starts and passes `generation=` to every write. Clearing the cache or signing out
   calls `store.bump_cache_generation()` first; from then on that job's writes land nowhere and
   make no directory, and a job that must stop (a sync's artwork, save_library) raises
-  `store.CacheGone`.
+  `store.CacheGone`. That is a `store.Cancelled` (`normalize.Cancelled`), which
+  `download_art` also raises when its `cancelled()` says so: a cancelled download never
+  returns counts that pass for a finished one, and the sync writes nothing after it.
 - Chrome's argv (`chrome.chrome_args()`): `--disable-features=HardwareMediaKeyHandling` keeps
   Chrome's own MPRIS player off the bus (the app owns MPRIS); `--headless=new`; the visible
   window is an `--app=` window. In a Flatpak sandbox `find_chrome()` asks the host (blocking:
