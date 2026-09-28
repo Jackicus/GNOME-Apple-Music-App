@@ -24,7 +24,7 @@ running and better than before.
 - [x] 14. Now Playing sheet, queue, lyrics (2026-09-28)
 - [x] 15. Search, New and Made for You (2026-09-28)
 - [x] 16. Context menus and actions (play next, love, add, drag to playlist) (2026-09-28)
-- [ ] 17. Preferences
+- [x] 17. Preferences (2026-09-28)
 - [ ] 18. Keyboard navigation and accessibility
 - [ ] 19. Performance pass
 - [ ] 20. Packaging and release
@@ -2034,6 +2034,80 @@ dialog) in dark and --light; real run: toggle background playback, close the win
 raise it from the shell's media controls, quit. Update CLAUDE.md (keys, dialogs/). Tick phase 17
 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- What exists: `src/dialogs/preferences.py` + `.blp` (`$AppleMusicPreferencesDialog`, pages
+  `general` and `engine`; `app.show_preferences(page)` opens it on one, `--preferences
+  [general|engine]` in `screenshot.py`), `app.preferences` (`<primary>comma`, "Preferences"
+  first in the primary menu's second section, in the shortcuts dialog), the
+  `background-playback` key, `Application.close_window()` and the background hold,
+  `Application.clear_cache()`, `Window.hide_for_background()`, `Player.stopped`, and in
+  `engine.py` `CACHE_ENTRIES`, `cache_size()`, `clear_cache()`, `Engine.prefer_headless`,
+  `Engine.set_port()`; `sync.py` gained `INTERVALS`, `interval_index()`, `sync_due()` (main's
+  method now calls it) and `last_sync_text()`. Tests: the mode and port rules and the cache
+  helpers in `test_engine.py`, `WhenToSyncTest` in `test_sync_app.py`, `stopped` in
+  `test_player.py`; 484 tests.
+- The layout, as shipped: General: "Playback" (the switch), "Library" (the interval ComboRow,
+  its subtitle "Last refreshed 3 hours ago" from `last-sync`, which phase 11 wanted shown
+  somewhere; the Refresh Now ButtonRow; the Cache row, "57.5 MB" or "Empty", with Clear).
+  Engine: an untitled group with the Engine row ("Running hidden on port 9229", "Running in a
+  window…", "Running on port …, not signed in", "Starting…", "Signing in…", "Not running";
+  Start/Stop insensitive while it changes or signs in), "Browser" (browser command, DevTools
+  port, run hidden, start with the app), "Account" (its description "Signed in as NAME",
+  "Signed in" or "Not signed in"; Sign Out destructive, sensitive only while signed in). Under
+  `--demo` the engine row says "Not used with the demo library" and its button and Sign Out
+  are off, Clear and Refresh Now toast "Not available with the demo library".
+- Decisions: `Adw.EntryRow` has no subtitle, so "applies the next time the engine starts" for
+  the browser command is the Browser group's description; the port and hidden rows say it in
+  their subtitles, the port's naming the port the engine really uses (the .Devel build's is
+  the setting + 1; `APPLE_MUSIC_PORT` overrides both). The interval ComboRow is bound by hand
+  (`Gio.Settings.bind_with_mapping` is unusable from Python: CLAUDE.md); a value outside the
+  four choices (the key takes 0-168) shows the nearest automatic one and is not rewritten.
+  Clear removes more than the plan listed: every `CACHE_ENTRIES` (the day-long landing,
+  categories, browse and made-for-you answers too), keeping `library.lock`; it cancels a
+  running sync first, empties the library, forgets `last-sync`, then syncs when signed in.
+  The size shown is the whole cache directory's, apparent bytes (`GLib.format_size`).
+  `engine.start()` without a mode now keeps a running engine in whichever mode (it used to
+  restart a visible one headless, which a play request during sign-in would have done) and
+  starts a stopped one per `engine-headless`; only sign-in names a mode. Background playback
+  keeps the app while paused (so the Shell's controls can resume it) and quits 10 s after
+  playback has stopped (`BACKGROUND_GRACE`; MusicKit passes through ended and stopped between
+  items); closing while paused quits at once, as with the setting off. Toasts go into
+  Preferences while it is open (`app.toast`), and Sign Out's question is asked over it.
+- Adw.Dialog as a window of its own (see CLAUDE.md): the dialog inserts the application as
+  its `app` action group, or Refresh Now would be insensitive; Sign Out is wired by its
+  `activated` signal (an actionable row's sensitivity is its action's);
+  `hide_for_background()` closes toplevels transient for the window as well as
+  `get_visible_dialog()`. Phase 18 should know that focus and Escape in such dialogs belong
+  to their own window.
+- Verified live (the real Application with the Devel id in-process on the dev engine, memory
+  settings, as phases 11-16; volume 0.2, playback stopped after, as before): the Engine row
+  followed the engine (running hidden on 9229; Stop → "Not running" and no Chrome; Start →
+  up); the port row set to 9240 left the running Chrome on 9229, and the next Start came up
+  on 9241 (`ps`), then back on 9229; Sign Out asked (its answer ran a stand-in for
+  `_sign_out`, so nothing was signed out); background playback switched on from the
+  General page; an album playing, `window.close()` hid the window with the app held, the
+  engine up and the position still moving; `gdbus … org.mpris.MediaPlayer2.Raise` showed it
+  and released the hold; closed again, MPRIS PlayPause paused it and the app stayed 13 s
+  (paused keeps it), PlayPause resumed, `player.stop()` → the app quit by itself 10.4 s
+  later and the Chrome was gone; with Preferences open, closing the window closed it too; a
+  second `app.activate()` showed the window; MPRIS Quit from the background quit and stopped
+  the Chrome; with the setting off, closing while playing quit at once and stopped it. Clear
+  on a throwaway copy of the cache (`APPLE_MUSIC_CACHE` in the scratchpad, deleted after):
+  it asked, removed the ten entries, emptied the library, started a sync that refilled it in
+  32 s, set `last-sync`, and the Cache row went "57.5 MB" → "Empty" → "40.1 MB". In demo
+  mode by a script: every bound row to its key and back, the four interval choices, the
+  Refresh Now row running `app.sync`, the dialog letting go of everything on close (27
+  checks). Screenshots `--demo --preferences` and `--preferences engine`, dark and light.
+- Not verified: a real click in GNOME Shell's media controls (Raise was called over D-Bus,
+  which is what the Shell does), a real Ctrl+, (no input synthesis), a start with
+  `engine-headless` off (it would open a Chrome window on the desktop; unit-tested only),
+  the dialog presented inside a maximized window.
+- Not done: the Cache row is measured on open, after Clear and when a sync ends, not while
+  one runs; after Clear the item playing keeps its artwork in the bar but MPRIS's
+  `mpris:artUrl` names a deleted file until the next item; the .Devel build's port is the
+  setting + 1 unguarded (65535 gives 65536); the dialog at 360 px is phase 18's.
 
 ## Phase 18: Keyboard navigation and accessibility
 

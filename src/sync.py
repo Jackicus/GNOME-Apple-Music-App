@@ -31,6 +31,10 @@ What the web player asks for, found by watching its requests (2026-09-28):
 
 The Item dicts written here carry one key beyond the README's shape: `artUrl`, the cover's
 URL at config.COVER_SIZE, which fetch_cover() downloads to the item's `art` path.
+
+When to sync: sync_due(last_sync, hours) (the last-sync and sync-interval settings), and the
+choices Preferences offers for the interval (INTERVALS; interval_index()), with
+last_sync_text() saying how long ago the last one was.
 """
 
 import asyncio
@@ -38,6 +42,8 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from gettext import gettext as _
+from gettext import ngettext
 
 import gi
 
@@ -75,6 +81,66 @@ SHELF_DEFS = (
     ('heavy-rotation', 'Heavy Rotation', '/v1/me/history/heavy-rotation', 10, 10),
     ('recently-added', 'Recently Added', '/v1/me/library/recently-added', 25, 100),
 )
+
+
+# The sync-interval choices Preferences offers, in hours, in its order: every hour, every
+# 6 hours, every day, manually (0: only when asked).
+INTERVALS = (1, 6, 24, 0)
+DEFAULT_INTERVAL = 6
+
+
+def interval_index(hours):
+    """The INTERVALS position for a sync-interval value; one set outside the choices (the
+    key takes 0 to 168) shows as the nearest automatic one, 0 as manual."""
+    if hours in INTERVALS:
+        return INTERVALS.index(hours)
+    if hours <= 0:
+        return INTERVALS.index(0)
+    automatic = [value for value in INTERVALS if value > 0]
+    return INTERVALS.index(min(automatic, key=lambda value: (abs(value - hours), value)))
+
+
+def parse_stamp(stamp):
+    """A last-sync value (ISO 8601) as an aware datetime, None when empty or not one; a
+    stamp without a zone is UTC."""
+    try:
+        when = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+def sync_due(stamp, hours, now=None):
+    """Whether the library should be synced now: never yet (no stamp, or not one), or the
+    last sync (`stamp`) is older than `hours`; 0 hours means only when asked."""
+    if hours <= 0:
+        return False
+    last = parse_stamp(stamp)
+    if last is None:
+        return True
+    now = now or datetime.now(timezone.utc)
+    return (now - last).total_seconds() > hours * 3600
+
+
+def last_sync_text(stamp, now=None):
+    """How long ago the last sync was, as Preferences words it."""
+    last = parse_stamp(stamp)
+    if last is None:
+        return _('Not refreshed yet')
+    now = now or datetime.now(timezone.utc)
+    minutes = int((now - last).total_seconds() // 60)
+    if minutes < 1:
+        return _('Last refreshed just now')
+    if minutes < 60:
+        return ngettext('Last refreshed {count} minute ago', 'Last refreshed {count} minutes ago',
+                        minutes).format(count=minutes)
+    hours = minutes // 60
+    if hours < 24:
+        return ngettext('Last refreshed {count} hour ago', 'Last refreshed {count} hours ago',
+                        hours).format(count=hours)
+    days = hours // 24
+    return ngettext('Last refreshed {count} day ago', 'Last refreshed {count} days ago',
+                    days).format(count=days)
 
 
 def scale_image(src_path, dest_path, size):

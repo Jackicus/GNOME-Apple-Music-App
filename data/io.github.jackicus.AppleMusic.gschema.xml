@@ -23,6 +23,11 @@
       <summary>Expanded playlist folders</summary>
       <description>The ids of the playlist folders shown open in the sidebar, their contents listed under them.</description>
     </key>
+    <key name="background-playback" type="b">
+      <default>false</default>
+      <summary>Keep playing when the window is closed</summary>
+      <description>Whether closing the window while something plays hides it and lets the music play on, the system's media controls bringing the window back; the app quits once playback stops. Off, closing the window quits the app and stops the engine.</description>
+    </key>
     <key name="browser-command" type="s">
       <default>'google-chrome-stable'</default>
       <summary>Browser command</summary>
@@ -32,12 +37,12 @@
       <range min="1024" max="65535"/>
       <default>9228</default>
       <summary>Engine debugging port</summary>
-      <description>The port on 127.0.0.1 where the engine's Chrome listens for DevTools. The development build uses the port after this one (9229 by default) so it can run beside a release build; APPLE_MUSIC_PORT in the environment overrides both.</description>
+      <description>The port on 127.0.0.1 where the engine's Chrome listens for DevTools, used from the next engine start. The development build uses the port after this one (9229 by default) so it can run beside a release build; APPLE_MUSIC_PORT in the environment overrides both.</description>
     </key>
     <key name="engine-headless" type="b">
       <default>true</default>
       <summary>Run the engine headless</summary>
-      <description>Whether Chrome runs without a window once signed in. Off, the Chrome window stays visible after signing in.</description>
+      <description>Whether Chrome runs without a window once signed in, from the next engine start. Off, the Chrome window stays visible after signing in and whenever the engine starts, which helps debugging.</description>
     </key>
     <key name="engine-autostart" type="b">
       <default>true</default>

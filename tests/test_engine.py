@@ -165,6 +165,7 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.devtools_waits = 0
+        self.devtools_port = 9333  # the port Chrome is expected on
         self.engine = TestEngine(self, profile_dir=self.profile, port=9333)
         self.engine.stop_grace = 0.5
         self.states = []
@@ -179,7 +180,7 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
 
     async def fake_devtools(self, port, timeout=15.0):
         self.devtools_waits += 1
-        self.assertEqual(port, 9333)
+        self.assertEqual(port, self.devtools_port)
         return {'Browser': 'Fake/1'}
 
     # -- starting and stopping ------------------------------------------------------------
@@ -266,6 +267,45 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.engine.spawned), 2)
         self.assertIsNotNone(self.engine.spawned[0].popen.poll())
         self.assertEqual(self.engine.state, 'up')
+
+    async def test_start_without_a_mode_keeps_a_running_engine(self):
+        await self.engine.start(visible=True)
+        await self.engine.start()  # a play request, a sync: whatever mode it runs in
+        self.assertEqual(len(self.engine.spawned), 1)
+        self.assertFalse(self.engine.headless)
+        self.assertEqual(self.states, ['starting', 'up'])
+
+    async def test_start_without_a_mode_follows_prefer_headless(self):
+        self.engine.prefer_headless = False  # engine-headless off: a window, for debugging
+        await self.engine.start()
+        self.assertNotIn('--headless=new', self.engine.spawned[0].argv)
+        self.assertFalse(self.engine.headless)
+        self.engine.prefer_headless = True
+        await self.engine.restart()
+        self.assertIn('--headless=new', self.engine.spawned[1].argv)
+        self.assertTrue(self.engine.headless)
+
+    async def test_a_port_change_waits_for_the_next_start(self):
+        await self.engine.start()
+        self.engine.set_port(9444)
+        self.assertEqual(self.engine.port, 9333)  # the running Chrome keeps its own
+        self.devtools_port = 9444
+        await self.engine.restart()
+        self.assertEqual(self.engine.port, 9444)
+        self.assertIn('--remote-debugging-port=9444', self.engine.spawned[1].argv)
+        self.assertEqual(chrome.EngineState.load(self.engine.state_file).port, 9444)
+
+    async def test_a_port_change_while_down_applies_at_once(self):
+        self.engine.set_port(9555)
+        self.assertEqual(self.engine.port, 9555)
+        self.engine.set_port(9333)
+        await self.engine.start()
+        self.assertIn('--remote-debugging-port=9333', self.engine.spawned[0].argv)
+        # Changed and changed back while up: nothing waits for the next start.
+        self.engine.set_port(9444)
+        self.engine.set_port(9333)
+        await self.engine.restart()
+        self.assertIn('--remote-debugging-port=9333', self.engine.spawned[1].argv)
 
     async def test_a_failed_start_cleans_up(self):
         self.chrome.responders['Runtime.evaluate'] = FakePage(ready=False)
@@ -1068,6 +1108,46 @@ class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.exception.code, 'engine-down')
         await engine.stop()
         self.assertFalse(pathlib.Path('/nowhere/chrome').exists())
+
+
+class CacheTest(unittest.TestCase):
+    """cache_size() and clear_cache() over an invented cache directory."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        self.cache = self.root / 'cache'
+        files = {
+            'library.json': 100, 'library.lock': 0, 'landing.json': 10, 'browse.json': 10,
+            'made-for-you.json': 10, 'art/l.alb1.jpg': 1000, 'art/.sizes': 20,
+            'thumb/l.alb1.jpg': 300, 'remote-art/abc.jpg': 400, 'items/album-1.json': 50,
+            'lyrics/1000000001.json': 30, 'categories/c1.json': 40, 'notes.txt': 5,
+        }
+        for name, size in files.items():
+            path = self.cache / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'x' * size)
+        self.total = sum(files.values())
+        # A link to something outside: neither counted nor followed, only removed.
+        self.outside = self.root / 'outside'
+        self.outside.mkdir()
+        (self.outside / 'big.bin').write_bytes(b'x' * 5000)
+        (self.cache / 'art' / 'elsewhere').symlink_to(self.outside)
+
+    def test_size_adds_up_the_files(self):
+        self.assertEqual(engine_module.cache_size(self.cache), self.total)
+        self.assertEqual(engine_module.cache_size(self.root / 'missing'), 0)
+
+    def test_clear_removes_the_cache_and_leaves_the_rest(self):
+        removed = engine_module.clear_cache(self.cache)
+        self.assertEqual(removed, len(engine_module.CACHE_ENTRIES))
+        self.assertEqual(sorted(p.name for p in self.cache.iterdir()),
+                         ['library.lock', 'notes.txt'])
+        self.assertTrue((self.outside / 'big.bin').is_file())  # the link's target stays
+        self.assertEqual(engine_module.cache_size(self.cache), 5)
+        self.assertEqual(engine_module.clear_cache(self.cache), 0)  # nothing left to clear
+        self.assertEqual(engine_module.clear_cache(self.root / 'missing'), 0)
 
 
 class PathsTest(unittest.TestCase):

@@ -1,5 +1,6 @@
 """The application: app actions, settings, the library and its sync, the engine's lifecycle,
-sign-in and sign-out, demo mode, logging and the asyncio-on-GLib bootstrap."""
+sign-in and sign-out, Preferences and the cache, background playback, demo mode, logging and
+the asyncio-on-GLib bootstrap."""
 
 import asyncio
 import logging
@@ -22,11 +23,12 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
-from .engine import Engine, engine_paths  # noqa: E402
+from .engine import Engine, clear_cache, engine_paths  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
-from .sync import install_scaler, sync_library  # noqa: E402
+from .sync import install_scaler, sync_due, sync_library  # noqa: E402
+from .widgets import artwork  # noqa: E402
 from .window import Window  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -36,6 +38,10 @@ RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
 # How long quitting waits for the engine to stop (its own SIGTERM grace is 5 s) before Chrome is
 # killed outright and the app quits anyway.
 QUIT_TIMEOUT = 6.0
+
+# With the window closed for background playback, how long playback may look stopped (MusicKit
+# passes through 'ended' and 'stopped' between items and queues) before the app quits.
+BACKGROUND_GRACE = 10
 
 
 class Application(Adw.Application):
@@ -59,13 +65,17 @@ class Application(Adw.Application):
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
+        self._preferences = None  # the Preferences dialog while it is open
         self._sync_task = None  # the sync running, if one is
+        self._background = None  # the handlers while the window is closed and music plays on
+        self._background_timer = None  # the grace before quitting, once playback stopped
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
 
         self._add_action('quit', self._on_quit, ['<primary>q'])
         self._add_action('about', self._on_about)
         self._add_action('shortcuts', self._on_shortcuts, ['<primary>question'])
+        self._add_action('preferences', self._on_preferences, ['<primary>comma'])
         self._add_action('sign-in', self._on_sign_in)
         self._add_action('sign-out', self._on_sign_out)
         self._add_action('sync', self._on_sync, ['<primary>r'])
@@ -133,15 +143,24 @@ class Application(Adw.Application):
 
     def _make_engine(self):
         """The Engine on this build's profile directory and port (engine_paths: the .Devel build
-        beside the release one; the environment overrides win), reading the browser command
-        from the settings, then and whenever it changes."""
+        beside the release one; the environment overrides win), with the browser command and
+        the preferred mode from the settings, then and whenever they change (Preferences):
+        the browser, the port and the mode apply when Chrome next starts."""
         if self.demo:
             return Engine(demo=True)
         profile_dir, port = engine_paths(self.profile, self.settings.get_int('engine-port'))
         engine = Engine(profile_dir, port, self.settings.get_string('browser-command'))
+        engine.prefer_headless = self.settings.get_boolean('engine-headless')
         self.settings.connect(
             'changed::browser-command',
             lambda settings, key: setattr(engine, 'browser_command', settings.get_string(key)))
+        self.settings.connect(
+            'changed::engine-port',
+            lambda settings, key: engine.set_port(engine_paths(self.profile,
+                                                               settings.get_int(key))[1]))
+        self.settings.connect(
+            'changed::engine-headless',
+            lambda settings, key: setattr(engine, 'prefer_headless', settings.get_boolean(key)))
         log.debug('engine: profile %s, port %d, state %s', profile_dir, port, engine.state_file)
         return engine
 
@@ -239,17 +258,8 @@ class Application(Adw.Application):
     def sync_due(self):
         """Whether the library should be synced now: never yet, or the last sync is older
         than the sync-interval setting (hours; 0 means only when asked)."""
-        hours = self.settings.get_int('sync-interval')
-        if hours <= 0:
-            return False
-        stamp = self.settings.get_string('last-sync')
-        try:
-            last = datetime.fromisoformat(stamp)
-        except ValueError:
-            return True
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - last).total_seconds() > hours * 3600
+        return sync_due(self.settings.get_string('last-sync'),
+                        self.settings.get_int('sync-interval'))
 
     def _on_sync(self, *_args):
         self.start_sync()
@@ -305,16 +315,38 @@ class Application(Adw.Application):
         if window is not None:
             window.show_sync_progress(section, done, total)
 
+    async def clear_cache(self):
+        """Clear the cache (engine.CACHE_ENTRIES: library.json, the artwork, items, lyrics
+        and the day-long answers), after stopping a sync that is running; the library
+        empties and `last-sync` is forgotten, and the library is synced again when signed
+        in. Answers False (nothing done) in demo mode, whose library is the cache."""
+        if self.demo:
+            return False
+        task = self._sync_task
+        if task is not None and not task.done():
+            task.cancel()  # it would write library.json and artwork into what is cleared
+            await asyncio.wait([task])
+        await asyncio.to_thread(clear_cache, config.cache_dir())
+        artwork.get_default().clear()
+        self.settings.set_string('last-sync', '')
+        await self.library.load()  # nothing left to read: the models empty
+        if self.settings.get_boolean('signed-in'):
+            self.start_sync()
+        return True
+
     def toast(self, title, button_label=None, action_name=None):
-        """A toast on the active window, with a button running an action when given."""
-        window = self.get_active_window()
-        if window is None:
+        """A toast on the active window, or in Preferences while that is open over it, with
+        a button running an action when given."""
+        target = self._preferences
+        if target is None:
+            target = self.get_active_window()
+        if target is None:
             return
         toast = Adw.Toast(title=title)
         if button_label and action_name:
             toast.set_button_label(button_label)
             toast.set_action_name(action_name)
-        window.add_toast(toast)
+        target.add_toast(toast)
 
     def report(self, error):
         """An EngineError as a toast: a sentence for its code, never a traceback."""
@@ -330,15 +362,85 @@ class Application(Adw.Application):
             self.toast(_('Apple Music could not do that: {message}').format(
                 message=getattr(error, 'message', error)))
 
+    # -- background playback -------------------------------------------------------------
+
+    def close_window(self, window):
+        """The window's close request (Window.do_close_request). With background playback
+        on and something playing, the window hides and the app is held while the music
+        plays on: MPRIS Raise or launching the app again shows it, and the app quits once
+        playback has stopped for BACKGROUND_GRACE seconds. Otherwise the app quits, which
+        stops the engine."""
+        if (self._quitting is None and self.settings.get_boolean('background-playback')
+                and self.player is not None and self.player.active):
+            window.hide_for_background()
+            self._enter_background(window)
+        else:
+            self.activate_action('quit')
+
+    @property
+    def in_background(self):
+        """Whether the window is closed while the music plays on (the app held)."""
+        return self._background is not None
+
+    def _enter_background(self, window):
+        if self._background is None:
+            self.hold()
+            self._background = [
+                (self.player, self.player.connect('notify::state', self._check_background)),
+                (self.player, self.player.connect('notify::track', self._check_background)),
+                (window, window.connect('notify::visible', self._on_window_visible)),
+            ]
+            log.info('the window is closed; playing on in the background')
+        self._check_background()
+
+    def _leave_background(self):
+        """The window is back (or the app is quitting): the hold released, nothing watched."""
+        if self._background is None:
+            return
+        for source, handler in self._background:
+            source.disconnect(handler)
+        self._background = None
+        if self._background_timer is not None:
+            GLib.source_remove(self._background_timer)
+            self._background_timer = None
+        self.release()
+
+    def _on_window_visible(self, window, _pspec):
+        if window.get_visible():
+            log.info('the window is shown again')
+            self._leave_background()
+
+    def _check_background(self, *_args):
+        """Playback stopped with the window closed: quit after the grace, unless something
+        plays (or is paused) again by then."""
+        if self._background is None:
+            return
+        if not self.player.stopped:
+            if self._background_timer is not None:
+                GLib.source_remove(self._background_timer)
+                self._background_timer = None
+        elif self._background_timer is None:
+            self._background_timer = GLib.timeout_add_seconds(
+                BACKGROUND_GRACE, self._on_background_stopped)
+
+    def _on_background_stopped(self):
+        self._background_timer = None
+        if self._background is not None and self.player.stopped:
+            log.info('playback stopped with the window closed: quitting')
+            self.activate_action('quit')
+        return GLib.SOURCE_REMOVE
+
     # -- quitting ------------------------------------------------------------------------
 
     def _on_quit(self, *_args):
         """Stop the engine, then quit: Chrome must not outlive the app. Closing the last window
-        comes here too (Window.do_close_request)."""
+        comes here too (close_window, unless the music plays on in the background), as do
+        MPRIS Quit and the end of background playback."""
         if self._quitting is None:
             self._quitting = self.spawn(self._quit())
 
     async def _quit(self):
+        self._leave_background()
         for window in self.get_windows():
             if hasattr(window, 'prepare_quit'):  # a dialog's toplevel has none
                 window.prepare_quit()  # remembers its state and hides at once
@@ -373,6 +475,27 @@ class Application(Adw.Application):
     def _on_signin_closed(self, _dialog):
         self._signin = None
 
+    def _on_preferences(self, *_args):
+        self.show_preferences()
+
+    def show_preferences(self, page=None):
+        """Present the Preferences dialog (app.preferences), on `page` ('general',
+        'engine') when given; the one open already if it is. Returns the dialog."""
+        dialog = self._preferences
+        if dialog is None:
+            from .dialogs.preferences import PreferencesDialog
+
+            dialog = PreferencesDialog(self)
+            self._preferences = dialog
+            dialog.connect('closed', self._on_preferences_closed)
+            dialog.present(self.get_active_window())
+        if page:
+            dialog.set_visible_page_name(page)
+        return dialog
+
+    def _on_preferences_closed(self, _dialog):
+        self._preferences = None
+
     def _on_sign_out(self, *_args):
         if self.demo:
             return
@@ -387,7 +510,8 @@ class Application(Adw.Application):
         dialog.set_default_response('cancel')
         dialog.set_close_response('cancel')
         dialog.connect('response', self._on_sign_out_response)
-        dialog.present(self.get_active_window())
+        parent = self._preferences  # over Preferences, when it asks from there
+        dialog.present(parent if parent is not None else self.get_active_window())
 
     def _on_sign_out_response(self, _dialog, response):
         if response == 'sign-out':
@@ -453,6 +577,7 @@ class Application(Adw.Application):
     def _on_shortcuts(self, *_args):
         section = Adw.ShortcutsSection(title=_('General'))
         section.add(Adw.ShortcutsItem.new(_('Keyboard Shortcuts'), '<primary>question'))
+        section.add(Adw.ShortcutsItem.new(_('Preferences'), '<primary>comma'))
         section.add(Adw.ShortcutsItem.new(_('Search'), '<primary>f'))
         section.add(Adw.ShortcutsItem.new(_('Refresh Library'), '<primary>r'))
         section.add(Adw.ShortcutsItem.new(_('Go Back'), '<alt>Left'))

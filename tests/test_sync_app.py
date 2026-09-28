@@ -11,6 +11,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
@@ -397,3 +398,45 @@ class ReloadTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class WhenToSyncTest(unittest.TestCase):
+    """The sync-interval choices, sync_due() and last_sync_text() (untranslated here)."""
+
+    NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+
+    def test_interval_index(self):
+        self.assertEqual([app_sync.interval_index(hours) for hours in app_sync.INTERVALS],
+                         [0, 1, 2, 3])
+        # Values the key takes but Preferences does not offer: the nearest automatic one.
+        self.assertEqual(app_sync.interval_index(2), 0)
+        self.assertEqual(app_sync.interval_index(4), 1)
+        self.assertEqual(app_sync.interval_index(12), 1)
+        self.assertEqual(app_sync.interval_index(20), 2)
+        self.assertEqual(app_sync.interval_index(168), 2)
+        self.assertEqual(app_sync.interval_index(-1), 3)
+
+    def test_sync_due(self):
+        due = app_sync.sync_due
+        self.assertTrue(due('', 6, self.NOW))  # never synced
+        self.assertTrue(due('not a time', 6, self.NOW))
+        self.assertFalse(due('', 0, self.NOW))  # manual: only when asked
+        self.assertFalse(due('2026-09-28T07:00:00+00:00', 6, self.NOW))
+        self.assertTrue(due('2026-09-28T05:59:00+00:00', 6, self.NOW))
+        self.assertTrue(due('2026-09-28T10:59:00', 1, self.NOW))  # no zone: UTC
+        self.assertFalse(due('2026-09-27T13:00:00+00:00', 24, self.NOW))
+
+    def test_last_sync_text(self):
+        text = app_sync.last_sync_text
+        self.assertEqual(text('', self.NOW), 'Not refreshed yet')
+        self.assertEqual(text('2026-09-28T11:59:40+00:00', self.NOW), 'Last refreshed just now')
+        self.assertEqual(text('2026-09-28T11:59:00+00:00', self.NOW),
+                         'Last refreshed 1 minute ago')
+        self.assertEqual(text('2026-09-28T11:15:00+00:00', self.NOW),
+                         'Last refreshed 45 minutes ago')
+        self.assertEqual(text('2026-09-28T09:00:00+00:00', self.NOW),
+                         'Last refreshed 3 hours ago')
+        self.assertEqual(text('2026-09-27T11:00:00+00:00', self.NOW),
+                         'Last refreshed 1 day ago')
+        self.assertEqual(text('2026-09-28T13:00:00+01:00', self.NOW),
+                         'Last refreshed just now')  # another zone, the same instant

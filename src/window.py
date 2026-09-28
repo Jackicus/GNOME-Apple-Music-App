@@ -604,8 +604,24 @@ class Window(Adw.ApplicationWindow):
         self._settings_handlers = []
         self.set_visible(False)
 
+    def hide_for_background(self):
+        """The window closes while the music plays on (background playback): its dialogs are
+        closed, its state remembered, and it hides, to be presented again as it was."""
+        dialog = self.get_visible_dialog()
+        if dialog is not None:
+            dialog.force_close()
+        # A dialog shown as a window of its own (this one neither maximized nor tiled) is
+        # not among this window's dialogs: its window is transient for this one.
+        for toplevel in Gtk.Window.list_toplevels():
+            if toplevel is not self and toplevel.get_transient_for() is self:
+                toplevel.close()
+        self._save_window_state()
+        self.set_visible(False)
+
     def do_close_request(self):
         # Closing the last window quits, and quitting stops the engine first: the window
-        # stays (hidden) until the app has, so the close is declined here.
-        self.get_application().activate_action('quit')
+        # stays (hidden) until the app has, so the close is declined here. With background
+        # playback on and something playing, the app hides the window instead
+        # (Application.close_window).
+        self.get_application().close_window(self)
         return True

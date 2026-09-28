@@ -3,11 +3,14 @@ data/io.github.jackicus.AppleMusic.metainfo.xml.in
 data/io.github.jackicus.AppleMusic.gschema.xml
 src/main.py
 src/actions.py
+src/dialogs/preferences.py
+src/dialogs/preferences.blp
 src/dialogs/signin.py
 src/dialogs/signin.blp
 src/window.py
 src/window.blp
 src/player.py
+src/sync.py
 src/mpris.py
 src/player_bar.py
 src/player_bar.blp

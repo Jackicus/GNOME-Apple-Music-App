@@ -73,6 +73,10 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   bus, the Shell's media controls and the media keys; its methods run the Player)│
 │   Sign-in: dialogs/signin.py (visible Chrome, then headless); the account button │
 │   and the "Sign in to see your library" banner follow the signed-in key          │
+│   Preferences: dialogs/preferences.py (app.preferences, Ctrl+,), rows bound to   │
+│   the settings; background playback: closing the window while playing hides it   │
+│   and holds the app (Application.close_window) until MPRIS Raise, a relaunch or  │
+│   playback stopping (then quit, engine stopped)                                  │
 │ Blocking work (JSON parse, image decode, artwork HTTP) ─► asyncio.to_thread      │
 └──────────────────────────────────────────────────────────────────────────────────┘
 Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/, remote-art/, lyrics/}
@@ -86,24 +90,41 @@ Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/, remote-ar
 ```
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
-src/main.py                    Application: app.* actions (quit, about, shortcuts, sign-in, sign-out,
-                               sync, now-playing; play-pause, next, previous, shuffle, repeat,
-                               enabled while something plays), GSettings, logging and --debug, --demo
+src/main.py                    Application: app.* actions (quit, about, shortcuts, preferences,
+                               sign-in, sign-out, sync, now-playing; play-pause, next, previous,
+                               shuffle, repeat, enabled while something plays), GSettings (the
+                               engine follows browser-command, engine-port and engine-headless:
+                               _make_engine), logging and --debug, --demo
                                (app.demo), app.library, app.engine, app.player and app.mpris
                                (made in do_startup; the library loaded and the engine
                                autostarted in do_activate; MPRIS released in do_shutdown),
                                spawn(coro), toast(), report(error),
                                player_command(coro), start_sync()/sync_due() (the sync as a
-                               task, one at a time, with the banner and the toasts), the quit
-                               path (sync cancelled, engine stopped first), use_glib_event_loop()
+                               task, one at a time, with the banner and the toasts),
+                               show_preferences(page) (toasts go into Preferences while it is
+                               open), clear_cache() (sync stopped, CACHE_ENTRIES removed in a
+                               thread, the library emptied, last-sync forgotten, a sync when
+                               signed in), background playback (close_window(window): hide and
+                               hold() while playing and background-playback is on, else quit;
+                               in_background; the window shown again releases; playback
+                               stopped for BACKGROUND_GRACE (10 s) quits), the quit path (hold
+                               released, sync cancelled, engine stopped first),
+                               use_glib_event_loop()
 src/sync.py                    sync_library(engine, library, progress): the whole sync (fetch
                                through the engine, normalise in a thread, thumbnails, library.json,
                                prune, library.reload()); the endpoints and the favourites tag
                                (and Apple's canEdit false, kept as attributes.canEdit);
-                               install_scaler() (GdkPixbuf as the backend's scale_image)
+                               install_scaler() (GdkPixbuf as the backend's scale_image);
+                               when to sync: INTERVALS (1, 6, 24, 0 hours: Preferences'
+                               choices), interval_index(hours), sync_due(stamp, hours, now),
+                               last_sync_text(stamp, now) ("Last refreshed 3 hours ago")
 src/engine.py                  Engine (GObject: state down/starting/up/signing-in, authorized,
-                               headless, `event` signal): Chrome's lifecycle in the app, the one
-                               CDPClient, the commands (status, api, api_pages, api_all, item,
+                               headless, `event` signal): Chrome's lifecycle in the app
+                               (start(visible=None): without a mode a running engine is kept
+                               and a stopped one starts headless unless prefer_headless is
+                               off; set_port(port) and browser_command apply at the next
+                               start), the one CDPClient, the commands (status, api, api_pages,
+                               api_all, item,
                                signin, account_name; playback: play(kind, id, start_with,
                                shuffle), play_next, play_later, control(action), seek(s),
                                volume(level), shuffle(mode), repeat(mode), now_playing(),
@@ -122,12 +143,18 @@ src/engine.py                  Engine (GObject: state down/starting/up/signing-i
                                playlist id, song id), catalog_url(kind, library id));
                                engine_paths(profile, port) (chrome-devel and port+1 for the
                                .Devel build), item_endpoint(), resource_type(kind, id) (the
-                               API type: 'song', 'library-album'…; "i." ids are the library's)
+                               API type: 'song', 'library-album'…; "i." ids are the library's);
+                               the cache: CACHE_ENTRIES (library.json, art, thumb, remote-art,
+                               items, lyrics, landing.json, categories, browse.json,
+                               made-for-you.json; not library.lock), cache_size(path) and
+                               clear_cache(path), both run in a thread
 src/player.py                  Player (GObject, no GTK): state (MusicKit PlaybackStates name),
                                track (NowPlaying: id, catalog_id, title, artist, album,
                                duration_ms, artwork_url, index, explicit; or None), position,
                                duration, shuffle, repeat, volume, position_updated_at,
-                               active, estimated_position(); queue (a Gio.ListStore of
+                               active, stopped (no item, or STOPPED_STATES: none, stopped,
+                               ended, completed; paused is not), estimated_position(); queue
+                               (a Gio.ListStore of
                                NowPlaying, from queueItemsDidChange and queue() when the item
                                playing is not in it) and queue_index; lyrics (a lyrics.Lyrics,
                                asked of engine.lyrics() once per catalog song as it starts)
@@ -160,6 +187,16 @@ src/mpris.py                   Mpris(app): the org.mpris.MediaPlayer2.<applicati
                                app.quit; start() in do_startup, stop() in do_shutdown; the
                                name lost is logged and the app runs on
 src/dialogs/signin.py + .blp   $AppleMusicSignInDialog: the sign-in flow as a task while shown
+src/dialogs/preferences.py + .blp  $AppleMusicPreferencesDialog (Adw.PreferencesDialog, pages
+                               `general` and `engine`): background playback, the refresh
+                               interval (a ComboRow over sync.INTERVALS, by hand; its subtitle
+                               last_sync_text), Refresh Now (app.sync), Cache (size in a thread,
+                               Clear asks, then app.clear_cache()); the engine's state with
+                               Start/Stop (label bound to engine.state), browser command, DevTools
+                               port (the .Devel/APPLE_MUSIC_PORT port named in the subtitle),
+                               hidden, autostart, Sign Out (app.sign-out, by its `activated`
+                               signal); BINDINGS are Gio.Settings.bind; everything outside the
+                               dialog is let go on `closed`
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
                                favourite_songs(), track_at(play, index), playlist_tree(),
@@ -187,7 +224,9 @@ src/window.py + window.blp     Window: split view, sidebar (the Playlists sectio
                                into the sheet while it is open), the playback keys
                                (PLAYBACK_KEYS: Space, Ctrl+Right, Ctrl+Left in a capture-phase
                                key controller that leaves editables alone), win.back, toasts,
-                               window state, prepare_quit(); item_actions (actions.py, made
+                               window state, prepare_quit(), hide_for_background() (its dialogs
+                               closed, those shown as windows of their own too); do_close_request
+                               → app.close_window(self); item_actions (actions.py, made
                                before the sidebar); the Playlists section's menu-model
                                (_sidebar_menu, filled on setup-menu for a playlist or Favourite
                                Songs, closed when empty) and its drop target (TrackRef onto
@@ -345,7 +384,8 @@ src/applemusic.gresource.xml   compiled .ui files (every .blp's, flat in build/s
                                source directory: window.ui, player_bar.ui, grid.ui, songs.ui,
                                detail.ui, artist.ui, home.ui, radio.ui, signin.ui, tile.ui,
                                song_title.ui, cover.ui, track_row.ui, shelf.ui, hero_tile.ui,
-                               now_playing.ui, search.ui, shelves.ui, category_tile.ui),
+                               now_playing.ui, search.ui, shelves.ui, category_tile.ui,
+                               preferences.ui),
                                style.css, icons
 src/meson.build                blueprint list (one custom_target per .blp), gresource, install_data
                                lists (app .py; pages/, widgets/, dialogs/, backend/ each their own)
@@ -412,7 +452,7 @@ scripts/demo.sh [args]    run.sh --demo: the app on the invented library in buil
                           first when missing); no Chrome, no account. Use it for all UI work
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
                       [--expand ID[,ID…]] [--signed-in [NAME]] [--now-playing [lyrics|queue]]
-                      [--search TERM] [--context-menu]
+                      [--search TERM] [--context-menu] [--preferences [general|engine]]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
                           --demo as demo.sh (without it the real cache is read); waits for the
@@ -434,6 +474,9 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           page's first mapped widget with a context_item) and draws the
                           popover into the shot at its surface's position (a popover is a
                           surface of its own, which the window's WidgetPaintable leaves out).
+                          --preferences opens Preferences on General (or Engine) and shoots
+                          the dialog: its own window here (the shot's window is fixed-size, so
+                          neither maximized nor tiled), or the window when it is inside it.
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
                           playlists. --signed-in [NAME] shows the account button signed in
                           (memory-backend settings only; no engine)
@@ -549,21 +592,33 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   a Sign In button for `not-signed-in`), never a traceback. Library reads are synchronous
   in-memory models. Engine properties: `state` (`down`, `starting`, `up`, `signing-in`),
   `authorized`, `headless`; the `event(name, data)` signal re-emits MusicKit's events without
-  the `am:` prefix. `engine.start(visible=False)` reclaims a live Chrome that engine.json names
+  the `am:` prefix. `engine.start(visible=None)` reclaims a live Chrome that engine.json names
   when its mode matches, else spawns one (Gio.Subprocess; stderr relayed to the log only at
-  DEBUG) and waits for DevTools, the bridge and `status()`; `stop()` is close, SIGTERM, 5 s,
+  DEBUG) and waits for DevTools, the bridge and `status()`; without a mode it keeps an engine
+  that runs in either mode and starts a stopped one headless unless `prefer_headless` (the
+  `engine-headless` setting) is off, so "make sure it is up" callers pass nothing and only
+  sign-in names a mode; the browser command and `set_port()` apply at the next start; `stop()` is close, SIGTERM, 5 s,
   SIGKILL; `kill()` is the synchronous last resort. Under `--demo` the Engine is `demo=True`:
   start/stop do nothing, every command raises `engine-down`.
 - Lifecycle: `do_startup` makes `app.engine` on `engine_paths(app.profile, engine-port)` (the
   .Devel build: `chrome-devel` and the port after the setting's, 9229 by default;
   `APPLE_MUSIC_PROFILE`/`APPLE_MUSIC_PORT` win); `do_activate` autostarts it headless when
   `signed-in` and `engine-autostart` are set. `app.quit` (Ctrl+Q, the last window's close
-  request, SIGINT/SIGTERM) runs `Application._quit()`: windows `prepare_quit()` (state saved,
+  request, MPRIS Quit, SIGINT/SIGTERM) runs `Application._quit()`: windows `prepare_quit()` (state saved,
   hidden), `engine.stop()` bounded by 6 s, then `Gio.Application.quit`. Never call `quit()`
   from app code; activate the action. Sign-in is `app.sign-in` (`dialogs/signin.py`: restart
   visible, `engine.signin()`, `signed-in` set, `account_name()` best effort, restart headless
   when `engine-headless`); `app.sign-out` asks, then stops the engine, wipes the profile and
   the cache in a thread and reloads the (now empty) library.
+- Background playback (phase 17, `background-playback`, off by default): the window's close
+  request goes to `app.close_window(window)`. With the setting on and `player.active`, the
+  window closes its dialogs (those shown as windows of their own too), hides, and the app is
+  `hold()`ed (`app.in_background`); the hidden window stays in the app, so MPRIS Raise and a
+  second launch `present()` it, and it becoming visible releases the hold. While hidden, the
+  app watches the Player: once `player.stopped` (no item, or none/stopped/ended/completed;
+  paused keeps it) has lasted `BACKGROUND_GRACE` (10 s: MusicKit passes through ended and
+  stopped between items) it activates `app.quit`, which stops the engine as ever. Otherwise
+  closing quits at once, as before.
 - Sync (`src/sync.py`, phase 11): `app.sync` ("Refresh Library", `<primary>r`) runs
   `Application.start_sync()`, which starts the engine if it is down and runs
   `sync_library(engine, library, progress)` as one task (a second request while one runs is
@@ -659,8 +714,11 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   `data/…gschema.xml` with a summary, and are read through `app.settings`. Keys: window-width/
   height/maximized, last-page, expanded-folders, browser-command, engine-port, engine-headless,
   engine-autostart, signed-in, account-name, last-sync (ISO 8601, '' before the first),
-  sync-interval (hours, 6; 0 = manual only) (phase 17 shows the engine and sync ones in
-  Preferences).
+  sync-interval (hours, 6; 0 = manual only), background-playback (b, false). Preferences
+  (`dialogs/preferences.py`) shows background-playback, sync-interval (with last-sync),
+  browser-command, engine-port, engine-headless and engine-autostart; the Engine applies the
+  engine ones at its next start. A row bound with `Gio.Settings.bind` needs nothing else; an
+  `i` key binds to a `double` property (the SpinRow's `value`) as it is.
 - Actions: `app.*` in `main.py`, `win.*` in `window.py`; accelerators via `set_accels_for_action`;
   every shortcut also appears in the shortcuts dialog. GTK 4 runs application accelerators in
   the window's *capture* phase, before the focus widget, so a bare key (Space) or an editing
@@ -669,6 +727,7 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   disabled actions, and listed in the shortcuts dialog by hand. `app.now-playing`
   (`<primary>n`) toggles the Now Playing sheet; Escape closes it (the sheet's own).
   `win.search` (`<primary>f`) selects Search in the sidebar and focuses its entry.
+  `app.preferences` (`<primary>comma`, "Preferences" in the primary menu) opens Preferences.
   The item actions (`win.item-*`, actions.py) take their object as a target, not as state:
   a menu item is `Gio.MenuItem.set_action_and_target_value('win.item-love', Variant('(ss)',
   (kind, id)))`. New tiles or rows get context menus by exposing `context_item` and calling
@@ -878,6 +937,18 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `StringFilter`s over `PropertyExpression`s serves the small stores. An `Adw.ToggleGroup`'s
   `active-name` is the toggle's `name`; a `Gtk.SearchEntry.grab_focus()` lands on its inner
   `Gtk.Text` (`window.get_focus()` is the text, whose ancestor is the entry).
+- An `Adw.Dialog` shown as a window of its own (its parent neither maximized nor tiled) is a
+  plain `Gtk.Window` transient for the parent, not one of the application's windows: its
+  widgets find no `app.*` actions (an actionable row is insensitive and does nothing; hence
+  Preferences' `insert_action_group('app', app)`), `get_active_window()` stays the main
+  window (whose toasts are then hidden behind the dialog: `app.toast()` goes into Preferences
+  while it is open), and `AdwApplicationWindow.get_visible_dialog()` does not see it (close
+  it through `Gtk.Window.list_toplevels()`, transient for the window). An actionable widget's
+  sensitivity is its action's: `set_sensitive(False)` on a row with `action-name` is undone
+  (Sign Out is wired by its `activated` signal instead). `Gio.Settings.bind_with_mapping`
+  exists in PyGObject but its get-mapping closure receives the GValue as a plain int it cannot
+  set (and GLib aborts on the rejected default), so a mapped row is bound by hand
+  (the refresh interval's ComboRow).
 - `screenshot.py --signed-in` also turns `engine-autostart` off in its memory settings: with
   it on, the shot's app started a real headless Chrome on the *release* profile and port
   (`profile` is `default` there), which is never wanted from a screenshot.

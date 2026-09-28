@@ -58,6 +58,10 @@ PLAYBACK_STATES = ('none', 'loading', 'playing', 'paused', 'stopped', 'ended', '
 # the way to, or in, playing. 'seeking' is a transient of either playing or paused.
 ACTIVE_STATES = ('playing', 'loading', 'waiting', 'stalled')
 
+# The states in which nothing plays or waits to resume: the item finished, the queue ended,
+# playback was stopped, or there never was any. Paused (and seeking) is not among them.
+STOPPED_STATES = ('none', 'stopped', 'ended', 'completed')
+
 REPEAT_MODES = ('none', 'one', 'all')
 
 # The events the Player takes its state from, and the handler for each.
@@ -414,6 +418,13 @@ class Player(GObject.Object):
     def active(self):
         """Whether playback is under way (ACTIVE_STATES): the bar shows Pause."""
         return self.state in ACTIVE_STATES
+
+    @property
+    def stopped(self):
+        """Whether nothing plays or is paused (no item, or STOPPED_STATES): what background
+        playback waits for before the app quits. MusicKit passes through these between
+        queues and at the end of each item, so a caller gives it a moment."""
+        return self.track is None or self.state in STOPPED_STATES
 
     def estimated_position(self):
         """The position now: the last one reported, plus the time since while playing

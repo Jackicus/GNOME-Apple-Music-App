@@ -4,6 +4,7 @@
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
                           [--now-playing [lyrics|queue]] [--search TERM] [--context-menu]
+                          [--preferences [general|engine]]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -33,6 +34,9 @@ results of the offline filter; the engine is never started here).
 --context-menu pops up the context menu of the page's first tile or row (the
 first shown widget with a context_item), as a right click on it would, and
 draws the popover into the shot where the compositor put it.
+--preferences opens the Preferences dialog (app.preferences) on its General page, or
+on Engine, and shoots it: inside the window when libadwaita put it there, else its
+own window (a fixed-size window that is neither maximized nor tiled gets one).
 """
 
 import argparse
@@ -66,6 +70,9 @@ parser.add_argument('--search', metavar='TERM',
                     help='the Search page in Your Library mode with TERM typed')
 parser.add_argument('--context-menu', action='store_true',
                     help="pop up the context menu of the page's first tile or row")
+parser.add_argument('--preferences', metavar='PAGE', nargs='?', const='general',
+                    choices=['general', 'engine'],
+                    help='open Preferences on PAGE and shoot the dialog')
 args = parser.parse_args()
 if args.search:
     args.page = 'search'
@@ -143,6 +150,7 @@ opened = False
 sheet_opened = False
 searched = False
 menu_opened = False
+preferences = None  # the Preferences dialog, once --preferences has opened it
 
 # --now-playing: the invented item's artwork URL. Its cover is copied to where
 # Artwork.fetch_remote would put this URL's 640 px image, so nothing is fetched.
@@ -261,7 +269,7 @@ def draw_popovers(window, snapshot):
 
 
 def shoot():
-    global opened, sheet_opened, searched, menu_opened
+    global opened, sheet_opened, searched, menu_opened, preferences
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -292,6 +300,12 @@ def shoot():
         open_context_menu(window)
         GLib.timeout_add(800, shoot)  # the popover shown and placed
         return GLib.SOURCE_REMOVE
+    if args.preferences and preferences is None:
+        preferences = app.show_preferences(args.preferences)
+        GLib.timeout_add(1200, shoot)  # shown, the cache measured
+        return GLib.SOURCE_REMOVE
+    if preferences is not None and preferences.get_root() is not window:
+        window = preferences.get_root()  # a window of its own
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()
     paintable.snapshot(snapshot, window.get_width(), window.get_height())

@@ -2,9 +2,12 @@
 UI awaits.
 
     engine = Engine(profile_dir, port, browser_command)   # made once, in Application.do_startup
-    await engine.start()                # headless Chrome on music.apple.com, the bridge in it
+    await engine.start()                # Chrome on music.apple.com, the bridge in it: headless
+                                        # (or a window when prefer_headless is off); a running
+                                        # engine is kept in whichever mode it runs
     await engine.start(visible=True)    # a window instead (sign-in); restarts if it was headless
     await engine.restart(visible=False)
+    engine.set_port(9300)               # the DevTools port from the next start
     await engine.stop()                 # SIGTERM, 5 s, SIGKILL; forgets engine.json
     await engine.status()               # {ready, engine, authorized, storefront, bitrate}
     await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
@@ -47,6 +50,11 @@ wait_async), the connection is the asynchronous CDPClient, and the JSON shaping 
 HTTP of item() run in a thread. A Chrome that outlived an earlier
 app process is reclaimed from engine.json when its mode matches. In demo mode (`demo=True`)
 start() and stop() do nothing and every command raises EngineError('engine-down') at once.
+
+The browser command (`browser_command`), the port (`set_port()`) and the preferred mode
+(`prefer_headless`) are read when Chrome is spawned, so a change applies at the next start
+and a running Chrome is left alone. cache_size() and clear_cache() measure and empty the
+cache directory (CACHE_ENTRIES), in a thread.
 """
 
 import asyncio
@@ -54,6 +62,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import time
 from pathlib import Path
@@ -90,6 +99,13 @@ BROWSE_PARAMS = {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork
 # Made for You: the recommendations, of which the mixes and stations are kept.
 RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
 RECOMMENDATIONS_PARAMS = {'limit': 25}
+
+# What the cache directory holds (config.cache_dir()), all of it fetched again as needed: the
+# library, its artwork (covers, thumbnails, remote art), items' groups, lyrics, and the
+# day-long answers (landing, categories, the New page, Made for You). library.lock, the
+# sync's flock, stays.
+CACHE_ENTRIES = ('library.json', 'art', 'thumb', 'remote-art', 'items', 'lyrics',
+                 'landing.json', 'categories', 'browse.json', 'made-for-you.json')
 
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
@@ -162,6 +178,49 @@ def engine_paths(profile, port_setting):
     else:
         port = int(port_setting) + (1 if profile == 'development' else 0)
     return profile_dir, port
+
+
+def cache_size(path):
+    """In a thread: the bytes the files under `path` hold (their sizes; symlinks are not
+    followed), 0 when it is not there."""
+    total = 0
+    stack = [str(path)]
+    while stack:
+        try:
+            entries = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+    return total
+
+
+def clear_cache(path, entries=CACHE_ENTRIES):
+    """In a thread: delete `entries` (CACHE_ENTRIES) under `path`, the cache directory,
+    leaving anything else there (the sync's lock). Answers how many were there to delete;
+    what cannot be deleted is logged and left."""
+    removed = 0
+    for name in entries:
+        target = os.path.join(str(path), name)
+        try:
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+            elif os.path.lexists(target):
+                os.remove(target)
+            else:
+                continue
+            removed += 1
+        except OSError as error:
+            log.warning('could not remove %s: %s', target, error)
+    log.info('cache cleared: %d of %d entries were there', removed, len(entries))
+    return removed
 
 
 def is_library_id(item_id):
@@ -339,6 +398,10 @@ class Engine(GObject.Object):
         self.profile_dir = Path(profile_dir) if profile_dir else config.profile_dir()
         self.port = int(port) if port else config.port()
         self.browser_command = browser_command
+        # Whether start() without a mode runs Chrome headless (the engine-headless setting);
+        # sign-in asks for a window whatever this says.
+        self.prefer_headless = True
+        self._next_port = None  # set_port() while Chrome runs: taken at the next start
         self.state_file = config.state_file(self.profile_dir)
         self.stop_grace = STOP_GRACE
         self._client = None
@@ -358,14 +421,32 @@ class Engine(GObject.Object):
 
     # -- lifecycle ---------------------------------------------------------------------------
 
-    async def start(self, visible=False):
-        """Chrome up with the bridge in it, headless unless `visible`. A running Chrome in the
-        other mode is stopped first; one in the same mode (this process's, or a live one
-        engine.json describes) is kept. EngineError when Chrome or the page will not come up."""
+    def set_port(self, port):
+        """The DevTools port Chrome is started on from now on. A running Chrome keeps its
+        own until the engine next starts (a restart, or a stop and a start)."""
+        port = int(port)
+        if self.state == 'down' and not self._lock.locked():
+            self.port, self._next_port = port, None
+        elif port != self.port:
+            self._next_port = port
+        else:
+            self._next_port = None
+
+    async def start(self, visible=None):
+        """Chrome up with the bridge in it: headless unless `visible`. Without a mode, a
+        running engine is kept whatever its mode, and a stopped one starts headless unless
+        `prefer_headless` is off. Asked for a mode, a running Chrome in the other mode is
+        stopped first; one in the same mode (this process's, or a live one engine.json
+        describes) is kept. EngineError when Chrome or the page will not come up."""
         if self.demo:
             return
-        headless = not visible
         async with self._lock:
+            if visible is None:
+                if self.state != 'down':
+                    return
+                headless = self.prefer_headless
+            else:
+                headless = not visible
             if self.state != 'down':
                 if self.headless == headless:
                     return
@@ -373,6 +454,9 @@ class Engine(GObject.Object):
                          'headless' if self.headless else 'visible',
                          'headless' if headless else 'visible')
                 await self._stop()
+            if self._next_port is not None:
+                log.info('the engine moves to port %d', self._next_port)
+                self.port, self._next_port = self._next_port, None
             self.state = 'starting'
             self.headless = headless
             try:
@@ -557,7 +641,9 @@ class Engine(GObject.Object):
         self.state = 'down'
         self.authorized = False
 
-    async def restart(self, visible=False):
+    async def restart(self, visible=None):
+        """stop(), then start(visible): without a mode, the preferred one (prefer_headless),
+        on the port and browser the settings now name."""
         await self.stop()
         await self.start(visible=visible)
 

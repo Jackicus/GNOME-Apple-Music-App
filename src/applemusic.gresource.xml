@@ -10,6 +10,7 @@
     <file preprocess="xml-stripblanks">home.ui</file>
     <file preprocess="xml-stripblanks">radio.ui</file>
     <file preprocess="xml-stripblanks">signin.ui</file>
+    <file preprocess="xml-stripblanks">preferences.ui</file>
     <file preprocess="xml-stripblanks">tile.ui</file>
     <file preprocess="xml-stripblanks">song_title.ui</file>
     <file preprocess="xml-stripblanks">cover.ui</file>

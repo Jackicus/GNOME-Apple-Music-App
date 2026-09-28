@@ -11,7 +11,7 @@ from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
 from applemusic.backend.errors import EngineError
 from applemusic.lyrics import Lyrics
-from applemusic.player import ACTIVE_STATES, NowPlaying, Player, format_time
+from applemusic.player import ACTIVE_STATES, STOPPED_STATES, NowPlaying, Player, format_time
 
 # An invented track, as the bridge's formatTrack shapes it.
 TRACK = {
@@ -60,7 +60,7 @@ class FakeEngine(GObject.Object):
             raise self.fail
         return self.answers.get(name)
 
-    async def start(self, visible=False):
+    async def start(self, visible=None):
         self.calls.append(('start', visible))
         self.state = 'up'
 
@@ -221,6 +221,19 @@ class EventTest(unittest.TestCase):
         self.engine.event('playbackStateDidChange', {'state': 'stopped'})
         self.assertFalse(self.player.active)
 
+    def test_stopped_is_no_item_or_a_stopped_state(self):
+        self.assertTrue(self.player.stopped)  # nothing yet
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        for state in ACTIVE_STATES + ('paused', 'seeking'):
+            self.engine.event('playbackStateDidChange', {'state': state})
+            self.assertFalse(self.player.stopped, state)
+        for state in STOPPED_STATES:
+            self.engine.event('playbackStateDidChange', {'state': state})
+            self.assertTrue(self.player.stopped, state)
+        self.engine.event('playbackStateDidChange', {'state': 'playing'})
+        self.engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+        self.assertTrue(self.player.stopped)  # playing, but no item
+
     def test_an_unknown_state_is_kept_as_it_is(self):
         self.engine.event('playbackStateDidChange', {'state': 'buffering'})
         self.assertEqual(self.player.state, 'buffering')
@@ -352,7 +365,7 @@ class CommandTest(unittest.TestCase):
         async def go():
             player, engine, app = make_player(state='down')
             await player.play({'kind': 'album', 'id': 'l.alb1'}, start_with=2)
-            self.assertEqual(engine.calls[0], ('start', False))
+            self.assertEqual(engine.calls[0], ('start', None))  # the preferred mode
             self.assertEqual(engine.calls[-1], ('play', 'album', 'l.alb1', 2, False))
             self.assertEqual(app.toasts, ['Starting playback engine…'])
         asyncio.run(go())
