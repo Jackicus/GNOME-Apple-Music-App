@@ -1204,7 +1204,8 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   so they resolve only once pushed, and renaming one breaks every metainfo already
   installed. Look at every shot before committing it: demo data only, and no text chunks.
 - `meson dist -C build` archives HEAD (commit first) without the subprojects: building the
-  tarball needs `blueprint-compiler` installed or the network for the wrap. Test a tarball
+  tarball needs `blueprint-compiler` installed or the network for the wrap (its own check
+  builds with the build directory's options and runs blueprint-compiler's tests). Test a tarball
   in a temporary directory with its own `--prefix`, and a PKGBUILD in a temporary copy with a
   `git archive --prefix=GNOME-Apple-Music-App-<version>/` tarball named as its source
   (makepkg finds it and skips the download); here blueprint-compiler is not installed, so

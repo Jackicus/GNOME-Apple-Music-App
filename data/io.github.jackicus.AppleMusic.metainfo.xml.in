@@ -13,8 +13,8 @@
     </p>
     <p>
       Playback runs through Google Chrome, which the app starts in the
-      background: Apple's streams are protected with Widevine, which only
-      Google's own Chrome provides on Linux. It needs Google Chrome and an
+      background: Apple's streams are protected with Widevine, which Google
+      Chrome includes and Chromium does not. It needs Google Chrome and an
       Apple Music subscription.
     </p>
     <p>

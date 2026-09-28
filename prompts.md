@@ -27,7 +27,7 @@ running and better than before.
 - [x] 17. Preferences (2026-09-28)
 - [x] 18. Keyboard navigation and accessibility (2026-09-28)
 - [x] 19. Performance pass (2026-09-28)
-- [ ] 20. Packaging and release
+- [x] 20. Packaging and release (2026-09-28, tag pending Jack's testing)
 
 ## Settled questions (Jack agreed to all four recommendations, 2026-09-27)
 
@@ -2471,6 +2471,90 @@ Verify: scripts/check.sh; the dist tarball builds and runs; the .desktop, metain
 validate; screenshots contain only fictional data. Update CLAUDE.md (distribution facts). Tick
 phase 20 and commit.
 ```
+
+**Done 2026-09-28, except the tag. Notes.**
+
+- **The tag waits for Jack's testing** (his call on 2026-09-28: use the app before any
+  release). Nothing is tagged, there is no GitHub release, and nothing is on the AUR. When the
+  testing passes:
+  1. If fixes went in or the day moved, update `<release version="0.9.0" date="…">` in
+     `data/io.github.jackicus.AppleMusic.metainfo.xml.in` (and its notes), commit and push.
+  2. Tag and push the tag:
+     `git tag -a v0.9.0 -m 'Apple Music for GNOME 0.9.0' && git push origin v0.9.0`
+  3. `cd build-aux/aur && updpkgsums && makepkg --printsrcinfo > .SRCINFO`, then commit the
+     checksum (the PKGBUILD has `SKIP` until GitHub serves the tag's archive), and
+     `makepkg -si` there to install it (blueprint-compiler is a makedepend).
+  4. Optional: the AUR (`git clone ssh://aur@aur.archlinux.org/gnome-apple-music.git`, copy
+     PKGBUILD and .SRCINFO in, commit, push) and a GitHub release carrying
+     `meson dist -C build`'s tarball.
+- Version 0.9.0, called the first release candidate in its release notes. The scaffold's
+  0.1.0 `<release>` was dropped: it was never released. `appstreamcli validate --no-net
+  --explain` passes; only the pedantic uppercase-ID hint remains (inherent to the ID).
+  `<requires>` gained `<internet>always</internet>`, and the description says why Google Chrome
+  is needed.
+- Screenshots: `data/screenshots/{home,albums,album,now-playing}-{light,dark}.png`, 1100×760,
+  from `scripts/screenshot.py --demo` (`--page home`, `--page albums`, `--page albums --open
+  album:first`, `--page albums --now-playing`, each plain and with `--light`). I looked at all
+  eight: the demo library's invented albums and artists, and the lyrics from the invented
+  `tests/fixtures/lyrics.json`. The account button reads "Sign In", and the PNGs have no text
+  chunks. No PNG optimiser is installed, so they were shrunk losslessly with pyoxipng through
+  `uv run` (pixel-identical, about 15 % smaller, 1.5 MB in all). The metainfo lists the light
+  ones first, with Home as the default, then the dark ones (`environment="gnome:dark"`), by
+  their `raw.githubusercontent.com/…/main/` URLs, which resolve only once pushed. In the
+  Albums and album shots the sidebar is scrolled a few pixels, so Search is cut at the top:
+  the sidebar's list keeps its selected row in view. That is cosmetic, and I left it.
+- Native: `build-aux/aur/PKGBUILD` (+ `.SRCINFO`). pkgname `gnome-apple-music`, which the AUR
+  did not have on 2026-09-28. The prompt named four depends; I also listed `python` and
+  `gdk-pixbuf2`, both used directly. checkdepends appstream and desktop-file-utils. It builds
+  with `arch-meson`, and check() runs `meson test` and all 517 unit tests (26 s, no display).
+  package() installs with `--skip-subprojects`. The Maintainer line gives Jack's GitHub page,
+  not an email. Verified in a temporary copy with a `git archive` tarball of the tree, named
+  as the source: `makepkg --nobuild`, then `makepkg --nodeps` with a `blueprint-compiler` shim
+  on PATH, since it is not installed here. Build, check (3 validations, 517 tests) and package
+  all passed. The package holds the 49 modules plus 98 .pyc (plain and opt-1, since
+  arch-meson sets `python.bytecompile=1`; checked-hash under `SOURCE_DATE_EPOCH`, tracebacks
+  naming `/usr/share/…`). Its launcher has `DEMO_DIR = ''` and no build path. Its metainfo,
+  desktop file and schema validate. Not done: `makepkg -si` (no installs on this machine) and
+  namcap (not installed).
+- `meson dist -C build` → `build/meson-dist/apple-music-0.9.0.tar.xz` (1.9 MB, most of it the
+  screenshots). It holds HEAD's files without the subproject, so a build from it needs
+  blueprint-compiler or the network. Meson's own dist check passed: it builds with the build
+  directory's options, fetches the wrap and runs blueprint-compiler's tests too. Unpacked in a
+  temporary directory, `meson setup _build --prefix=<tmp>/prefix` (release profile, the wrap
+  fetched), compile, `meson test` (3 OK), and `meson install --skip-subprojects` gave only the
+  app's files plus 49 .pyc. Without `--skip-subprojects` the wrap would also install
+  `lib/python3.14/site-packages/blueprintcompiler/reference_docs.json` (seen with
+  `--dry-run`). From the repo root, with APPLE_MUSIC_CACHE unset, that install's
+  `bin/apple-music --demo --debug` read `./build/demo` (the new fallback), painted its first
+  frame at 975 ms, reached library-ready at 1,024 ms with no traceback, and owned
+  `org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic`. The installed .pyc were byte-identical
+  after the run, so Python used them rather than recompiling. Stopped by pid.
+- The demo path: the launcher's `DEMO_DIR` is the source tree's `build/demo` only in the
+  development profile, so `scripts/demo.sh` is unchanged (checked: it read build/demo). A
+  release build's `--demo` reads `./build/demo`. In the Flatpak (development profile) the baked
+  path is the flatpak-builder source directory, which the sandbox cannot see, so a Flatpak
+  `--demo` needs `APPLE_MUSIC_CACHE` pointing at a demo library it can read.
+- Bytecode: `build-aux/meson/compile-python.py`, a Meson install script. It runs compileall on
+  the installed package and honours `python.bytecompile`. It is fine for the development
+  install, where only stale files are compiled again. `ninja uninstall` leaves the
+  `__pycache__` directories behind, and the README says so.
+- Flatpak, development only: the manifest got `--talk-name=org.freedesktop.Flatpak`, the
+  release ID's MPRIS `--own-name` beside the .Devel one, and an `"x-comment"` explaining why:
+  development only, Flathub out of scope because of the host Chrome and the trademark.
+  flatpak-builder ignores `x-` keys. I also removed `--socket=pulseaudio`, because the host's
+  Chrome makes the sound, and `--talk-name=org.mpris.MediaPlayer2.*`, because the app talks to
+  no other player. In `chrome.py`, when `/.flatpak-info` exists, `find_chrome()` resolves the
+  names with the host's shell through `flatpak-spawn --host` (`find_host_chrome`; the engine
+  now calls `find_chrome` in a thread), and `chrome_args()` prefixes `flatpak-spawn --host
+  --watch-bus`. Six new tests cover this with a stand-in runner. **Not tested:** neither
+  flatpak-builder nor the GNOME 50 runtime is installed. Expected to work: the profile under
+  `~/.var/app/<id>/data` is the same path on the host, and 127.0.0.1 is shared through
+  `--share=network`. Worth checking in Builder: that SIGTERM reaches Chrome through
+  flatpak-spawn and the engine stops within its 5 s, and whether engine.json reclaiming works
+  across sandbox restarts (probably not: the old flatpak-spawn dies with its sandbox, and
+  --watch-bus should take Chrome with it).
+- README rewritten: what the app is, why it needs Google Chrome, requirements, install (AUR,
+  Meson), first run and sign-in, where data lives and how to remove it, development, license.
 
 ---
 
