@@ -22,6 +22,7 @@ from ..library import Track
 from ..widgets import artwork, context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
+from ..widgets.util import connect_weak
 
 log = logging.getLogger(__name__)
 
@@ -112,23 +113,29 @@ class DetailPage(Adw.NavigationPage):
         self.empty_page.set_title(empty_title or self.get_title())
         self.empty_page.set_description(empty_description)
 
+        # Every signal of a child or of an object the page holds is connected weakly
+        # (widgets/util.py): a bound method would keep the page alive once popped.
         factory = Gtk.SignalListItemFactory()
-        factory.connect('setup', self._on_setup)
-        factory.connect('bind', self._on_bind)
-        factory.connect('unbind', self._on_unbind)
+        connect_weak(factory, 'setup', self._on_setup)
+        connect_weak(factory, 'bind', self._on_bind)
+        connect_weak(factory, 'unbind', self._on_unbind)
         self.list_view.set_factory(factory)
+        connect_weak(self.list_view, 'activate', self._on_activate)
         context_menu.attach(self.list_view, drag=True)  # the tracks' menus, dragged to playlists
         self._header_factory = Gtk.SignalListItemFactory()
-        self._header_factory.connect('setup', self._on_setup_header)
-        self._header_factory.connect('bind', self._on_bind_header)
+        connect_weak(self._header_factory, 'setup', self._on_setup_header)
+        connect_weak(self._header_factory, 'bind', self._on_bind_header)
+        connect_weak(self.play_button, 'clicked', self._on_play_clicked)
+        connect_weak(self.shuffle_button, 'clicked', self._on_shuffle_clicked)
+        connect_weak(self.status_button, 'clicked', self._on_status_clicked)
         # What a track's row reads to assistive technology (looked up once: rows bind often).
         self._label_formats = {
             'artist': _('{title}, {artist}'),
             'explicit': _('{label}, explicit'),
         }
-        # Tab from Shuffle goes on into the tracks (see on_list_key_pressed).
+        # Tab from Shuffle goes on into the tracks (see _on_list_key_pressed).
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
-        keys.connect('key-pressed', self.on_list_key_pressed)
+        connect_weak(keys, 'key-pressed', self._on_list_key_pressed)
         self.list_view.add_controller(keys)
 
         self._hero_section = Gio.ListStore(item_type=GObject.Object)
@@ -277,8 +284,7 @@ class DetailPage(Adw.NavigationPage):
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
 
-    @Gtk.Template.Callback()
-    def on_status_clicked(self, _button):
+    def _on_status_clicked(self, _button):
         app = Gio.Application.get_default()
         if self._status == 'not-signed-in':
             app.activate_action('sign-in')
@@ -340,7 +346,7 @@ class DetailPage(Adw.NavigationPage):
             label = self._label_formats['explicit'].format(label=label)
         return label
 
-    def on_list_key_pressed(self, _controller, keyval, _keycode, state):
+    def _on_list_key_pressed(self, _controller, keyval, _keycode, state):
         """Tab from the hero's last button (Shuffle) into the tracks. The list's Tab leaves
         it after the focused item (tab-behavior item), and the hero is its first item, so the
         tracks would otherwise be reached only with Down."""
@@ -372,16 +378,13 @@ class DetailPage(Adw.NavigationPage):
         label.set_visible(section >= 0)  # the hero's section has no heading
         label.set_label(self._headings[section] if section >= 0 else '')
 
-    @Gtk.Template.Callback()
-    def on_activate(self, _list_view, position):
+    def _on_activate(self, _list_view, position):
         track = self._rows.get_item(position)
         if isinstance(track, Track):
             self.get_root().play_request(track.play, start_with=track.index)
 
-    @Gtk.Template.Callback()
-    def on_play_clicked(self, _button):
+    def _on_play_clicked(self, _button):
         self.get_root().play_request(self.item.play)
 
-    @Gtk.Template.Callback()
-    def on_shuffle_clicked(self, _button):
+    def _on_shuffle_clicked(self, _button):
         self.get_root().play_request(self.item.play, shuffle=True)

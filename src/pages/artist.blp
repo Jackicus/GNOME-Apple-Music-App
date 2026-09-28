@@ -124,7 +124,6 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
             min-children-per-line: 2;
             max-children-per-line: 12;
             valign: start;
-            child-activated => $on_album_activated();
           }
 
           // In place of the albums: an artist that came without them (a shelf's) while the
@@ -135,8 +134,6 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
 
             child: Button status_button {
               halign: center;
-              clicked => $on_status_clicked();
-
               styles [
                 "pill",
               ]

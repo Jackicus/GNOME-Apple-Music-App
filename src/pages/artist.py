@@ -9,6 +9,7 @@ from ..backend.errors import EngineError
 from ..library import Item
 from ..widgets import artwork, context_menu
 from ..widgets.tile import Tile
+from ..widgets.util import connect_weak, weak_method
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +46,11 @@ class ArtistPage(Adw.NavigationPage):
         self._fetching = False
         self._status = None
         self._albums = Gio.ListStore(item_type=Item)
-        self.flow_box.bind_model(self._albums, self._create_tile)
+        # What a child holds calls the page weakly (widgets/util.py): a bound method would
+        # keep the page alive once popped.
+        self.flow_box.bind_model(self._albums, weak_method(self._create_tile))
+        connect_weak(self.flow_box, 'child-activated', self._on_album_activated)
+        connect_weak(self.status_button, 'clicked', self._on_status_clicked)
         context_menu.attach(self.flow_box)
         self._show()
 
@@ -114,8 +119,7 @@ class ArtistPage(Adw.NavigationPage):
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
 
-    @Gtk.Template.Callback()
-    def on_status_clicked(self, _button):
+    def _on_status_clicked(self, _button):
         app = Gio.Application.get_default()
         if self._status == 'not-signed-in':
             app.activate_action('sign-in')
@@ -160,8 +164,7 @@ class ArtistPage(Adw.NavigationPage):
         child.update_property([Gtk.AccessibleProperty.LABEL], [label])
         return child
 
-    @Gtk.Template.Callback()
-    def on_album_activated(self, _flow_box, child):
+    def _on_album_activated(self, _flow_box, child):
         album = self._albums.get_item(child.get_index())
         if album is not None:
             self.get_root().open_item(album)

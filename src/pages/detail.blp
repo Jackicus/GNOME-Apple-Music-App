@@ -57,7 +57,6 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
             child: ListView list_view {
               single-click-activate: false;
               tab-behavior: item;
-              activate => $on_activate();
 
               styles [
                 "track-list",
@@ -132,8 +131,6 @@ Box hero {
         margin-top: 12;
 
         Button play_button {
-          clicked => $on_play_clicked();
-
           child: Adw.ButtonContent {
             icon-name: "media-playback-start-symbolic";
             label: _("Play");
@@ -146,8 +143,6 @@ Box hero {
         }
 
         Button shuffle_button {
-          clicked => $on_shuffle_clicked();
-
           child: Adw.ButtonContent {
             icon-name: "media-playlist-shuffle-symbolic";
             label: _("Shuffle");
@@ -219,7 +214,6 @@ Box hero {
     Button status_button {
       halign: center;
       margin-top: 12;
-      clicked => $on_status_clicked();
 
       styles [
         "pill",

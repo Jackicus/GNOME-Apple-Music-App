@@ -20,6 +20,7 @@ from ..backend.errors import EngineError
 from ..library import Item, Shelf as ShelfModel
 from ..widgets import artwork
 from ..widgets.shelf import Shelf
+from ..widgets.util import connect_weak
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +100,9 @@ class ShelvesPage(Adw.NavigationPage):
         self._engine_handlers = []
         self.header_bar.set_show_title(not root)
         self.title_label.set_label(title)
+        # Connected weakly (widgets/util.py): a bound method would keep a popped page alive.
+        connect_weak(self.refresh_button, 'clicked', self._on_refresh_clicked)
+        connect_weak(self.status_button, 'clicked', self._on_status_clicked)
 
     @staticmethod
     def _app():
@@ -210,12 +214,10 @@ class ShelvesPage(Adw.NavigationPage):
         elif self._status == 'not-signed-in' and engine.authorized:
             self.load()
 
-    @Gtk.Template.Callback()
-    def on_refresh_clicked(self, _button):
+    def _on_refresh_clicked(self, _button):
         self.load(refresh=True)
 
-    @Gtk.Template.Callback()
-    def on_status_clicked(self, _button):
+    def _on_status_clicked(self, _button):
         app = self._app()
         if self._status == 'not-signed-in':
             app.activate_action('sign-in')

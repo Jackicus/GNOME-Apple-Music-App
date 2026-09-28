@@ -7,6 +7,7 @@ from gi.repository import GObject, Gtk
 from . import context_menu
 from .hero_tile import HeroTile
 from .tile import Tile
+from .util import connect_weak
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/shelf.ui')
@@ -26,8 +27,9 @@ class Shelf(Gtk.Box):
     goes on to the page's scrolled window, and a horizontal one (a touchpad, a tilting wheel,
     Shift and the wheel) moves the row. A row that fits scrolls neither way.
 
-    It may be built by GtkBuilder, which does not call __init__, so its state starts as class
-    attributes.
+    GtkBuilder builds some (radio.blp, search.blp): it calls __init__ without arguments and
+    sets the properties after it, where a Python caller's are set before __init__'s body
+    runs, so the state the property setters read starts as class attributes.
     """
 
     __gtype_name__ = 'AppleMusicShelf'
@@ -42,6 +44,19 @@ class Shelf(Gtk.Box):
     _hero = False
     _accessible_format = None
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Every signal of a child or of an object the shelf holds is connected weakly
+        # (util.py): a bound method would keep a shelf that a page drops alive.
+        factory = Gtk.SignalListItemFactory()
+        connect_weak(factory, 'setup', self._on_setup)
+        connect_weak(factory, 'bind', self._on_bind)
+        connect_weak(factory, 'unbind', self._on_unbind)
+        self.list_view.set_factory(factory)
+        connect_weak(self.list_view, 'activate', self._on_activate)
+        connect_weak(self.see_all_button, 'clicked', self._on_see_all_clicked)
+        context_menu.attach(self.list_view)
+
     def _get_hero(self):
         return self._hero
 
@@ -53,10 +68,12 @@ class Shelf(Gtk.Box):
             self.list_view.add_css_class('hero')
         else:
             self.list_view.remove_css_class('hero')
-        # New rows, built with the other kind of tile.
+        # New rows, built with the other kind of tile (none before __init__ has made the
+        # factory, when a Python caller passes hero=True).
         factory = self.list_view.get_factory()
-        self.list_view.set_factory(None)
-        self.list_view.set_factory(factory)
+        if factory is not None:
+            self.list_view.set_factory(None)
+            self.list_view.set_factory(factory)
 
     hero = GObject.Property(type=bool, default=False, getter=_get_hero, setter=_set_hero,
                             nick='Hero', blurb='Whether the tiles are large cards')
@@ -75,7 +92,6 @@ class Shelf(Gtk.Box):
         """Show a library.Shelf: its title, and its items, which the row follows as they change."""
         if shelf is self.shelf:
             return
-        context_menu.attach(self.list_view)  # once: here, as GtkBuilder skips __init__
         self.shelf = shelf
         self.title_label.set_label(shelf.title)
         self.title_label.set_visible(bool(shelf.title))
@@ -86,12 +102,10 @@ class Shelf(Gtk.Box):
         self.list_view.set_model(Gtk.NoSelection(model=getattr(shelf, 'row_items', shelf.items)))
         self.scrolled_window.get_hadjustment().set_value(0)  # a new shelf starts at its start
 
-    @Gtk.Template.Callback()
-    def on_setup(self, _factory, list_item):
+    def _on_setup(self, _factory, list_item):
         list_item.set_child(HeroTile() if self._hero else Tile())
 
-    @Gtk.Template.Callback()
-    def on_bind(self, _factory, list_item):
+    def _on_bind(self, _factory, list_item):
         item = list_item.get_item()
         tile = list_item.get_child()
         if not self._hero:
@@ -105,17 +119,14 @@ class Shelf(Gtk.Box):
             label = Shelf._accessible_format.format(title=item.title, subtitle=item.subtitle)
         list_item.set_accessible_label(label)
 
-    @Gtk.Template.Callback()
-    def on_unbind(self, _factory, list_item):
+    def _on_unbind(self, _factory, list_item):
         list_item.get_child().unbind()
 
-    @Gtk.Template.Callback()
-    def on_activate(self, list_view, position):
+    def _on_activate(self, list_view, position):
         item = list_view.get_model().get_item(position)
         if item is not None:
             self.get_root().open_item(item)
 
-    @Gtk.Template.Callback()
-    def on_see_all_clicked(self, _button):
+    def _on_see_all_clicked(self, _button):
         if self.shelf is not None:
             self.get_root().open_shelf(self.shelf)

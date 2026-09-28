@@ -136,6 +136,7 @@ install_data(
   'widgets/tile.py',
   'widgets/track_row.py',
   'widgets/transport.py',
+  'widgets/util.py',
   install_dir: moduledir / 'widgets',
 )
 
