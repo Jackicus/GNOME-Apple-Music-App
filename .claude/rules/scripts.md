@@ -17,6 +17,12 @@ paths:
   `make_app()` before importing Gtk. A new in-process script starts through the harness too: the
   scripts' app runs as the release profile, and the harness is what keeps it from starting a real
   Chrome.
+- `headless.sh COMMAND…` runs a command on a private, invisible display: a headless mutter with a
+  virtual monitor (`HEADLESS_SIZE`, default 1920x1080) in its own D-Bus session, with `DISPLAY`
+  unset. Run every GUI script through it (screenshot.py, a11y_check.py, scroll_test.py,
+  bench.py, the widget tests) so no window opens on, or takes focus from, the user's desktop, and
+  the app's MPRIS player never reaches the real session. Compare timings only with other
+  headless runs.
 - screenshot.py and a11y_check.py also use the stock GNOME look (Adwaita icons, Adwaita Sans 11)
   and no animations, so shots do not depend on the desktop's theme.
 - `screenshot.py` without `--demo` reads the release build's real cache (`APPLE_MUSIC_CACHE`
