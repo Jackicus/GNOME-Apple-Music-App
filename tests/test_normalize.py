@@ -64,6 +64,12 @@ class TestSync(unittest.TestCase):
         self.assertIsNone(normalize.strip_html(''))
         self.assertEqual(normalize.strip_html('<p>Hello <b>World</b>&amp;Friends</p>'),
                          'Hello World&Friends')
+        # Line breaks and paragraphs keep their words apart.
+        self.assertEqual(normalize.strip_html(
+            'First paragraph.<br><br>Second.<p>Third</p><p class="x">Fourth</p>'),
+            'First paragraph.\n\nSecond.\n\nThird\n\nFourth')
+        self.assertEqual(normalize.strip_html('One<br/>two <BR> three'), 'One\ntwo\nthree')
+        self.assertIsNone(normalize.strip_html('<p></p><br>'))
 
     def test_artwork_url_and_path(self):
         art_obj = {'url': 'https://example.com/art/{w}x{h}bb.{f}', 'bgColor': '222222'}
@@ -275,6 +281,29 @@ class TestSync(unittest.TestCase):
         self.assertEqual(shelves[2]['items'][0]['kind'], 'station')
         self.assertEqual(shelves[0]['items'][0]['groups'], [])
 
+    def test_recommendations_keep_to_what_the_app_can_show(self):
+        curator = {'id': '900000901', 'type': 'apple-curators',
+                   'attributes': {'name': 'Apple Music Folk', 'shortName': 'Folk'}}
+        banner = {'id': 'e.1', 'type': 'editorial-items', 'attributes': {'name': 'A Banner'}}
+        album = {'id': 'a1', 'type': 'albums', 'attributes': {'name': 'Album 1'}}
+        mix = {'id': 'pl.m', 'type': 'playlists',
+               'attributes': {'name': 'Chill Mix', 'playlistType': 'personal-mix'}}
+        raw = [
+            {'id': 'mixed', 'attributes': {'title': {'stringForDisplay': 'For the Weekend'}},
+             'relationships': {'contents': {'data': [curator, banner, album]}}},
+            {'id': 'none', 'attributes': {'title': {'stringForDisplay': 'Browse'}},
+             'relationships': {'contents': {'data': [curator, banner]}}},
+            {'attributes': {}, 'relationships': {'contents': {'data': [mix]}}},
+        ]
+        shelves = normalize.recommendation_shelves(raw, self.tmp_dir)
+        # Home: the curator and the banner are left out; a shelf with nothing else goes.
+        self.assertEqual([(s['key'], [it['id'] for it in s['items']]) for s in shelves],
+                         [('rec-mixed', ['a1']), ('rec-1', ['pl.m'])])
+        self.assertEqual(shelves[0]['items'][0]['groups'], [])
+        # Made for You takes only the recommendations made entirely of mixes and stations.
+        self.assertEqual([s['key'] for s in normalize.made_for_you_shelves(raw, self.tmp_dir)],
+                         ['rec-0'])
+
     def test_search_results_are_shelved_in_apples_order(self):
         with open(os.path.join(os.path.dirname(__file__), 'fixtures', 'search_results.json')) as f:
             raw = json.load(f)
@@ -461,6 +490,30 @@ class TestSync(unittest.TestCase):
         self.assertEqual(item['subtitle'], 'Apple Music')
         self.assertEqual(item['summary'], 'The new music that matters.')
         self.assertEqual(item['groups'], [])
+
+    def test_nothing_is_attributed_to_anyone_made_up(self):
+        station = normalize.normalize_station({'id': 'ra.1', 'attributes': {'name': 'S'}})
+        album = normalize.normalize_album({'id': 'l.a', 'attributes': {'name': 'A'}})
+        playlist = normalize.normalize_playlist({'id': 'p.1', 'attributes': {'name': 'Mine'}})
+        artist = normalize.normalize_artist({'id': 'l.r', 'attributes': {'name': 'R'}})
+        for item in (station, album, playlist, artist):
+            with self.subTest(kind=item['kind']):
+                self.assertEqual(item['subtitle'], '')
+
+    def test_a_resource_of_no_known_type_plays_nothing(self):
+        item = normalize.normalize_item({'id': 'e.1', 'type': 'editorial-items',
+                                         'attributes': {'name': 'A Banner'}})
+        self.assertEqual((item['kind'], item['title'], item['play']), ('unknown', 'A Banner', {}))
+
+    def test_songs_without_names_group_under_nameless_albums_and_artists(self):
+        songs = [{'id': 'i.1', 'type': 'library-songs',
+                  'attributes': {'name': 'Untitled', 'artistName': '', 'trackNumber': 1}},
+                 {'id': 'i.2', 'type': 'library-songs',
+                  'attributes': {'name': 'Also Untitled', 'trackNumber': 2}}]
+        albums, artists = normalize.group_songs_into_albums_and_artists(songs)
+        self.assertEqual([(album['title'], album['subtitle']) for album in albums], [('', '')])
+        self.assertEqual([artist['title'] for artist in artists], [''])
+        self.assertEqual(len(albums[0]['groups'][0]['entries']), 2)
 
     def test_group_songs_into_albums_and_artists(self):
         songs = [

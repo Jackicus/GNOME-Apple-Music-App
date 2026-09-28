@@ -110,7 +110,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 Item = {
   "id": "l.abc123",             // library id, or catalog id when not in the library
   "kind": "album" | "playlist" | "artist" | "station",
-  "title": "…", "subtitle": "…",                 // artist, curator, or "Apple Music"
+  "title": "…", "subtitle": "…",                 // artist or curator; "" when none
   "year": 2007, "genre": "Rock", "summary": "plain text" /* or null */,
   "art": "<cache>/art/<sha1>.jpg" /* or null */,  // 640x640, the hero
   "thumb": "<cache>/thumb/<sha1>.jpg" /* or null */,  // 320x320, the tiles; same name as its art
