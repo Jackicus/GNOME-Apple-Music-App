@@ -576,23 +576,6 @@ class Library(GObject.Object):
         """The Favourite Songs playlist (Item.favourites), or None when the library has none."""
         return self._favourites
 
-    def track_at(self, play, index):
-        """The Track at queue position index of what play ({kind, id}) names, or None.
-
-        play is an Item's or a Group's play target, as track rows and Play buttons pass it: the
-        album or playlist is looked up by kind and id, and its groups sharing that target are
-        searched for the entry whose `index` it is (an album's discs count on from each other).
-        """
-        item = self.by_id(play.get('kind'), play.get('id')) if isinstance(play, dict) else None
-        if item is None:
-            return None
-        for group in item.groups:
-            if group.play == play:
-                for track in group.entries:
-                    if track.index == index:
-                        return track
-        return None
-
     def load(self):
         """Read library.json from the cache directory and fill the models from it: a
         coroutine to await, whose file is being read (in a thread) from the moment this is
