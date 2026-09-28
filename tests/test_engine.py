@@ -41,7 +41,8 @@ RELAY = pathlib.Path(__file__).parent / 'fake_chrome_relay.py'
 # PyGObject 3.56's awaitable Gio calls look the loop up through asyncio's policy, which Python
 # 3.14 deprecates; main.use_glib_event_loop() filters the same warning in the app.
 warnings.filterwarnings('ignore', r"'asyncio\.\w*policy\w*' is deprecated", DeprecationWarning)
-PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
+PLAYBACK_METHODS = ('signout', 'play', 'playNext', 'playLater', 'control', 'seek', 'volume',
+                    'shuffle',
                     'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
                     'search', 'suggest', 'searchLanding', 'category',
                     'rating', 'addToLibrary', 'addToPlaylist')
@@ -1017,8 +1018,8 @@ class LifecycleTest(EngineFixture):
                 return thrown('Error: the page is navigating')
             return page(message)
 
-        with mock.patch.object(engine_module, 'SIGNIN_POLL', 0.2):
-            task = asyncio.create_task(self.engine.signin(timeout=1))
+        with mock.patch.object(engine_module, 'SIGNIN_POLL', 0.1):
+            task = asyncio.create_task(self.engine.signin(timeout=0.5))
             await until(lambda: self.engine.state == 'signing-in')
             self.chrome.responders['Runtime.evaluate'] = navigating
             # Signed in, and the page navigates: the event wakes the loop, the reads fail.
@@ -1063,6 +1064,26 @@ class LifecycleTest(EngineFixture):
         await self.engine.start()
         self.assertTrue(await self.engine.signin())
         self.assertEqual(self.page.signin_calls, 0)
+
+    async def test_unauthorize_revokes_the_session_and_never_raises(self):
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            self.assertFalse(await self.engine.unauthorize())  # down: nothing to revoke with
+        self.page.authorized = True
+        await self.engine.start()
+        self.assertTrue(await self.engine.unauthorize())
+        self.assertEqual(self.page.bridge_calls, [('signout',)])
+        self.assertFalse(self.engine.authorized)
+        self.page.bridge_answers['signout'] = {'error': 'Unauthorized'}
+        with self.assertLogs(engine_module.log, 'WARNING') as logs:
+            self.assertFalse(await self.engine.unauthorize())
+        self.assertIn('Unauthorized', logs.output[0])
+        # A page that does not answer in time: False, after `timeout`.
+        page = self.page
+        self.chrome.responders['Runtime.evaluate'] = lambda message: (
+            None if 'signout' in message['params']['expression'] else page(message))
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            self.assertFalse(await self.engine.unauthorize(timeout=0.2))
+        self.assertEqual(self.engine.state, 'up')
 
     async def test_account_name(self):
         await self.engine.start()

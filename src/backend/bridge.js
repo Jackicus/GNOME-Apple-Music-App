@@ -337,6 +337,21 @@
             return { authorized: !!mk.isAuthorized };
         },
 
+        // Sign out of Apple Music: MusicKit's unauthorize() revokes the session it
+        // was given, so it stops working at Apple's end too, not only on this
+        // computer. Answers {ok: true}, or {error} when MusicKit is not there or
+        // refuses; never throws.
+        signout: async function () {
+            const mk = getMusicKit();
+            if (!mk) return { error: 'MusicKit not initialized' };
+            try {
+                await mk.unauthorize();
+                return { ok: true };
+            } catch (err) {
+                return { error: describeError(err) };
+            }
+        },
+
         api: async function (path, params, options) {
             return await apiCall(path, params, options);
         },
