@@ -244,6 +244,33 @@ class DemoTest(unittest.TestCase):
         self.assertTrue(app.engine.demo)
 
 
+class AccountKeyTest(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(config.set_build_profile, 'default')
+
+    def test_the_development_build_has_keys_of_its_own(self):
+        release = make_app(profile='default')
+        devel = make_app(profile='development')
+        schema = devel.settings.props.settings_schema
+        for name in main.ACCOUNT_KEYS:
+            self.assertEqual(release.account_key(name), name)
+            self.assertEqual(devel.account_key(name), name + '-devel')
+            self.assertTrue(schema.has_key(devel.account_key(name)), name)
+        self.assertEqual(devel.account_key('sync-interval'), 'sync-interval')
+
+    def test_the_development_app_reads_its_own(self):
+        app = make_app(profile='development')
+        for key in ('signed-in', 'signed-in-devel'):
+            self.addCleanup(app.settings.reset, key)
+        action = app.lookup_action('sync')
+        app.settings.set_boolean('signed-in', True)  # the release build's sign-in
+        self.assertFalse(action.get_enabled())
+        self.assertFalse(app._autostart_wanted())
+        app.settings.set_boolean('signed-in-devel', True)
+        self.assertTrue(action.get_enabled())
+        self.assertTrue(app._autostart_wanted())
+
+
 class ConstructionTest(unittest.TestCase):
     def test_the_profile_sets_the_paths(self):
         self.addCleanup(config.set_build_profile, 'default')

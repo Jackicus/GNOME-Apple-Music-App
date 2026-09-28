@@ -54,7 +54,7 @@ async def sign_in(app, on_status):
         signing = True
         on_status(_('Sign in with your Apple ID in the Chrome window'))
         await engine.signin()
-        app.settings.set_boolean('signed-in', True)
+        app.settings.set_boolean(app.account_key('signed-in'), True)
         committed = True
     except asyncio.CancelledError:
         log.info('sign-in cancelled')
@@ -102,7 +102,7 @@ async def _finish_sign_in(app):
         except EngineError as error:
             log.info('no account name read after sign-in: %s', error)
             name = ''
-        settings.set_string('account-name', name)
+        settings.set_string(app.account_key('account-name'), name)
         if not name:
             log.info('no account name found on the page; the button says Signed In')
         try:
@@ -148,7 +148,7 @@ async def _revoke(app):
     that is down is started for it when the account is signed in, REVOKE_TIMEOUT at most."""
     engine = app.engine
     if engine.state == 'down':
-        if not app.settings.get_boolean('signed-in'):
+        if not app.settings.get_boolean(app.account_key('signed-in')):
             return
         try:
             await asyncio.wait_for(engine.start(visible=False), REVOKE_TIMEOUT)
@@ -173,7 +173,8 @@ def _forget(app):
     """The settings that name the account or its library: the sign-in, the name, the last
     sync, the expanded folders, and the last page when it is a playlist or a folder."""
     settings = app.settings
-    for key in ('signed-in', 'account-name', 'last-sync', 'expanded-folders'):
+    for key in (*map(app.account_key, ('signed-in', 'account-name', 'last-sync')),
+                'expanded-folders'):
         settings.reset(key)
     if parse_key(settings.get_string('last-page')) is not None:
         settings.reset('last-page')
@@ -199,8 +200,8 @@ async def clear_cache(app):
         await app.library_sync.cancel()
         await asyncio.to_thread(cache.clear, config.cache_dir())
         _forget_artwork(app)
-        app.settings.reset('last-sync')
+        app.settings.reset(app.account_key('last-sync'))
         await app.library.load()  # nothing left to read: the models empty
-    if app.settings.get_boolean('signed-in'):
+    if app.settings.get_boolean(app.account_key('signed-in')):
         app.library_sync.start()
     return True

@@ -118,8 +118,8 @@ Nothing records which Chrome is the app's: Chrome's own lock in the profile (`Si
 names the process that holds it.
 
 The development build (`-Dprofile=development`) has its own app ID, Chrome profile and cache,
-so it runs beside a release build. It shares the release build's settings, the signed-in state
-included.
+so it runs beside a release build. It shares the release build's settings, but for the
+sign-in's own: whether it is signed in, the account's name and the last sync (`-devel` keys).
 
 ## Further reading
 

@@ -143,6 +143,9 @@ class FakeWindow:
 
 
 class FakeApp:
+    def account_key(self, name):
+        return name  # the release build's keys
+
     def __init__(self, calls, profile_dir, engine_state='up'):
         self.calls = calls
         self.demo = False

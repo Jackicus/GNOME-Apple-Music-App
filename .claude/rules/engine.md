@@ -91,8 +91,9 @@ paths:
 - Paths (`backend/config.py`): `Application.__init__` calls `config.set_build_profile()`. The
   release build uses `$XDG_DATA_HOME/apple-music/chrome` and `$XDG_CACHE_HOME/apple-music`; the
   .Devel build `chrome-devel` and `apple-music-devel`. `APPLE_MUSIC_PROFILE` and
-  `APPLE_MUSIC_CACHE` override them, read on every call. The builds share every setting,
-  `signed-in`, `account-name` and `last-sync` included.
+  `APPLE_MUSIC_CACHE` override them, read on every call. The builds share the settings but
+  the sign-in's: `signed-in`, `account-name` and `last-sync` are `-devel` keys for the .Devel
+  build, whose profile holds a sign-in of its own (`Application.account_key()`).
 - The cache: src/cache.py knows what it holds (`CACHE_ENTRIES`), measures and clears it (the
   entries and `*.tmp` leftovers, never an unrelated file) and reads the kept answers.
   `normalize.prune_caches()` trims what only grows (remote-art/ to 32 MB, the 2,000 lyrics

@@ -727,9 +727,9 @@ class LibrarySync(GObject.Object):
     def due(self):
         """Whether the library should be synced now (sync_due): the last sync older than the
         sync-interval setting (hours; 0 only when asked), or no library on disk to keep."""
-        settings = self._app.settings
-        return sync_due(settings.get_string('last-sync'), settings.get_int('sync-interval'),
-                        library_ok=library_ok(self._app.library))
+        app = self._app
+        return sync_due(app.settings.get_string(app.account_key('last-sync')),
+                        app.settings.get_int('sync-interval'), library_ok=library_ok(app.library))
 
     # -- running one -----------------------------------------------------------------------
 
@@ -740,7 +740,7 @@ class LibrarySync(GObject.Object):
         app = self._app
         if app.refuse_in_demo():
             return None
-        if not app.settings.get_boolean('signed-in'):
+        if not app.settings.get_boolean(app.account_key('signed-in')):
             app.report(EngineError('not-signed-in', 'sign in to Apple Music to sync'))
             return None
         if self._holds:
@@ -804,7 +804,8 @@ class LibrarySync(GObject.Object):
             live[0] = False
             app.library.syncing = False
         self._failed_at = None
-        app.settings.set_string('last-sync', datetime.now(UTC).isoformat(timespec='seconds'))
+        app.settings.set_string(app.account_key('last-sync'),
+                                datetime.now(UTC).isoformat(timespec='seconds'))
         log.info('sync done in %.0f s', time.monotonic() - started)
         failed = (counts.get('art') or {}).get('failed', 0)
         if failed and not retry:
@@ -831,7 +832,7 @@ class LibrarySync(GObject.Object):
         self._scheduled = True
         app = self._app
         app.settings.connect('changed::sync-interval', self._arm)
-        app.settings.connect('changed::last-sync', self._arm)
+        app.settings.connect('changed::' + app.account_key('last-sync'), self._arm)
         app.engine.connect('notify::state', self.check)
         app.engine.connect('notify::authorized', self.check)
         app.library.connect('changed', self._on_library_changed)
@@ -849,7 +850,7 @@ class LibrarySync(GObject.Object):
         app = self._app
         engine = app.engine
         return (not app.demo and not self._holds and not self.running
-                and app.settings.get_boolean('signed-in')
+                and app.settings.get_boolean(app.account_key('signed-in'))
                 and engine.state == 'up' and engine.authorized
                 and not self._backing_off())
 
@@ -871,10 +872,10 @@ class LibrarySync(GObject.Object):
         if self._timer is not None:
             self._remove_timeout(self._timer)
             self._timer = None
-        settings = self._app.settings
-        delay = next_sync_delay(settings.get_string('last-sync'),
-                                settings.get_int('sync-interval'))
-        if not library_ok(self._app.library):
+        app = self._app
+        delay = next_sync_delay(app.settings.get_string(app.account_key('last-sync')),
+                                app.settings.get_int('sync-interval'))
+        if not library_ok(app.library):
             delay = 0
         if delay is None:
             return

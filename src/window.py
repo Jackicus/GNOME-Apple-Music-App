@@ -75,6 +75,7 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._settings = self.get_application().settings
+        self._account_key = self.get_application().account_key  # this build's key for a setting
         self._library = self.get_application().library
         self._destinations = {}  # the fixed sections' Adw.SidebarItem -> Destination
         self._destination_keys = {}  # key -> Destination, every fixed destination
@@ -104,8 +105,10 @@ class Window(Adw.ApplicationWindow):
         # the button is off while signing out; the sync banner follows the app's sync
         # (sync.LibrarySync).
         self._settings_handlers = [
-            self._settings.connect('changed::signed-in', self._update_account),
-            self._settings.connect('changed::account-name', self._update_account),
+            self._settings.connect('changed::' + self._account_key('signed-in'),
+                                   self._update_account),
+            self._settings.connect('changed::' + self._account_key('account-name'),
+                                   self._update_account),
         ]
         app = self.get_application()
         self._app_handlers = [
@@ -229,8 +232,8 @@ class Window(Adw.ApplicationWindow):
     # The account.
 
     def _update_account(self, *_args):
-        signed_in = self._settings.get_boolean('signed-in')
-        name = self._settings.get_string('account-name')
+        signed_in = self._settings.get_boolean(self._account_key('signed-in'))
+        name = self._settings.get_string(self._account_key('account-name'))
         self.account_stack.set_visible_child_name('account' if signed_in else 'sign-in')
         self.account_label.set_label(name or _('Signed In'))
         self.account_avatar.set_text(name)

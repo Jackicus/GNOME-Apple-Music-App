@@ -29,6 +29,9 @@ from applemusic.library import Library
 class FakeApp:
     """What LibrarySync asks of the Application."""
 
+    def account_key(self, name):
+        return name  # the release build's keys
+
     def __init__(self, engine, library):
         self.engine = engine
         self.library = library

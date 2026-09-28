@@ -57,6 +57,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         super().__init__()
         self._app = app
         self._settings = settings = app.settings
+        self._key = account_key = app.account_key  # this build's key for an account's setting
         self._engine = engine = app.engine
         self._closed = False
         self._quiet = False  # the interval row is being set from the setting
@@ -77,9 +78,12 @@ class PreferencesDialog(Adw.PreferencesDialog):
 
         self._handlers = [
             (settings, settings.connect('changed::sync-interval', self._update_interval)),
-            (settings, settings.connect('changed::last-sync', self._on_last_sync)),
-            (settings, settings.connect('changed::signed-in', self._update_account)),
-            (settings, settings.connect('changed::account-name', self._update_account)),
+            (settings, settings.connect('changed::' + account_key('last-sync'),
+                                        self._on_last_sync)),
+            (settings, settings.connect('changed::' + account_key('signed-in'),
+                                        self._update_account)),
+            (settings, settings.connect('changed::' + account_key('account-name'),
+                                        self._update_account)),
             (app, app.connect('notify::signing-out', self._update_account)),
             (app.library_sync, app.library_sync.connect('notify::running',
                                                          self._on_sync_running)),
@@ -122,7 +126,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         if self._app.library_sync.props.running:
             subtitle = _('Refreshing…')
         else:
-            subtitle = last_sync_text(self._settings.get_string('last-sync'))
+            subtitle = last_sync_text(self._settings.get_string(self._key('last-sync')))
         self.interval_row.set_subtitle(subtitle)
 
     def _on_tick(self):
@@ -157,7 +161,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
     def _on_clear_clicked(self, _button):
         if self._app.refuse_in_demo():
             return
-        if self._settings.get_boolean('signed-in'):
+        if self._settings.get_boolean(self._key('signed-in')):
             body = _('The library, artwork and lyrics kept on this computer are removed, '
                      'then your library is fetched again from Apple Music.')
         else:
@@ -248,8 +252,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._app.activate_action('sign-out')  # asks first, over this dialog
 
     def _update_account(self, *_args):
-        signed_in = self._settings.get_boolean('signed-in') and not self._app.demo
-        name = self._settings.get_string('account-name')
+        signed_in = self._settings.get_boolean(self._key('signed-in')) and not self._app.demo
+        name = self._settings.get_string(self._key('account-name'))
         if self._app.demo:
             description = _('Not used with the demo library')
         elif not signed_in:
