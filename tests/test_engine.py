@@ -574,6 +574,12 @@ class LifecycleTest(EngineFixture):
         await self.wait_exited(process)
         self.assertFalse(self.engine.authorized)
 
+    async def test_a_crashed_page_takes_the_engine_down(self):
+        await self.engine.start()
+        await self.chrome.send_event('Inspector.targetCrashed', {})
+        await until(lambda: self.engine.state == 'down', timeout=3)
+        await self.wait_exited(self.engine.spawned[0][0])
+
     async def test_bridge_events_are_re_emitted(self):
         await self.engine.start()
         seen = []

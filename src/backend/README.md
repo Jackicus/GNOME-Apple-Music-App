@@ -230,12 +230,15 @@ sit on it.
   connect(transport)` (the browser endpoint), `await attach_page()` (finds
   the music.apple.com page through `Target.setDiscoverTargets` and
   `Target.getTargets`, sends another page there or opens one, attaches with
-  `Target.attachToTarget({flatten: true})`, then enables `Runtime` and
-  `Page` and adds the `__amEvent` binding on that session; the page closing or
-  detaching loses the connection), `await call(method, params, timeout,
-  browser=False)`, `await evaluate(js, await_promise, timeout)` (by value; a
-  JS exception is `EngineError('api')`),
-  `await bridge(method, *args)` (`window.__appleMusicLibrary.method(...)`),
+  `Target.attachToTarget({flatten: true})`, then enables `Runtime`, `Page`
+  and `Inspector` and adds the `__amEvent` binding on that session; the page
+  crashing, closing or detaching loses the connection, and a failed attach
+  closes it), `await call(method, params, timeout, browser=False)`, `await
+  evaluate(js, await_promise, timeout)` (by value, NaN/Infinity/-0/BigInt
+  mapped; a JS exception is `EngineError('api')`),
+  `await bridge(method, *args)` (`window.__appleMusicLibrary.method(...)`;
+  it waits while the bridge is being put back, and is made again once it is
+  when it found the bridge gone),
   `on(event, callback)` / `off` (callback gets `(name, data)`; a CDP method
   name, a bridge event as `'am:<name>'`, or the wildcards `'am:*'` and
   `'*'`), `await ensure_bridge()` (injects `bridge.js` when the page's
@@ -246,7 +249,9 @@ sit on it.
   wait_closed()`, `connected`. `await open_page(transport)` connects and
   attaches; `await attach_devtools(port)` does it through a DevTools port.
   Timeouts are `EngineError('timeout')`, a lost connection `'engine-down'`
-  (pending calls included).
+  (pending calls included); a bad message or payload, or a handler that
+  raises, is logged and skipped. Answers of 512 KB and more are parsed in a
+  thread, in order.
 - **`scripts/am.py`** — the debug CLI: `status`, `start [--visible]`,
   `stop`, `eval <js>`, `now-playing`, `events`. Same configuration as the
   app (`config.py`, so 9228 and `$XDG_DATA_HOME/apple-music/chrome` unless

@@ -14,6 +14,7 @@ import base64
 import hashlib
 import http.server
 import json
+import math
 import os
 import re
 import socket
@@ -43,7 +44,8 @@ SUBSCRIBE = 'window.__appleMusicLibrary.subscribe()'
 MISSING = 'typeof window.__appleMusicLibrary === "undefined"'
 PAGE_TARGET = {'targetId': 'PAGE-1', 'type': 'page', 'title': 'Apple Music',
                'url': 'https://music.apple.com/us/new', 'attached': False}
-PAGE_SETUP = ['Runtime.enable', 'Page.enable', 'Runtime.addBinding', 'Page.getFrameTree']
+PAGE_SETUP = ['Runtime.enable', 'Page.enable', 'Inspector.enable', 'Runtime.addBinding',
+              'Page.getFrameTree']
 
 
 def server_frame(opcode, payload, fin=True):
@@ -422,6 +424,31 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created, [{'url': chrome.START_URL}])
         self.assertEqual(self.chrome.sessions[self.chrome.session], 'PAGE-1')
 
+    async def test_connecting_twice_is_refused(self):
+        await self.open()
+        other = PipeFakeChrome()
+        transport = other.client_transport()
+        try:
+            with self.assertRaises(RuntimeError):
+                await self.client.connect(transport)
+        finally:
+            transport.close()
+            other.own.close()
+
+    async def test_a_failed_attach_leaves_nothing_running(self):
+        def refuse(message):
+            raise CDPFailure(-32000, 'Page.enable failed')
+        self.chrome.responders['Page.enable'] = refuse
+        await self.client.connect(self.chrome.client_transport())
+        reader = self.client._reader_task
+        with self.assertRaises(EngineError) as ctx:
+            await self.client.attach_page(1)
+        self.assertEqual(ctx.exception.code, 'api')
+        self.assertFalse(self.client.connected)
+        await asyncio.sleep(0)
+        self.assertTrue(reader.done())
+        await until(lambda: self.chrome.hung_up)  # our end of the pipe was let go
+
     async def test_open_page(self):
         client = await open_page(self.chrome.client_transport(), timeout=3, wait=1)
         try:
@@ -471,13 +498,22 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         await self.open()
         self.assertEqual(await self.client.evaluate('answer()'), 42)
 
-    async def test_evaluate_undefined_and_objects(self):
+    async def test_evaluate_undefined_objects_and_unserializable_values(self):
         answers = {'undefined': value(None), 'obj': value({'a': [1, 2]}), 'no': value(False)}
+        for text in ('NaN', 'Infinity', '-Infinity', '-0', '5n', 'odd'):
+            answers[text] = {'result': {'type': 'number', 'unserializableValue': text}}
         self.chrome.responders['Runtime.evaluate'] = lambda m: answers[m['params']['expression']]
         await self.open()
         self.assertIsNone(await self.client.evaluate('undefined'))
         self.assertEqual(await self.client.evaluate('obj'), {'a': [1, 2]})
         self.assertIs(await self.client.evaluate('no', await_promise=False), False)
+        self.assertTrue(math.isnan(await self.client.evaluate('NaN')))
+        self.assertEqual(await self.client.evaluate('Infinity'), math.inf)
+        self.assertEqual(await self.client.evaluate('-Infinity'), -math.inf)
+        zero = await self.client.evaluate('-0')
+        self.assertEqual((zero, math.copysign(1, zero)), (0, -1))
+        self.assertEqual(await self.client.evaluate('5n'), 5)
+        self.assertEqual(await self.client.evaluate('odd'), 'odd')
 
     async def test_bridge_calls_pass_json_arguments(self):
         seen = []
@@ -534,6 +570,26 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         self.chrome.responders['Split'] = halves
         self.assertEqual(await self.client.call('Split'), {'whole': True})
 
+    async def test_big_answers_keep_their_order(self):
+        big = 'x' * (client_module.BIG_MESSAGE + 1000)
+        seen = []
+        await self.open()
+        self.client.on('Custom.before', lambda name, data: seen.append(name))
+        self.client.on('Custom.after', lambda name, data: seen.append(name))
+
+        async def answer(message):
+            await self.chrome.send_event('Custom.before', {})
+            await self.chrome.send({'id': message['id'], 'sessionId': message['sessionId'],
+                                    'result': {'data': big}})
+            await self.chrome.send_event('Custom.after', {})
+        self.chrome.responders['Big'] = answer
+        result = await self.client.call('Big')
+        self.assertEqual(len(result['data']), len(big))
+        await until(lambda: len(seen) == 2)
+        self.assertEqual(seen, ['Custom.before', 'Custom.after'])
+
+    # -- the connection going ----------------------------------------------------------------
+
     async def test_chrome_going_is_engine_down(self):
         async def hang_up(message):
             await self.chrome.drop()
@@ -548,6 +604,18 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
             await self.client.call('Anything')
         self.assertEqual(ctx.exception.code, 'engine-down')
 
+    async def test_close_fails_calls_in_flight_and_lets_go_of_the_pipe(self):
+        self.chrome.responders['Slow'] = lambda m: None
+        await self.open()
+        call = asyncio.create_task(self.client.call('Slow'))
+        await until(lambda: 'Slow' in self.chrome.methods())
+        await self.client.close()
+        with self.assertRaises(EngineError) as ctx:
+            await call
+        self.assertEqual(ctx.exception.code, 'engine-down')
+        self.assertFalse(self.client.connected)
+        await until(lambda: self.chrome.hung_up)
+
     async def assert_lost(self, reason, push):
         self.chrome.responders['Hang'] = lambda m: None
         await self.open()
@@ -561,6 +629,15 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.client.wait_closed(), 1)
         self.assertFalse(self.client.connected)
 
+    async def test_a_crashed_page_loses_the_connection(self):
+        await self.assert_lost('the page crashed', lambda: self.chrome.send_event(
+            'Inspector.targetCrashed', {}))
+
+    async def test_the_browser_saying_the_page_crashed(self):
+        await self.assert_lost('the page crashed', lambda: self.chrome.send_browser_event(
+            'Target.targetCrashed', {'targetId': 'PAGE-1', 'status': 'crashed',
+                                     'errorCode': 139}))
+
     async def test_the_page_closing(self):
         await self.assert_lost('the page was closed', lambda: self.chrome.send_browser_event(
             'Target.targetDestroyed', {'targetId': 'PAGE-1'}))
@@ -568,6 +645,17 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_session_detached(self):
         await self.assert_lost('the page was detached', lambda: self.chrome.send_browser_event(
             'Target.detachedFromTarget', {'sessionId': 'SESSION-1', 'targetId': 'PAGE-1'}))
+
+    async def test_another_page_crashing_changes_nothing(self):
+        await self.open()
+        await self.chrome.send_browser_event('Target.targetCrashed', {'targetId': 'OTHER'})
+        await self.chrome.send_browser_event('Target.detachedFromTarget',
+                                             {'sessionId': 'SESSION-9'})
+        await self.chrome.send_event('Inspector.targetCrashed', {}, session='SESSION-9')
+        self.assertEqual(await self.client.call('Still.there'), {})
+        self.assertTrue(self.client.connected)
+
+    # -- events ----------------------------------------------------------------------------
 
     async def test_binding_event_is_dispatched(self):
         await self.open()
@@ -611,6 +699,40 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         self.client.on('Page.loadEventFired', handler)
         await self.chrome.send_event('Page.loadEventFired', {'timestamp': 1})
         await asyncio.wait_for(done.wait(), 2)
+
+    async def test_a_raising_handler_does_not_stop_later_events(self):
+        await self.open()
+        seen = []
+
+        def broken(name, data):
+            raise RuntimeError('a bug in a handler')
+        self.client.on('am:*', broken)
+        self.client.on('am:*', lambda name, data: seen.append(name))
+        with self.assertLogs(client_module.log, 'ERROR') as logs:
+            await self.chrome.send_binding('one', None)
+            await self.chrome.send_binding('two', None)
+            await until(lambda: seen == ['am:one', 'am:two'])
+        self.assertEqual(len(logs.records), 2)
+
+    async def test_malformed_messages_are_logged_and_the_session_goes_on(self):
+        await self.open()
+        seen = []
+        self.client.on('am:*', lambda name, data: seen.append((name, data)))
+        with self.assertLogs(client_module.log, 'WARNING') as logs:
+            for payload in (json.dumps({'name': 1}), '[1]', 'not json', json.dumps('x')):
+                await self.chrome.send_event('Runtime.bindingCalled', {
+                    'name': '__amEvent', 'executionContextId': 1, 'payload': payload})
+            self.chrome.write_raw(b'{not json at all\0')
+            await self.chrome.send({'id': [1], 'result': {}})  # an id that cannot be looked up
+            await self.chrome.send_binding('fine', {'ok': True})
+            await until(lambda: seen == [('am:fine', {'ok': True})])
+        self.assertTrue(self.client.connected)
+        self.assertEqual(await self.client.call('Still.there'), {})
+        messages = '\n'.join(logs.output)
+        self.assertIn('unreadable event', messages)
+        self.assertIn('undecodable message', messages)
+
+    # -- the bridge ------------------------------------------------------------------------
 
     async def open_with_page(self, **kwargs):
         page = FakePage(**kwargs)
@@ -692,6 +814,26 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         await self.open()
         await self.client.ensure_bridge(timeout=2)
         self.assertEqual(page.injections, 1)
+
+    async def test_a_bridge_call_waits_for_the_bridge_to_come_back(self):
+        page = await self.open_with_page()
+        await self.client.subscribe()
+        page.bridge = None
+        page.ready = False  # MusicKit still loading in the new document
+        await self.chrome.send_event(*context_created(9))
+        await until(lambda: self.client._bridge_lock.locked())
+        call = asyncio.create_task(self.client.bridge('status'))
+        await asyncio.sleep(0.1)
+        self.assertFalse(call.done())  # waiting, not failing with a TypeError
+        page.ready = True
+        self.assertEqual((await asyncio.wait_for(call, 3))['ready'], True)
+
+    async def test_a_bridge_call_that_meets_a_missing_bridge_is_made_again(self):
+        page = await self.open_with_page()
+        await self.client.subscribe()
+        page.bridge = None  # navigated; the re-injection has not begun
+        self.assertEqual((await self.client.bridge('status'))['ready'], True)
+        self.assertEqual(page.injections, 2)
 
 class WebSocketClientTest(unittest.IsolatedAsyncioTestCase):
     """The same client through a DevTools WebSocket (scripts/am.py --attach)."""
