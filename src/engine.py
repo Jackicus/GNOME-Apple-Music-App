@@ -82,6 +82,7 @@ PAGE_WAIT = 20.0          # a new Chrome showing music.apple.com
 BRIDGE_WAIT = 15.0        # a fresh page loading MusicKit
 EXIT_GRACE = 1.0          # Chrome's pipe closing to its exit being seen, when it fails
 CDP_TIMEOUT = 30.0        # a CDP call without a timeout of its own
+PROBE_TIMEOUT = 5.0       # after a call timed out: a page silent this long is wedged
 CLOSE_WAIT = 2.0          # Chrome closing on Browser.close, before SIGTERM
 STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
@@ -429,6 +430,7 @@ class Engine(GObject.Object):
         self.prefer_headless = True
         self.stop_grace = STOP_GRACE
         self.close_wait = CLOSE_WAIT
+        self.probe_timeout = PROBE_TIMEOUT
         self.api_retry_delay = API_RETRY_DELAY
         self._client = None
         self._process = None   # the Gio.Subprocess running Chrome
@@ -438,6 +440,7 @@ class Engine(GObject.Object):
         self._lock = asyncio.Lock()
         self._starting = None  # (Future, headless) of the start under way
         self._tasks = set()    # small tasks of the engine's own, held until they end
+        self._probe = None     # the task asking a page that timed out whether it answers
 
     @property
     def pid(self):
@@ -551,6 +554,7 @@ class Engine(GObject.Object):
         log.info('Chrome %d started %s', self._pid, 'headless' if headless else 'visible')
         client = self._client = CDPClient(timeout=CDP_TIMEOUT)
         client.on(EVENT_PREFIX + '*', self._on_bridge_event)
+        client.on_timeout = lambda _method: self._on_timeout(client)
         await self._open(client, transport, self._process)
         await client.ensure_bridge(timeout=BRIDGE_WAIT)
         await client.subscribe()  # finds the bridge in place; events from now on
@@ -640,6 +644,27 @@ class Engine(GObject.Object):
         """The client on Chrome's pipe, attached to the music.apple.com page."""
         await client.connect(transport)
         await client.attach_page(PAGE_WAIT)
+
+    def _on_timeout(self, client):
+        """A call ran out of time: is the page there at all? One probe at a time, and only
+        while the engine is up (a start has waits of its own)."""
+        if self._client is not client or self.state not in ('up', 'signing-in'):
+            return
+        if self._probe is None or self._probe.done():
+            self._probe = self._in_background(self._probe_page(client))
+
+    async def _probe_page(self, client):
+        """`0` in the page. A page that answers is alive, and the slow part was MusicKit or
+        Apple; one silent for probe_timeout is wedged (a hung or crashed renderer), so its
+        connection is closed: the engine goes down (_watch_connection) and the next command
+        starts a fresh Chrome, rather than every command timing out while the Player shows
+        what played last."""
+        try:
+            await client.evaluate('0', await_promise=False, timeout=self.probe_timeout)
+        except EngineError as e:
+            if e.code == 'timeout' and self._client is client:
+                log.warning('the page does not answer; the engine goes down')
+                await client.close()
 
     async def _watch_connection(self, client):
         await client.wait_closed()

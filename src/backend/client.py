@@ -312,10 +312,14 @@ class WebSocketTransport:
 
 
 class CDPClient:
-    """The connection. One per engine; reconnect by making a new one."""
+    """The connection. One per engine; reconnect by making a new one.
+
+    `on_timeout(method)`, when set, is called whenever a call runs out of time (the engine
+    checks then whether the page still answers at all)."""
 
     def __init__(self, timeout=30.0):
         self.timeout = timeout
+        self.on_timeout = None
         self.reinject_timeout = BRIDGE_TIMEOUT
         self._transport = None
         self._reader_task = None
@@ -539,6 +543,11 @@ class CDPClient:
             response = await asyncio.wait_for(future, timeout)
         except TimeoutError as e:
             self._pending.pop(message['id'], None)
+            if self.on_timeout is not None:
+                try:
+                    self.on_timeout(method)
+                except Exception:
+                    log.exception('on_timeout failed')
             raise EngineError('timeout', f'{method} took longer than {timeout:g} s') from e
         if 'error' in response:
             error = response['error']

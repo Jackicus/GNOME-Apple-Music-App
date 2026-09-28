@@ -328,6 +328,8 @@ class FakePage:
         if expression == SUBSCRIBE:
             self.subscriptions += 1
             return value({'subscribed': True})
+        if expression == '0':  # the engine asking whether the page answers at all
+            return value(0)
         if expression.startswith('window.__appleMusicLibrary.') and self.bridge is None:
             method = expression[len('window.__appleMusicLibrary.'):].split('(', 1)[0]
             return thrown(f"TypeError: Cannot read properties of undefined (reading '{method}')"
@@ -551,12 +553,15 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout(self):
         self.chrome.responders['Slow.call'] = lambda m: None
+        timed_out = []
+        self.client.on_timeout = timed_out.append
         await self.open()
         with self.assertRaises(EngineError) as ctx:
             await self.client.call('Slow.call', timeout=0.2)
         self.assertEqual(ctx.exception.code, 'timeout')
         self.assertTrue(self.client.connected)  # a slow answer is not a dead Chrome
         self.assertEqual(self.client._pending, {})
+        self.assertEqual(timed_out, ['Slow.call'])
 
     async def test_a_message_split_across_reads(self):
         await self.open()
