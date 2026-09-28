@@ -1,7 +1,5 @@
 #!@PYTHON@
 
-import gettext
-import locale
 import os
 import signal
 import sys
@@ -16,9 +14,10 @@ localedir = '@localedir@'
 
 sys.path.insert(1, pkgdatadir)
 signal.signal(signal.SIGINT, signal.SIG_DFL)
-locale.bindtextdomain('apple-music', localedir)
-locale.textdomain('apple-music')
-gettext.install('apple-music', localedir)
+
+from applemusic import i18n  # noqa: E402
+
+i18n.setup(localedir)  # for Python's gettext and GtkBuilder's, before anything is translated
 
 if __name__ == '__main__':
     from gi.repository import Gio

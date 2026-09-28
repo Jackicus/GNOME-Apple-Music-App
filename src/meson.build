@@ -83,6 +83,7 @@ install_data(
   '__init__.py',
   'actions.py',
   'engine.py',
+  'i18n.py',
   'library.py',
   'lyrics.py',
   'main.py',

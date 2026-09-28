@@ -3,16 +3,32 @@ module missing from src/meson.build's install lists, a .blp missing from the blu
 or the gresource, or a file with translatable strings missing from po/POTFILES.in, would pass
 every other test and break (or go untranslated) only once installed."""
 
+import io
 import re
 import shutil
 import subprocess
+import tokenize
 import unittest
 import xml.etree.ElementTree as ElementTree
 
 from tests import ROOT, SRC
 
-# A gettext call: _(…) (not some_name_(…) or obj._(…)), ngettext(…), or C_(…) in Blueprint.
-TRANSLATABLE = re.compile(r'(?<![\w.])(?:_|ngettext|C_)\(')
+GETTEXT_CALLS = ('_', 'ngettext', 'C_')
+# A call in Blueprint: _("…") or C_("…", "…") (not some_name_(…)), outside // comments.
+BLUEPRINT_CALL = re.compile(r'(?<![\w.])(?:_|C_)\(')
+
+
+def translates(path):
+    """Whether the .py or .blp file at path calls _(, ngettext( or C_( (in code, not in a
+    docstring or a comment)."""
+    text = path.read_text(encoding='utf-8')
+    if path.suffix == '.blp':
+        return any(BLUEPRINT_CALL.search(line.partition('//')[0]) for line in text.splitlines())
+    tokens = [token for token in tokenize.generate_tokens(io.StringIO(text).readline)
+              if token.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE)]
+    return any(token.type == tokenize.NAME and token.string in GETTEXT_CALLS
+               and following.string == '(' and previous.string != '.'
+               for previous, token, following in zip(tokens, tokens[1:], tokens[2:]))
 
 
 def source_files(*suffixes):
@@ -84,7 +100,7 @@ class BuildListsTest(unittest.TestCase):
 
     def test_every_file_with_translatable_strings_is_in_potfiles(self):
         translatable = [path for path in source_files('.py', '.blp')
-                        if TRANSLATABLE.search((ROOT / path).read_text(encoding='utf-8'))]
+                        if translates(ROOT / path)]
         self.assertGreater(len(translatable), 20)  # the pattern still finds them
         self.assertEqual(sorted(set(translatable) - set(self.potfiles)), [],
                          'missing from po/POTFILES.in')

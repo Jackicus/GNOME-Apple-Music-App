@@ -90,7 +90,12 @@ Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/, remote-ar
 
 ```
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
-src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
+src/apple-music.in             launcher configured by Meson: i18n.setup(localedir), loads the
+                               gresource, main.main()
+src/i18n.py                    setup(localedir): binds and selects the `apple-music` domain for
+                               C libintl (GtkBuilder, the .blp strings) and Python's gettext
+                               (every `_()`/`ngettext()` in the modules); the scripts call it
+                               through scripts/harness.py
 src/main.py                    Application: app.* actions (quit, about, shortcuts, preferences,
                                sign-in, sign-out, sync, now-playing; play-pause, next, previous,
                                shuffle, repeat, enabled while something plays), every
