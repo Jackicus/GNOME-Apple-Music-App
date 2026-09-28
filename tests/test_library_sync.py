@@ -215,6 +215,49 @@ class LibrarySyncTest(SyncTestCase):
         self.assertIsNotNone(self.sync.start())
         await self.sync.cancel()
 
+    async def test_an_unexpected_failure_is_toasted_with_retry(self):
+        async def broken(engine, library, progress=None):
+            raise OSError(28, 'No space left on device')
+
+        with mock.patch.object(app_sync, 'sync_library', broken), \
+                self.assertLogs('applemusic.sync', 'ERROR'):
+            await self.sync.start()
+        self.assertEqual(self.app.toasts, [('Could not sync your library', 'Retry', 'app.sync')])
+        self.assertEqual(self.app.settings.get_string('last-sync'), '')
+
+    async def test_an_api_failure_says_so_without_its_detail(self):
+        del self.engine.answers[app_sync.SONGS_ENDPOINT]  # Apple says no
+        with self.assertLogs('applemusic.sync', 'WARNING'):
+            await self.sync.start()
+        self.assertEqual(self.app.toasts, [('Could not sync your library', 'Retry', 'app.sync')])
+        self.assertEqual(self.app.reported, [])
+
+    async def test_a_missing_engine_is_reported(self):
+        async def no_chrome(visible=None):
+            raise EngineError('no-browser', 'Google Chrome was not found')
+
+        self.engine.start = no_chrome
+        await self.sync.start()
+        self.assertEqual(self.app.reported, ['no-browser'])
+        self.assertEqual(self.app.toasts, [])
+
+
+class ProgressTextTest(unittest.TestCase):
+    def test_every_section_has_both_sentences(self):
+        texts = app_sync.progress_texts()
+        self.assertEqual(set(texts), set(app_sync.PROGRESS_SECTIONS))
+        for section, (counted, uncounted) in texts.items():
+            self.assertTrue(counted and uncounted, section)
+            self.assertNotIn('{', uncounted, section)
+
+    def test_the_sentences(self):
+        text = app_sync.progress_text
+        self.assertEqual(text('', 0, None), 'Syncing your library…')
+        self.assertEqual(text('songs', 0, None), 'Syncing songs…')
+        self.assertEqual(text('songs', 300, 900), 'Syncing songs: 300 of 900')
+        self.assertEqual(text('artwork', 5, 9), 'Downloading artwork: 5 of 9')
+        self.assertEqual(text('shelves', 1, 3), 'Syncing recommendations…')
+
 
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
 
