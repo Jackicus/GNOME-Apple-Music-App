@@ -190,6 +190,22 @@ class LibrarySyncTest(SyncTestCase):
         self.assertEqual(self.app.settings.get_string('last-sync'), '')
         self.assertEqual(self.app.toasts, [])
 
+    async def test_a_sync_asked_while_the_engine_starts_waits_for_it(self):
+        starts = []
+
+        async def start(visible=None):
+            starts.append(visible)
+            await asyncio.sleep(0.05)
+            self.engine.state = 'up'
+
+        self.engine.state = 'starting'
+        self.engine.start = start
+        await self.sync.start()
+        self.assertEqual(starts, [None])
+        self.assertEqual(self.progress[0], ('', 0, None))  # the banner before the wait
+        self.assertEqual(self.app.reported, [])
+        self.assertTrue(self.app.toasts[-1][0].startswith('Library synced'))
+
     async def test_held_starts_nothing(self):
         with self.sync.held():
             self.assertIsNone(self.sync.start())

@@ -643,9 +643,8 @@ class LibrarySync(GObject.Object):
                 self.emit('progress', section, done, total)
 
         try:
-            if engine.state == 'down':
-                await engine.start()
-            progress('', 0, None)
+            progress('', 0, None)  # the banner, while Chrome may take seconds to come up
+            await engine.start()  # a start under way is joined; a running engine is kept
             counts = await sync_library(engine, app.library, progress)
         except store.Cancelled as error:
             log.info('sync stopped: %s', error)  # the cache was cleared under it
