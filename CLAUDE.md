@@ -36,10 +36,12 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │            a store of SidebarEntry (sidebar.py): All Playlists, Favourite Songs, │
 │            then library.playlist_tree() depth first, folders collapsible         │
 │   content: AdwNavigationView; a sidebar item replaces its stack with that        │
-│            destination's root page (pages/, built on first visit and kept, each  │
-│            with its own header bar): Home and Radio (shelves), GridPages, the    │
-│            SongsPage (ColumnView), Favourite Songs and each sidebar playlist (a  │
-│            DetailPage), each folder (a GridPage of its folders and playlists);   │
+│            destination's root page (pages/, built on first visit and kept; a     │
+│            playlist's or a folder's only while among the ROOT_LIMIT (8) last     │
+│            shown; each with its own header bar): Home and Radio (shelves),       │
+│            GridPages, the SongsPage (ColumnView), Favourite Songs and each       │
+│            sidebar playlist (a DetailPage), each folder (a GridPage of its       │
+│            folders and playlists);                                               │
 │            tiles → window.open_item() pushes a                                   │
 │            DetailPage (album, playlist), an ArtistPage or a folder's GridPage,   │
 │            or plays a station; a shelf's See All →                               │
@@ -587,7 +589,8 @@ scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--watch MS] [--size WxH
                           --watch ms (1000) after each switch, RSS and anon RSS, and the pages
                           step: 20 albums, 5 artists and 5 See All opened and popped, the RSS
                           they leave after gc.collect() + malloc_trim(0) and how many of those
-                          pages are still alive (weakrefs, by class; the page-leak measure);
+                          pages are still alive (GObject weak references, by class; the
+                          page-leak measure);
                           --profile KEY prints a cProfile of that page's first switch. Keep its
                           window visible (no frames otherwise: reported after 3 s)
 meson setup _build --prefix=/usr && meson install -C _build --skip-subprojects
@@ -604,7 +607,17 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
 
 - UI is Blueprint (`.blp`, compiled to `.ui` by Meson). Widgets are `Gtk.Template` classes with
   `__gtype_name__ = 'AppleMusic<Name>'`, `Gtk.Template.Child()` for named children,
-  `@Gtk.Template.Callback()` for handlers named in the `.blp`.
+  `@Gtk.Template.Callback()` for handlers named in the `.blp`, but only in widgets that live
+  as long as the window (the next rule).
+- Widget lifetimes: a widget that can be dropped (a pushed page, an evicted root page, a
+  Shelf, a dialog, a row) never connects a child's or an owned object's signal (a factory's,
+  an adjustment's, a controller's) to its own bound method, and declares no `=> $handler()`
+  in its `.blp`: the cycle runs through C and the widget is never freed. It connects them in
+  `__init__` with `widgets.util.connect_weak(obj, signal, self._method)` (`weak_method()` for
+  other callbacks a child holds, such as `FlowBox.bind_model`'s); `self.connect()` and vfuncs
+  are fine. A widget's lifetime is followed with a GObject weak reference (`obj.weak_ref()`),
+  never `weakref`: PyGObject 3.56 lets a widget's Python wrapper go and makes a new one while
+  the widget lives. `tests/test_page_lifetime.py` checks each such class (add new ones).
 - Every user-visible string goes through `_()`: `from gettext import gettext as _` in Python,
   `_("…")` in Blueprint. New files with strings go in `po/POTFILES.in`. Source strings keep the
   scaffold's en-GB spelling ("Favourite").
