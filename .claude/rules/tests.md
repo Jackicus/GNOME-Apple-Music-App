@@ -19,7 +19,8 @@ paths:
   compiled gresource from build/src or build/install), template modules imported inside the
   test, `pump()`/`wait_for()` for the main loop, and under a second per test. They must pass on
   CI's Xvfb with the cairo renderer and no accessibility bus.
-- Tests never start Chrome, touch the real profile or cache, or reach the network: point
+- Tests never start Chrome, touch the real profile or cache, or reach the network (a server
+  the test runs itself on 127.0.0.1, as test_normalize's artwork fetch does, is fine): point
   `APPLE_MUSIC_CACHE` (and `APPLE_MUSIC_PROFILE`) at a temporary directory. test_engine.py runs
   on gi.events' `GLibEventLoop` (`loop_factory`), as the app does, with `chrome.find_chrome`
   patched to a script that runs `tests/fake_chrome_relay.py` through the real `Engine._spawn`:
