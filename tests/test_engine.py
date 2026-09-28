@@ -1810,5 +1810,27 @@ class KeptAfterWipeTest(unittest.TestCase):
         self.assertEqual(list(cache.iterdir()), [])
 
 
+class BrowserPathTest(unittest.IsolatedAsyncioTestCase):
+    """Engine.browser_path(): Preferences' check of a browser program, no Chrome needed."""
+
+    async def test_a_program_is_looked_up_as_it_is(self):
+        with tempfile.TemporaryDirectory() as bin_dir:
+            program = os.path.join(bin_dir, 'invented-browser')
+            with open(program, 'w', encoding='utf-8') as file:
+                file.write('#!/bin/sh\n')
+            os.chmod(program, 0o755)
+            with mock.patch.object(chrome, 'in_flatpak', lambda: False), \
+                    mock.patch.dict(os.environ, {'PATH': bin_dir}):
+                self.assertEqual(await Engine.browser_path('invented-browser'), program)
+                self.assertEqual(await Engine.browser_path(program), program)
+                # No other name is tried in its place, as a start would.
+                self.assertIsNone(await Engine.browser_path('google-chrome-stable'))
+
+    async def test_in_a_sandbox_the_host_is_asked(self):
+        with mock.patch.object(chrome, 'in_flatpak', lambda: True), \
+                mock.patch.object(chrome, 'find_host_chrome', lambda names: f'/host/{names[0]}'):
+            self.assertEqual(await Engine.browser_path('chrome'), '/host/chrome')
+
+
 if __name__ == '__main__':
     unittest.main()

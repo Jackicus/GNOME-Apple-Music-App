@@ -30,8 +30,8 @@
     </key>
     <key name="browser-command" type="s">
       <default>'google-chrome-stable'</default>
-      <summary>Browser command</summary>
-      <description>The command that runs Google Chrome, the playback engine (it must be the real Chrome: it ships Widevine). When it is not on PATH, google-chrome-stable, google-chrome and /opt/google/chrome/chrome are tried.</description>
+      <summary>Browser program</summary>
+      <description>The program that runs Google Chrome, the playback engine: a name on PATH or an absolute path, without arguments (it must be the real Chrome: it ships Widevine). When it is not found, google-chrome-stable, google-chrome and /opt/google/chrome/chrome are tried.</description>
     </key>
     <key name="engine-headless" type="b">
       <default>true</default>
@@ -41,7 +41,7 @@
     <key name="engine-autostart" type="b">
       <default>true</default>
       <summary>Start the engine on launch</summary>
-      <description>Whether Chrome is started (headless) when the app starts and the account is signed in.</description>
+      <description>Whether the engine is started when the app starts and the account is signed in (headless unless engine-headless is off).</description>
     </key>
     <key name="signed-in" type="b">
       <default>false</default>
