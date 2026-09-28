@@ -75,8 +75,9 @@ class EnginePage(FakePage):
         super().__init__()
         self.authorized = False
         self.storefront = 'us'
-        self.api_answers = {}   # path -> answer dict
+        self.api_answers = {}   # path, or (path, offset) for a page -> answer dict
         self.api_calls = []
+        self.api_params = []    # the params of each api() call, in order
         self.signin_calls = 0
         self.account = None
 
@@ -88,10 +89,13 @@ class EnginePage(FakePage):
             self.signin_calls += 1
             return None  # hangs, as mk.authorize() does until the user acts
         if expression.startswith('window.__appleMusicLibrary.api('):
-            path = json.loads(expression[len('window.__appleMusicLibrary.api('):-1]
-                              .split(', ', 1)[0])
+            path, params = json.loads(
+                '[' + expression[len('window.__appleMusicLibrary.api('):-1] + ']')
             self.api_calls.append(path)
-            answer = self.api_answers.get(path, {'errors': [{'status': '404', 'title': 'no'}]})
+            self.api_params.append(params)
+            answer = self.api_answers.get((path, params.get('offset')))
+            if answer is None:
+                answer = self.api_answers.get(path, {'errors': [{'status': '404', 'title': 'no'}]})
             return value(answer)
         if expression.startswith('window.__appleMusicLibrary.apiAll('):
             paths = json.loads(expression[len('window.__appleMusicLibrary.apiAll('):-1])
@@ -354,6 +358,56 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.engine.authorized)
 
     # -- commands --------------------------------------------------------------------------
+
+    async def test_api_is_the_bridge_read(self):
+        await self.engine.start()
+        self.page.api_answers['/v1/me/library/albums'] = {'data': [{'id': 'l.1'}]}
+        self.assertEqual(await self.engine.api('/v1/me/library/albums', {'limit': 5}),
+                         {'data': [{'id': 'l.1'}]})
+        self.assertEqual(self.page.api_params[-1], {'limit': 5})
+        with self.assertRaises(EngineError) as ctx:
+            await self.engine.api('/v1/nothing')
+        self.assertEqual(ctx.exception.code, 'api')
+
+    async def test_api_pages_with_a_total_fetches_the_rest_at_once(self):
+        await self.engine.start()
+        path = '/v1/me/library/songs'
+        pages = {0: ['a', 'b'], 2: ['c', 'd'], 4: ['e', 'f'], 6: ['g']}
+        for offset, ids in pages.items():
+            self.page.api_answers[(path, offset)] = {
+                'data': [{'id': i} for i in ids], 'meta': {'total': 7},
+                'next': f'{path}?offset={offset + 2}' if offset < 6 else None}
+        seen = []
+        items = await self.engine.api_pages(path, {'include': 'albums'}, page=2,
+                                            progress=lambda d, t: seen.append((d, t)))
+        self.assertEqual([item['id'] for item in items], list('abcdefg'))
+        self.assertEqual(self.page.api_calls.count(path), 4)
+        self.assertEqual([p['offset'] for p in self.page.api_params if p.get('include')],
+                         [0, 2, 4, 6])
+        self.assertEqual(seen[0], (2, 7))
+        self.assertEqual(seen[-1], (7, 7))
+
+    async def test_api_pages_without_a_total_follows_next(self):
+        await self.engine.start()
+        path = '/v1/me/library/recently-added'
+        self.page.api_answers[(path, 0)] = {'data': [{'id': 'x'}, {'id': 'y'}],
+                                            'next': f'{path}?offset=2'}
+        self.page.api_answers[(path, 2)] = {'data': [{'id': 'z'}]}
+        seen = []
+        items = await self.engine.api_pages(path, page=2,
+                                            progress=lambda d, t: seen.append((d, t)))
+        self.assertEqual([item['id'] for item in items], ['x', 'y', 'z'])
+        self.assertEqual(seen, [(2, None), (3, None)])
+        # A limit stops the paging and trims the answer.
+        self.page.api_calls.clear()
+        items = await self.engine.api_pages(path, page=2, limit=1)
+        self.assertEqual([item['id'] for item in items], ['x'])
+        self.assertEqual(self.page.api_calls, [path])
+
+    async def test_api_all(self):
+        await self.engine.start()
+        self.page.api_answers['/v1/a'] = {'data': [1]}
+        self.assertEqual(await self.engine.api_all(['/v1/a', '/v1/b']), [{'data': [1]}, None])
 
     async def test_status(self):
         with self.assertRaises(EngineError) as ctx:

@@ -1,9 +1,6 @@
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# A reference for porting, not code that runs (see src/backend/__init__.py). extend-exclude keeps
-# ruff's default excludes.
-extend-exclude = ["src/backend/am.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]

@@ -110,6 +110,7 @@ def on_activate(_app):
     if args.signed_in is not None:
         app.settings.set_boolean('signed-in', True)
         app.settings.set_string('account-name', args.signed_in)
+        app.settings.set_boolean('engine-autostart', False)  # signed in, but no engine here
     GLib.timeout_add(1200, shoot)
 
 

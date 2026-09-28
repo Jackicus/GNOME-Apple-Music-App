@@ -7,6 +7,9 @@ UI awaits.
     await engine.restart(visible=False)
     await engine.stop()                 # SIGTERM, 5 s, SIGKILL; forgets engine.json
     await engine.status()               # {ready, engine, authorized, storefront, bitrate}
+    await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
+    await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
+    await engine.api_all(paths)         # several reads at once; a failed one is None
     await engine.item(kind, id)         # a full Item with its groups, kept under <cache>/items/
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.account_name()         # the name on the page, or '' (best effort)
@@ -43,6 +46,7 @@ STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
 API_RETRIES = 3
+PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 
 # Library ids ("l." albums and playlists, "p." playlists, "r." radio) live under /v1/me/library;
 # anything else is the catalog's.
@@ -151,6 +155,12 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir):
 def _keep_item(item, cache_dir):
     sync.download_item_art(item, cache_dir)
     return sync.write_answer(sync.item_cache_path(cache_dir, item['kind'], item['id']), item)
+
+
+def _page_data(answer):
+    """The resources of one page: its `data` list's dicts."""
+    data = answer.get('data') if isinstance(answer, dict) else None
+    return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
 
 
 class Engine(GObject.Object):
@@ -447,6 +457,65 @@ class Engine(GObject.Object):
                 continue
             return answer if isinstance(answer, dict) else {}
         raise EngineError(last.code if last else 'api', f'{path}: {last.message if last else "?"}')
+
+    async def api(self, path, params=None, timeout=None):
+        """One Apple Music API read through the page's MusicKit (the bridge's api(), that is
+        mk.api.music(path, params)), retried a few times; the answer's body as a dict
+        ({data: [...], meta, next…}). EngineError('api') when Apple says no, 'engine-down'
+        when there is no engine."""
+        client = self._require_up()
+        return await self._api(client, path, params, timeout)
+
+    async def api_all(self, paths, timeout=60):
+        """Several reads at once in the page (the bridge's apiAll): one answer per path, in
+        order, None where one failed."""
+        client = self._require_up()
+        answers = await client.bridge('apiAll', list(paths), timeout=timeout)
+        return answers if isinstance(answers, list) else []
+
+    async def api_pages(self, path, params=None, page=100, limit=None, progress=None,
+                        concurrency=PAGE_CONCURRENCY):
+        """Every item (`data`) of a paged endpoint, `page` at a time by offset, following
+        `next` until there is none or `limit` items are in hand. An endpoint whose first
+        answer carries `meta.total` has its remaining pages fetched `concurrency` at a time;
+        the rest are followed one by one. `progress(done, total)` is called after each page
+        (total None until it is known)."""
+        params = dict(params or {})
+        first = await self.api(path, dict(params, limit=page, offset=0))
+        items = _page_data(first)
+        meta = first.get('meta')
+        total = meta.get('total') if isinstance(meta, dict) else None
+        total = total if isinstance(total, int) and not isinstance(total, bool) else None
+        if limit is not None:
+            total = min(total, limit) if total is not None else None
+        if progress:
+            progress(len(items), total)
+        if not items or not first.get('next') or (limit is not None and len(items) >= limit):
+            return items[:limit] if limit is not None else items
+        if total is not None and total > len(items):
+            # Every remaining offset is known: a few pages at a time, kept in order.
+            offsets = list(range(len(items), total, page))
+            for start in range(0, len(offsets), max(1, concurrency)):
+                batch = offsets[start:start + max(1, concurrency)]
+                answers = await asyncio.gather(
+                    *(self.api(path, dict(params, limit=page, offset=offset))
+                      for offset in batch))
+                for answer in answers:
+                    items.extend(_page_data(answer))
+                if progress:
+                    progress(min(len(items), total), total)
+                if any(not _page_data(answer) for answer in answers):
+                    break  # Apple ran out early (the total counted something we do not get)
+            return items[:limit] if limit is not None else items
+        while True:
+            answer = await self.api(path, dict(params, limit=page, offset=len(items)))
+            data = _page_data(answer)
+            items.extend(data)
+            if progress:
+                progress(len(items), total)
+            if not data or not answer.get('next') or (limit is not None and len(items) >= limit):
+                break
+        return items[:limit] if limit is not None else items
 
     async def item(self, kind, item_id):
         """One full Item of `kind` with its `groups` (an album's discs, a playlist's list, an

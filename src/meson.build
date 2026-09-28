@@ -73,6 +73,7 @@ install_data(
   'player_bar.py',
   'sections.py',
   'sidebar.py',
+  'sync.py',
   'window.py',
   install_dir: moduledir,
 )
@@ -106,7 +107,7 @@ install_data(
   install_dir: moduledir / 'widgets',
 )
 
-# The backend package. am.py stays out: it is a reference for porting, never run or imported.
+# The backend package.
 install_data(
   'backend/__init__.py',
   'backend/bridge.js',

@@ -13,6 +13,11 @@ thousands of tiles from decoding every cover it passes.
 Widgets hold a texture only while they are on screen (the grid tiles let go of theirs when
 unmapped), so the cache's size bounds what the artwork costs: 200 textures of 320×320 are about
 80 MB.
+
+A sync fetches only thumbnails; the covers (an Item's `art`, 640 px) are fetched here on
+demand, by the pages that show one: `await fetch_cover(item)` downloads it into <cache>/art/
+in a thread, from the `artUrl` the sync kept in the Item, and answers True when a file arrived
+(the page then shows it). Nothing here needs the engine.
 """
 
 import asyncio
@@ -25,6 +30,9 @@ import gi
 gi.require_version('Gdk', '4.0')
 
 from gi.repository import Gdk, Gio, GLib  # noqa: E402
+
+from ..backend import config  # noqa: E402
+from ..backend import sync as backend  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +48,37 @@ class Artwork:
         self._decodes = {}  # path -> (asyncio.Task, {token: callback})
         self._paths = {}  # token -> path, for the requests still waiting
         self._tokens = itertools.count(1)
+        self._fetches = {}  # cover path -> the asyncio.Task fetching it
+
+    async def fetch_cover(self, item):
+        """The Item's cover (`art`) on disk: True when this call downloaded it (from the
+        Item's `artUrl`, in a thread), False when it was there already, the Item has no
+        cover URL, or the fetch failed (logged; the page keeps the thumbnail). Concurrent
+        calls for one cover share the download."""
+        path = item.art
+        url = item.raw.get('artUrl') if isinstance(item.raw, dict) else None
+        if not path or not url:
+            return False
+        task = self._fetches.get(path)
+        if task is None:
+            task = asyncio.get_event_loop().create_task(self._fetch(path, url))
+            self._fetches[path] = task
+            task.add_done_callback(lambda _task: self._fetches.pop(path, None))
+        return await asyncio.shield(task)
+
+    async def _fetch(self, path, url):
+        def fetch():
+            if not backend._art_missing(path):
+                return False
+            return backend.cache_artwork(url, str(config.cache_dir()), dest_path=path) is not None
+        try:
+            fetched = await asyncio.to_thread(fetch)
+        except Exception:
+            log.exception('Cannot fetch the cover %s', path)
+            return False
+        if fetched:
+            log.debug('fetched the cover %s', path)
+        return fetched
 
     def get(self, path):
         """The texture for path if it is decoded and cached, else None. Counts as a use."""

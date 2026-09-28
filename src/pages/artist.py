@@ -170,6 +170,13 @@ class ArtistPage(Adw.NavigationPage):
     def do_map(self):
         Adw.NavigationPage.do_map(self)
         self._load_portrait()
+        if self.item.raw.get('artUrl'):
+            # A sync fetches thumbnails only: the portrait's full size comes now.
+            Gio.Application.get_default().spawn(self._fetch_cover(self.item))
+
+    async def _fetch_cover(self, item):
+        if await artwork.get_default().fetch_cover(item) and self.get_mapped():
+            self._load_portrait()
 
     def _load_portrait(self):
         loader = artwork.get_default()

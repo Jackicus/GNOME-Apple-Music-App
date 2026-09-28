@@ -1,0 +1,45 @@
+{
+  "data": [
+    {
+      "id": "i.mv0001",
+      "type": "library-music-videos",
+      "href": "/v1/me/library/music-videos/i.mv0001",
+      "attributes": {
+        "name": "Where the Light Gets In (Live)",
+        "artistName": "Paper Parachutes",
+        "albumName": "Static Skyline (Live Sessions)",
+        "durationInMillis": 231000,
+        "releaseDate": "2008-02-14",
+        "genreNames": ["Rock"],
+        "contentRating": "clean",
+        "artwork": {
+          "width": 1920,
+          "height": 1080,
+          "url": "https://example.invalid/image/thumb/Video/v4/mv/00/01/{w}x{h}bb.jpg",
+          "bgColor": "223344"
+        },
+        "playParams": {"id": "i.mv0001", "kind": "musicVideo", "isLibrary": true, "catalogId": "1724040900"}
+      }
+    },
+    {
+      "id": "i.mv0002",
+      "type": "library-music-videos",
+      "href": "/v1/me/library/music-videos/i.mv0002",
+      "attributes": {
+        "name": "Glass Harbour",
+        "artistName": "Meridian Tide",
+        "durationInMillis": 198000,
+        "releaseDate": "2021-09-03",
+        "genreNames": ["Electronic"],
+        "artwork": {
+          "width": 1920,
+          "height": 1080,
+          "url": "https://example.invalid/image/thumb/Video/v4/mv/00/02/{w}x{h}bb.jpg",
+          "bgColor": "445566"
+        },
+        "playParams": {"id": "i.mv0002", "kind": "musicVideo", "isLibrary": true, "catalogId": "1724040901"}
+      }
+    }
+  ],
+  "meta": {"total": 2}
+}

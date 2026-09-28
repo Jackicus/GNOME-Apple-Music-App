@@ -374,13 +374,16 @@ def collect_art_urls(library_data: dict) -> dict[str, str]:
     return {p: ART_URLS[p] for p in collect_art_paths(library_data) if p in ART_URLS}
 
 
-def download_art(library_data_or_urls, cache_dir: str, workers: int = 8, log=None) -> dict:
+def download_art(library_data_or_urls, cache_dir: str, workers: int = 8, log=None,
+                 progress=None, cancelled=None) -> dict:
     """Fetch every artwork the library refers to that is not in the cache yet.
 
     Takes a library dict (paths resolved through ART_URLS) or a {path: url}
     map. Returns {"wanted", "fetched", "failed"}. Failures are logged through
     `log` (a callable taking a string) and otherwise ignored: the UI treats a
-    path that is not on disk as no artwork.
+    path that is not on disk as no artwork. `progress(done, total)` is called
+    (on this thread) after each fetch, and `cancelled()` is asked before each
+    result is waited for: True gives up the fetches not started yet.
     """
     urls = library_data_or_urls if isinstance(library_data_or_urls, dict) and "sections" not in library_data_or_urls \
         else collect_art_urls(library_data_or_urls)
@@ -395,11 +398,18 @@ def download_art(library_data_or_urls, cache_dir: str, workers: int = 8, log=Non
     # cover when that is on disk, and fetched only when it is not.
     covers = {p: u for p, u in todo.items() if not _is_thumb_path(p, cache_dir)}
     thumbs = {p: u for p, u in todo.items() if _is_thumb_path(p, cache_dir)}
+    done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for batch, fetch in ((covers, lambda p, u: cache_artwork(u, cache_dir)),
                              (thumbs, lambda p, u: cache_thumbnail(u, cache_dir, p))):
+            if cancelled and cancelled():
+                break
             futures = {pool.submit(fetch, path, url): url for path, url in batch.items()}
             for fut in concurrent.futures.as_completed(futures):
+                if cancelled and cancelled():
+                    for pending in futures:
+                        pending.cancel()
+                    break
                 ok = False
                 try:
                     ok = bool(fut.result())
@@ -411,6 +421,9 @@ def download_art(library_data_or_urls, cache_dir: str, workers: int = 8, log=Non
                     counts["failed"] += 1
                     if log:
                         log(f"artwork: could not fetch {futures[fut]}")
+                done += 1
+                if progress:
+                    progress(done, len(todo))
     return counts
 
 
@@ -1406,8 +1419,9 @@ def group_songs_into_albums_and_artists(songs: list[dict], cache_dir: str | None
     return albums_list, artists_list
 
 
-def save_library(library_data: dict, cache_dir: str, only: str | None = None) -> None:
-    """Atomically save library.json under flock, merging sections if only is specified."""
+def save_library(library_data: dict, cache_dir: str, only: str | None = None, indent: int | None = 2) -> None:
+    """Atomically save library.json under flock, merging sections if only is specified.
+    `indent` is json.dump's: None writes the compact form."""
     import fcntl
     os.makedirs(cache_dir, exist_ok=True)
     lock_path = os.path.join(cache_dir, "library.lock")
@@ -1432,7 +1446,7 @@ def save_library(library_data: dict, cache_dir: str, only: str | None = None) ->
 
             tmp_path = lib_path + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(target_data, f, indent=2)
+                json.dump(target_data, f, indent=indent)
             os.replace(tmp_path, lib_path)
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

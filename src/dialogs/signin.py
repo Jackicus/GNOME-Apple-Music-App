@@ -62,6 +62,7 @@ class SignInDialog(Adw.Dialog):
                 await engine.restart(visible=False)
             self._finish()
             app.toast(_('Signed in'))
+            app.start_sync()  # the library, now that there is an account to fetch it from
         except asyncio.CancelledError:
             log.info('sign-in cancelled')
             app.spawn(engine.stop())

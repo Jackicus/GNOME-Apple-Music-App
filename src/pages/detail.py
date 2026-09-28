@@ -19,6 +19,7 @@ from gi.repository import Adw, Gio, GObject, Gtk, Pango
 
 from ..backend.errors import EngineError
 from ..library import Track
+from ..widgets import artwork
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
 
@@ -172,6 +173,9 @@ class DetailPage(Adw.NavigationPage):
         self._album_artist = item.subtitle if item.kind == 'album' else None
 
         self.cover.set_paths(item.art, item.thumb)  # the 640 px cover, else the thumbnail
+        if item.raw.get('artUrl'):
+            # A sync fetches thumbnails only: the cover comes now, if it is not on disk yet.
+            Gio.Application.get_default().spawn(self._fetch_cover(item))
         self.title_label.set_label(item.title)
         self.subtitle_label.set_label(item.subtitle)
         self.subtitle_label.set_visible(bool(item.subtitle))
@@ -205,6 +209,10 @@ class DetailPage(Adw.NavigationPage):
         self._sections.splice(0, self._sections.get_n_items(),
                               [self._hero_section] + [group.entries for group in groups])
         self._update_state()
+
+    async def _fetch_cover(self, item):
+        if await artwork.get_default().fetch_cover(item) and self.item is item:
+            self.cover.refresh()
 
     # Fetching the tracks of an item that came without them.
 

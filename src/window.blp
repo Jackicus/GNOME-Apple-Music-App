@@ -140,14 +140,19 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
         title: _("Home");
         tag: "content";
 
-        // Each page in the navigation view carries its own header bar; the banner sits above
-        // them while signed out (window.py reveals it).
+        // Each page in the navigation view carries its own header bar; the banners sit above
+        // them: one while signed out, one while the library syncs (window.py reveals them).
         child: Adw.ToolbarView {
           [top]
           Adw.Banner sign_in_banner {
             title: _("Sign in to see your library");
             button-label: _("Sign In");
             button-clicked => $on_banner_sign_in();
+          }
+
+          [top]
+          Adw.Banner sync_banner {
+            title: _("Syncing your library…");
           }
 
           content: Adw.NavigationView navigation_view {};
@@ -161,6 +166,13 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
 }
 
 menu primary_menu {
+  section {
+    item {
+      label: _("_Refresh Library");
+      action: "app.sync";
+    }
+  }
+
   section {
     item {
       label: _("_Keyboard Shortcuts");

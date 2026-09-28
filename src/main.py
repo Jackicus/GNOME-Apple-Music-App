@@ -1,5 +1,5 @@
-"""The application: app actions, settings, the library, the engine's lifecycle, sign-in and
-sign-out, demo mode, logging and the asyncio-on-GLib bootstrap."""
+"""The application: app actions, settings, the library and its sync, the engine's lifecycle,
+sign-in and sign-out, demo mode, logging and the asyncio-on-GLib bootstrap."""
 
 import asyncio
 import logging
@@ -9,7 +9,9 @@ import signal
 import sys
 import time
 import warnings
+from datetime import datetime, timezone
 from gettext import gettext as _
+from gettext import ngettext
 
 import gi
 
@@ -22,6 +24,7 @@ from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .engine import Engine, engine_paths  # noqa: E402
 from .library import Library  # noqa: E402
+from .sync import install_scaler, sync_library  # noqa: E402
 from .window import Window  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -52,6 +55,7 @@ class Application(Adw.Application):
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
+        self._sync_task = None  # the sync running, if one is
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
 
@@ -60,6 +64,7 @@ class Application(Adw.Application):
         self._add_action('shortcuts', self._on_shortcuts, ['<primary>question'])
         self._add_action('sign-in', self._on_sign_in)
         self._add_action('sign-out', self._on_sign_out)
+        self._add_action('sync', self._on_sync, ['<primary>r'])
         self.set_accels_for_action('window.close', ['<primary>w'])
         self.set_accels_for_action('win.back', ['<alt>Left'])
 
@@ -92,6 +97,7 @@ class Application(Adw.Application):
         Adw.Application.do_startup(self)
         self.library = Library()
         self.engine = self._make_engine()
+        install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
         # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
         # default, which would end the process with Chrome running on (reclaimed next time).
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -126,6 +132,8 @@ class Application(Adw.Application):
             self.spawn(self._log_event_loop())
             if self._autostart_wanted():
                 self.spawn(self._autostart())
+        elif self.engine.state == 'up' and self.engine.authorized and self.sync_due():
+            self.start_sync()  # launched again: a sync when the last is old
         window.present()
 
     # -- the engine ----------------------------------------------------------------------
@@ -145,7 +153,10 @@ class Application(Adw.Application):
         if not self.engine.authorized:
             log.warning('the engine is up but Apple Music is not signed in')
             self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
-        elif not self.settings.get_string('account-name'):
+            return
+        if self.sync_due():
+            self.start_sync()
+        if not self.settings.get_string('account-name'):
             # Sign-in may have missed the name (the page renders it late); try again now.
             try:
                 name = await self.engine.account_name(wait=10)
@@ -155,6 +166,77 @@ class Application(Adw.Application):
             if name:
                 self.settings.set_string('account-name', name)
                 log.info('account name read from the page after autostart')
+
+    # -- the sync ------------------------------------------------------------------------
+
+    def sync_due(self):
+        """Whether the library should be synced now: never yet, or the last sync is older
+        than the sync-interval setting (hours; 0 means only when asked)."""
+        hours = self.settings.get_int('sync-interval')
+        if hours <= 0:
+            return False
+        stamp = self.settings.get_string('last-sync')
+        try:
+            last = datetime.fromisoformat(stamp)
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last).total_seconds() > hours * 3600
+
+    def _on_sync(self, *_args):
+        self.start_sync()
+
+    def start_sync(self):
+        """Sync the library through the engine, starting it if it is down, unless a sync is
+        running already. Returns the task, or None."""
+        if self.demo:
+            self.toast(_('Not available with the demo library'))
+            return None
+        if self._sync_task is not None and not self._sync_task.done():
+            log.debug('a sync is running already')
+            return None
+        self._sync_task = self.spawn(self._sync())
+        return self._sync_task
+
+    async def _sync(self):
+        window = self.get_active_window()
+        started = time.monotonic()
+        try:
+            if self.engine.state == 'down':
+                await self.engine.start()
+            if window is not None:
+                window.show_sync_progress(None, 0, None)
+            counts = await sync_library(self.engine, self.library, self._on_sync_progress)
+        except EngineError as error:
+            log.warning('sync: %s', error)
+            if error.code == 'not-signed-in':
+                self.report(error)
+            else:
+                self.toast(_('Could not sync your library: {message}').format(
+                    message=error.message), _('Retry'), 'app.sync')
+            return
+        finally:
+            window = self.get_active_window()
+            if window is not None:
+                window.hide_sync_progress()
+        self.settings.set_string('last-sync', datetime.now(timezone.utc).isoformat(
+            timespec='seconds'))
+        log.info('sync done in %.0f s', time.monotonic() - started)
+        albums, playlists = counts.get('albums', 0), counts.get('playlists', 0)
+        songs = self.library.song_count()
+        summary = ', '.join([
+            ngettext('{count} album', '{count} albums', albums).format(count=f'{albums:n}'),
+            ngettext('{count} playlist', '{count} playlists', playlists).format(
+                count=f'{playlists:n}'),
+            ngettext('{count} song', '{count} songs', songs).format(count=f'{songs:n}'),
+        ])
+        self.toast(_('Library synced: {summary}').format(summary=summary))
+
+    def _on_sync_progress(self, section, done, total):
+        window = self.get_active_window()
+        if window is not None:
+            window.show_sync_progress(section, done, total)
 
     def toast(self, title, button_label=None, action_name=None):
         """A toast on the active window, with a button running an action when given."""
@@ -193,6 +275,8 @@ class Application(Adw.Application):
         for window in self.get_windows():
             if hasattr(window, 'prepare_quit'):  # a dialog's toplevel has none
                 window.prepare_quit()  # remembers its state and hides at once
+        if self._sync_task is not None and not self._sync_task.done():
+            self._sync_task.cancel()  # its downloads give up at the next one
         try:
             await asyncio.wait_for(self.engine.stop(), QUIT_TIMEOUT)
         except TimeoutError:
@@ -301,6 +385,7 @@ class Application(Adw.Application):
     def _on_shortcuts(self, *_args):
         section = Adw.ShortcutsSection(title=_('General'))
         section.add(Adw.ShortcutsItem.new(_('Keyboard Shortcuts'), '<primary>question'))
+        section.add(Adw.ShortcutsItem.new(_('Refresh Library'), '<primary>r'))
         section.add(Adw.ShortcutsItem.new(_('Go Back'), '<alt>Left'))
         section.add(Adw.ShortcutsItem.new(_('Close Window'), '<primary>w'))
         section.add(Adw.ShortcutsItem.new(_('Quit'), '<primary>q'))

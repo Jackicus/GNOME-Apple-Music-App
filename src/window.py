@@ -17,6 +17,20 @@ log = logging.getLogger(__name__)
 PLAYLISTS = 'all-playlists'
 
 
+def sync_section_names():
+    """What the sync banner calls each progress section (sync.PROGRESS_SECTIONS), translated
+    on call, after gettext is set up."""
+    return {
+        'songs': _('songs'),
+        'playlists': _('playlists'),
+        'folders': _('folders'),
+        'videos': _('music videos'),
+        'radio': _('radio'),
+        'shelves': _('shelves'),
+        'artwork': _('artwork'),
+    }
+
+
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/window.ui')
 class Window(Adw.ApplicationWindow):
     __gtype_name__ = 'AppleMusicWindow'
@@ -30,6 +44,7 @@ class Window(Adw.ApplicationWindow):
     account_avatar = Gtk.Template.Child()
     account_label = Gtk.Template.Child()
     sign_in_banner = Gtk.Template.Child()
+    sync_banner = Gtk.Template.Child()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -86,6 +101,28 @@ class Window(Adw.ApplicationWindow):
     @Gtk.Template.Callback()
     def on_banner_sign_in(self, _banner):
         self.get_application().activate_action('sign-in')
+
+    # The sync's progress, on a banner over the content.
+
+    def show_sync_progress(self, section, done, total):
+        """Reveal the sync banner saying how far the sync is: "Syncing your library: songs
+        300 of 2,000". section is one of sync.PROGRESS_SECTIONS, or None before the first."""
+        name = sync_section_names().get(section)
+        if name is None:
+            title = _('Syncing your library…')
+        elif total:
+            title = _('Syncing your library: {section} {done} of {total}').format(
+                section=name, done=f'{done:n}', total=f'{total:n}')
+        elif done:
+            title = _('Syncing your library: {section} {done}').format(
+                section=name, done=f'{done:n}')
+        else:
+            title = _('Syncing your library: {section}…').format(section=name)
+        self.sync_banner.set_title(title)
+        self.sync_banner.set_revealed(True)
+
+    def hide_sync_progress(self):
+        self.sync_banner.set_revealed(False)
 
     def open_item(self, item):
         """Show an album, artist, playlist, folder, station or video: what activating a tile

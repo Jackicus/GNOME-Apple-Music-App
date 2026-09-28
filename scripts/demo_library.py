@@ -14,6 +14,9 @@ hand-written ones, for measuring big libraries: about 12 songs an album, so
 The last playlist is Favourite Songs, flagged by attributes.isFavourites.
 Three playlist folders, one inside another, hold some of the playlists; the
 rest are at the top level (`folders`, whose "root" entry lists the top level).
+The keys the app's sync adds beyond these (sections.songs, sections.videos,
+artUrl) are optional and left out: the demo has no loose songs, no music
+videos and nothing to fetch.
 Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
 """
 import argparse

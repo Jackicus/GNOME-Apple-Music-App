@@ -7,13 +7,20 @@ and the Songs store are wrapped only when first asked for. SongOrder sorts the S
 GLib, GObject and Gio only, no GTK, so the model works in tests without a display.
 
 Besides the README's shape, library.json may hold `folders`, the user's playlist folders (an
-optional key, like `sections.songs` and `sections.videos`; the demo writes it, phase 11's sync
-will): a list of {id, title, parent, children}, `parent` a folder id or null and `children` a
-list of {kind: "folder" | "playlist", id} in Apple's order. The entry with id "root" lists what
-is in no folder. PlaylistTree reads it.
+optional key, like `sections.songs` and `sections.videos`; the demo and the sync write it): a
+list of {id, title, parent, children}, `parent` a folder id or null and `children` a list of
+{kind: "folder" | "playlist", id} in Apple's order. The entry with id "root" lists what is in
+no folder. PlaylistTree reads it. `sections.songs` holds Track dicts: the library's loose songs,
+which the Songs store takes after the albums' tracks, by id. `sections.videos` holds Items of
+kind 'video'.
+
+load() makes new objects for everything; reload() (after a sync) reads the file again and brings
+the models up to date in place: an Item or Track still in the library keeps its object, so open
+pages and scroll positions survive.
 """
 
 import asyncio
+import difflib
 import json
 import locale
 import logging
@@ -209,29 +216,41 @@ class Item(GObject.Object):
                ('art_color', 'artColor'), ('count_label', 'countLabel'),
                ('catalog_id', 'catalogId'), ('url', 'url'))
 
-    def merge(self, data):
-        """Take a fresh Item dict for this item (the engine's item() answer: the same shape,
-        with `groups`) into this object: the raw dict updated, the properties that changed
-        set (so bound widgets follow), the groups wrapped again on the next access."""
-        for key, value in data.items():
-            if key in ('id', 'kind'):
-                continue
-            self.raw[key] = value
+    def merge(self, data, replace=False):
+        """Take a fresh Item dict for this item into this object: the raw dict updated (or
+        replaced by `data`, for a reload's complete dict), the properties that changed set (so
+        bound widgets follow), and the groups wrapped again on the next access when they
+        differ from the ones in hand (the same groups keep their Group and Track objects).
+        An engine item() answer (the same shape, with `groups`) merges; a sync's dict replaces.
+        True when a property changed."""
+        groups_changed = 'groups' in data and data.get('groups') != self.raw.get('groups')
+        if replace:
+            self.raw = data
+        else:
+            for key, value in data.items():
+                if key in ('id', 'kind'):
+                    continue
+                self.raw[key] = value
+        changed = False
         for name, key in self._MERGED:
-            if key in data:
+            if replace or key in data:
                 value = _text(data.get(key))
                 if name in ('title', 'subtitle', 'count_label'):
                     value = value or ''
                 if value != getattr(self, '_' + name):
                     setattr(self, name, value)  # the property's setter: it notifies
-        if 'year' in data and _number(data.get('year')) != self._year:
+                    changed = True
+        if (replace or 'year' in data) and _number(data.get('year')) != self._year:
             self.year = _number(data.get('year'))
-        if 'explicit' in data and bool(data.get('explicit')) != self._explicit:
+            changed = True
+        if (replace or 'explicit' in data) and bool(data.get('explicit')) != self._explicit:
             self.explicit = bool(data.get('explicit'))
+            changed = True
         if data.get('play'):
             self.play = data['play']
-        if 'groups' in data:
+        if groups_changed:
             self._groups = None
+        return changed
 
 
 class Shelf(GObject.Object):
@@ -252,6 +271,14 @@ class Shelf(GObject.Object):
         self._title = title
         self.items = Gio.ListStore(item_type=Item)
         self.items.splice(0, 0, items)
+
+    def update(self, title, items):
+        """A reload's version of this shelf: the title set if it changed, the store brought
+        to `items` with the fewest changes (the same objects in the same order change
+        nothing)."""
+        if title != self._title:
+            self.title = title
+        apply_diff(self.items, items)
 
 
 class TreeNode:
@@ -308,8 +335,9 @@ class PlaylistTree:
     Library.load() (the model: GObject only, no GTK).
     """
 
-    def __init__(self, folders=(), playlists=()):
-        """folders: library.json's `folders` dicts; playlists: the playlist Items."""
+    def __init__(self, folders=(), playlists=(), existing=None):
+        """folders: library.json's `folders` dicts; playlists: the playlist Items; existing:
+        a {(kind, id): Item} index whose folder Items are reused (a reload keeps them)."""
         folders = [raw for raw in folders if _text(raw.get('id'))]
         raw_by_id = {}
         for raw in folders:
@@ -322,7 +350,12 @@ class PlaylistTree:
             root_raw = {'id': ROOT_FOLDER, 'title': '', 'parent': None, 'children': [
                 {'kind': 'folder', 'id': _text(raw.get('id'))} for raw in folders
                 if raw.get('parent') is None]}
-        self.root = TreeNode(_folder_item(root_raw), -1, None)
+        existing = existing or {}
+
+        def folder_item(raw):
+            return _folder_item(raw, existing.get(('folder', _text(raw.get('id')))))
+
+        self.root = TreeNode(folder_item(root_raw), -1, None)
         self.flat = []
         self._folders = {ROOT_FOLDER: self.root}
         placed = set()  # (kind, id) already in the tree
@@ -333,7 +366,7 @@ class PlaylistTree:
                 if (kind, child_id) in placed:
                     continue
                 if kind == 'folder' and child_id in raw_by_id:
-                    add(node, _folder_item(raw_by_id[child_id]), raw_by_id[child_id])
+                    add(node, folder_item(raw_by_id[child_id]), raw_by_id[child_id])
                 elif kind == 'playlist' and child_id in playlist_by_id:
                     add(node, playlist_by_id[child_id])
 
@@ -352,7 +385,7 @@ class PlaylistTree:
         fill(self.root, root_raw.get('children'))
         for raw in folders:
             if ('folder', _text(raw.get('id'))) not in placed:
-                add(self.root, _folder_item(raw), raw)
+                add(self.root, folder_item(raw), raw)
         for item in playlists:
             if ('playlist', item.id) not in placed:
                 add(self.root, item)
@@ -369,12 +402,31 @@ class PlaylistTree:
         return [node for node in self.flat if node.kind == 'folder']
 
 
-def _folder_item(raw):
-    """A folders entry as an Item of kind 'folder'."""
+def _folder_item(raw, existing=None):
+    """A folders entry as an Item of kind 'folder': `existing` brought up to date, or a new one."""
     folder_id = _text(raw.get('id'))
-    return Item({'id': folder_id, 'kind': 'folder', 'title': _text(raw.get('title')) or '',
-                 'play': {}, 'groups': [], 'parent': raw.get('parent'),
-                 'children': raw.get('children')})
+    data = {'id': folder_id, 'kind': 'folder', 'title': _text(raw.get('title')) or '',
+            'play': {}, 'groups': [], 'parent': raw.get('parent'),
+            'children': raw.get('children')}
+    if existing is not None and existing.kind == 'folder' and existing.id == folder_id:
+        existing.merge(data, replace=True)
+        return existing
+    return Item(data)
+
+
+def apply_diff(store, items):
+    """Bring a Gio.ListStore to hold `items` (objects) in that order with the fewest splices:
+    runs of the same objects in the same order are left alone, so a view over the store keeps
+    its rows and its scroll position through a reload that changed little. 23,000 items diff
+    in about 25 ms."""
+    old = [store.get_item(position) for position in range(store.get_n_items())]
+    if len(old) == len(items) and all(a is b for a, b in zip(old, items)):
+        return
+    matcher = difflib.SequenceMatcher(None, [id(item) for item in old],
+                                      [id(item) for item in items], autojunk=False)
+    for tag, start, end, new_start, new_end in reversed(matcher.get_opcodes()):
+        if tag != 'equal':
+            store.splice(start, end - start, items[new_start:new_end])
 
 
 class _Superseded(Exception):
@@ -414,12 +466,15 @@ class Library(GObject.Object):
         self._songs_wanted = False  # build_songs() was called: every load() refills the store
         self._song_count = 0
         self._index = {}  # (kind, id) -> Item
+        self._loose = []  # sections.songs: the loose songs' Track dicts
+        self._loose_tracks = {}  # id -> Track, for the loose songs wrapped so far
         self._tree = PlaylistTree()
         self._generation = 0
 
     @property
     def songs(self):
-        """The Songs store: every album's tracks, deduplicated by id, in album order.
+        """The Songs store: every album's tracks, then the loose songs (sections.songs),
+        deduplicated by id, in album order.
 
         It stays empty until build_songs() fills it (`songs-ready`); from then on every load()
         refills it.
@@ -498,9 +553,23 @@ class Library(GObject.Object):
 
         The file is read and parsed in a thread; wrapping happens here, a batch at a time, with
         a pause for GTK to paint between batches. The stores keep their identity and are
-        refilled in place. A missing or unreadable file leaves the library empty. A load that
-        another load() overtakes gives up at its next pause.
+        refilled in place, with new Item objects. A missing or unreadable file leaves the
+        library empty. A load that another load() overtakes gives up at its next pause.
         """
+        await self._load(keep=False)
+
+    async def reload(self):
+        """Read library.json again (after a sync) and bring the models up to date in place.
+
+        Everything is matched by kind and id: an Item still in the library keeps its object
+        (its properties set where they changed, its groups and Tracks kept unless they
+        changed), what is gone leaves the stores, what is new goes in at its place, and the
+        shelves and folders keep theirs too. A page showing an Item, a grid's scroll position
+        and the sidebar's selection all survive. As load() otherwise.
+        """
+        await self._load(keep=True)
+
+    async def _load(self, keep):
         self._generation += 1
         generation = self._generation
         started = time.monotonic()
@@ -509,7 +578,7 @@ class Library(GObject.Object):
             data, song_count = await asyncio.to_thread(
                 _read_library, config.cache_dir() / 'library.json')
             self._check(generation)
-            await self._fill(data or {}, generation)
+            await self._fill(data or {}, generation, keep)
         except _Superseded:
             return
         except Exception:
@@ -518,50 +587,93 @@ class Library(GObject.Object):
             raise
         self._song_count = song_count
         self._set_state('ready' if data is not None else 'empty')
-        log.debug('Library %s in %.0f ms: %s, %d shelves, %d songs', self.state,
+        log.debug('Library %s in %.0f ms: %s, %d shelves, %d songs%s', self.state,
                   (time.monotonic() - started) * 1000,
                   ', '.join(f'{getattr(self, name).get_n_items()} {name}' for name in SECTIONS),
-                  len(self.shelves), song_count)
+                  len(self.shelves), song_count, ' (in place)' if keep else '')
         self.emit('changed')
 
-    async def _fill(self, data, generation):
+    async def _fill(self, data, generation, keep=False):
         self.generated = _text(data.get('generated'))
         self.storefront = _text(data.get('storefront'))
         sections = data.get('sections') if isinstance(data.get('sections'), dict) else {}
+        existing = self._index if keep else {}
         index = {}
+        changed = []  # kept Items whose properties changed: their views are told
 
         def wrap(raw):
-            item = Item(raw)
-            index.setdefault((item.kind, item.id), item)
+            key = (_text(raw.get('kind')), _text(raw.get('id')))
+            item = existing.get(key)
+            if item is None:
+                item = Item(raw)
+            elif item.merge(raw, replace=True):
+                changed.append(item)
+            index.setdefault(key, item)
             return item
 
         for name in SECTIONS:
-            await self._splice(getattr(self, name), _dicts(sections.get(name)), wrap, generation)
+            await self._splice(getattr(self, name), _dicts(sections.get(name)), wrap, generation,
+                               keep)
+        if changed:
+            self._notify_changed(changed)
 
         def shelf_item(raw):
             # The same album or playlist on a shelf and in a section is one object.
             return index.get((raw.get('kind'), raw.get('id'))) or wrap(raw)
 
         shelves = []
+        kept = {shelf.key: shelf for shelf in self.shelves} if keep else {}
         for raw in _dicts(data.get('shelves')):
+            key, title = _text(raw.get('key')) or '', _text(raw.get('title')) or ''
             items = [shelf_item(item) for item in _dicts(raw.get('items'))]
-            shelves.append(Shelf(_text(raw.get('key')) or '', _text(raw.get('title')) or '', items))
-        tree = PlaylistTree(_dicts(data.get('folders')), list(self.playlists))
+            shelf = kept.pop(key, None)
+            if shelf is None:
+                shelf = Shelf(key, title, items)
+            else:
+                shelf.update(title, items)
+            shelves.append(shelf)
+        tree = PlaylistTree(_dicts(data.get('folders')), list(self.playlists), existing)
         for node in tree.folders():
             index.setdefault(('folder', node.id), node.item)
         index.setdefault(('folder', ROOT_FOLDER), tree.root.item)
+        self._loose = _dicts(sections.get('songs'))
+        if not keep:
+            self._loose_tracks = {}
         self.shelves = shelves
         self._tree = tree
         self._index = index
         if self._songs_wanted:
             await self._fill_songs(generation)
 
-    async def _splice(self, store, dicts, wrap, generation):
+    def _notify_changed(self, items):
+        """Tell the stores' views about kept Items whose properties changed, so bound rows are
+        rebound: each is spliced over itself where it sits."""
+        positions = {}
+        for name in SECTIONS:
+            store = getattr(self, name)
+            for position in range(store.get_n_items()):
+                positions[store.get_item(position)] = (store, position)
+        for item in items:
+            found = positions.get(item)
+            if found is not None:
+                store, position = found
+                store.splice(position, 1, [item])
+
+    async def _splice(self, store, dicts, wrap, generation, keep=False):
         """Replace the store's contents with the wrapped dicts, a batch at a time.
 
         Each batch overwrites the old items at its position, so a reload never shows an empty
-        store; whatever old items are left over go at the end.
+        store; whatever old items are left over go at the end. Keeping (reload), the wrapped
+        items are diffed against the store instead, so unchanged runs are not touched.
         """
+        if keep:
+            items = []
+            for start in range(0, len(dicts), self.batch_size):
+                items.extend(wrap(raw) for raw in dicts[start:start + self.batch_size])
+                await yield_to_frames()
+                self._check(generation)
+            apply_diff(store, items)
+            return
         position = 0
         for start in range(0, len(dicts), self.batch_size):
             batch = [wrap(raw) for raw in dicts[start:start + self.batch_size]]
@@ -586,7 +698,23 @@ class Library(GObject.Object):
                 await yield_to_frames()
                 self._check(generation)
                 paused = time.monotonic()
-        self._songs.splice(0, self._songs.get_n_items(), tracks)
+        # The loose songs after the albums', by id; a loose song wrapped before keeps its Track
+        # while its dict is the same.
+        loose_tracks = {}
+        for raw in self._loose:
+            track_id = _text(raw.get('id'))
+            if not track_id or track_id in seen:
+                continue
+            seen.add(track_id)
+            track = self._loose_tracks.get(track_id)
+            if track is None or track.raw != raw:
+                track = Track(raw, {'kind': 'song', 'id': track_id})
+            loose_tracks[track_id] = track
+            tracks.append(track)
+        self._loose_tracks = loose_tracks
+        current = [self._songs.get_item(position) for position in range(self._songs.get_n_items())]
+        if len(current) != len(tracks) or any(a is not b for a, b in zip(current, tracks)):
+            self._songs.splice(0, self._songs.get_n_items(), tracks)
         if not self.songs_ready:
             self.songs_ready = True
         log.debug('Songs built in %.0f ms: %d songs', (time.monotonic() - started) * 1000,
@@ -701,6 +829,7 @@ def _read_library(path):
              for album in _dicts(sections.get('albums'))
              for group in _dicts(album.get('groups'))
              for entry in _dicts(group.get('entries'))}
+    songs |= {entry.get('id') for entry in _dicts(sections.get('songs')) if entry.get('id')}
     return data, len(songs)
 
 

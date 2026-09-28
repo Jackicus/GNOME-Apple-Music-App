@@ -49,6 +49,11 @@ class Cover(Gtk.Overlay):
         if self.get_mapped():
             self._show_art()
 
+    def refresh(self):
+        """Look for the paths again (a better one has arrived on disk since)."""
+        if self.get_mapped():
+            self._show_art()
+
     def do_map(self):
         Gtk.Overlay.do_map(self)
         self._show_art()

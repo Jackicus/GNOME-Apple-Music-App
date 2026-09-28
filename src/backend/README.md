@@ -3,14 +3,15 @@
 > **Vendored** from the GNOME Shell extension; `__init__.py` records where
 > from, when, and every edit. Most of this file still describes the
 > extension's process-per-command `am.py` (and the shell code around it),
-> which this app keeps only as a reference for phases 10 and 11 of
-> `prompts.md`: it is not installed, imported or linted. What carries over
-> as is: `cdp.py`, `bridge.js`, `sync.py`, the command table (as the list of
-> what the bridge can do), the error codes, and the `library.json`, `Item`
-> and `Track` shapes. Here, paths, the port and the artwork sizes come from
-> `config.py`, and nothing in this directory imports gi. This app's own
-> layer on top, one long-lived asynchronous connection instead of a process
-> per command, is described at the end ("The asynchronous layer").
+> which this app kept as a reference until its sync and commands were
+> ported (`src/engine.py`, `src/sync.py`; the file is gone). What carries
+> over as is: `cdp.py`, `bridge.js`, `sync.py`, the command table (as the
+> list of what the bridge can do), the error codes, and the `library.json`,
+> `Item` and `Track` shapes (with this app's additions, noted there). Here,
+> paths, the port and the artwork sizes come from `config.py`, and nothing
+> in this directory imports gi. This app's own layer on top, one long-lived
+> asynchronous connection instead of a process per command, is described at
+> the end ("The asynchronous layer").
 
 Everything that talks to Apple Music lives here. The shell process never
 touches the network: `src/lib/amctl.js` spawns `am.py <command>`, reads the
@@ -126,11 +127,31 @@ Track = {"id": "i.xyz", "catalogId": "…" /* or null */, "title": "…", "artis
          "thumb": "<cache>/thumb/<sha1>.jpg" /* or null */}  // a playlist's rows only
 ```
 
+**This app's additions** (`src/sync.py` writes them; all optional, version
+stays 1; the demo library has the first two):
+
+```jsonc
+{
+  "sections": {…, "songs": [Track],            // the loose songs: in no library album (each
+                                               // is also under a stand-in album); the Songs
+                                               // page merges them by id after the albums'
+               "videos": [Item]},              // kind "video", play {"kind": "musicVideo"}
+  "folders": [{"id": "root", "title": "", "parent": null,      // Apple's p.playlistsroot
+               "children": [{"kind": "playlist", "id": "p.pl123"}, {"kind": "folder", "id": "p.fld1"}]},
+              {"id": "p.fld1", "title": "Workouts", "parent": "root", "children": […]}]
+}
+Item += {"artUrl": "https://…/640x640bb.jpg",  // the cover's URL, for fetching it on demand
+         "attributes": {"isFavourites": true}} // on the Favourite Songs playlist only (Apple's
+                                               // attributes.tags holds "favorited" for it)
+```
+
 Artwork is fetched at `config.COVER_SIZE` (640×640) into
 `<cache>/art/`, and each cover has a `config.THUMB_SIZE` (320×320) thumbnail under
 the same name in `<cache>/thumb/` — scaled from the cover when it is
 already on disk (by `sync.scale_image`, which the app installs), fetched otherwise. The tiles and track rows
-draw the thumbnail; the detail pane's hero draws the cover. The shell
+draw the thumbnail; the detail pane's hero draws the cover. (This app's
+sync fetches the thumbnails only; a page that shows a cover fetches it
+from `artUrl` when it first needs it.) The shell
 decodes a cover whole, on the compositor thread, the first time a tile is
 painted, so the thumbnail size is what a page of tiles costs to show.
 `<cache>/art/.sizes` records what the cache was built at: a sync applies the

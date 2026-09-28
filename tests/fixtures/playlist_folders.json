@@ -1,0 +1,53 @@
+{
+  "p.playlistsroot": {
+    "data": [
+      {
+        "id": "p.pl123",
+        "type": "library-playlists",
+        "href": "/v1/me/library/playlists/p.pl123",
+        "attributes": {"name": "Chill Mix", "canEdit": true, "canDelete": true}
+      },
+      {
+        "id": "p.fldA1",
+        "type": "library-playlist-folders",
+        "href": "/v1/me/library/playlist-folders/p.fldA1",
+        "attributes": {"name": "Workouts", "canEdit": false, "canDelete": true, "dateAdded": "2025-03-01T10:00:00Z"}
+      },
+      {
+        "id": "p.favs0",
+        "type": "library-playlists",
+        "href": "/v1/me/library/playlists/p.favs0",
+        "attributes": {"name": "Favourite Songs", "canEdit": false, "canDelete": false}
+      }
+    ],
+    "meta": {"total": 3}
+  },
+  "p.fldA1": {
+    "data": [
+      {
+        "id": "p.fldB2",
+        "type": "library-playlist-folders",
+        "href": "/v1/me/library/playlist-folders/p.fldB2",
+        "attributes": {"name": "Running", "canEdit": false, "canDelete": true, "dateAdded": "2025-03-02T10:00:00Z"}
+      },
+      {
+        "id": "p.pl456",
+        "type": "library-playlists",
+        "href": "/v1/me/library/playlists/p.pl456",
+        "attributes": {"name": "Rock Workout", "canEdit": true, "canDelete": true}
+      }
+    ],
+    "meta": {"total": 2}
+  },
+  "p.fldB2": {
+    "data": [
+      {
+        "id": "p.pl789",
+        "type": "library-playlists",
+        "href": "/v1/me/library/playlists/p.pl789",
+        "attributes": {"name": "Tempo Runs", "canEdit": true, "canDelete": true}
+      }
+    ],
+    "meta": {"total": 1}
+  }
+}

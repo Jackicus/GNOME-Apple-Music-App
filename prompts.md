@@ -18,7 +18,7 @@ running and better than before.
 - [x] 8. Sidebar: playlists and folders (2026-09-27)
 - [x] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI (2026-09-27)
 - [x] 10. Engine in the app: lifecycle, sign-in, account (2026-09-27)
-- [ ] 11. Library sync and artwork cache
+- [x] 11. Library sync and artwork cache (2026-09-28)
 - [ ] 12. Playback: Player state and the player bar
 - [ ] 13. MPRIS
 - [ ] 14. Now Playing sheet, queue, lyrics
@@ -1288,6 +1288,89 @@ shows library.json, art/, thumb/ and .sizes with 320/640; pages fill; sync again
 Albums page keeps its scroll position. Nothing from the real library goes into the repo. Update
 CLAUDE.md (sync flow, keys). Tick phase 11 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- The endpoints, confirmed by watching the signed-in web player's own requests over CDP
+  (`Network.requestWillBeSent` while `location.assign`ing its library pages) and by calling
+  them through the bridge (`src/sync.py`'s docstring has the same):
+  - Sidebar playlists and folders: `GET /v1/me/library/playlist-folders/p.playlistsroot/children`
+    (the player adds `extend[library-playlists]=tags`, `fields[playlists]=curatorName`,
+    `include=catalog`, `omit[resource]=autos`, `platform=web`, `offset=0`), then each folder's
+    `/children`. The children come in the sidebar's order, playlists and folders mixed, typed
+    `library-playlists` / `library-playlist-folders`; a folder's `attributes` are `name`,
+    `canEdit`, `canDelete`, `dateAdded`. `/v1/me/library/playlist-folders` lists the folders
+    flat (the root not among them). The sync maps `p.playlistsroot` onto `root`.
+  - The favourites playlist: a library playlist's attributes carry no flag by default; asked
+    with `extend=tags` (the player's `extend[library-playlists]=tags`), `attributes.tags` is
+    `["favorited"]` on Favourite Songs (also the one playlist with `canEdit` and `canDelete`
+    both false; nothing else has tags). The sync writes `attributes: {isFavourites: true}`
+    (`library.FAVOURITES`, as the demo) onto it: `library.favourite_songs()` resolves.
+  - Songs: `/v1/me/library/songs?limit=100&offset=N` answers `meta.total` and `next`; the
+    sync asks `include=albums` (the albums and artists are grouped from the songs, as the
+    extension did). The player asks `include[library-songs]=catalog`. Music videos:
+    `/v1/me/library/music-videos?limit=100&offset=N` (this library has none; the section is
+    written empty and the page shows its empty state). Recently Added:
+    `/v1/me/library/recently-added?limit=25`, paged by `next` only (no `meta`), 25 at most a
+    page; the sync takes up to 100. `/v1/me/library/albums` and `/artists` exist (628 and
+    379 here, against 793 songs) but are not used: the songs' albums are what the extension's
+    shape wants (an album holds only its library songs).
+- What the sync writes beyond the README's shape (all optional, version 1; the demo omits
+  them): `sections.songs` (Track dicts: the loose songs, whose `albums` relationship is
+  empty; each is also under a stand-in `l.alb_…` album, and the Songs store merges by id
+  albums first, so a loose song plays as its stand-in album's track), `sections.videos`
+  (Items of kind `video`, play `musicVideo`), `folders` (phase 8's shape), `artUrl` on every
+  Item with artwork (the 640 px cover URL) and `attributes.isFavourites`. library.json is
+  written compact (1.8 MB for 628 albums; `save_library(indent=None)`).
+- How the sync reuses the engine: `Engine.api(path, params)`, `api_pages(path, params,
+  page=100, limit=None, progress=None)` (follows `next` by offset; with `meta.total` known
+  the remaining pages are fetched three at a time, in order) and `api_all(paths)` are thin
+  wrappers over the one CDPClient (`bridge('api', …)`, retried as `item()` is). No second
+  connection, no busy flag: MusicKit answers concurrent reads, and `_api`'s retries cover a
+  navigation. Playlist tracks are fetched four playlists at a time. Measured on this
+  library (628 albums, 380 artists, 34 playlists, 793 songs, 21 shelves): the first sync 72 s
+  (about 50 s of it the 1,034 thumbnail downloads, 8 threads), a second 18 s (nothing to
+  fetch; 36 s from a freshly started Chrome), `library.reload()` 24 ms in place, the sidebar
+  10 ms. Checked in-process (a throwaway script driving the app on the real cache and the dev
+  engine): the Albums grid scrolled to 1,400 px stayed at 1,400 px with the same first item
+  after the sync; the banner and the counts toast showed; quitting stopped the Chrome.
+- `library.reload()` keeps identity by (kind, id): `Item.merge(raw, replace=True)` (groups and
+  their Tracks kept when the group dicts are equal), `apply_diff(store, items)` (difflib
+  over object ids: 2 ms at 2,000, 23 ms at 23,000), changed Items spliced over themselves so
+  bound tiles rebind, Shelf objects kept by key (Home rebinds nothing), folder Items kept by
+  id, the Songs store untouched when nothing moved. `load()` still makes new objects (the
+  first load, sign-out). Tests: `tests/test_sync_app.py` (a fake engine over invented
+  fixtures: the written file, a failed section keeping last time's entry, identity across a
+  second sync, the reload diff), `api_pages` in `test_engine.py`. 230 tests.
+- Covers are not fetched by the sync: `Artwork.fetch_cover(item)` downloads `artUrl` to
+  `item.art` in a thread when a detail or artist page shows the item (`cover.refresh()`
+  after), shared per path. Hero cards on Home still draw the thumbnail (260 px from 320: fine
+  at 1×; phase 19 may fetch covers for the hero shelf). `prune_art` keeps a cover once
+  fetched (its path is named by the Item). `sync.install_scaler()` gives the backend a
+  GdkPixbuf scaler, so a thumbnail whose cover is on disk is scaled, not fetched.
+- Triggers: `app.sync` (`<primary>r`, "Refresh Library" first in the primary menu, in the
+  shortcuts dialog), after sign-in (`signin.py`), and `sync_due()` (last-sync older than
+  sync-interval hours; 0 = manual) checked when the engine comes up authorized in
+  `_autostart()` and on a second activation of the running app. One sync at a time
+  (`Application._sync_task`; a second request is logged and ignored: checked live with two
+  `gapplication action … sync` a second apart). Quit cancels the task; `download_art`'s
+  `cancelled()` hook makes the thread give up at its next fetch, so the exit does not wait
+  for hundreds of downloads. Progress is `(section, done, total)` with sections `songs
+  playlists folders videos radio shelves artwork`; the banner reads "Syncing your library:
+  artwork 300 of 1,034". Errors: `not-signed-in` through `app.report` (Sign In button), the
+  rest "Could not sync your library: …" with Retry (`app.sync`). A section that fails
+  (folders, videos, radio, a shelf, a playlist's tracks) keeps last time's entry and logs a
+  warning; a failed songs or playlists listing fails the sync.
+- Two things found on the way, in CLAUDE.md's "worth knowing": the blueprints custom_target
+  does not recompile an edited `.blp` once anything else has been written into `build/src`
+  (touch the `.blp`); and `screenshot.py --signed-in` autostarted a real Chrome on the
+  *release* profile and port (its `profile` is `default`), so it now turns `engine-autostart`
+  off in its memory settings.
+- Not done: the Songs page is not told about a reload that changes nothing (fine) but a
+  reload that changes an album's tracks re-splices the whole Songs store (the page re-sorts,
+  30-50 ms, and loses its scroll); the hero shelf draws thumbnails; no "last synced" time is
+  shown anywhere (phase 17's preferences could); `sections.videos` is untested on a library
+  that has music videos (the fixture has two).
 
 ## Phase 12: Playback, Player state and the player bar
 

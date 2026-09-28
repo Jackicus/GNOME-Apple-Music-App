@@ -67,31 +67,39 @@ Disk: $XDG_CACHE_HOME/apple-music/{library.json, art/, thumb/, items/ (+ remote-
 ```
 meson.build, meson.options     project; -Dprofile=development → .Devel ID, version gets the git rev
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
-src/main.py                    Application: app.* actions (quit, about, shortcuts, sign-in, sign-out),
-                               GSettings, logging and --debug, --demo (app.demo), app.library
-                               and app.engine (made in do_startup; the library loaded and the
-                               engine autostarted in do_activate), spawn(coro), toast(),
-                               report(error), the quit path (engine stopped first),
-                               use_glib_event_loop()
+src/main.py                    Application: app.* actions (quit, about, shortcuts, sign-in, sign-out,
+                               sync), GSettings, logging and --debug, --demo (app.demo),
+                               app.library and app.engine (made in do_startup; the library loaded
+                               and the engine autostarted in do_activate), spawn(coro), toast(),
+                               report(error), start_sync()/sync_due() (the sync as a task, one at
+                               a time, with the banner and the toasts), the quit path (sync
+                               cancelled, engine stopped first), use_glib_event_loop()
+src/sync.py                    sync_library(engine, library, progress): the whole sync (fetch
+                               through the engine, normalise in a thread, thumbnails, library.json,
+                               prune, library.reload()); the endpoints and the favourites tag;
+                               install_scaler() (GdkPixbuf as the backend's scale_image)
 src/engine.py                  Engine (GObject: state down/starting/up/signing-in, authorized,
                                headless, `event` signal): Chrome's lifecycle in the app, the one
-                               CDPClient, the commands (status, item, signin, account_name);
-                               engine_paths(profile, port) (chrome-devel and port+1 for the
-                               .Devel build), item_endpoint()
+                               CDPClient, the commands (status, api, api_pages, api_all, item,
+                               signin, account_name); engine_paths(profile, port) (chrome-devel
+                               and port+1 for the .Devel build), item_endpoint()
 src/dialogs/signin.py + .blp   $AppleMusicSignInDialog: the sign-in flow as a task while shown
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
                                favourite_songs(), track_at(play, index), playlist_tree(),
-                               folder_items(id), async load; songs filled by async
-                               build_songs(), songs-ready), Item (favourites; kind 'folder' for
-                               a playlist folder), Group, Track (search_key), Shelf (GType
+                               folder_items(id), async load (new objects) and reload (in place,
+                               by id); songs filled by async build_songs(), songs-ready), Item
+                               (favourites; merge(data, replace); kind 'folder' for a playlist
+                               folder), Group, Track (search_key), Shelf (GType
                                AppleMusicShelfModel: the widget is AppleMusicShelf),
                                PlaylistTree/TreeNode (the folders); SongOrder (the Songs table's
-                               orders), fold(), collation_key(); GObject/Gio only
+                               orders), fold(), collation_key(), apply_diff(store, items);
+                               GObject/Gio only
 src/window.py + window.blp     Window: split view, sidebar (the Playlists section bound to the
                                library's tree; folder expansion in `expanded-folders`), the
-                               account button (Sign In, or the name over a Sign Out menu) and
-                               the signed-out banner, the content's AdwNavigationView and its
+                               account button (Sign In, or the name over a Sign Out menu), the
+                               signed-out banner and the sync banner (show_sync_progress/
+                               hide_sync_progress), the content's AdwNavigationView and its
                                root pages (pages.create, pages.playlist/folder, or a
                                placeholder), last-page restore, open_item(item),
                                open_shelf(shelf), play_request(play, start_with=None,
@@ -173,10 +181,9 @@ src/backend/                   the engine layer: vendored from the extension plu
   bridge.js                    injected into music.apple.com (window.__appleMusicLibrary); installed
                                as data beside the Python; subscribe() forwards MusicKit events through
                                the window.__amEvent binding as {name, data}
-  sync.py                      API answers → Item/Track, artwork cache (.sizes, scale_image hook),
-                               library.json writing
-  am.py                        REFERENCE ONLY (the extension's CLI): not installed, imported or
-                               linted; phases 10-11 port its sync and command bodies, then delete it
+  sync.py                      API answers → Item/Track, artwork cache (.sizes, scale_image hook,
+                               download_art with progress/cancelled), library.json writing
+                               (save_library under flock, atomic)
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
@@ -188,8 +195,8 @@ scripts/demo_library.py        invented library.json + drawn artwork (config siz
                                playlist folders (l.fd002 inside l.fd001) and loose playlists
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
                                fixtures/ holds invented API answers
-pyproject.toml                 ruff config only (line length 100, E/F/W; am.py excluded, vendored
-                               files exempt from E501)
+pyproject.toml                 ruff config only (line length 100, E/F/W; vendored files exempt
+                               from E501)
 build-aux/flatpak/*.Devel.json Flatpak manifest, GNOME 50 runtime (not installed locally)
 subprojects/blueprint-compiler.wrap   fallback when blueprint-compiler is not on PATH
 ```
@@ -321,7 +328,8 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   `await asyncio.sleep(0)`: asyncio runs at `G_PRIORITY_DEFAULT`, above GTK's redraw, so sleep(0)
   alone paints nothing until the task ends (measured: 0 frames against 5 in the same load).
 - The backend is reached only through `app.engine` (`src/engine.py`; coroutines: `await
-  app.engine.item(kind, id)`, later `play(...)`), spawned from signal handlers with
+  app.engine.item(kind, id)`, `api(path, params)`, `api_pages(path, params, page=100)`,
+  `api_all(paths)`, later `play(...)`), spawned from signal handlers with
   `app.spawn(coro)`. Errors are `EngineError(code)` with the README's codes (`engine-down`,
   `not-signed-in`, `api`, `timeout`); `app.report(error)` toasts a sentence for the code (with
   a Sign In button for `not-signed-in`), never a traceback. Library reads are synchronous
@@ -342,6 +350,33 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   visible, `engine.signin()`, `signed-in` set, `account_name()` best effort, restart headless
   when `engine-headless`); `app.sign-out` asks, then stops the engine, wipes the profile and
   the cache in a thread and reloads the (now empty) library.
+- Sync (`src/sync.py`, phase 11): `app.sync` ("Refresh Library", `<primary>r`) runs
+  `Application.start_sync()`, which starts the engine if it is down and runs
+  `sync_library(engine, library, progress)` as one task (a second request while one runs is
+  ignored). It also runs after sign-in and when the engine comes up (autostart, or a second
+  launch) with `last-sync` older than `sync-interval` hours (`sync_due()`; 0 hours: only when
+  asked). The sync fetches every section through `engine.api_pages` (songs with their albums,
+  playlists with `extend=tags` and each one's tracks four at a time, the folders from
+  `playlist-folders/p.playlistsroot/children` and each folder's `children`, music videos,
+  radio, the shelves), normalises in a thread with `backend.sync`'s functions, fetches the
+  missing *thumbnails* only (`download_art` over the thumb URLs; progress relayed with
+  `call_soon_threadsafe`), writes library.json compact and atomically under the backend's
+  flock, prunes, then `library.reload()`. Covers are fetched on demand by the pages that
+  show one: `await artwork.get_default().fetch_cover(item)` downloads `item.raw['artUrl']`
+  (which the sync writes) to `item.art` in a thread and answers True when it arrived (the
+  page then `cover.refresh()`es). Progress is a banner over the content ("Syncing your
+  library: songs 300 of 2,000"; sections `sync.PROGRESS_SECTIONS`, named in
+  `window.sync_section_names()`), the end a toast with the counts, a failure a toast with the
+  message and a Retry button (`not-signed-in` goes through `app.report`). A sync that a
+  section's fetch fails (folders, videos, radio, a shelf, a playlist's tracks) keeps last
+  time's entry for it; a failed songs or playlists listing, or a lost engine, fails the sync.
+  Quitting cancels the sync task (the download thread gives up at its next fetch).
+- `library.reload()` (after a sync) matches everything by kind and id: kept Items get
+  `merge(raw, replace=True)` (properties set where changed, groups and Tracks kept when the
+  group dicts are equal), stores get `apply_diff` (difflib over object ids, so unchanged runs
+  are not spliced), changed Items are spliced over themselves so bound rows rebind, Shelf
+  objects are kept by key, folder Items by id, the Songs store is left alone when nothing
+  moved. `load()` still makes new objects (sign-out, the first load).
 - Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
   `APPLE_MUSIC_CACHE` at the launcher's `DEMO_DIR` (the source tree's `build/demo`) unless the
   variable is already set, so `APPLE_MUSIC_CACHE=DIR scripts/demo.sh` shows another generated
@@ -395,7 +430,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - Settings: one schema `io.github.jackicus.AppleMusic` for both profiles; new keys go in
   `data/…gschema.xml` with a summary, and are read through `app.settings`. Keys: window-width/
   height/maximized, last-page, expanded-folders, browser-command, engine-port, engine-headless,
-  engine-autostart, signed-in, account-name (phase 17 shows the engine ones in Preferences).
+  engine-autostart, signed-in, account-name, last-sync (ISO 8601, '' before the first),
+  sync-interval (hours, 6; 0 = manual only) (phase 17 shows the engine and sync ones in
+  Preferences).
 - Actions: `app.*` in `main.py`, `win.*` in `window.py`; accelerators via `set_accels_for_action`;
   every shortcut also appears in the shortcuts dialog.
 - Style: 4-space Python, single quotes, no type-annotation ceremony, a docstring where a module or
@@ -514,6 +551,14 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   resizable when mapped: test scripts make theirs non-resizable in `window-added`.
 - The dev build shares the release schema and resource path; only the app ID, desktop file and icons
   differ. `run.sh` sets `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS` to `build/install`.
+- The blueprints are one Meson `custom_target` whose output is the `build/src` directory, so
+  ninja compares the *directory's* mtime with the `.blp` files: anything else written into
+  `build/src` later (the gresource) makes it look up to date, and an edited `.blp` is then not
+  recompiled (the installed window lacked a new template child and the app crashed at start).
+  When a template change does not show, `touch src/<file>.blp` and build again (phase 11).
+- `screenshot.py --signed-in` also turns `engine-autostart` off in its memory settings: with
+  it on, the shot's app started a real headless Chrome on the *release* profile and port
+  (`profile` is `default` there), which is never wanted from a screenshot.
 - Chrome: `google-chrome-stable` 154 is installed. Its MPRIS player is
   `org.mpris.MediaPlayer2.chromium.instance<pid>`, disabled by
   `--disable-features=HardwareMediaKeyHandling`. The extension's engine uses port 9227 and profile

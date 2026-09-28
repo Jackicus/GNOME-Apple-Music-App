@@ -17,17 +17,19 @@ importing the package imports none of its modules.
                 library.json
     config.py   paths, port, the state file and artwork sizes (new here; replaces the
                 extension's GSettings)
-    am.py       REFERENCE ONLY: the extension's one-process-per-command CLI. Not installed,
-                not imported, not linted; phases 10 and 11 port its sync and command bodies
-                (phase 9 ported the engine lifecycle into chrome.py and scripts/am.py), then
-                delete it
     README.md   the command table, error codes, the events, and the library.json/Item/Track
                 shapes
+
+The extension's am.py (its one-process-per-command CLI) was vendored as a reference for
+phases 9 to 11 and deleted in phase 11 once its engine lifecycle (chrome.py, scripts/am.py),
+its commands (src/engine.py) and its sync (src/sync.py) had been ported.
 
 Provenance. Vendored on 2026-09-27 from the GNOME Shell extension Apple Music Library,
 ~/Projects/GNOME-Extensions/GNOME-Apple-Music-Library at commit 906bfa9: src/backend/{cdp.py,
 bridge.js,sync.py,am.py,README.md}; tests/{test_cdp.py,test_sync.py,test_demo_schema.py} and
-tests/fixtures/ (fixtures unchanged); scripts/demo_library.py. Edits, to keep when refreshing
+tests/fixtures/ (the vendored fixtures unchanged; phase 11 added playlist_folders.json,
+library_playlists_tags.json, library_music_videos.json and recently_added.json, invented, for
+the app's sync tests); scripts/demo_library.py. Edits, to keep when refreshing
 from upstream:
 
 cdp.py
@@ -49,13 +51,9 @@ sync.py
   `scale_image(src, dest, size)` hook, which the app installs; without one it returns False and
   the thumbnail is fetched at its own size (upstream's behaviour without PyGObject).
 - The artwork fetch's User-Agent, as in cdp.py.
-am.py
-- A header comment marks it reference only. Package imports (from .cdp, from . import config,
-  sync) instead of a sys.path insert, so it no longer runs as a script.
-- Paths, port and state file come from config.py (APPLE_MUSIC_* variables, port 9228, the
-  apple-music directories) instead of the extension's; the settings the extension read from its
-  GSettings schema through gi are plain defaults (get_setting), set_setting does nothing.
-- ensure_bridge reads config.BRIDGE_JS.
+- (Phase 11) download_art(progress=None, cancelled=None): progress(done, total) after each
+  fetch, cancelled() asked before each result (True gives up the rest); save_library(indent=2)
+  takes json.dump's indent (the app writes the compact form). Behaviour otherwise unchanged.
 README.md
 - A header note on what still applies; the paths, variables, port, sizes, the thumbnail scaler
   and the settings paragraph describe this app.

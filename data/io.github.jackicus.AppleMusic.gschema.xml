@@ -54,5 +54,16 @@
       <summary>Account display name</summary>
       <description>The name shown on the account button, read from the Apple Music page after signing in; empty when none could be read.</description>
     </key>
+    <key name="last-sync" type="s">
+      <default>''</default>
+      <summary>When the library was last synced</summary>
+      <description>The time the library was last fetched from Apple Music in full, as an ISO 8601 timestamp; empty before the first sync.</description>
+    </key>
+    <key name="sync-interval" type="i">
+      <range min="0" max="168"/>
+      <default>6</default>
+      <summary>Hours between automatic library syncs</summary>
+      <description>The library is synced again when the app starts (or the engine comes up) and the last sync is older than this many hours. 0 syncs only when asked (Refresh Library).</description>
+    </key>
   </schema>
 </schemalist>

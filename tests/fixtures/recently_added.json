@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "id": "l.alb123",
+      "type": "library-albums",
+      "href": "/v1/me/library/albums/l.alb123",
+      "attributes": {
+        "name": "Static Skyline",
+        "artistName": "Paper Parachutes",
+        "releaseDate": "2007-09-18",
+        "genreNames": ["Rock"],
+        "trackCount": 12,
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://example.invalid/image/thumb/Music/v4/a1/b2/c3/{w}x{h}bb.jpg",
+          "bgColor": "112233"
+        },
+        "playParams": {"id": "l.alb123", "kind": "album", "isLibrary": true}
+      }
+    },
+    {
+      "id": "p.pl456",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.pl456",
+      "attributes": {
+        "name": "Rock Workout",
+        "canEdit": true,
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://example.invalid/image/thumb/Features/v4/11/22/33/{w}x{h}bb.jpg",
+          "bgColor": "e84855"
+        },
+        "playParams": {"id": "p.pl456", "kind": "playlist", "isLibrary": true}
+      }
+    }
+  ],
+  "next": "/v1/me/library/recently-added?offset=25"
+}

@@ -1,0 +1,86 @@
+{
+  "data": [
+    {
+      "id": "p.pl123",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.pl123",
+      "attributes": {
+        "name": "Chill Mix",
+        "description": {"standard": "Relax and unwind with smooth beats."},
+        "canEdit": true,
+        "canDelete": true,
+        "isPublic": false,
+        "hasCatalog": false,
+        "hasCollaboration": false,
+        "tags": [],
+        "lastModifiedDate": "2025-05-01T09:00:00Z",
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://example.invalid/image/thumb/Features/v4/aa/bb/cc/{w}x{h}bb.jpg",
+          "bgColor": "0b2545"
+        },
+        "playParams": {"id": "p.pl123", "kind": "playlist", "isLibrary": true}
+      }
+    },
+    {
+      "id": "p.pl456",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.pl456",
+      "attributes": {
+        "name": "Rock Workout",
+        "canEdit": true,
+        "canDelete": true,
+        "isPublic": true,
+        "hasCatalog": false,
+        "hasCollaboration": false,
+        "lastModifiedDate": "2025-04-11T09:00:00Z",
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://example.invalid/image/thumb/Features/v4/11/22/33/{w}x{h}bb.jpg",
+          "bgColor": "e84855"
+        },
+        "playParams": {"id": "p.pl456", "kind": "playlist", "isLibrary": true}
+      }
+    },
+    {
+      "id": "p.pl789",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.pl789",
+      "attributes": {
+        "name": "Tempo Runs",
+        "canEdit": true,
+        "canDelete": true,
+        "isPublic": false,
+        "hasCatalog": false,
+        "hasCollaboration": false,
+        "lastModifiedDate": "2025-02-20T09:00:00Z",
+        "playParams": {"id": "p.pl789", "kind": "playlist", "isLibrary": true}
+      }
+    },
+    {
+      "id": "p.favs0",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/p.favs0",
+      "attributes": {
+        "name": "Favourite Songs",
+        "canEdit": false,
+        "canDelete": false,
+        "isPublic": false,
+        "hasCatalog": false,
+        "hasCollaboration": false,
+        "tags": ["favorited"],
+        "lastModifiedDate": "2025-06-30T09:00:00Z",
+        "artwork": {
+          "width": 1000,
+          "height": 1000,
+          "url": "https://example.invalid/image/thumb/Features/v4/fa/v0/00/{w}x{h}bb.jpg",
+          "bgColor": "d90429"
+        },
+        "playParams": {"id": "p.favs0", "kind": "playlist", "isLibrary": true}
+      }
+    }
+  ],
+  "meta": {"total": 4}
+}
