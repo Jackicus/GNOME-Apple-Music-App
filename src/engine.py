@@ -1011,13 +1011,18 @@ class Engine(GObject.Object):
         mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `shuffle` True turns
         MusicKit's shuffle on (a Shuffle button), False off (a Play button plays in order),
         None leaves it as it is (a track row). Needs a signed-in engine: library ids and
-        full songs are the account's."""
+        full songs are the account's. MusicKit refusing is EngineError('api') with its code
+        as `musickit_code` ('CONTENT_UNAVAILABLE'…)."""
         client = await self._require_signed_in('play')
         if not kind or item_id in (None, ''):
             raise EngineError('usage', 'play needs a kind and an id')
         options = {'startWith': int(start_with or 0),
                    'shuffle': None if shuffle is None else bool(shuffle)}
-        await client.bridge('play', str(kind), str(item_id), options, timeout=PLAY_TIMEOUT)
+        answer = await client.bridge('play', str(kind), str(item_id), options,
+                                     timeout=PLAY_TIMEOUT)
+        if isinstance(answer, dict) and answer.get('error'):
+            raise EngineError('api', f'play {kind}: {answer["error"]}',
+                              musickit_code=str(answer.get('code') or '') or None)
 
     async def play_next(self, kind, item_id):
         """Queue an item right after the one playing (mk.playNext)."""

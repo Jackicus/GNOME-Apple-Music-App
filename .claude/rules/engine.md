@@ -39,7 +39,9 @@ paths:
   the library changes during a read), for listings of resources, never a playlist's tracks;
   tests/test_sync_app.py's FakeEngine borrows `Engine.api_pages`, so it may use nothing of
   the Engine but `api()`.
-- Only `EngineError(code, message)` leaves the backend and the Engine. A new failure kind gets a
+- Only `EngineError(code, message)` leaves the backend and the Engine (with `status`, Apple's
+  HTTP status, and `musickit_code`, MusicKit's code for a play it refused, when there is one;
+  `mediaPlaybackError` events carry `{code, message}` the same way). A new failure kind gets a
   code in `backend/errors.py` and a sentence in `Application.report()` (`no-browser`, no Chrome
   to find or spawn, still has the generic one). `start()` raises nothing else: a Chrome that
   exits at once is `engine-down` with its exit status; anything unexpected is logged and raised

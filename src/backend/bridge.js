@@ -237,6 +237,13 @@
         return String(err.message || err.description || err.name || err);
     }
 
+    // MusicKit's code for a failure ('CONTENT_UNAVAILABLE', 'SUBSCRIPTION_ERROR'…: an
+    // MKError's errorCode), or the error's name, or '': what the app words the failure by.
+    function errorCode(err) {
+        if (!err || typeof err !== 'object') return '';
+        return String(err.errorCode || err.name || '');
+    }
+
     // The MusicKit events the app follows, each with the plain data it is
     // posted with — the shapes the answers below use (nowPlaying, queue),
     // read from the instance at the moment of the event rather than from
@@ -291,7 +298,7 @@
             return { volume: typeof mk.volume === 'number' ? mk.volume : 1 };
         },
         mediaPlaybackError: function (mk, e) {
-            return { message: describeError(e) };
+            return { code: errorCode(e), message: describeError(e) };
         }
     };
 
@@ -437,8 +444,14 @@
                 queueObj[kind] = id;
             }
 
-            await mk.setQueue(queueObj);
-            await mk.play();
+            // MusicKit refusing (an item not in this storefront, no subscription…)
+            // answers {error, code} rather than throwing, so its code reaches the app.
+            try {
+                await mk.setQueue(queueObj);
+                await mk.play();
+            } catch (err) {
+                return { error: describeError(err), code: errorCode(err) };
+            }
             return { ok: true };
         },
 

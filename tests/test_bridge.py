@@ -204,6 +204,37 @@ class BridgeTest(unittest.TestCase):
 
     @scenario("""
         bridge.subscribe();
+        mk.fire('mediaPlaybackError', {errorCode: 'CONTENT_UNAVAILABLE', name: 'MKError',
+                                       message: 'Content unavailable'});
+        mk.fire('mediaPlaybackError', {name: 'NotAllowedError', description: 'No gesture'});
+        mk.fire('mediaPlaybackError', 'Playback failed');
+        mk.fire('mediaPlaybackError', undefined);
+        return posted.map(event => event.data);
+    """)
+    def test_playback_errors_carry_musickits_code(self, value):
+        self.assertEqual(value, [
+            {'code': 'CONTENT_UNAVAILABLE', 'message': 'Content unavailable'},
+            {'code': 'NotAllowedError', 'message': 'No gesture'},
+            {'code': '', 'message': 'Playback failed'},
+            {'code': '', 'message': 'unknown error'}])
+
+    @scenario("""
+        mk.failures.setQueue = {errorCode: 'CONTENT_UNAVAILABLE', message: 'Content unavailable'};
+        const queued = await bridge.play('album', '1000000002');
+        delete mk.failures.setQueue;
+        mk.failures.play = new Error('The play() request was interrupted');
+        const played = await bridge.play('album', '1000000002');
+        delete mk.failures.play;
+        return {queued, played, fine: await bridge.play('album', '1000000002')};
+    """)
+    def test_a_refused_play_answers_its_code(self, value):
+        self.assertEqual(value, {
+            'queued': {'error': 'Content unavailable', 'code': 'CONTENT_UNAVAILABLE'},
+            'played': {'error': 'The play() request was interrupted', 'code': 'Error'},
+            'fine': {'ok': True}})
+
+    @scenario("""
+        bridge.subscribe();
         for (const state of [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 'ended', 99])
             mk.fire('playbackStateDidChange', {state});
         return posted.map(event => event.data.state);

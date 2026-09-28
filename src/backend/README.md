@@ -82,7 +82,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 | `status` | `{engine, authorized, storefront, bitrate}` |
 | `sync [--only albums\|artists\|playlists\|radio\|shelves]` | Fetches the missing artwork in threads at the `cover-size`/`thumb-size` settings, then writes library.json once (atomically: a temporary file renamed over it), then prunes: the artwork nothing names, and `remote-art/` to a budget. `{counts, generated}` |
 | `item <kind> <id>` | One full item with its `groups`, for a shelf or search result picked on demand; fetches its artwork too |
-| `play <kind> <id> [--start-with N] [--shuffle]` | `{ok: true}`. kind ∈ `album playlist station song musicVideo artist`. The bridge's `play(kind, id, {startWith, shuffle})`: shuffle `true` turns MusicKit's shuffle on, `false` off (a Play button plays in order), `null` leaves it (a track row) |
+| `play <kind> <id> [--start-with N] [--shuffle]` | `{ok: true}`. kind ∈ `album playlist station song musicVideo artist`. The bridge's `play(kind, id, {startWith, shuffle})`: shuffle `true` turns MusicKit's shuffle on, `false` off (a Play button plays in order), `null` leaves it (a track row); MusicKit refusing answers `{error, code}` (the Engine raises `EngineError('api')` with `musickit_code`) |
 | `play-next <kind> <id>`, `play-later <kind> <id>` | `{ok: true}` |
 | `control play\|pause\|toggle\|next\|previous\|stop`, `seek <sec>` | `{ok: true}` |
 | `volume <0..1>` | `{volume}` — the level as MusicKit has it after the set. It is the engine's own, not the system's; Apple's page keeps it across restarts, and a nought is a mute |
@@ -301,4 +301,4 @@ event:
 | `shuffleModeDidChange` | `{shuffle: "on"\|"off"}` |
 | `repeatModeDidChange` | `{repeat: "none"\|"one"\|"all"}` |
 | `playbackVolumeDidChange` | `{volume}` (0..1) |
-| `mediaPlaybackError` | `{message}` |
+| `mediaPlaybackError` | `{code, message}` (code: MusicKit's `errorCode`, e.g. `CONTENT_UNAVAILABLE`, else the error's name, else '') |
