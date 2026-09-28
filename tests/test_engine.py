@@ -1131,6 +1131,20 @@ class PlaybackTest(EngineFixture):
             ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': False}),  # in order
         ])
 
+    async def test_a_refused_play_carries_musickits_code(self):
+        await self.up()
+        self.page.bridge_answers['play'] = {'error': 'Content unavailable',
+                                            'code': 'CONTENT_UNAVAILABLE'}
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.play('album', '1000000002')
+        error = raised.exception
+        self.assertEqual((error.code, error.musickit_code), ('api', 'CONTENT_UNAVAILABLE'))
+        self.assertIn('Content unavailable', error.message)
+        self.page.bridge_answers['play'] = {'error': 'Something odd', 'code': ''}
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.play('album', '1000000002')
+        self.assertIsNone(raised.exception.musickit_code)
+
     async def test_play_needs_a_signed_in_engine(self):
         with self.assertRaises(EngineError) as raised:
             await self.engine.play('album', 'l.alb1')
