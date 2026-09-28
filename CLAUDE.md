@@ -3,9 +3,12 @@
 A native GNOME client for Apple Music. GTK 4.22, libadwaita 1.9, Python 3.14 with PyGObject 3.56,
 Blueprint for UI, Meson, gettext. GPL-2.0-or-later. App ID `io.github.jackicus.AppleMusic`
 (`.Devel` under `-Dprofile=development`); resource base path `/io/github/jackicus/AppleMusic`.
+Those versions are what it is developed on (this machine's). `meson.build` requires only
+GTK >= 4.20, libadwaita >= 1.9, GLib >= 2.84, PyGObject >= 3.50 and Meson >= 1.2: use no API
+newer than those minimums without raising them there.
 It should feel like a GNOME core app (Nautilus, Music, Settings) while laying out its pages like
-the Apple Music web player. `prompts.md` is a finished build log (all 20 phases done; it moves
-to docs/history/ in WP12). This file is what every session needs: what exists and the rules.
+the Apple Music web player. `prompts.md` is the finished build log of the 20 phases (history,
+not instructions). This file is what every session needs: what exists and the rules.
 
 ## The one hard constraint
 
@@ -330,8 +333,9 @@ src/pages/home.py + .blp       $AppleMusicHomePage: title over a Gtk.Box of Appl
 src/pages/shelves.py + .blp    $AppleMusicShelvesPage(title, fetch, root, icon_name, hero, empty
                                texts): shelves the engine answers with (fetch(refresh) → {shelves}),
                                wrapped by remote_shelves() (Items with artwork under remote-art)
-                               and their thumbnails fetched by fetch_shelf_art() (each tile rebound
-                               as its file arrives); spinner, Start Engine / Sign In / Try Again
+                               and their thumbnails fetched by fetch_shelf_art() (each item spliced
+                               over itself as its file arrives, which GTK 4.22 does not rebind: a
+                               known bug); spinner, Start Engine / Sign In / Try Again
                                status page (waits while the engine is starting; loads itself once
                                it is up or signed in), a refresh button (past the day-long cache);
                                category_page(item) for a search category, pushed
@@ -483,11 +487,14 @@ build-aux/meson/compile-python.py  meson install's byte-compiling of the install
 subprojects/blueprint-compiler.wrap   fallback when blueprint-compiler is not on PATH
 ```
 
-New code goes in: `src/backend/` (engine, CDP, sync; imports no GTK), `src/library.py` (data
-model), `src/pages/<name>.py` + `.blp` (one module per sidebar destination or detail page),
-`src/widgets/` (reusable: tiles, shelves, track rows, artwork loader), `src/dialogs/` (sign-in,
-preferences), `tests/` (stdlib `unittest`), `scripts/` (developer tools). Anything installed
-outside the Python module goes in `data/`.
+New code goes in: `src/backend/` (the Chrome process, the CDP client, bridge.js, the sync's
+normalising and cache files; asyncio and the stdlib only, no gi at all: a test checks; the
+`Engine` GObject is `src/engine.py`), `src/<name>.py` (app services and logic with no widgets:
+engine, player, sync, mpris, actions, lyrics, shortcuts; unit-tested with stand-ins),
+`src/library.py` (data model), `src/pages/<name>.py` + `.blp` (one module per sidebar
+destination or detail page), `src/widgets/` (reusable: tiles, shelves, track rows, artwork
+loader), `src/dialogs/` (sign-in, preferences), `tests/` (stdlib `unittest`), `scripts/`
+(developer tools). Anything installed outside the Python module goes in `data/`.
 
 ## Commands
 
@@ -583,8 +590,13 @@ scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--watch MS] [--size WxH
                           pages are still alive (weakrefs, by class; the page-leak measure);
                           --profile KEY prints a cProfile of that page's first switch. Keep its
                           window visible (no frames otherwise: reported after 3 s)
-meson setup build --prefix=/usr && meson install -C build --skip-subprojects
-                          system install, release profile (byte-compiled; see Distribution)
+meson setup _build --prefix=/usr && meson install -C _build --skip-subprojects
+                          system install, release profile (byte-compiled; see Distribution), in
+                          a build directory of its own (_build/, git-ignored; Meson asks to
+                          elevate). Never build/: that is the development build run.sh and
+                          check.sh own; `meson setup build --prefix=/usr` on it only changes
+                          the prefix and keeps the development profile, so the install puts
+                          the .Devel build into /usr
 meson dist -C build       the release tarball in build/meson-dist/ (needs a clean, committed tree)
 ```
 
@@ -664,7 +676,12 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   (320 px), falling back to `art`; a detail page's hero draws `art` (640 px), falling back to
   `thumb` (the tile's texture shown meanwhile). Ask in an idle after the frame (a list maps a few
   hundred rows to show a dozen), not in bind. `widgets.cover.Cover` does this for any square
-  artwork; the tiles and Songs cells keep their own copies of the same logic.
+  artwork, but it is one of five copies of this logic, and they have diverged: Tile and
+  SongTitle match each other; Cover adds the `get_any()` stand-in and a first-to-decode walk,
+  and a pending idle keeps its old `best` when `set_paths()` changes the paths (a known bug);
+  CategoryTile and ArtistPage's portrait ask at map with no idle and clear to None instead of
+  `artwork.empty()` (CategoryTile also decodes at the file's own size). They are to be unified
+  into one; until then a fix to one copy goes into all five.
 - Nothing in a recycled row or tile may change size when its artwork comes or goes: a
   `Gtk.Picture` queues a resize, laying out the whole list, whenever its paintable's intrinsic
   size changes (None to a texture and back), and so does a widget shown or hidden. Show
@@ -705,14 +722,18 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   commands are thin coroutines over those (`app.player_command(coro)` spawns one and toasts
   its EngineError) and whose properties change only from the engine's `event` signal (the
   bar and MPRIS follow `notify::*`; nothing polls MusicKit). Errors are
-  `EngineError(code)` with the README's codes (`engine-down`,
-  `not-signed-in`, `api`, `timeout`); `app.report(error)` toasts a sentence for the code (with
-  a Sign In button for `not-signed-in`), never a traceback. Library reads are synchronous
-  in-memory models. Engine properties: `state` (`down`, `starting`, `up`, `signing-in`),
-  `authorized`, `headless`; the `event(name, data)` signal re-emits MusicKit's events without
-  the `am:` prefix. `engine.start(visible=None)` reclaims a live Chrome that engine.json names
-  when its mode matches, else spawns one (Gio.Subprocess; stderr relayed to the log only at
-  DEBUG) and waits for DevTools, the bridge and `status()`; without a mode it keeps an engine
+  `EngineError(code)` with the README's codes (`engine-down`, `not-signed-in`, `api`,
+  `timeout`, and `usage` for a bad argument); `app.report(error)` toasts a sentence for the code
+  (with a Sign In button for `not-signed-in`; `api` and `usage` share a generic one), never a
+  traceback. Library reads are synchronous in-memory models. Engine properties: `state`
+  (`down`, `starting`, `up`, `signing-in`), `authorized`, `headless`; the `event(name, data)`
+  signal re-emits MusicKit's events without the `am:` prefix. Known bug, being fixed (do not
+  rely on it): every command raises `engine-down` while `state` is `starting` (`_require_up()`
+  takes only `up` and `signing-in`), and `Player.ensure_engine()` returns at once unless the
+  state is `down`, so a play or an item action during a start in progress fails instead of
+  waiting. `engine.start(visible=None)` reclaims a live Chrome that engine.json names when its
+  mode matches, else spawns one (Gio.Subprocess; stderr relayed to the log only at DEBUG) and
+  waits for DevTools, the bridge and `status()`; without a mode it keeps an engine
   that runs in either mode and starts a stopped one headless unless `prefer_headless` (the
   `engine-headless` setting) is off, so "make sure it is up" callers pass nothing and only
   sign-in names a mode; the browser command and `set_port()` apply at the next start; `stop()` is close, SIGTERM, 5 s,
@@ -762,7 +783,7 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   `merge(raw, replace=True)` (properties set where changed, groups and Tracks kept when the
   group dicts are equal), stores get `apply_diff` (difflib over object ids, so unchanged runs
   are not spliced), changed Items are spliced over themselves (GTK 4.22 does not rebind a
-  same-object splice: bound rows keep their old values; see C054/C083), Shelf
+  same-object splice: bound rows keep their old values, a known bug), Shelf
   objects are kept by key, folder Items by id, the Songs store is left alone when nothing
   moved. `load()` still makes new objects (sign-out, the first load).
 - Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
@@ -778,8 +799,10 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   `print` in app code.
 - Async: `app.spawn(coro)` runs a coroutine as a task on the GLib-backed asyncio loop, keeps a
   reference until it finishes, logs its exception (cancellation is silent) and returns the task for
-  cancelling. Use it from signal handlers instead of threads or `GLib.idle_add`; blocking work
-  inside the coroutine goes through `asyncio.to_thread`.
+  cancelling. Use it for asynchronous work from signal handlers instead of threads;
+  `GLib.idle_add` is for deferring UI work past the current frame or layout (as the artwork
+  requests do), not for running async work. Blocking work inside the coroutine goes through
+  `asyncio.to_thread`.
 - Pages: a destination's root page is an `Adw.NavigationPage` with its own `Adw.ToolbarView` and
   `Adw.HeaderBar` (`show-title: false`; the header bar still shows the back button to the sidebar
   when collapsed), registered in `pages.PAGES`. Pages listen to `app.library` only while mapped
@@ -795,7 +818,7 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   (`thumb` at 320, `art` at 640, with `thumbUrl`/`artUrl`), `pages.shelves.remote_shelves()`
   wraps them as `library.Shelf`s of `Item`s, and `fetch_shelf_art(shelves)` fetches the missing
   thumbnails a few at a time, splicing each item over itself (GTK 4.22 does not rebind a
-  same-object splice; see C054/C083; `HeroTile.bind` refreshes its cover when the paths are
+  same-object splice, a known bug; `HeroTile.bind` refreshes its cover when the paths are
   unchanged). Opening
   such an item works as for a Home shelf's: `DetailPage` fetches its groups through
   `engine.item()` and merges the sync-style paths in. `ShelvesPage` is the page for any of
@@ -850,10 +873,13 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   browser-command, engine-port, engine-headless and engine-autostart; the Engine applies the
   engine ones at its next start. A row bound with `Gio.Settings.bind` needs nothing else; an
   `i` key binds to a `double` property (the SpinRow's `value`) as it is.
-- Actions: `app.*` in `main.py`, `win.*` in `window.py`. Every shortcut is in `src/shortcuts.py`:
-  an accelerator in `ACCELS` (main.py sets them all), a key the window handles itself in
-  `PLAYBACK`, and each listed in `sections()`, the Keyboard Shortcuts dialog
-  (`tests/test_shortcuts.py` fails when one is not). GTK 4 runs application accelerators in the
+- Actions: `app.*` in `main.py`, `win.*` in `window.py` (the item actions, `win.item-*`, in
+  `actions.py`). Every shortcut is in `src/shortcuts.py`: an accelerator in `ACCELS` (main.py
+  sets them all), a key the window handles itself in `PLAYBACK`, and each listed in
+  `sections()`, the Keyboard Shortcuts dialog (`tests/test_shortcuts.py` fails when one is not).
+  The one exception: the context-menu keys are bound from `widgets/context_menu.py`'s own
+  `MENU_KEYS`, which `shortcuts.CONTEXT_MENU` repeats for the dialog and no test compares:
+  change both together. GTK 4 runs application accelerators in the
   window's *capture* phase, before the focus widget, so a bare key (Space) or an editing chord
   (Ctrl+Left) must not be an accelerator: the playback keys are handled by a capture-phase
   `Gtk.EventControllerKey` on the window that leaves them to an editable or text view, a toggle
@@ -892,10 +918,15 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
 
 ## Verifying a change
 
-1. `scripts/check.sh` passes (it grows: tests, lint).
+1. `scripts/check.sh` passes (it grows: tests, lint). CI (GitHub Actions,
+   `.github/workflows/ci.yml`) runs the same script on every push to main and every pull
+   request, in an Arch Linux container under Xvfb with software rendering (`GSK_RENDERER=cairo`,
+   no GL, no accessibility bus) and a stub `google-chrome-stable` on PATH (the engine tests look
+   Chrome up but never run it): widget tests must pass there, and without any Chrome on PATH the
+   engine tests fail.
 2. Anything visual: `scripts/run.sh` (or `scripts/demo.sh`) builds, then
    `scripts/screenshot.py build/shot.png --demo --page KEY` and look at the PNG with the Read tool;
-   also `--light`, and `--size 400x700` for anything adaptive.
+   also `--light`, and `--size 360x640` (the narrowest width supported) for anything adaptive.
 3. Backend or model changes get a unit test in `tests/`.
 4. Keyboard or accessibility changes (or a new page): `scripts/a11y_check.py`, with
    `--size 360x640` and `--names`.
@@ -946,8 +977,11 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
     route the window's own selections through `_set_selected` (`_quiet`), which shows nothing.
   - It cannot indent: a folder's contents follow it, the arrow (`pan-end`/`pan-down-symbolic`
     suffix) says whether they show. In page mode the suffix sits before the row's own arrow.
-    Selecting does not scroll the list to the item (a restored playlist far down stays off
-    screen; the API has no scroll-to).
+    It scrolls to its selection only once, when its list maps; a later `set_selected()` does
+    not scroll, so a playlist restored after the library loads stays off screen. AdwSidebar has
+    no scroll-to of its own, but its rows sit in a ScrolledWindow > Viewport > ListBox, and
+    `Gtk.Viewport.scroll_to(row, None)` on that viewport (after the map, e.g. from an idle)
+    brings one into view.
   - Context menus (phase 16): the triggers are the sidebar's own (each row's
     `Gtk.GestureClick` for any button and touch `Gtk.GestureLongPress`, a sidebar-level
     Menu/Shift+F10 → `menu.popup`); it emits `setup-menu(item)`, then shows one
@@ -973,7 +1007,7 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `build/install/share/apple-music/applemusic`, where the gresource also lives. `tests/__init__.py`
   registers `src/` under that name (spec_from_file_location + sys.modules) for the tests;
   `scripts/demo_library.py` does the same to reach `applemusic.backend`.
-- src/backend is a fork owned by this app (D7): phases 9, 11 and 14-16 rewrote parts of cdp.py,
+- src/backend is a fork owned by this app: phases 9, 11 and 14-16 rewrote parts of cdp.py,
   sync.py and bridge.js, so it no longer diffs cleanly against the extension. Its vendored files
   still use upstream's style (pyproject exempts them from Q, E501, UP and B) until they are
   reformatted; new backend modules follow this file's style. Nothing in
@@ -1056,8 +1090,14 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   240 Hz; unfocused windows may get 60), so `scroll_test.py` reports the app's own work per frame,
   which is what the app controls. The desktop's tiling extension resizes windows that are
   resizable when mapped: test scripts make theirs non-resizable in `window-added`.
-- The dev build shares the release schema and resource path; only the app ID, desktop file and icons
-  differ. `run.sh` sets `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS` to `build/install`.
+- The .Devel build shares with the release build its schema, and so every setting
+  (`signed-in`, `account-name` and `last-sync` included), its resource path and its cache
+  (`$XDG_CACHE_HOME/apple-music`). It differs in app ID (desktop file, icons, MPRIS bus name),
+  version (the git rev), `DEMO_DIR` (set only in the development profile) and
+  `engine.engine_paths()`: Chrome profile `chrome-devel` (its engine.json inside it) and port
+  `engine-port` + 1. So signing in one build marks the other signed in though its Chrome
+  profile is not, and both sync into one cache: a known problem, to be fixed. `run.sh` sets
+  `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS` to `build/install`.
 - The blueprints are one Meson `custom_target` per `.blp` naming its `.ui` (flat in
   `build/src`), so an edited `.blp` is recompiled on the next build. (Until phase 12 they were
   one target whose output was the directory, which looked up to date whenever anything else
@@ -1121,9 +1161,10 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   exists in PyGObject but its get-mapping closure receives the GValue as a plain int it cannot
   set (and GLib aborts on the rejected default), so a mapped row is bound by hand
   (the refresh interval's ComboRow).
-- `screenshot.py --signed-in` also turns `engine-autostart` off in its memory settings: with
-  it on, the shot's app started a real headless Chrome on the *release* profile and port
-  (`profile` is `default` there), which is never wanted from a screenshot.
+- `scripts/harness.make_app()` turns `engine-autostart` off in the memory settings of every
+  in-process script (screenshot, a11y_check, scroll_test, bench), `--signed-in` or not: their
+  app runs as profile `default`, so an autostart would start a real headless Chrome on the
+  *release* profile and port. A new script builds its app through the harness.
 - Chrome: `google-chrome-stable` 154 is installed. Its MPRIS player is
   `org.mpris.MediaPlayer2.chromium.instance<pid>`, disabled by
   `--disable-features=HardwareMediaKeyHandling` (confirmed in phase 13: with the engine
@@ -1134,8 +1175,8 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   (the `.Devel` build 9229 and `chrome-devel`) so they can run side by side, which also means a
   separate sign-in per profile.
 - The engine layer (phase 9): `EngineState.alive` is the pid *and* `--user-data-dir=<profile>`
-  on its `/proc` command line, a substring match (P09-5: `…/chrome` also matches
-  `…/chrome-devel`, so a reused pid can be mistaken; D1 removes the state file); the state file
+  on its `/proc` command line, a substring match (`…/chrome` also matches
+  `…/chrome-devel`, so a reused pid can be mistaken: a known bug); the state file
   is keyed by profile (`config.state_file(profile)`: the default profile's in
   `$XDG_RUNTIME_DIR/apple-music/engine.json`, any other's inside the profile). A
   `Runtime.addBinding` is per CDP session: each connection registers `__amEvent` itself, and
