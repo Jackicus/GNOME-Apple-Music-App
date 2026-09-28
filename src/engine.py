@@ -13,6 +13,13 @@ UI awaits.
     await engine.item(kind, id)         # a full Item with its groups, kept under <cache>/items/
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.account_name()         # the name on the page, or '' (best effort)
+    await engine.play(kind, id, start_with=None, shuffle=False)   # mk.setQueue + mk.play
+    await engine.play_next(kind, id); await engine.play_later(kind, id)
+    await engine.control('toggle')      # play, pause, toggle, next, previous, stop
+    await engine.seek(seconds); await engine.volume(level)   # volume answers the level set
+    await engine.shuffle('toggle'); await engine.repeat('cycle')   # answer {shuffle, repeat}
+    await engine.now_playing()   # {state, track, position, duration, shuffle, repeat, volume}
+    await engine.queue()         # {index, items: [Track…]}
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
@@ -47,6 +54,12 @@ SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
 API_RETRIES = 3
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
+PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
+
+# The playback commands' arguments, as the bridge (and the extension's am.py) take them.
+CONTROL_ACTIONS = ('play', 'pause', 'toggle', 'next', 'previous', 'stop')
+SHUFFLE_MODES = ('on', 'off', 'toggle')
+REPEAT_MODES = ('none', 'one', 'all', 'cycle')
 
 # Library ids ("l." albums and playlists, "p." playlists, "r." radio) live under /v1/me/library;
 # anything else is the catalog's.
@@ -631,3 +644,88 @@ class Engine(GObject.Object):
             if time.monotonic() >= deadline:
                 return ''
             await asyncio.sleep(0.5)
+
+    # -- playback ------------------------------------------------------------------------
+    # Thin wrappers over the bridge, as am.py's play/control/seek/volume/shuffle/repeat/
+    # now-playing/queue commands were; the outcome shows up as MusicKit events (the `event`
+    # signal), which is where the Player takes its state from, not from these answers.
+
+    def _require_signed_in(self):
+        client = self._require_up()
+        if not self.authorized:
+            raise EngineError('not-signed-in', 'sign in to Apple Music to play')
+        return client
+
+    async def play(self, kind, item_id, start_with=None, shuffle=False):
+        """Play an album, playlist, station, song, musicVideo or artist (its top songs) by
+        id, from queue position `start_with` (a track row), shuffled when asked: the
+        bridge's play(), that is mk.setQueue({kind: id, startWith, startPlaying}) and
+        mk.play(). Needs a signed-in engine: library ids and full songs are the account's."""
+        client = self._require_signed_in()
+        if not kind or item_id in (None, ''):
+            raise EngineError('usage', 'play needs a kind and an id')
+        options = {'startWith': int(start_with or 0), 'shuffle': bool(shuffle)}
+        await client.bridge('play', str(kind), str(item_id), options, timeout=PLAY_TIMEOUT)
+
+    async def play_next(self, kind, item_id):
+        """Queue an item right after the one playing (mk.playNext)."""
+        client = self._require_signed_in()
+        await client.bridge('playNext', str(kind), str(item_id), timeout=PLAY_TIMEOUT)
+
+    async def play_later(self, kind, item_id):
+        """Queue an item at the end (mk.playLater)."""
+        client = self._require_signed_in()
+        await client.bridge('playLater', str(kind), str(item_id), timeout=PLAY_TIMEOUT)
+
+    async def control(self, action):
+        """One of CONTROL_ACTIONS: play, pause, toggle, next, previous, stop."""
+        if action not in CONTROL_ACTIONS:
+            raise EngineError('usage', f'unknown control action: {action}')
+        client = self._require_up()
+        await client.bridge('control', action)
+
+    async def seek(self, seconds):
+        """Jump to `seconds` into the item playing (mk.seekToTime)."""
+        client = self._require_up()
+        await client.bridge('seek', max(0.0, float(seconds)))
+
+    async def volume(self, level):
+        """Set MusicKit's volume, 0 to 1 (the engine's own, not the system's; Apple's page
+        keeps it across restarts). Answers the level as MusicKit has it after the set."""
+        client = self._require_up()
+        level = min(1.0, max(0.0, float(level)))
+        answer = await client.bridge('volume', level)
+        value = answer.get('volume') if isinstance(answer, dict) else None
+        return float(value) if isinstance(value, (int, float)) else level
+
+    async def shuffle(self, mode):
+        """Shuffle on, off or toggle; answers {shuffle: 'on'|'off', repeat: 'none'|'one'|'all'}
+        as MusicKit has them after the change."""
+        if mode not in SHUFFLE_MODES:
+            raise EngineError('usage', f'unknown shuffle mode: {mode}')
+        client = self._require_up()
+        answer = await client.bridge('shuffle', mode)
+        return answer if isinstance(answer, dict) else {}
+
+    async def repeat(self, mode):
+        """Repeat none, one, all, or cycle through them; answers as shuffle() does."""
+        if mode not in REPEAT_MODES:
+            raise EngineError('usage', f'unknown repeat mode: {mode}')
+        client = self._require_up()
+        answer = await client.bridge('repeat', mode)
+        return answer if isinstance(answer, dict) else {}
+
+    async def now_playing(self):
+        """What plays: {state, track, position, duration, shuffle, repeat, volume}, the state
+        the coarse playing/paused/stopped and the track the Track shape (or None)."""
+        client = self._require_up()
+        answer = await client.bridge('nowPlaying')
+        if not isinstance(answer, dict):
+            raise EngineError('api', 'the page gave no now-playing answer')
+        return answer
+
+    async def queue(self):
+        """The queue: {index, items: [Track…]}."""
+        client = self._require_up()
+        answer = await client.bridge('queue')
+        return answer if isinstance(answer, dict) else {'index': 0, 'items': []}

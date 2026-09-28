@@ -24,6 +24,7 @@ from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .engine import Engine, engine_paths  # noqa: E402
 from .library import Library  # noqa: E402
+from .player import Player  # noqa: E402
 from .sync import install_scaler, sync_library  # noqa: E402
 from .window import Window  # noqa: E402
 
@@ -52,6 +53,7 @@ class Application(Adw.Application):
         self.demo = False  # True under --demo: an invented library and no engine
         self.library = None  # created in do_startup
         self.engine = None  # created in do_startup
+        self.player = None  # created in do_startup, after the engine
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
@@ -65,6 +67,18 @@ class Application(Adw.Application):
         self._add_action('sign-in', self._on_sign_in)
         self._add_action('sign-out', self._on_sign_out)
         self._add_action('sync', self._on_sync, ['<primary>r'])
+        # Playback, enabled while something plays (the bar's buttons follow). Their keys
+        # (Space, Ctrl+Right, Ctrl+Left) are the window's (window.PLAYBACK_KEYS), not
+        # accelerators, which GTK 4 would fire before a focused entry gets them.
+        self._playback_actions = [
+            self._add_action('play-pause', self._on_play_pause),
+            self._add_action('next', self._on_next),
+            self._add_action('previous', self._on_previous),
+            self._add_action('shuffle', self._on_shuffle),
+            self._add_action('repeat', self._on_repeat),
+        ]
+        for action in self._playback_actions:
+            action.set_enabled(False)
         self.set_accels_for_action('window.close', ['<primary>w'])
         self.set_accels_for_action('win.back', ['<alt>Left'])
 
@@ -97,6 +111,9 @@ class Application(Adw.Application):
         Adw.Application.do_startup(self)
         self.library = Library()
         self.engine = self._make_engine()
+        self.player = Player(self)
+        self.player.connect('notify::track', self._on_track_changed)
+        self.player.connect('error', self._on_playback_error)
         install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
         # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
         # default, which would end the process with Chrome running on (reclaimed next time).
@@ -166,6 +183,40 @@ class Application(Adw.Application):
             if name:
                 self.settings.set_string('account-name', name)
                 log.info('account name read from the page after autostart')
+
+    # -- playback ------------------------------------------------------------------------
+
+    def _on_track_changed(self, player, _pspec):
+        playing = player.track is not None
+        for action in self._playback_actions:
+            action.set_enabled(playing)
+
+    def _on_playback_error(self, _player, message):
+        self.toast(_('Playback failed: {message}').format(message=message))
+
+    def player_command(self, coro):
+        """A Player command as a task, its EngineError toasted."""
+        async def command():
+            try:
+                await coro
+            except EngineError as error:
+                self.report(error)
+        return self.spawn(command())
+
+    def _on_play_pause(self, *_args):
+        self.player_command(self.player.toggle())
+
+    def _on_next(self, *_args):
+        self.player_command(self.player.next())
+
+    def _on_previous(self, *_args):
+        self.player_command(self.player.previous())
+
+    def _on_shuffle(self, *_args):
+        self.player_command(self.player.toggle_shuffle())
+
+    def _on_repeat(self, *_args):
+        self.player_command(self.player.cycle_repeat())
 
     # -- the sync ------------------------------------------------------------------------
 
@@ -367,6 +418,7 @@ class Application(Adw.Application):
         self.add_action(action)
         if accels:
             self.set_accels_for_action(f'app.{name}', accels)
+        return action
 
     def _on_about(self, *_args):
         about = Adw.AboutDialog(
@@ -389,8 +441,13 @@ class Application(Adw.Application):
         section.add(Adw.ShortcutsItem.new(_('Go Back'), '<alt>Left'))
         section.add(Adw.ShortcutsItem.new(_('Close Window'), '<primary>w'))
         section.add(Adw.ShortcutsItem.new(_('Quit'), '<primary>q'))
+        playback = Adw.ShortcutsSection(title=_('Playback'))
+        playback.add(Adw.ShortcutsItem.new(_('Play or Pause'), 'space'))
+        playback.add(Adw.ShortcutsItem.new(_('Next'), '<primary>Right'))
+        playback.add(Adw.ShortcutsItem.new(_('Previous'), '<primary>Left'))
         dialog = Adw.ShortcutsDialog()
         dialog.add(section)
+        dialog.add(playback)
         dialog.present(self.get_active_window())
 
 

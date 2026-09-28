@@ -17,12 +17,17 @@ unmapped), so the cache's size bounds what the artwork costs: 200 textures of 32
 A sync fetches only thumbnails; the covers (an Item's `art`, 640 px) are fetched here on
 demand, by the pages that show one: `await fetch_cover(item)` downloads it into <cache>/art/
 in a thread, from the `artUrl` the sync kept in the Item, and answers True when a file arrived
-(the page then shows it). Nothing here needs the engine.
+(the page then shows it). Artwork the library does not name (the item playing, a search hit)
+comes through `await fetch_remote(url, size)`: the URL re-sized to `size` px square, fetched
+into <cache>/remote-art/ (named by the sized URL's hash; the sync trims that directory to a
+budget) and answered as its path. Nothing here needs the engine.
 """
 
 import asyncio
 import itertools
 import logging
+import os
+import re
 from collections import OrderedDict
 
 import gi
@@ -37,6 +42,28 @@ from ..backend import sync as backend  # noqa: E402
 log = logging.getLogger(__name__)
 
 CACHE_SIZE = 200
+
+# The size at the end of an Apple artwork URL ("…/256x256bb.jpg", "…/600x600bb-60.jpg"), to
+# re-size one; a template ("{w}x{h}") is filled by the backend first.
+ART_SIZE_RE = re.compile(r'/(\d+)x(\d+)([a-z]{0,3}(?:-\d+)?)(\.[A-Za-z0-9]+)$')
+
+
+def sized_url(url, size):
+    """`url` naming a `size`×`size` px image: Apple's templates and sized URLs both take it;
+    any other URL is left as it is."""
+    if not url:
+        return None
+    url = backend.template_artwork_url(str(url), size, size)
+    return ART_SIZE_RE.sub(lambda match: f'/{size}x{size}{match.group(3)}{match.group(4)}', url)
+
+
+def remote_art_path(url, size=config.COVER_SIZE):
+    """Where fetch_remote keeps the image at `url` re-sized to `size`: under <cache>/remote-art/,
+    named by the sized URL's hash. None without a URL."""
+    url = sized_url(url, size)
+    if not url:
+        return None
+    return os.path.join(str(config.cache_dir()), 'remote-art', backend.artwork_filename(url))
 
 
 class Artwork:
@@ -65,6 +92,24 @@ class Artwork:
             self._fetches[path] = task
             task.add_done_callback(lambda _task: self._fetches.pop(path, None))
         return await asyncio.shield(task)
+
+    async def fetch_remote(self, url, size=config.COVER_SIZE):
+        """The image at `url` (an Apple artwork URL of any size), re-sized to `size` px
+        square and on disk under <cache>/remote-art/: its path, once it is there (fetched
+        in a thread when it is not), or None without a URL or when the fetch failed
+        (logged). Concurrent calls for one image share the download. The player bar asks
+        at the cover size, so the Now Playing sheet finds the same file."""
+        path = remote_art_path(url, size)
+        if not path:
+            return None
+        if not backend._art_missing(path):
+            return path
+        task = self._fetches.get(path)
+        if task is None:
+            task = asyncio.get_event_loop().create_task(self._fetch(path, sized_url(url, size)))
+            self._fetches[path] = task
+            task.add_done_callback(lambda _task: self._fetches.pop(path, None))
+        return path if await asyncio.shield(task) or not backend._art_missing(path) else None
 
     async def _fetch(self, path, url):
         def fetch():

@@ -6,6 +6,8 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
   width-request: 360;
   height-request: 294;
 
+  // The last breakpoint that matches is the one applied, so the narrower one repeats the
+  // wider one's setters.
   Adw.Breakpoint {
     condition ("max-width: 640sp")
 
@@ -15,7 +17,33 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
     }
   }
 
-  content: Adw.ToastOverlay toast_overlay {
+  Adw.Breakpoint {
+    condition ("max-width: 600sp")
+
+    setters {
+      split_view.collapsed: true;
+      sidebar.mode: page;
+      player_bar.compact: true;
+    }
+  }
+
+  // The player bar is the bottom sheet's bottom bar, always shown under the content and the
+  // window's full width (not full-width, it floats over the content as a pill the width of
+  // its controls, which covers the tiles); the sheet over it is Now Playing (a placeholder
+  // until it is built). Toasts go over the content, above the bar.
+  content: Adw.BottomSheet bottom_sheet {
+    bottom-bar: $AppleMusicPlayerBar player_bar {};
+
+    sheet: Adw.StatusPage {
+      icon-name: "music-note-symbolic";
+      title: _("Now Playing");
+      description: _("Nothing to show yet");
+    };
+
+    // The bar is laid over the content, not under it: the content ends above the bar.
+    content: Adw.ToastOverlay toast_overlay {
+      margin-bottom: bind bottom_sheet.bottom-bar-height;
+
     child: Adw.NavigationSplitView split_view {
       min-sidebar-width: 220;
       max-sidebar-width: 280;
@@ -156,11 +184,9 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
           }
 
           content: Adw.NavigationView navigation_view {};
-
-          [bottom]
-          $AppleMusicPlayerBar player_bar {}
         };
       };
+    };
     };
   };
 }

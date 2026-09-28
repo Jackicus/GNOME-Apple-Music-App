@@ -3,12 +3,20 @@
   --accent-bg-color: #fa2d48;
 }
 
+/* The player bar (player_bar.blp), the bottom sheet's bottom bar: the transport buttons a
+   little larger than the toolbar default, the seek slider's trough flush with the labels. */
 .player-bar {
-  min-height: 48px;
+  min-height: 56px;
 }
 
-.player-artwork {
-  border-radius: 6px;
+.player-bar .play-button {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.player-bar scale {
+  margin: 0;
+  padding: 0;
 }
 
 /* Grid pages (pages/grid.blp). The top padding scrolls with the tiles and leaves room for the

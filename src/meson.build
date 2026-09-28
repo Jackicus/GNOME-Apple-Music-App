@@ -8,9 +8,11 @@ if not blueprint_compiler.found()
   )
 endif
 
-blueprints = custom_target(
-  'blueprints',
-  input: files(
+# One target per .blp, each naming its .ui, so an edited .blp is recompiled: a single target
+# with the directory as its output looked up to date whenever anything else had been written
+# there. The .ui files land flat in the build directory, which the gresource lists them from.
+blueprints = []
+foreach blueprint : files(
     'pages/artist.blp',
     'pages/detail.blp',
     'pages/grid.blp',
@@ -26,16 +28,13 @@ blueprints = custom_target(
     'widgets/tile.blp',
     'widgets/track_row.blp',
     'window.blp',
-  ),
-  output: '.',
-  command: [
-    blueprint_compiler,
-    'batch-compile',
-    '@OUTPUT@',
-    '@CURRENT_SOURCE_DIR@',
-    '@INPUT@',
-  ],
-)
+  )
+  blueprints += custom_target(
+    input: blueprint,
+    output: '@BASENAME@.ui',
+    command: [blueprint_compiler, 'compile', '--output', '@OUTPUT@', '@INPUT@'],
+  )
+endforeach
 
 gnome.compile_resources(
   'applemusic',
@@ -70,6 +69,7 @@ install_data(
   'engine.py',
   'library.py',
   'main.py',
+  'player.py',
   'player_bar.py',
   'sections.py',
   'sidebar.py',

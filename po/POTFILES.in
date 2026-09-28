@@ -6,6 +6,8 @@ src/dialogs/signin.py
 src/dialogs/signin.blp
 src/window.py
 src/window.blp
+src/player.py
+src/player_bar.py
 src/player_bar.blp
 src/sections.py
 src/pages/__init__.py

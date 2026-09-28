@@ -19,7 +19,7 @@ running and better than before.
 - [x] 9. Backend layer: Chrome process, async CDP client, bridge events, debug CLI (2026-09-27)
 - [x] 10. Engine in the app: lifecycle, sign-in, account (2026-09-27)
 - [x] 11. Library sync and artwork cache (2026-09-28)
-- [ ] 12. Playback: Player state and the player bar
+- [x] 12. Playback: Player state and the player bar (2026-09-28)
 - [ ] 13. MPRIS
 - [ ] 14. Now Playing sheet, queue, lyrics
 - [ ] 15. Search
@@ -1431,6 +1431,76 @@ row 3 (starts at track 3), a Songs row, a station; pause, seek, next; watch the 
 400 px wide (Not Playing state). Update CLAUDE.md (Player, BottomSheet structure, actions). Tick
 phase 12 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- Verified live (dev build, in-process script on the real cache and the dev engine, as
+  phase 11 did; audio at volume 0.2, put back after): Play on an album page (the album's
+  first track, index 0), a track row at index 2 (starts there), a Songs row (that song), a
+  station (a track arrives, state playing); pause and resume (`app.play-pause`), seek by the
+  bar's slider (`change-value` → 30 s; the slider stayed there), next and previous
+  (`app.next`/`app.previous`), shuffle and repeat by the bar's toggles and `app.shuffle`,
+  the volume by the bar's button; the bar followed every one of them from events
+  (`--debug` shows `event playbackTimeDidChange` four times a second and no now-playing
+  reads after the one at engine start); artwork arrived in `<cache>/remote-art/`; stop
+  cleared the track and disabled the bar. 39 of 39 checks. MusicKit calls that worked:
+  `setQueue({album|playlist|station: id, startWith, startPlaying: true})` + `play()`,
+  `pause()`, `skipToNextItem()`, `skipToPreviousItem()`, `seekToTime()`, `stop()`, the
+  `volume`, `shuffleMode` and `repeatMode` setters (each answered by its event).
+- The Player API (`src/player.py`, CLAUDE.md has the summary): `Player(app)`; properties
+  `state` (the PlaybackStates name; `ACTIVE_STATES` = playing, loading, waiting, stalled →
+  `player.active`, the bar's Pause icon), `track` (`NowPlaying`, from the bridge's Track
+  shape: `artwork_url` is the 256 px URL; `Artwork.fetch_remote(url, 640)` re-sizes it),
+  `position`, `duration`, `shuffle`, `repeat`, `volume`, plus `position_updated_at`
+  (monotonic) and `estimated_position()` for MPRIS. `apply(now_playing_dict)` sets everything
+  (phase 14's `--now-playing` screenshot can feed it a fictional answer); `apply(None)`
+  resets the state, track and times but keeps shuffle, repeat and the volume (Apple's page
+  keeps them across engine restarts; the next `refresh()` reads them). `error(message)` is
+  emitted for `mediaPlaybackError` (toasted "Playback failed: …").
+- What the events do, seen live: a `play()` from a new queue goes paused → seeking → paused
+  → `nowPlayingItemDidChange` null → stopped → `nowPlayingItemDidChange` (the new item) →
+  duration → playing → waiting → loading → playing; the bar shows "Not Playing" for about
+  half a second in the middle (the actions disable and enable with it). `skipToNextItem` at
+  the end of the queue (repeat none) goes paused → seeking → item null → stopped →
+  completed. `playbackTimeDidChange` carries integer seconds. MusicKit's `isPlaying` is false
+  while loading, so the bridge's `control('toggle')` would ask a loading item to play again:
+  `Player.toggle()` decides from its own `active` (pause when active, else play).
+- The bottom sheet: `window.blp` is `Adw.BottomSheet bottom_sheet { content: Adw.ToastOverlay
+  toast_overlay { margin-bottom: bind bottom_sheet.bottom-bar-height; child: split view };
+  bottom-bar: $AppleMusicPlayerBar player_bar; sheet: Adw.StatusPage "Now Playing" }`, full
+  width (not full-width, the bar floats as a pill the width of its controls over the tiles;
+  seen at 1100 px). The bar overlays the content in libadwaita 1.9, hence the margin binding.
+  Toasts sit above the bar; with the sheet open (modal) they are under it, so phase 14 may
+  want a toast overlay inside the sheet. Phase 14 replaces the `sheet:` child and flips
+  nothing else; `bottom_sheet.open` opens it (`app.now-playing`); the bar's click and swipe
+  open it already.
+- The bar: transport left (`app.previous`, `app.play-pause`, `app.next`, actionable buttons,
+  so their sensitivity is the actions'), `$AppleMusicCover` 44 px + title + "Artist — Album"
+  + seek row in the middle, shuffle/repeat/volume right. A 600sp breakpoint on the window
+  sets `player_bar.compact` (volume and the times hidden), repeating the 640sp collapse
+  setters (only the last matching breakpoint applies). Shuffle and repeat are
+  `Gtk.ToggleButton`s not bound to actions: a click calls the Player with the mode asked for
+  (repeat: the next in none → one → all, shown at once with `-repeat-song-symbolic` for one)
+  and the event confirms; a failure puts the button back. `app.shuffle` and `app.repeat`
+  have no accelerators (none in the plan; Ctrl+R is Refresh). The three
+  `media-playlist-*-symbolic` icons are bundled (Adwaita has none).
+- Space: GTK 4 puts application accelerators in the window's capture phase (the controller
+  named `gtk-application-shortcuts` reports `capture`), so a `space` accel would have fired
+  while typing in the Songs filter and `<primary>Left` would have skipped a track instead of a
+  word. The keys are `window.PLAYBACK_KEYS` in a capture-phase `Gtk.EventControllerKey` on
+  the window: not handled when the focus is a `Gtk.Editable` or `Gtk.TextView` or the action
+  is disabled (Space then presses a focused button as usual). Checked in demo mode by calling
+  the handler with the filter entry focused and not (no key injection on this desktop).
+- The seek slider ignores incoming positions from `change-value` until the seek has been
+  sent (250 ms after the last movement) and then until MusicKit reports a position within
+  2 s of the target or 1.5 s pass. `playbackTimeDidChange` is 4/s, so the bar needs no timer.
+- The blueprint build was fixed on the way: one `custom_target` per `.blp` (see CLAUDE.md);
+  the gresource lists bare `.ui` names. `scripts/screenshot.py` needed no change.
+- Not done: no grace for the half-second "Not Playing" between queues; the bar's artwork is
+  the 640 px file decoded whole (fine for one); `NowPlaying` has no `thumb` from the library
+  (the bar could show the library thumbnail at once for library tracks); the volume button is
+  insensitive with nothing playing (the plan's "everything disabled"), though MusicKit would
+  take a level then too.
 
 ## Phase 13: MPRIS
 

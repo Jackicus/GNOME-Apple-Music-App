@@ -3,22 +3,25 @@
   <gresource prefix="/io/github/jackicus/AppleMusic">
     <file preprocess="xml-stripblanks">window.ui</file>
     <file preprocess="xml-stripblanks">player_bar.ui</file>
-    <file preprocess="xml-stripblanks" alias="grid.ui">pages/grid.ui</file>
-    <file preprocess="xml-stripblanks" alias="songs.ui">pages/songs.ui</file>
-    <file preprocess="xml-stripblanks" alias="detail.ui">pages/detail.ui</file>
-    <file preprocess="xml-stripblanks" alias="artist.ui">pages/artist.ui</file>
-    <file preprocess="xml-stripblanks" alias="home.ui">pages/home.ui</file>
-    <file preprocess="xml-stripblanks" alias="radio.ui">pages/radio.ui</file>
-    <file preprocess="xml-stripblanks" alias="signin.ui">dialogs/signin.ui</file>
-    <file preprocess="xml-stripblanks" alias="tile.ui">widgets/tile.ui</file>
-    <file preprocess="xml-stripblanks" alias="song_title.ui">widgets/song_title.ui</file>
-    <file preprocess="xml-stripblanks" alias="cover.ui">widgets/cover.ui</file>
-    <file preprocess="xml-stripblanks" alias="track_row.ui">widgets/track_row.ui</file>
-    <file preprocess="xml-stripblanks" alias="shelf.ui">widgets/shelf.ui</file>
-    <file preprocess="xml-stripblanks" alias="hero_tile.ui">widgets/hero_tile.ui</file>
+    <file preprocess="xml-stripblanks">grid.ui</file>
+    <file preprocess="xml-stripblanks">songs.ui</file>
+    <file preprocess="xml-stripblanks">detail.ui</file>
+    <file preprocess="xml-stripblanks">artist.ui</file>
+    <file preprocess="xml-stripblanks">home.ui</file>
+    <file preprocess="xml-stripblanks">radio.ui</file>
+    <file preprocess="xml-stripblanks">signin.ui</file>
+    <file preprocess="xml-stripblanks">tile.ui</file>
+    <file preprocess="xml-stripblanks">song_title.ui</file>
+    <file preprocess="xml-stripblanks">cover.ui</file>
+    <file preprocess="xml-stripblanks">track_row.ui</file>
+    <file preprocess="xml-stripblanks">shelf.ui</file>
+    <file preprocess="xml-stripblanks">hero_tile.ui</file>
     <file>style.css</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/music-note-symbolic.svg">icons/music-note-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/playlist-symbolic.svg">icons/playlist-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/broadcast-symbolic.svg">icons/broadcast-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/media-playlist-shuffle-symbolic.svg">icons/media-playlist-shuffle-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/media-playlist-repeat-symbolic.svg">icons/media-playlist-repeat-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/media-playlist-repeat-song-symbolic.svg">icons/media-playlist-repeat-song-symbolic.svg</file>
   </gresource>
 </gresources>

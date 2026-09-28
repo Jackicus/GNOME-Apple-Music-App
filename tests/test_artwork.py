@@ -31,6 +31,72 @@ async def settle():
             return
 
 
+class TestRemoteArt(unittest.TestCase):
+    """fetch_remote: the URL re-sized, the file under <cache>/remote-art/, shared fetches."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        patcher = mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.temp_dir.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.fetched = []
+
+        def fake_cache_artwork(url, cache_dir, timeout=10.0, dest_path=None):
+            self.fetched.append(url)
+            if 'missing' in url:
+                return None
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, 'wb') as file:
+                file.write(b'jpeg')
+            return dest_path
+
+        patcher = mock.patch.object(artwork.backend, 'cache_artwork', fake_cache_artwork)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_sized_url(self):
+        self.assertEqual(artwork.sized_url('https://x.invalid/a/256x256bb.jpg', 640),
+                         'https://x.invalid/a/640x640bb.jpg')
+        self.assertEqual(artwork.sized_url('https://x.invalid/a/{w}x{h}bb.jpg', 320),
+                         'https://x.invalid/a/320x320bb.jpg')
+        self.assertEqual(artwork.sized_url('https://x.invalid/a/600x600bb-60.webp', 640),
+                         'https://x.invalid/a/640x640bb-60.webp')
+        self.assertEqual(artwork.sized_url('https://x.invalid/a/cover.jpg', 640),
+                         'https://x.invalid/a/cover.jpg')
+        self.assertIsNone(artwork.sized_url(None, 640))
+        self.assertIsNone(artwork.sized_url('', 640))
+
+    def test_fetches_into_remote_art_once(self):
+        loader = artwork.Artwork()
+        url = 'https://x.invalid/a/256x256bb.jpg'
+
+        async def go():
+            first, second = await asyncio.gather(loader.fetch_remote(url, 640),
+                                                 loader.fetch_remote(url, 640))
+            self.assertEqual(first, second)
+            self.assertEqual(os.path.dirname(first),
+                             os.path.join(self.temp_dir.name, 'remote-art'))
+            self.assertTrue(os.path.exists(first))
+            self.assertEqual(self.fetched, ['https://x.invalid/a/640x640bb.jpg'])
+            # On disk already: answered without a fetch.
+            self.assertEqual(await loader.fetch_remote(url, 640), first)
+            self.assertEqual(len(self.fetched), 1)
+            # Another size is another file.
+            other = await loader.fetch_remote(url, 320)
+            self.assertNotEqual(other, first)
+            self.assertEqual(self.fetched[-1], 'https://x.invalid/a/320x320bb.jpg')
+        run(go())
+
+    def test_failures_answer_none(self):
+        loader = artwork.Artwork()
+
+        async def go():
+            self.assertIsNone(await loader.fetch_remote(None, 640))
+            self.assertIsNone(await loader.fetch_remote('https://x.invalid/missing/1x1.jpg', 640))
+        run(go())
+
+
 class TestArtwork(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,8 @@ from applemusic.engine import Engine, engine_paths, item_endpoint
 from tests.test_client import FakeChrome, FakePage, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
+PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
+                    'repeat', 'nowPlaying', 'queue')
 SLEEPER = 'import time; time.sleep(60)'
 STUBBORN = 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'
 
@@ -80,9 +83,16 @@ class EnginePage(FakePage):
         self.api_params = []    # the params of each api() call, in order
         self.signin_calls = 0
         self.account = None
+        self.bridge_calls = []  # (method, args) of the playback commands
+        self.bridge_answers = {}  # method -> what it answers (None: {ok: True})
 
     def __call__(self, message):
         expression = message['params']['expression']
+        match = re.match(r'window\.__appleMusicLibrary\.(\w+)\((.*)\)$', expression, re.S)
+        if match and match.group(1) in PLAYBACK_METHODS:
+            args = json.loads('[' + match.group(2) + ']') if match.group(2) else []
+            self.bridge_calls.append((match.group(1), *args))
+            return value(self.bridge_answers.get(match.group(1), {'ok': True}))
         if expression == 'window.__appleMusicLibrary.status()':
             return value(self.status())
         if expression == 'window.__appleMusicLibrary.signin()':
@@ -552,6 +562,104 @@ class EngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.engine.account_name(), '')
         self.page.account = 7
         self.assertEqual(await self.engine.account_name(), '')
+
+
+class PlaybackTest(EngineTest):
+    """The playback commands: thin calls into the bridge, their arguments as am.py sent
+    them, their answers shaped, and the errors when the engine is down or signed out."""
+
+    async def up(self, authorized=True):
+        self.page.authorized = authorized
+        await self.engine.start()
+
+    async def test_play_sends_kind_id_and_options(self):
+        await self.up()
+        await self.engine.play('album', 'l.alb1')
+        await self.engine.play('playlist', 'p.pl1', start_with=3)
+        await self.engine.play('station', 'ra.1', shuffle=True)
+        self.assertEqual(self.page.bridge_calls, [
+            ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': False}),
+            ('play', 'playlist', 'p.pl1', {'startWith': 3, 'shuffle': False}),
+            ('play', 'station', 'ra.1', {'startWith': 0, 'shuffle': True}),
+        ])
+
+    async def test_play_needs_a_signed_in_engine(self):
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.play('album', 'l.alb1')
+        self.assertEqual(raised.exception.code, 'engine-down')
+        await self.up(authorized=False)
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.play('album', 'l.alb1')
+        self.assertEqual(raised.exception.code, 'not-signed-in')
+        self.assertEqual(self.page.bridge_calls, [])
+
+    async def test_play_needs_a_target(self):
+        await self.up()
+        for kind, item_id in (('', 'x'), (None, 'x'), ('album', ''), ('album', None)):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.play(kind, item_id)
+            self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_play_next_and_later(self):
+        await self.up()
+        await self.engine.play_next('song', 'i.1')
+        await self.engine.play_later('album', 'l.2')
+        self.assertEqual(self.page.bridge_calls,
+                         [('playNext', 'song', 'i.1'), ('playLater', 'album', 'l.2')])
+
+    async def test_control_seek_volume(self):
+        await self.up()
+        for action in engine_module.CONTROL_ACTIONS:
+            await self.engine.control(action)
+        await self.engine.seek(42)
+        await self.engine.seek(-3)
+        self.page.bridge_answers['volume'] = {'volume': 0.5}
+        self.assertEqual(await self.engine.volume(0.5), 0.5)
+        self.page.bridge_answers['volume'] = None  # not a dict: the level asked for
+        self.assertEqual(await self.engine.volume(2), 1.0)
+        self.assertEqual(self.page.bridge_calls, [
+            ('control', 'play'), ('control', 'pause'), ('control', 'toggle'),
+            ('control', 'next'), ('control', 'previous'), ('control', 'stop'),
+            ('seek', 42.0), ('seek', 0.0), ('volume', 0.5), ('volume', 1.0)])
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.control('rewind')
+        self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_shuffle_and_repeat(self):
+        await self.up()
+        self.page.bridge_answers['shuffle'] = {'shuffle': 'on', 'repeat': 'none'}
+        self.page.bridge_answers['repeat'] = {'shuffle': 'on', 'repeat': 'all'}
+        self.assertEqual(await self.engine.shuffle('toggle'), {'shuffle': 'on', 'repeat': 'none'})
+        self.assertEqual(await self.engine.repeat('cycle'), {'shuffle': 'on', 'repeat': 'all'})
+        self.assertEqual(self.page.bridge_calls, [('shuffle', 'toggle'), ('repeat', 'cycle')])
+        for method, mode in (('shuffle', 'maybe'), ('repeat', 'twice')):
+            with self.assertRaises(EngineError) as raised:
+                await getattr(self.engine, method)(mode)
+            self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_now_playing_and_queue(self):
+        await self.up()
+        answer = {'state': 'playing', 'track': {'id': 'i.1', 'title': 'Harbour Lights'},
+                  'position': 3, 'duration': 200, 'shuffle': 'off', 'repeat': 'none',
+                  'volume': 1}
+        self.page.bridge_answers['nowPlaying'] = answer
+        self.page.bridge_answers['queue'] = {'index': 1, 'items': [{'id': 'i.0'}, {'id': 'i.1'}]}
+        self.assertEqual(await self.engine.now_playing(), answer)
+        self.assertEqual((await self.engine.queue())['index'], 1)
+        self.assertEqual(self.page.bridge_calls, [('nowPlaying',), ('queue',)])
+        self.page.bridge_answers['nowPlaying'] = None
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.now_playing()
+        self.assertEqual(raised.exception.code, 'api')
+
+    async def test_commands_when_down(self):
+        for coro in (self.engine.control('toggle'), self.engine.seek(1), self.engine.volume(1),
+                     self.engine.shuffle('on'), self.engine.repeat('all'),
+                     self.engine.now_playing(), self.engine.queue(),
+                     self.engine.play_next('song', 'i.1')):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'engine-down')
 
 
 class DemoEngineTest(unittest.IsolatedAsyncioTestCase):

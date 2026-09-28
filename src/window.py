@@ -2,9 +2,10 @@ import logging
 import time
 from gettext import gettext as _
 
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gdk, Gio, Gtk
 
 from . import pages, sections
+from .backend.errors import EngineError
 from .pages.artist import ArtistPage
 from .pages.detail import DetailPage
 from .pages.grid import GridPage
@@ -15,6 +16,17 @@ log = logging.getLogger(__name__)
 
 # The first destination of the Playlists section, whose items the library's playlists follow.
 PLAYLISTS = 'all-playlists'
+
+# The playback keys, by (keyval, modifiers) -> app action. Not application accelerators: GTK 4
+# runs those in the window's capture phase, before the focus widget, so a bare Space would fire
+# while typing in the Songs filter and Ctrl+Left would skip a track instead of a word. The
+# window's own capture-phase key controller handles them instead, and leaves an editable alone.
+PLAYBACK_KEYS = {
+    (Gdk.KEY_space, 0): 'play-pause',
+    (Gdk.KEY_KP_Space, 0): 'play-pause',
+    (Gdk.KEY_Right, Gdk.ModifierType.CONTROL_MASK): 'next',
+    (Gdk.KEY_Left, Gdk.ModifierType.CONTROL_MASK): 'previous',
+}
 
 
 def sync_section_names():
@@ -36,6 +48,8 @@ class Window(Adw.ApplicationWindow):
     __gtype_name__ = 'AppleMusicWindow'
 
     toast_overlay = Gtk.Template.Child()
+    bottom_sheet = Gtk.Template.Child()
+    player_bar = Gtk.Template.Child()
     split_view = Gtk.Template.Child()
     sidebar = Gtk.Template.Child()
     content_page = Gtk.Template.Child()
@@ -62,6 +76,7 @@ class Window(Adw.ApplicationWindow):
 
         self._build_sidebar()
         self._update_playlists()
+        self.player_bar.set_player(self.get_application().player, self.get_application())
         self._library_handler = self._library.connect('changed', self._on_library_changed)
         self._restore_window_state()
         self._restore_page(self._settings.get_string('last-page'))
@@ -83,6 +98,26 @@ class Window(Adw.ApplicationWindow):
         self.split_view.connect('notify::collapsed', self._update_back)
         self.split_view.connect('notify::show-content', self._update_back)
         self._update_back()
+
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect('key-pressed', self.on_key_pressed)
+        self.add_controller(keys)
+
+    def on_key_pressed(self, _controller, keyval, _keycode, state):
+        """Space, Ctrl+Right and Ctrl+Left run the playback actions (PLAYBACK_KEYS) while
+        something plays, unless the focus is in an entry or a text view, whose keys they
+        are. A key nothing handles goes on to the focus widget (Space presses a button)."""
+        name = PLAYBACK_KEYS.get((keyval, state & Gtk.accelerator_get_default_mod_mask()))
+        if name is None:
+            return False
+        focus = self.get_focus()
+        if isinstance(focus, (Gtk.Editable, Gtk.TextView)):
+            return False
+        action = self.get_application().lookup_action(name)
+        if action is None or not action.get_enabled():
+            return False
+        self.get_application().activate_action(name)
+        return True
 
     def toast(self, title):
         self.toast_overlay.add_toast(Adw.Toast(title=title))
@@ -177,18 +212,30 @@ class Window(Adw.ApplicationWindow):
         """Play what play names ({kind, id}: an Item's or a Group's play target), from its entry at
         queue position start_with (a track row: track.play, track.index), or shuffled.
 
-        The one way into playback, as `am.py play <kind> <id> [--start-with N] [--shuffle]` is
-        upstream; phase 12 hands it to the engine. Until then a toast says what would play.
+        The one way into playback from the pages (a Play button, a track row, a station's
+        tile), as `am.py play <kind> <id> [--start-with N] [--shuffle]` was upstream: the
+        Player plays it through the engine, starting that first if need be; signed out, the
+        sign-in flow opens instead; a failure is toasted. The bar follows the engine's events.
         """
-        item = self._library.by_id(play.get('kind'), play.get('id')) if play else None
-        track = self._library.track_at(play, start_with) if start_with is not None else None
-        title = track.title if track is not None else item.title if item is not None else None
-        if title is None:
-            self.toast(_('Playback is not available yet'))
-        elif shuffle:
-            self.toast(_('Shuffling “{title}” is not available yet').format(title=title))
-        else:
-            self.toast(_('Playing “{title}” is not available yet').format(title=title))
+        app = self.get_application()
+        if app.demo:
+            self.toast(_('Not available with the demo library'))
+            return
+        if not play or not play.get('kind') or not play.get('id'):
+            self.toast(_('This cannot be played'))
+            return
+        app.spawn(self._play(play, start_with, shuffle))
+
+    async def _play(self, play, start_with, shuffle):
+        app = self.get_application()
+        try:
+            await app.player.play(play, start_with=start_with, shuffle=shuffle)
+        except EngineError as error:
+            if error.code == 'not-signed-in' and not app.settings.get_boolean('signed-in'):
+                log.info('play while signed out: opening sign-in')
+                app.activate_action('sign-in')
+            else:
+                app.report(error)
 
     # The sidebar. The first sections are fixed items; the Playlists section is bound to a
     # store of SidebarEntry: its two destinations, then the library's folders and playlists.

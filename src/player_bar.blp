@@ -1,6 +1,10 @@
 using Gtk 4.0;
 using Adw 1;
 
+// The transport bar at the bottom of the window (player_bar.py): the AdwBottomSheet's bottom
+// bar. Transport on the left; the item playing (artwork, title, artist) with the seek slider
+// under it in the middle; shuffle, repeat and the volume on the right. The window's breakpoint
+// sets `compact` below 600sp, which hides the volume and the times around the slider.
 template $AppleMusicPlayerBar: Adw.Bin {
   child: Box {
     spacing: 12;
@@ -17,10 +21,11 @@ template $AppleMusicPlayerBar: Adw.Bin {
       spacing: 4;
       valign: center;
 
-      Button {
+      Button previous_button {
         icon-name: "media-skip-backward-symbolic";
         tooltip-text: _("Previous");
-        sensitive: false;
+        action-name: "app.previous";
+        valign: center;
 
         styles [
           "flat",
@@ -28,21 +33,24 @@ template $AppleMusicPlayerBar: Adw.Bin {
         ]
       }
 
-      Button {
+      Button play_button {
         icon-name: "media-playback-start-symbolic";
         tooltip-text: _("Play");
-        sensitive: false;
+        action-name: "app.play-pause";
+        valign: center;
 
         styles [
           "circular",
           "suggested-action",
+          "play-button",
         ]
       }
 
-      Button {
+      Button next_button {
         icon-name: "media-skip-forward-symbolic";
         tooltip-text: _("Next");
-        sensitive: false;
+        action-name: "app.next";
+        valign: center;
 
         styles [
           "flat",
@@ -55,26 +63,25 @@ template $AppleMusicPlayerBar: Adw.Bin {
       spacing: 10;
       hexpand: true;
 
-      Image artwork {
-        icon-name: "music-note-symbolic";
-        pixel-size: 20;
-        width-request: 40;
-        height-request: 40;
+      $AppleMusicCover cover {
+        size: 44;
+        valign: center;
 
         styles [
-          "card",
-          "player-artwork",
+          "small",
         ]
       }
 
       Box {
         orientation: vertical;
         valign: center;
+        hexpand: true;
 
         Label title_label {
           label: _("Not Playing");
           xalign: 0;
           ellipsize: end;
+          single-line-mode: true;
 
           styles [
             "heading",
@@ -84,6 +91,7 @@ template $AppleMusicPlayerBar: Adw.Bin {
         Label subtitle_label {
           xalign: 0;
           ellipsize: end;
+          single-line-mode: true;
           visible: false;
 
           styles [
@@ -91,6 +99,108 @@ template $AppleMusicPlayerBar: Adw.Bin {
             "caption",
           ]
         }
+
+        Box seek_box {
+          spacing: 6;
+          sensitive: false;
+
+          Label elapsed_label {
+            label: "0:00";
+            xalign: 1;
+            width-chars: 5;
+            valign: center;
+
+            styles [
+              "numeric",
+              "caption",
+              "dim-label",
+            ]
+          }
+
+          Scale seek_scale {
+            hexpand: true;
+            valign: center;
+            draw-value: false;
+            adjustment: Adjustment seek_adjustment {
+              lower: 0;
+              upper: 1;
+              step-increment: 5;
+              page-increment: 30;
+            };
+            change-value => $on_seek_change_value();
+            accessible-role: slider;
+
+            accessibility {
+              label: _("Position");
+            }
+          }
+
+          Label remaining_label {
+            label: "-0:00";
+            xalign: 0;
+            width-chars: 6;
+            valign: center;
+
+            styles [
+              "numeric",
+              "caption",
+              "dim-label",
+            ]
+          }
+        }
+      }
+    }
+
+    Box {
+      spacing: 4;
+      valign: center;
+
+      ToggleButton shuffle_button {
+        icon-name: "media-playlist-shuffle-symbolic";
+        tooltip-text: _("Shuffle");
+        sensitive: false;
+        valign: center;
+        toggled => $on_shuffle_toggled();
+
+        styles [
+          "flat",
+        ]
+      }
+
+      ToggleButton repeat_button {
+        icon-name: "media-playlist-repeat-symbolic";
+        tooltip-text: _("Repeat");
+        sensitive: false;
+        valign: center;
+        toggled => $on_repeat_toggled();
+
+        styles [
+          "flat",
+        ]
+      }
+
+      ScaleButton volume_button {
+        icons: [
+          "audio-volume-muted-symbolic",
+          "audio-volume-high-symbolic",
+          "audio-volume-low-symbolic",
+          "audio-volume-medium-symbolic",
+        ];
+        adjustment: Adjustment volume_adjustment {
+          lower: 0;
+          upper: 1;
+          step-increment: 0.05;
+          page-increment: 0.1;
+          value: 1;
+        };
+        tooltip-text: _("Volume");
+        sensitive: false;
+        valign: center;
+        value-changed => $on_volume_changed();
+
+        styles [
+          "flat",
+        ]
       }
     }
   };
