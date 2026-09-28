@@ -369,7 +369,7 @@ def luminance(rgb):
 
 def contrast_ratio(text, opacity, background):
     """WCAG's contrast ratio of `text` drawn at `opacity` over `background` (sRGB tuples)."""
-    shown = tuple(opacity * t + (1 - opacity) * b for t, b in zip(text, background))
+    shown = tuple(opacity * t + (1 - opacity) * b for t, b in zip(text, background, strict=True))
     lighter, darker = sorted((luminance(shown), luminance(background)), reverse=True)
     return (lighter + 0.05) / (darker + 0.05)
 
@@ -385,7 +385,7 @@ def readable_band(rgb, dark, text_opacity=1.0):
     towards = (0.0, 0.0, 0.0) if dark else (1.0, 1.0, 1.0)
     for step in range(51):
         amount = step / 50
-        band = tuple(c * (1 - amount) + t * amount for c, t in zip(rgb, towards))
+        band = tuple(c * (1 - amount) + t * amount for c, t in zip(rgb, towards, strict=True))
         if contrast_ratio(text, opacity, band) >= MIN_CONTRAST:
             return band
     return towards

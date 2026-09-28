@@ -11,7 +11,7 @@ import os
 import pathlib
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
@@ -399,7 +399,7 @@ class ReloadTest(unittest.TestCase):
 class WhenToSyncTest(unittest.TestCase):
     """The sync-interval choices, sync_due() and last_sync_text() (untranslated here)."""
 
-    NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
 
     def test_interval_index(self):
         self.assertEqual([app_sync.interval_index(hours) for hours in app_sync.INTERVALS],

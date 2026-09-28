@@ -173,7 +173,7 @@ def window_size():
 
 
 def report(times, work, interval, distance):
-    gaps = [b - a for a, b in zip(times, times[1:])] or [0]
+    gaps = [b - a for a, b in zip(times, times[1:], strict=False)] or [0]
     work = sorted(work or [0])
     budget = interval / 1e6
     print(f'scroll-test: {where()} at {window_size()}: {distance:.0f} px in '

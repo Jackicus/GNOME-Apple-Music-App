@@ -28,7 +28,7 @@ def translates(path):
               if token.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE)]
     return any(token.type == tokenize.NAME and token.string in GETTEXT_CALLS
                and following.string == '(' and previous.string != '.'
-               for previous, token, following in zip(tokens, tokens[1:], tokens[2:]))
+               for previous, token, following in zip(tokens, tokens[1:], tokens[2:], strict=False))
 
 
 def source_files(*suffixes):

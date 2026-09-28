@@ -58,7 +58,7 @@ TRACK_HOLD = 2.0   # the same after a track change: MusicKit reports the previou
 LOOP_STATUS = {'none': 'None', 'one': 'Track', 'all': 'Playlist'}
 REPEAT_MODE = {status: mode for mode, status in LOOP_STATUS.items()}
 
-INTROSPECTION_XML = '''
+INTROSPECTION_XML = """
 <node>
   <interface name="org.mpris.MediaPlayer2">
     <method name="Raise"/>
@@ -114,7 +114,7 @@ INTROSPECTION_XML = '''
     </property>
   </interface>
 </node>
-'''
+"""
 
 
 def bus_name(app_id):

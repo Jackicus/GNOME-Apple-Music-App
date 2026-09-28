@@ -281,7 +281,8 @@ class Item(GObject.Object):
                 if key in ('id', 'kind'):
                     continue
                 self.raw[key] = value
-        changed = [name for name, old in zip(names, before) if self.get_property(name) != old]
+        changed = [name for name, old in zip(names, before, strict=True)
+                   if self.get_property(name) != old]
         for name in changed:
             self.notify(name)
         if data.get('play'):
@@ -458,7 +459,7 @@ def apply_diff(store, items):
     its rows and its scroll position through a reload that changed little. 23,000 items diff
     in about 25 ms."""
     old = [store.get_item(position) for position in range(store.get_n_items())]
-    if len(old) == len(items) and all(a is b for a, b in zip(old, items)):
+    if len(old) == len(items) and all(a is b for a, b in zip(old, items, strict=True)):
         return
     matcher = difflib.SequenceMatcher(None, [id(item) for item in old],
                                       [id(item) for item in items], autojunk=False)
@@ -753,7 +754,7 @@ class Library(GObject.Object):
             stale = min(len(batch), store.get_n_items() - position)
             store.splice(position, stale, batch)
             position += len(batch)
-            log.debug('Library: %d items wrapped in %.0f ms, spliced in %.0f ms (the views\' '
+            log.debug("Library: %d items wrapped in %.0f ms, spliced in %.0f ms (the views' "
                       'work)', len(batch), (wrapped - started) * 1000,
                       (time.monotonic() - wrapped) * 1000)
             await yield_to_frames()
@@ -791,12 +792,13 @@ class Library(GObject.Object):
         self._loose_tracks = loose_tracks
         current = [self._songs.get_item(position) for position in range(self._songs.get_n_items())]
         wrapped = time.monotonic()
-        if len(current) != len(tracks) or any(a is not b for a, b in zip(current, tracks)):
+        if len(current) != len(tracks) or any(
+                a is not b for a, b in zip(current, tracks, strict=True)):
             self._songs.splice(0, self._songs.get_n_items(), tracks)
         if not self.songs_ready:
             self.songs_ready = True
         log.debug('Songs built in %.0f ms: %d songs (wrapped in %.0f ms, spliced in %.0f ms: '
-                  'the views\' sort and rows)', (time.monotonic() - started) * 1000,
+                  "the views' sort and rows)", (time.monotonic() - started) * 1000,
                   len(tracks), (wrapped - started) * 1000, (time.monotonic() - wrapped) * 1000)
 
     def _check(self, generation):

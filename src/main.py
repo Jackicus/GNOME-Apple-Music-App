@@ -10,7 +10,7 @@ import signal
 import sys
 import time
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from gettext import gettext as _
 from gettext import ngettext
 
@@ -380,7 +380,7 @@ class Application(Adw.Application):
             window = self.get_active_window()
             if window is not None:
                 window.hide_sync_progress()
-        self.settings.set_string('last-sync', datetime.now(timezone.utc).isoformat(
+        self.settings.set_string('last-sync', datetime.now(UTC).isoformat(
             timespec='seconds'))
         log.info('sync done in %.0f s', time.monotonic() - started)
         albums, playlists = counts.get('albums', 0), counts.get('playlists', 0)

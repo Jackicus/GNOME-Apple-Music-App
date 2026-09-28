@@ -475,8 +475,9 @@ tests/                         stdlib unittest; __init__.py registers src/ as `a
                                (requires_gtk, pump, wait_for);
                                fixtures/ holds invented API answers (lyrics.json: invented
                                synced lyrics for the tests and the --now-playing shot)
-pyproject.toml                 ruff config only (line length 100, E/F/W; vendored files exempt
-                               from E501)
+pyproject.toml                 ruff config only (line length 100; E, F, W, single quotes (Q),
+                               bugbear (B), pyupgrade (UP); the vendored files exempt from Q,
+                               E501, UP and B until the backend is reformatted as a fork)
 build-aux/flatpak/*.Devel.json Flatpak manifest, development only (why in its "x-comment"); GNOME
                                50 runtime and flatpak-builder not installed here, never built
 build-aux/aur/PKGBUILD         the AUR package gnome-apple-music (+ .SRCINFO, regenerated with it)
@@ -496,7 +497,8 @@ outside the Python module goes in `data/`.
 scripts/run.sh [args]     meson setup (dev profile, prefix build/install) + install + run;
                           `--debug` (or APPLE_MUSIC_DEBUG=1) logs at DEBUG. run.sh and check.sh
                           reconfigure a build/ set up with another prefix or profile
-scripts/check.sh          compileall, ruff (skipped if not installed), meson compile, unit tests,
+scripts/check.sh          compileall, ruff (else uv's cached ruff; skipped if neither), meson
+                          compile, unit tests,
                           meson tests (desktop/metainfo/schema validation); prints `check: ok`
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
                           first when missing); no Chrome, no account. Use it for all UI work
@@ -835,7 +837,9 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   build/src's gresource exists; check.sh compiles before the tests), template modules imported
   inside the test, `pump()`/`wait_for()` for the main loop; each must finish in under 1 s.
   The rest of the UI is checked with screenshots.
-- Lint: `pyproject.toml` configures ruff; imports after `gi.require_version()` need `# noqa: E402`.
+- Lint: `pyproject.toml` configures ruff (pycodestyle, pyflakes, single quotes, bugbear,
+  pyupgrade: `zip()` says `strict=`, `datetime.UTC`, `TimeoutError`); imports after
+  `gi.require_version()` need `# noqa: E402`.
 - Settings: one schema `io.github.jackicus.AppleMusic` for both profiles; new keys go in
   `data/…gschema.xml` with a summary, and are read through `app.settings`. Keys: window-width/
   height/maximized, last-page and expanded-folders (written as the window closes or hides, and

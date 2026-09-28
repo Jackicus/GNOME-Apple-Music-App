@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 python3 -m compileall -q src scripts tests
 if command -v ruff >/dev/null; then
   ruff check .
+elif command -v uvx >/dev/null && uvx --offline ruff --version >/dev/null 2>&1; then
+  uvx --offline ruff check .  # the ruff uv has cached
 else
   echo "check: ruff not installed, lint skipped"
 fi

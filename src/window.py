@@ -457,7 +457,7 @@ class Window(Adw.ApplicationWindow):
         old = [self._playlist_store.get_item(position)
                for position in range(fixed, self._playlist_store.get_n_items())]
         if [entry.shape() for entry in old] == [entry.shape() for entry in entries]:
-            for kept, entry in zip(old, entries):
+            for kept, entry in zip(old, entries, strict=True):
                 kept.item = entry.item
             return
         self._quiet = True
@@ -672,7 +672,7 @@ class Window(Adw.ApplicationWindow):
         dialog, not to the pages behind it); back also while the Now Playing sheet is open
         (Escape closes that) or there is nowhere to go back to."""
         free = self.get_visible_dialog() is None
-        for name, action in self._actions.items():
+        for action in self._actions.values():
             action.set_enabled(free)
         self._actions['back'].set_enabled(
             free and not self.bottom_sheet.get_open() and self._can_go_back())

@@ -41,7 +41,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from gettext import gettext as _
 from gettext import ngettext
 
@@ -107,7 +107,7 @@ def parse_stamp(stamp):
         when = datetime.fromisoformat(stamp)
     except (TypeError, ValueError):
         return None
-    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
 def sync_due(stamp, hours, now=None):
@@ -118,7 +118,7 @@ def sync_due(stamp, hours, now=None):
     last = parse_stamp(stamp)
     if last is None:
         return True
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return (now - last).total_seconds() > hours * 3600
 
 
@@ -127,7 +127,7 @@ def last_sync_text(stamp, now=None):
     last = parse_stamp(stamp)
     if last is None:
         return _('Not refreshed yet')
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     minutes = int((now - last).total_seconds() // 60)
     if minutes < 1:
         return _('Last refreshed just now')
@@ -370,7 +370,7 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
 
     library_data = {
         'version': 1,
-        'generated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'generated': datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'storefront': storefront,
         'sections': sections,
         'shelves': shelves,
@@ -464,7 +464,7 @@ def _every_item(library_data):
 def _previous_library(cache_dir):
     """What library.json holds now, or {}."""
     try:
-        with open(os.path.join(cache_dir, 'library.json'), 'r', encoding='utf-8') as file:
+        with open(os.path.join(cache_dir, 'library.json'), encoding='utf-8') as file:
             data = json.load(file)
     except (OSError, ValueError):
         return {}

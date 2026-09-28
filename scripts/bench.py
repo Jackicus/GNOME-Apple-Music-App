@@ -185,7 +185,7 @@ def parent():
     content = median(run['startup'].get('albums-painted') for run in runs)
     floor = median(bare['first_frame'] for bare in bares)
     print(f'  content painted {fmt(content)} ({verdict(content, CONTENT_TARGET)} the '
-          f'{CONTENT_TARGET} ms target); a bare Adw window\'s first frame {fmt(floor)}')
+          f"{CONTENT_TARGET} ms target); a bare Adw window's first frame {fmt(floor)}")
     print('  page switches (selection to the end of the next paint), first visit / again; '
           f'the longest frame in the {args.watch} ms after each:')
     for key in first['order']:

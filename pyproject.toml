@@ -3,14 +3,19 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
+# pycodestyle, pyflakes, the quote style (single quotes; docstrings and other multi-line
+# strings in double), bugbear and pyupgrade.
+select = ["E", "F", "W", "Q", "B", "UP"]
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
 
 [tool.ruff.lint.per-file-ignores]
-# Vendored from the GNOME Shell extension and kept close to it so refreshes diff cleanly, long
-# lines included.
-"src/backend/cdp.py" = ["E501"]
-"src/backend/sync.py" = ["E501"]
-"tests/test_cdp.py" = ["E501"]
-"tests/test_sync.py" = ["E501"]
-"tests/test_demo_schema.py" = ["E501"]
-"scripts/demo_library.py" = ["E501"]
+# Vendored from the GNOME Shell extension in upstream's style (double quotes, long lines,
+# annotations) until the backend package reformats them as this app's fork.
+"src/backend/cdp.py" = ["Q", "E501", "UP", "B"]
+"src/backend/sync.py" = ["Q", "E501", "UP", "B"]
+"tests/test_cdp.py" = ["Q", "E501", "UP", "B"]
+"tests/test_sync.py" = ["Q", "E501", "UP", "B"]
+"tests/test_demo_schema.py" = ["Q", "E501", "UP", "B"]
+"scripts/demo_library.py" = ["Q", "E501", "UP", "B"]

@@ -141,7 +141,7 @@ LIBRARY_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-vide
 # container is where the account goes. No selector for the signed-in state is known to be
 # stable, so the candidates are tried in turn and the first with a short, non-empty text that
 # is not a prompt or a menu label is taken; none gives '', never a guess.
-ACCOUNT_NAME_JS = r'''(() => {
+ACCOUNT_NAME_JS = r"""(() => {
   const candidates = [
     '.account-menu .user__name', '.user__name',
     '[data-testid="user-menu-name"]', '[data-testid="account-name"]',
@@ -160,7 +160,7 @@ ACCOUNT_NAME_JS = r'''(() => {
     }
   }
   return null;
-})()'''
+})()"""
 
 
 def engine_paths(profile, port_setting):
