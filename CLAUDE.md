@@ -146,10 +146,9 @@ sudo meson install -C _build --skip-subprojects
 - **Demo mode** (`--demo`, `app.demo`) has no engine: every engine command raises
   `engine-down`, and nothing in it may start Chrome or read the real cache.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
-- **Style**: `ruff check .` must be clean (`pyproject.toml`). Beyond ruff: 4-space indents, no
-  type annotations, a docstring where a module or function is not obvious, and comments that
-  describe the code as it is (no phase numbers, review IDs or plans). `src/backend/normalize.py`
-  keeps the extension's style until it is reformatted.
+- **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
+  ruff: 4-space indents, no type annotations, a docstring where a module or function is not
+  obvious, and comments that describe the code as it is (no phase numbers, review IDs or plans).
 - **Tests**: stdlib `unittest` in `tests/test_<module>.py`. Keep logic in non-widget classes and
   pure functions, tested with stand-ins; widget tests go through `tests/gtk.py`. Backend, model
   and service changes come with a test.

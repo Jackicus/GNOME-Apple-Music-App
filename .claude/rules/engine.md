@@ -20,9 +20,9 @@ paths:
   a `Gio.Subprocess`, the one `CDPClient`, the commands as coroutines. engine.py's docstring lists
   the commands; `src/backend/README.md` has the bridge's calls, the events and the library.json
   shapes. Keep the three in step when you add a command.
-- The backend is a fork this app owns. `normalize.py` (and its test, and `scripts/demo_library.py`)
-  still use the extension's style, exempted in `pyproject.toml`; new backend code follows the
-  app's style. `cdp.py` is only the WebSocket codec, for the developer attach.
+- The backend is a fork this app owns, in the app's style like the rest of the code.
+  `normalize.py` turns Apple's answers into the library's shapes; `cdp.py` is only the
+  WebSocket codec, for the developer attach.
 - Only `EngineError(code, message)` leaves the backend and the Engine. A new failure kind gets a
   code in `backend/errors.py` and a sentence in `Application.report()` (`no-browser`, no Chrome
   to find or spawn, still has the generic one). `start()` raises nothing else: a Chrome that
