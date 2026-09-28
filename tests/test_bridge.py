@@ -204,6 +204,31 @@ class BridgeTest(unittest.TestCase):
     def test_no_binding_posts_nothing(self, value):
         self.assertEqual(value, 0)
 
+    # -- the account -----------------------------------------------------------------------
+
+    @scenario("""
+        const names = {};
+        page.elements = {'.account-menu .user__name': [{textContent: '  Jo \\n Bloggs '}]};
+        names.menu = bridge.accountName();
+        // Signed out, or the moment after sign-in: the footer's sign-in button, in any
+        // language, and the menu's name is not trusted yet.
+        page.elements['button.signin'] = [{textContent: 'Anmelden'}];
+        names.signingIn = bridge.accountName();
+        // Broader elements are never read, whatever they hold.
+        page.elements = {'.auth-content span': [{textContent: 'Se connecter'}],
+                         'nav footer button[aria-haspopup] span': [{textContent: 'Jo'}]};
+        names.footer = bridge.accountName();
+        page.elements = {'.user__name': [{textContent: 'x'.repeat(65)}, {textContent: ''}],
+                         '.account-name': [{textContent: 'Sam'}]};
+        names.fallback = bridge.accountName();
+        page.elements = {};
+        names.none = bridge.accountName();
+        return names;
+    """)
+    def test_account_name(self, value):
+        self.assertEqual(value, {'menu': 'Jo Bloggs', 'signingIn': None, 'footer': None,
+                                 'fallback': 'Sam', 'none': None})
+
     # -- playback --------------------------------------------------------------------------
 
     @scenario("""

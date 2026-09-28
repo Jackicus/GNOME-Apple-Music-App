@@ -146,7 +146,7 @@ class EnginePage(FakePage):
             paths = json.loads(expression[len('window.__appleMusicLibrary.apiAll('):-1])
             self.api_calls.extend(paths)
             return value([self.api_answers.get(path) for path in paths])
-        if expression == engine_module.ACCOUNT_NAME_JS:
+        if expression == 'window.__appleMusicLibrary.accountName()':
             return value(self.account)
         return super().__call__(message)
 
@@ -1050,6 +1050,20 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(await self.engine.account_name(), '')
         self.page.account = 7
         self.assertEqual(await self.engine.account_name(), '')
+
+    async def test_account_name_waits_for_the_account_menu(self):
+        await self.engine.start()
+
+        async def later():
+            await asyncio.sleep(0.15)
+            self.page.account = 'Jo Bloggs'
+
+        with mock.patch.object(engine_module, 'ACCOUNT_NAME_POLL', 0.05):
+            appears = asyncio.create_task(later())
+            self.assertEqual(await self.engine.account_name(wait=1), 'Jo Bloggs')
+            await appears
+            self.page.account = None
+            self.assertEqual(await self.engine.account_name(wait=0.1), '')  # gives up
 
 
 class PlaybackTest(EngineFixture):

@@ -148,7 +148,9 @@ paths:
   through `engine._process_exit()`. Chrome's helpers write to the profile for a moment after the
   browser exits, so deleting the profile retries. `scripts/am.py` runs this same Engine on
   gi.events' loop (`loop_factory=GLibEventLoop`); its modes are in scripts.md.
-- `account_name()` is best effort: known selectors under the page's account footer, else ''.
-  Apple's page is Svelte with hashed class names; don't guess new selectors without checking.
+- `account_name()` is best effort: the bridge's `accountName()` reads only selectors that
+  name the user (`.account-menu .user__name` first) and answers null while a sign-in control
+  is on the page, whatever its language; else ''. Apple's page is Svelte with hashed class
+  names; don't guess new selectors without checking.
 - Tests never start a real Chrome, or look one up: see tests.md. Anything against the real
   engine follows the `live-engine-check` skill.
