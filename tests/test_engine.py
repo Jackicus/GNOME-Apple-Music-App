@@ -34,7 +34,7 @@ from applemusic.backend import chrome, normalize, store
 from applemusic.backend import client as client_module
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine
-from tests.test_client import FakeBrowser, FakePage, context_created, until, value
+from tests.test_client import FakeBrowser, FakePage, context_created, thrown, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 RELAY = pathlib.Path(__file__).parent / 'fake_chrome_relay.py'
@@ -1005,6 +1005,29 @@ class LifecycleTest(EngineFixture):
             self.assertTrue(await asyncio.wait_for(task, 3))
         self.assertTrue(self.engine.authorized)
         self.assertEqual(self.engine.state, 'up')
+
+    async def test_signin_does_not_spin_on_a_status_that_fails(self):
+        await self.engine.start()
+        page = self.page
+        reads = []
+
+        def navigating(message):
+            if message['params']['expression'] == 'window.__appleMusicLibrary.status()':
+                reads.append(message)
+                return thrown('Error: the page is navigating')
+            return page(message)
+
+        with mock.patch.object(engine_module, 'SIGNIN_POLL', 0.2):
+            task = asyncio.create_task(self.engine.signin(timeout=1))
+            await until(lambda: self.engine.state == 'signing-in')
+            self.chrome.responders['Runtime.evaluate'] = navigating
+            # Signed in, and the page navigates: the event wakes the loop, the reads fail.
+            await self.chrome.send_binding('authorizationStatusDidChange',
+                                           {'authorized': True, 'status': 3})
+            with self.assertRaises(EngineError) as ctx:
+                await task
+        self.assertEqual(ctx.exception.code, 'timeout')
+        self.assertLess(len(reads), 10)  # one per poll, not thousands
 
     async def test_signin_times_out(self):
         await self.engine.start()
