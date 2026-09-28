@@ -1,17 +1,18 @@
-"""Finding and describing the Chrome the engine runs in, and the file that remembers it.
+"""Finding and describing the Chrome the engine runs in.
 
-Nothing here starts a process: the app spawns Chrome with Gio.Subprocess and the debug CLI with
-asyncio; both build the command line with chrome_args(), record it in an EngineState and wait
-for its DevTools port with wait_for_devtools(). The HTTP here is urllib in a thread, so nothing
-blocks the loop.
+Nothing here starts a process: the Engine spawns Chrome with Gio.Subprocess from the command
+line chrome_args() builds, which has Chrome speak the DevTools protocol over a pipe on its file
+descriptors 3 and 4 (--remote-debugging-pipe) rather than on a port any local program could
+reach. select_page() picks the music.apple.com page from Chrome's targets. get_json() reads a
+DevTools port's /json, for the developer attach only (APPLE_MUSIC_DEBUG_PORT, scripts/am.py
+--attach); its HTTP is urllib in a thread, so nothing blocks the loop.
 
 Inside a Flatpak sandbox (/.flatpak-info exists; the development manifest only) Chrome is the
 host's: find_chrome() asks the host's shell for it and chrome_args() runs it through
-`flatpak-spawn --host` (the manifest's --talk-name=org.freedesktop.Flatpak). The process the
-app then holds is flatpak-spawn, whose argv is Chrome's: pid_alive() still finds the profile on
-its command line, flatpak-spawn relays SIGTERM to Chrome, and --watch-bus ends Chrome when
-flatpak-spawn itself goes (a SIGKILL, the sandbox closing). The profile (under ~/.var/app) and
-127.0.0.1 (--share=network) are the same paths and address on both sides.
+`flatpak-spawn --host`, forwarding the pipe's descriptors 3 and 4 (the manifest's
+--talk-name=org.freedesktop.Flatpak). flatpak-spawn relays SIGTERM to Chrome, and --watch-bus
+ends Chrome when flatpak-spawn itself goes (a SIGKILL, the sandbox closing). The profile (under
+~/.var/app) is the same path on both sides. Untested: this machine has no Flatpak runtime.
 """
 
 import asyncio
@@ -21,6 +22,7 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.parse
 from pathlib import Path
 
 from .errors import EngineError
@@ -35,6 +37,8 @@ DEVTOOLS_HOST = '127.0.0.1'
 FLATPAK_INFO = '/.flatpak-info'
 # How a sandboxed app runs a host command; --watch-bus ends it when flatpak-spawn ends.
 HOST_SPAWN = ('flatpak-spawn', '--host', '--watch-bus')
+# The DevTools pipe's descriptors, passed on to the host's Chrome.
+HOST_PIPE = ('--forward-fd=3', '--forward-fd=4')
 # The host's shell prints the first of its arguments that resolves to an executable.
 HOST_LOOKUP = ('for name do p=$(command -v "$name") && [ -x "$p" ] '
                '&& { printf "%s\\n" "$p"; exit 0; }; done; exit 1')
@@ -77,17 +81,19 @@ def find_host_chrome(names, run=subprocess.run):
     return lines[0]
 
 
-def chrome_args(binary, profile, port, headless=True, host=None):
-    """The argv that runs `binary` on `profile` with DevTools on 127.0.0.1:`port`, showing
-    music.apple.com; headless (no window, audio still out) or a visible window for sign-in.
-    With `host` (by default when in_flatpak()) it runs on the host through flatpak-spawn."""
+def chrome_args(binary, profile, headless=True, debug_port=None, host=None):
+    """The argv that runs `binary` on `profile` showing music.apple.com, with DevTools on the
+    pipe of its descriptors 3 (commands in) and 4 (answers and events out); headless (no
+    window, audio still out) or a visible window for sign-in. `debug_port` also opens DevTools
+    on 127.0.0.1:`debug_port`, for a developer to attach (APPLE_MUSIC_DEBUG_PORT): any local
+    program can then drive the signed-in session. With `host` (by default when in_flatpak())
+    it runs on the host through flatpak-spawn."""
     if host is None:
         host = in_flatpak()
     args = [
         str(binary),
         f'--user-data-dir={profile}',
-        f'--remote-debugging-port={port}',
-        f'--remote-debugging-address={DEVTOOLS_HOST}',
+        '--remote-debugging-pipe',
         # MusicKit's play() is called from CDP, not from a click in the page.
         '--autoplay-policy=no-user-gesture-required',
         # Chrome would otherwise publish org.mpris.MediaPlayer2.chromium.instance<pid> and take
@@ -99,16 +105,45 @@ def chrome_args(binary, profile, port, headless=True, host=None):
         # greet the next visible window with the "Restore pages?" bubble.
         '--hide-crash-restore-bubble',
     ]
+    if debug_port is not None:
+        args[3:3] = [f'--remote-debugging-port={int(debug_port)}',
+                     f'--remote-debugging-address={DEVTOOLS_HOST}']
     if headless:
         args.append('--headless=new')
         args.append(START_URL)
     else:
-        # As am.py did: an app window of the page alone, without tabs or an address bar, is what
-        # the sign-in flow shows.
+        # The sign-in flow shows an app window of the page alone, without tabs or an address
+        # bar.
         args.append(f'--app={START_URL}')
     if host:
-        args[:0] = HOST_SPAWN
+        args[:0] = [*HOST_SPAWN, *HOST_PIPE]
     return args
+
+
+def describe_argv(argv):
+    """argv as one line for the log, the profile's path left out (a home directory in a bug
+    report)."""
+    return ' '.join('--user-data-dir=<profile>' if arg.startswith('--user-data-dir=') else arg
+                    for arg in argv)
+
+
+def is_music_url(url):
+    """Whether `url` is a music.apple.com page (the host itself, over https)."""
+    try:
+        parts = urllib.parse.urlsplit(str(url))
+    except ValueError:
+        return False
+    return parts.scheme == 'https' and parts.hostname == 'music.apple.com'
+
+
+def select_page(targets):
+    """The first page target (Target.getTargets' TargetInfo dicts) showing music.apple.com,
+    or None."""
+    for target in targets:
+        if (target.get('type') == 'page' and target.get('targetId')
+                and is_music_url(target.get('url', ''))):
+            return target
+    return None
 
 
 def pid_alive(pid, profile=None):
@@ -222,55 +257,3 @@ async def get_json(port, path, timeout=5.0):
         if isinstance(reason, TimeoutError):
             raise EngineError('timeout', f'DevTools on port {port} did not answer') from e
         raise EngineError('engine-down', f'no DevTools on port {port}: {reason}') from e
-
-
-async def wait_for_devtools(port, timeout=15.0):
-    """Poll /json/version every 200 ms until Chrome answers; its answer (Browser, webSocket
-    DebuggerUrl…), or EngineError('timeout')."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while True:
-        try:
-            return await get_json(port, '/json/version', timeout=2.0)
-        except EngineError as e:
-            if loop.time() >= deadline:
-                raise EngineError(
-                    'timeout', f'Chrome did not open its DevTools port {port} in {timeout:g} s'
-                ) from e
-        await asyncio.sleep(0.2)
-
-
-async def list_targets(port):
-    """Every target Chrome lists at /json/list."""
-    targets = await get_json(port, '/json/list')
-    if not isinstance(targets, list):
-        raise EngineError('engine-down', f'DevTools on port {port} listed no targets')
-    return [t for t in targets if isinstance(t, dict)]
-
-
-def select_target(targets):
-    """The page target showing music.apple.com (the first with a debugger URL), or None."""
-    for target in targets:
-        if (target.get('type') == 'page' and target.get('webSocketDebuggerUrl')
-                and str(target.get('url', '')).startswith('https://music.apple.com')):
-            return target
-    return None
-
-
-async def find_target(port):
-    """The music.apple.com page target on `port`, or None when Chrome shows no such page."""
-    return select_target(await list_targets(port))
-
-
-async def wait_for_target(port, timeout=15.0):
-    """The music.apple.com page, polled for: Chrome lists its first page a moment after the
-    DevTools port opens. EngineError('timeout') when none appears."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while True:
-        target = await find_target(port)
-        if target is not None:
-            return target
-        if loop.time() >= deadline:
-            raise EngineError('timeout', f'Chrome on port {port} shows no music.apple.com page')
-        await asyncio.sleep(0.2)

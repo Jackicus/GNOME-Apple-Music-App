@@ -179,26 +179,20 @@ class Application(Adw.Application):
         Adw.Application.do_shutdown(self)
 
     def _make_engine(self):
-        """The Engine on this build's profile directory and port (engine_paths: the .Devel build
-        beside the release one; the environment overrides win), with the browser command and
-        the preferred mode from the settings, then and whenever they change (Preferences):
-        the browser, the port and the mode apply when Chrome next starts."""
+        """The Engine on this build's Chrome profile (engine_paths: the .Devel build's beside
+        the release one's; APPLE_MUSIC_PROFILE wins), with the browser command and the
+        preferred mode from the settings, then and whenever they change (Preferences): both
+        apply when Chrome next starts."""
         if self.demo:
             return Engine(demo=True)
-        profile_dir, port = engine_paths(self.profile, self.settings.get_int('engine-port'))
-        engine = Engine(profile_dir, port, self.settings.get_string('browser-command'))
+        engine = Engine(engine_paths(self.profile), self.settings.get_string('browser-command'))
         engine.prefer_headless = self.settings.get_boolean('engine-headless')
         self.settings.connect(
             'changed::browser-command',
             lambda settings, key: setattr(engine, 'browser_command', settings.get_string(key)))
         self.settings.connect(
-            'changed::engine-port',
-            lambda settings, key: engine.set_port(engine_paths(self.profile,
-                                                               settings.get_int(key))[1]))
-        self.settings.connect(
             'changed::engine-headless',
             lambda settings, key: setattr(engine, 'prefer_headless', settings.get_boolean(key)))
-        log.debug('engine: profile %s, port %d, state %s', profile_dir, port, engine.state_file)
         return engine
 
     def _on_signal(self, signum):

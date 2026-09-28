@@ -8,7 +8,7 @@
 > over as is: `cdp.py`, `bridge.js`, `sync.py`, the command table (as the
 > list of what the bridge can do), the error codes, and the `library.json`,
 > `Item` and `Track` shapes (with this app's additions, noted there). Here,
-> paths, the port and the artwork sizes come from `config.py`, and nothing
+> paths and the artwork sizes come from `config.py`, and nothing
 > in this directory imports gi. This app's own layer on top, one long-lived
 > asynchronous connection instead of a process per command, is described at
 > the end ("The asynchronous layer").
@@ -38,12 +38,12 @@ Extension (src/lib, in the shell) ──spawn──► am.py <command> ──CDP
 ## The engine
 
 The engine is Google Chrome (the real build: it ships Widevine, Chromium
-doesn't) running music.apple.com in a profile of its own, with the
-debugging port on 127.0.0.1. The user signs in once in a visible window;
-after that it runs headless. Its state is
-`$XDG_RUNTIME_DIR/apple-music/engine.json`: `{pid, port, headless, profile,
-started}`, which `player.js` reads to pick Chrome's MPRIS player out of the
-bus by PID.
+doesn't) running music.apple.com in a profile of its own. The user signs in
+once in a visible window; after that it runs headless. The extension drove
+it through a DevTools port on 127.0.0.1 and recorded it in a state file,
+which its `player.js` read to pick Chrome's MPRIS player out of the bus by
+PID; this app talks to its Chrome over a pipe (below, "The asynchronous
+layer").
 
 The page exposes MusicKit v3 as a global, and that is all the bridge uses:
 `mk.api.music(path, params)` for reads, `mk.setQueue({album|playlist|
@@ -64,11 +64,11 @@ everything that only wants an answer if the engine happens to be up (search,
 the now-playing poll, lyrics, the queue), so typing in the overview never
 launches Chrome.
 
-The settings (`browser-command`, `engine-port`, `engine-headless`,
+The settings (`browser-command`, a port, `engine-headless`,
 `engine-autostart`) were read from the extension's own compiled schema. The
-backend imports no gi, so here `am.py` takes their defaults, with the paths
-and the port from `config.py`; the app's own GSettings keys arrive with the
-Engine (phase 10) and the sync (phase 11), and are read in the app.
+backend imports no gi, so here `am.py` took their defaults, with the paths
+from `config.py`; the app's own GSettings keys arrived with the Engine
+(phase 10) and the sync (phase 11), and are read in the app.
 
 | Command | Result |
 |---|---|
@@ -188,7 +188,7 @@ Read by `config.py` on every call:
 | Variable | Overrides |
 |---|---|
 | `APPLE_MUSIC_PROFILE` | Chrome's profile directory (default `$XDG_DATA_HOME/apple-music/chrome`); the engine state then lives in it too |
-| `APPLE_MUSIC_PORT` | the debugging port (default 9228) |
+| `APPLE_MUSIC_DEBUG_PORT` | a DevTools port on 127.0.0.1 beside the engine's pipe, for `scripts/am.py --attach`; unset by default, and while it is set any local program can drive the signed-in session |
 | `APPLE_MUSIC_CACHE` | the cache directory (default `$XDG_CACHE_HOME/apple-music`) |
 
 ```bash
@@ -210,20 +210,29 @@ sit on it.
   in this layer raises it and nothing else.
 - **`chrome.py`** — `find_chrome(command)` (the configured command, then
   `google-chrome-stable`, `google-chrome`, `/opt/google/chrome/chrome`;
-  None if absent), `chrome_args(binary, profile, port, headless)` (the argv,
-  `--disable-features=HardwareMediaKeyHandling` included so Chrome publishes
-  no MPRIS player; visible mode is an `--app=` window as before),
+  None if absent), `chrome_args(binary, profile, headless, debug_port)` (the
+  argv: `--remote-debugging-pipe`, so CDP runs over Chrome's descriptors 3
+  and 4 and no port listens, and a port on 127.0.0.1 as well only with
+  `debug_port`; `--disable-features=HardwareMediaKeyHandling` so Chrome
+  publishes no MPRIS player; visible mode is an `--app=` window as before),
+  `select_page(targets)` (the page target on `https://music.apple.com`, by
+  parsed URL), `get_json(port, path)` (a DevTools port's `/json`, in a
+  thread: the developer attach only),
   `EngineState` (engine.json: `{pid, port, headless, profile, started}`,
   `load`/`save`/`remove`, `alive` checks the pid *and* that its command line
-  names the profile), `pid_alive`, and the `/json` polling in a thread:
-  `await wait_for_devtools(port)`, `await list_targets(port)`,
-  `select_target(targets)` (the page whose URL starts with
-  `https://music.apple.com`), `await find_target(port)`,
-  `await wait_for_target(port)`.
-- **`client.py`** — `CDPClient`: `await connect(ws_url)` (handshake, then
-  `Runtime.enable`, `Page.enable`, `Runtime.addBinding('__amEvent')`),
-  `await call(method, params, timeout)`, `await evaluate(js, await_promise,
-  timeout)` (by value; a JS exception is `EngineError('api')`),
+  names the profile), `pid_alive`.
+- **`client.py`** — two transports carrying whole messages:
+  `PipeTransport(read_fd, write_fd)` (Chrome's pipe, NUL-terminated JSON,
+  asyncio pipe transports) and `WebSocketTransport(ws_url)` (a DevTools
+  port's browser endpoint, for the attach). `CDPClient`: `await
+  connect(transport)` (the browser endpoint), `await attach_page()` (finds
+  the music.apple.com page through `Target.setDiscoverTargets` and
+  `Target.getTargets`, sends another page there or opens one, attaches with
+  `Target.attachToTarget({flatten: true})`, then enables `Runtime` and
+  `Page` and adds the `__amEvent` binding on that session; the page closing or
+  detaching loses the connection), `await call(method, params, timeout,
+  browser=False)`, `await evaluate(js, await_promise, timeout)` (by value; a
+  JS exception is `EngineError('api')`),
   `await bridge(method, *args)` (`window.__appleMusicLibrary.method(...)`),
   `on(event, callback)` / `off` (callback gets `(name, data)`; a CDP method
   name, a bridge event as `'am:<name>'`, or the wildcards `'am:*'` and
@@ -232,9 +241,10 @@ sit on it.
   on puts the bridge back after every navigation of the page's main frame,
   seen as `Runtime.executionContextCreated`), `await subscribe()` (bridge
   events on, re-done after navigations), `await close()`, `await
-  wait_closed()`, `connected`. `await connect_page(port)` finds the page
-  and connects. Timeouts are `EngineError('timeout')`, a lost socket
-  `'engine-down'` (pending calls included).
+  wait_closed()`, `connected`. `await open_page(transport)` connects and
+  attaches; `await attach_devtools(port)` does it through a DevTools port.
+  Timeouts are `EngineError('timeout')`, a lost connection `'engine-down'`
+  (pending calls included).
 - **`scripts/am.py`** — the debug CLI: `status`, `start [--visible]`,
   `stop`, `eval <js>`, `now-playing`, `events`. Same configuration as the
   app (`config.py`, so 9228 and `$XDG_DATA_HOME/apple-music/chrome` unless

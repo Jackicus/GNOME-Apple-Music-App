@@ -5,9 +5,10 @@
     "playback needs the host's Google Chrome (its Widevine plays Apple's protected streams),",
     "which a Flathub app may not depend on, and the name and ID carry Apple's trademark.",
     "The sandboxed app runs that Chrome through flatpak-spawn --host, hence the",
-    "org.freedesktop.Flatpak talk-name; the Chrome profile under ~/.var/app and DevTools on",
-    "127.0.0.1 (the shared network) mean the same on both sides. Audio comes out of the host's",
-    "Chrome, not the app. The app owns org.mpris.MediaPlayer2.<its id> for the Shell's media",
+    "org.freedesktop.Flatpak talk-name; the Chrome profile under ~/.var/app is the same path on",
+    "both sides, and the DevTools pipe (descriptors 3 and 4) is passed on to the host's Chrome",
+    "with flatpak-spawn --forward-fd=3 --forward-fd=4, written without a Flatpak runtime to test",
+    "it on. Audio comes out of the host's Chrome, not the app. The app owns org.mpris.MediaPlayer2.<its id> for the Shell's media",
     "controls: the .Devel name for this build, the release name for a build without",
     "-Dprofile=development."
   ],

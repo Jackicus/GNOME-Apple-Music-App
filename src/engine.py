@@ -1,14 +1,13 @@
 """The Engine: Chrome's lifecycle inside the app, its one CDP connection, and the commands the
 UI awaits.
 
-    engine = Engine(profile_dir, port, browser_command)   # made once, in Application.do_startup
+    engine = Engine(profile_dir, browser_command)   # made once, in Application.do_startup
     await engine.start()                # Chrome on music.apple.com, the bridge in it: headless
                                         # (or a window when prefer_headless is off); a running
                                         # engine is kept in whichever mode it runs
     await engine.start(visible=True)    # a window instead (sign-in); restarts if it was headless
     await engine.restart(visible=False)
-    engine.set_port(9300)               # the DevTools port from the next start
-    await engine.stop()                 # SIGTERM, 5 s, SIGKILL; forgets engine.json
+    await engine.stop()                 # SIGTERM, 5 s, SIGKILL
     await engine.status()               # {ready, engine, authorized, storefront, bitrate}
     await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
     await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
@@ -46,15 +45,16 @@ Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `head
 prefix), and `rated(kind, id, value)` follows love(), unlove() and rating() (the kind and id
 as they were asked, value 1 loved, 0 not), so a heart shows what a menu did. Every failure
 is an EngineError; nothing here blocks the loop: Chrome is a Gio.Subprocess (awaitable
-wait_async), the connection is the asynchronous CDPClient, and the JSON shaping and artwork
-HTTP of item() run in a thread. A Chrome that outlived an earlier
-app process is reclaimed from engine.json when its mode matches. In demo mode (`demo=True`)
-start() and stop() do nothing and every command raises EngineError('engine-down') at once.
+wait_async), the connection is the asynchronous CDPClient over Chrome's DevTools pipe (its
+descriptors 3 and 4: no port is open), and the JSON shaping and artwork HTTP of item() run in
+a thread. In demo mode (`demo=True`) start() and stop() do nothing and every command raises
+EngineError('engine-down') at once.
 
-The browser command (`browser_command`), the port (`set_port()`) and the preferred mode
-(`prefer_headless`) are read when Chrome is spawned, so a change applies at the next start
-and a running Chrome is left alone. cache_size() and clear_cache() measure and empty the
-cache directory (CACHE_ENTRIES), in a thread.
+The browser command (`browser_command`) and the preferred mode (`prefer_headless`) are read
+when Chrome is spawned, so a change applies at the next start and a running Chrome is left
+alone. APPLE_MUSIC_DEBUG_PORT, when set, also opens DevTools on that port of 127.0.0.1 for a
+developer (scripts/am.py --attach), with a warning at every start. cache_size() and
+clear_cache() measure and empty the cache directory (CACHE_ENTRIES), in a thread.
 """
 
 import asyncio
@@ -70,15 +70,16 @@ from pathlib import Path
 from gi.repository import Gio, GLib, GObject
 
 from .backend import chrome, config, sync
-from .backend.client import EVENT_PREFIX, connect_page
+from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
 
 log = logging.getLogger(__name__)
 
 STATES = ('down', 'starting', 'up', 'signing-in')
 
-DEVTOOLS_TIMEOUT = 20.0   # Chrome opening its port
+PAGE_WAIT = 20.0          # a new Chrome showing music.apple.com
 BRIDGE_WAIT = 15.0        # a fresh page loading MusicKit
+CDP_TIMEOUT = 30.0        # a CDP call without a timeout of its own
 STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
@@ -163,22 +164,15 @@ ACCOUNT_NAME_JS = r"""(() => {
 })()"""
 
 
-def engine_paths(profile, port_setting):
-    """(Chrome profile directory, DevTools port) for a build profile and the engine-port
-    setting. The development build uses `chrome-devel` beside the release build's `chrome`
-    and the port after the setting's (9229 by default), so both can run at once; the
-    APPLE_MUSIC_PROFILE and APPLE_MUSIC_PORT environment overrides win over both."""
+def engine_paths(profile):
+    """The Chrome profile directory for a build profile: the development build uses
+    `chrome-devel` beside the release build's `chrome`, so both can run at once; the
+    APPLE_MUSIC_PROFILE environment override wins over both."""
     if os.environ.get('APPLE_MUSIC_PROFILE'):
-        profile_dir = config.profile_dir()
-    elif profile == 'development':
-        profile_dir = config.default_profile_dir().with_name('chrome-devel')
-    else:
-        profile_dir = config.default_profile_dir()
-    if os.environ.get('APPLE_MUSIC_PORT'):
-        port = config.port()
-    else:
-        port = int(port_setting) + (1 if profile == 'development' else 0)
-    return profile_dir, port
+        return config.profile_dir()
+    if profile == 'development':
+        return config.default_profile_dir().with_name('chrome-devel')
+    return config.default_profile_dir()
 
 
 def cache_size(path):
@@ -379,6 +373,15 @@ def _write_json(path, data):
         log.warning('could not keep %s: %s', path, error)
 
 
+async def _process_exit(process):
+    """Until the Gio.Subprocess has exited (a task can wait on it and be cancelled cleanly:
+    a cancelled wait_async() raises GLib.Error, not CancelledError)."""
+    try:
+        await process.wait_async()
+    except GLib.Error:
+        pass
+
+
 class Engine(GObject.Object):
     """Chrome and the bridge, as one object the UI talks to. See the module."""
 
@@ -393,22 +396,19 @@ class Engine(GObject.Object):
     authorized = GObject.Property(type=bool, default=False)
     headless = GObject.Property(type=bool, default=True)
 
-    def __init__(self, profile_dir=None, port=None, browser_command=None, demo=False):
+    def __init__(self, profile_dir=None, browser_command=None, demo=False):
         super().__init__()
         self.demo = demo
         self.profile_dir = Path(profile_dir) if profile_dir else config.profile_dir()
-        self.port = int(port) if port else config.port()
         self.browser_command = browser_command
         # Whether start() without a mode runs Chrome headless (the engine-headless setting);
         # sign-in asks for a window whatever this says.
         self.prefer_headless = True
-        self._next_port = None  # set_port() while Chrome runs: taken at the next start
-        self.state_file = config.state_file(self.profile_dir)
         self.stop_grace = STOP_GRACE
         self.api_retry_delay = API_RETRY_DELAY
         self._client = None
-        self._process = None   # the Gio.Subprocess, when this process started Chrome
-        self._pid = None       # Chrome's pid, ours or reclaimed
+        self._process = None   # the Gio.Subprocess running Chrome
+        self._pid = None       # its pid
         self._watch = None     # the task waiting for the connection to drop
         self._relay = None     # the task relaying Chrome's stderr to the log (DEBUG only)
         self._lock = asyncio.Lock()
@@ -423,23 +423,12 @@ class Engine(GObject.Object):
 
     # -- lifecycle ---------------------------------------------------------------------------
 
-    def set_port(self, port):
-        """The DevTools port Chrome is started on from now on. A running Chrome keeps its
-        own until the engine next starts (a restart, or a stop and a start)."""
-        port = int(port)
-        if self.state == 'down' and not self._lock.locked():
-            self.port, self._next_port = port, None
-        elif port != self.port:
-            self._next_port = port
-        else:
-            self._next_port = None
-
     async def start(self, visible=None):
         """Chrome up with the bridge in it: headless unless `visible`. Without a mode, a
         running engine is kept whatever its mode, and a stopped one starts headless unless
         `prefer_headless` is off. Asked for a mode, a running Chrome in the other mode is
-        stopped first; one in the same mode (this process's, or a live one engine.json
-        describes) is kept. EngineError when Chrome or the page will not come up."""
+        stopped first; one in the same mode is kept. EngineError when Chrome or the page will
+        not come up."""
         if self.demo:
             return
         async with self._lock:
@@ -456,9 +445,6 @@ class Engine(GObject.Object):
                          'headless' if self.headless else 'visible',
                          'headless' if headless else 'visible')
                 await self._stop()
-            if self._next_port is not None:
-                log.info('the engine moves to port %d', self._next_port)
-                self.port, self._next_port = self._next_port, None
             self.state = 'starting'
             self.headless = headless
             try:
@@ -468,40 +454,27 @@ class Engine(GObject.Object):
                 raise
 
     async def _start(self, headless):
-        state = chrome.EngineState.load(self.state_file)
-        if state is not None and state.alive:
-            if state.headless == headless and state.port == self.port:
-                log.info('reclaiming Chrome %d, %s on port %d', state.pid,
-                         'headless' if headless else 'visible', self.port)
-                self._pid = state.pid
-            else:
-                log.info('Chrome %d from an earlier run is %s on port %d; stopping it',
-                         state.pid, 'headless' if state.headless else 'visible', state.port)
-                await self._terminate(state.pid)
-                chrome.EngineState.remove(self.state_file)
-        elif state is not None:
-            chrome.EngineState.remove(self.state_file)
-        if self._pid is None:
-            # In a thread: in a Flatpak sandbox it asks the host through flatpak-spawn.
-            binary = await asyncio.to_thread(chrome.find_chrome, self.browser_command)
-            if binary is None:
-                raise EngineError(
-                    'engine-down', 'Google Chrome was not found (google-chrome-stable, '
-                    'google-chrome or /opt/google/chrome/chrome; the browser-command setting '
-                    'names another)')
-            self.profile_dir.mkdir(parents=True, exist_ok=True)
-            argv = chrome.chrome_args(binary, self.profile_dir, self.port, headless)
-            log.debug('exec %s', ' '.join(argv))
-            self._process = self._spawn(argv)
-            self._pid = int(self._process.get_identifier())
-            chrome.EngineState(self._pid, self.port, headless, self.profile_dir).save(
-                self.state_file)
-            log.info('Chrome %d started %s on port %d', self._pid,
-                     'headless' if headless else 'visible', self.port)
-        await chrome.wait_for_devtools(self.port, timeout=DEVTOOLS_TIMEOUT)
-        client = await self._connect()
-        self._client = client
+        # In a thread: in a Flatpak sandbox it asks the host through flatpak-spawn.
+        binary = await asyncio.to_thread(chrome.find_chrome, self.browser_command)
+        if binary is None:
+            raise EngineError(
+                'engine-down', 'Google Chrome was not found (google-chrome-stable, '
+                'google-chrome or /opt/google/chrome/chrome; the browser-command setting '
+                'names another)')
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        debug_port = config.debug_port()
+        if debug_port is not None:
+            log.warning("APPLE_MUSIC_DEBUG_PORT is set: Chrome's DevTools listen on "
+                        '127.0.0.1:%d and any local program can control the signed-in '
+                        'session', debug_port)
+        argv = chrome.chrome_args(binary, self.profile_dir, headless, debug_port=debug_port)
+        log.debug('exec %s', ' '.join(argv))
+        self._process, transport = self._spawn(argv)
+        self._pid = int(self._process.get_identifier())
+        log.info('Chrome %d started %s', self._pid, 'headless' if headless else 'visible')
+        client = self._client = CDPClient(timeout=CDP_TIMEOUT)
         client.on(EVENT_PREFIX + '*', self._on_bridge_event)
+        await self._connect(client, transport)
         await client.ensure_bridge(timeout=BRIDGE_WAIT)
         await client.subscribe()  # finds the bridge in place; events from now on
         status = await client.bridge('status')
@@ -511,18 +484,28 @@ class Engine(GObject.Object):
         log.info('engine up: %s', 'authorized' if self.authorized else 'not signed in')
 
     def _spawn(self, argv):
-        """Chrome as a Gio.Subprocess: its output silenced, or its stderr relayed to the log
-        when that is at DEBUG."""
+        """Chrome as a Gio.Subprocess, the DevTools pipe on its descriptors 3 (it reads) and 4
+        (it writes); its output silenced, or its stderr relayed to the log when that is at
+        DEBUG. Answers the process and the PipeTransport over this end of the pipe."""
         debug = log.isEnabledFor(logging.DEBUG)
         flags = Gio.SubprocessFlags.STDOUT_SILENCE | (
             Gio.SubprocessFlags.STDERR_PIPE if debug else Gio.SubprocessFlags.STDERR_SILENCE)
+        commands, chrome_in = os.pipe()     # Chrome reads commands on its 3
+        chrome_out, answers = os.pipe()     # and writes answers and events on its 4
+        launcher = Gio.SubprocessLauncher.new(flags)
+        launcher.take_fd(commands, 3)
+        launcher.take_fd(answers, 4)
         try:
-            process = Gio.Subprocess.new(argv, flags)
+            process = launcher.spawnv(argv)
         except GLib.Error as e:
+            os.close(chrome_in)
+            os.close(chrome_out)
             raise EngineError('engine-down', f'could not start {argv[0]}: {e.message}') from e
+        finally:
+            launcher.close()  # Chrome's ends are Chrome's alone now
         if debug:
             self._relay = asyncio.create_task(self._relay_stderr(process), name='chrome-stderr')
-        return process
+        return process, PipeTransport(chrome_out, chrome_in)
 
     async def _relay_stderr(self, process):
         """Chrome's stderr, a line at a time, to the log at DEBUG. Read to the end whatever
@@ -551,8 +534,10 @@ class Engine(GObject.Object):
             except GLib.Error:
                 pass
 
-    async def _connect(self):
-        return await connect_page(self.port, timeout=30.0, wait=BRIDGE_WAIT)
+    async def _connect(self, client, transport):
+        """The client on Chrome's pipe, attached to the music.apple.com page."""
+        await client.connect(transport)
+        await client.attach_page(PAGE_WAIT)
 
     async def _watch_connection(self, client):
         await client.wait_closed()
@@ -565,7 +550,7 @@ class Engine(GObject.Object):
 
     async def stop(self):
         """End Chrome: the connection closed, SIGTERM, up to stop_grace seconds, then
-        SIGKILL; engine.json forgotten. Nothing to do when it is down."""
+        SIGKILL. Nothing to do when it is down."""
         if self.demo:
             return
         async with self._lock:
@@ -581,7 +566,7 @@ class Engine(GObject.Object):
             await client.close()
         pid, self._pid = self._pid, None
         process, self._process = self._process, None
-        if pid is not None:
+        if process is not None:
             await self._terminate(pid, process)
         relay, self._relay = self._relay, None
         if relay is not None and not relay.done():
@@ -589,64 +574,52 @@ class Engine(GObject.Object):
                 await asyncio.wait_for(relay, 1.0)  # Chrome's pipe closes as it exits
             except Exception:
                 relay.cancel()
-        chrome.EngineState.remove(self.state_file)
         self.authorized = False
         self.state = 'down'
 
-    async def _terminate(self, pid, process=None):
-        """SIGTERM `pid` (this process's `process`, or a reclaimed Chrome), wait, SIGKILL."""
-        if not chrome.pid_alive(pid, self.profile_dir):
-            return
+    async def _terminate(self, pid, process):
+        """SIGTERM this process's Chrome, wait, SIGKILL."""
+        if process.get_identifier() is None:
+            return  # gone already, and reaped
         log.info('stopping Chrome %d', pid)
-        self._signal(pid, process, signal.SIGTERM)
-        if not await self._wait_exit(pid, process, self.stop_grace):
+        self._signal(process, signal.SIGTERM)
+        if not await self._wait_exit(process, self.stop_grace):
             log.warning('Chrome %d ignored SIGTERM for %g s; killing it', pid, self.stop_grace)
-            self._signal(pid, process, signal.SIGKILL)
-            await self._wait_exit(pid, process, self.stop_grace)
+            self._signal(process, signal.SIGKILL)
+            await self._wait_exit(process, self.stop_grace)
 
     @staticmethod
-    def _signal(pid, process, signum):
+    def _signal(process, signum):
         try:
-            if process is not None:
-                if signum == signal.SIGKILL:
-                    process.force_exit()
-                else:
-                    process.send_signal(signum)
+            if signum == signal.SIGKILL:
+                process.force_exit()
             else:
-                os.kill(pid, signum)
-        except (OSError, GLib.Error):
+                process.send_signal(signum)
+        except GLib.Error:
             pass
 
-    async def _wait_exit(self, pid, process, timeout):
+    @staticmethod
+    async def _wait_exit(process, timeout):
         """True once the process is gone, False after `timeout` seconds with it still there."""
-        if process is not None:
-            try:
-                await asyncio.wait_for(process.wait_async(), timeout)
-                return True
-            except TimeoutError:
-                return False
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        while chrome.pid_alive(pid, self.profile_dir):
-            if loop.time() >= deadline:
-                return False
-            await asyncio.sleep(0.1)
-        return True
+        try:
+            await asyncio.wait_for(_process_exit(process), timeout)
+            return True
+        except TimeoutError:
+            return False
 
     def kill(self):
         """SIGKILL Chrome now, without waiting: the last resort when stop() ran out of time."""
         pid, self._pid = self._pid, None
         process, self._process = self._process, None
-        if pid is not None and chrome.pid_alive(pid, self.profile_dir):
+        if process is not None and process.get_identifier() is not None:
             log.warning('killing Chrome %d', pid)
-            self._signal(pid, process, signal.SIGKILL)
-        chrome.EngineState.remove(self.state_file)
+            self._signal(process, signal.SIGKILL)
         self.state = 'down'
         self.authorized = False
 
     async def restart(self, visible=None):
         """stop(), then start(visible): without a mode, the preferred one (prefer_headless),
-        on the port and browser the settings now name."""
+        with the browser the settings now name."""
         await self.stop()
         await self.start(visible=visible)
 

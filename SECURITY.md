@@ -26,9 +26,9 @@ for sign-in; afterwards it runs headless.
 In scope, for example:
 
 - Anything that lets another local user or process reach the engine: the DevTools connection
-  gives full control of a browser that is signed in to your Apple Account. (Until the engine
-  moves to a pipe, the DevTools port listens on 127.0.0.1; see the issues labelled
-  [`security`](https://github.com/Jackicus/GNOME-Apple-Music-App/issues?q=label%3Asecurity).)
+  gives full control of a browser that is signed in to your Apple Account. It is a private
+  pipe between the app and its Chrome, with no listening port, unless a developer sets
+  `APPLE_MUSIC_DEBUG_PORT`, which opens one on 127.0.0.1.
 - Files the app writes with modes that let other users read them, or writes outside its own
   directories.
 - Sign-out or Clear Cache leaving account data behind.

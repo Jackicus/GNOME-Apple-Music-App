@@ -21,8 +21,8 @@ Apple Music streams are protected with Widevine DRM, and Apple offers no public
 streaming API. WebKitGTK cannot play them, and neither can Chromium, which ships
 without Widevine. Google's own Chrome can. So the app starts Google Chrome with
 a private profile, shows music.apple.com in it and drives Apple's own player in
-that page over Chrome's DevTools protocol, on 127.0.0.1 only. Chrome opens a
-window once, for you to sign in. After that it runs headless, with no window.
+that page over Chrome's DevTools protocol, through a private pipe (no network
+port). Chrome opens a window once, for you to sign in. After that it runs headless, with no window.
 
 Because the sound comes from Chrome, your system's per-app volume controls list
 it as Chrome. The app talks only to Apple: through that Chrome page, plus
@@ -93,8 +93,8 @@ with the window closed, turn on background playback in Preferences.
 | Which Chrome process belongs to the app | `$XDG_RUNTIME_DIR/apple-music/engine.json` |
 | Settings | GSettings schema `io.github.jackicus.AppleMusic` |
 
-Chrome's DevTools port is 9228 on 127.0.0.1. The development build uses
-port 9229 and `~/.local/share/apple-music/chrome-devel/` instead.
+The development build uses `~/.local/share/apple-music/chrome-devel/`
+instead.
 
 - **Sign Out** (in the account menu at the bottom of the sidebar) stops Chrome
   and deletes both the Chrome profile and the cache.

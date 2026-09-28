@@ -1,5 +1,5 @@
 """Unit tests for src/backend/chrome.py and errors.py: the argv, the state file, finding Chrome,
-picking the page target, and the DevTools polling (against a local HTTP server)."""
+picking the page target, and a DevTools port's /json (against a local HTTP server)."""
 
 import http.server
 import json
@@ -20,14 +20,11 @@ from applemusic.backend import chrome, config
 from applemusic.backend.errors import EngineError
 
 SAMPLE_TARGETS = [
-    {'type': 'page', 'url': 'chrome://newtab/', 'id': 'A',
-     'webSocketDebuggerUrl': 'ws://127.0.0.1:9228/devtools/page/A'},
-    {'type': 'service_worker', 'url': 'https://music.apple.com/sw.js', 'id': 'B',
-     'webSocketDebuggerUrl': 'ws://127.0.0.1:9228/devtools/page/B'},
-    {'type': 'page', 'url': 'https://music.apple.com/us/new', 'id': 'C', 'title': 'Apple Music',
-     'webSocketDebuggerUrl': 'ws://127.0.0.1:9228/devtools/page/C'},
-    {'type': 'page', 'url': 'https://music.apple.com/us/browse', 'id': 'D',
-     'webSocketDebuggerUrl': 'ws://127.0.0.1:9228/devtools/page/D'},
+    {'type': 'page', 'url': 'chrome://newtab/', 'targetId': 'A'},
+    {'type': 'service_worker', 'url': 'https://music.apple.com/sw.js', 'targetId': 'B'},
+    {'type': 'page', 'url': 'https://music.apple.com/us/new', 'targetId': 'C',
+     'title': 'Apple Music'},
+    {'type': 'page', 'url': 'https://music.apple.com/us/browse', 'targetId': 'D'},
 ]
 
 
@@ -43,11 +40,12 @@ class EngineErrorTest(unittest.TestCase):
 
 class ChromeArgsTest(unittest.TestCase):
     def test_headless(self):
-        args = chrome.chrome_args('/opt/google/chrome/chrome', '/p/chrome', 9228, headless=True)
+        args = chrome.chrome_args('/opt/google/chrome/chrome', '/p/chrome', headless=True)
         self.assertEqual(args[0], '/opt/google/chrome/chrome')
         self.assertIn('--user-data-dir=/p/chrome', args)
-        self.assertIn('--remote-debugging-port=9228', args)
-        self.assertIn('--remote-debugging-address=127.0.0.1', args)
+        self.assertIn('--remote-debugging-pipe', args)
+        self.assertFalse([arg for arg in args if arg.startswith(('--remote-debugging-port',
+                                                                '--remote-debugging-address'))])
         self.assertIn('--autoplay-policy=no-user-gesture-required', args)
         self.assertIn('--disable-features=HardwareMediaKeyHandling', args)
         self.assertIn('--no-first-run', args)
@@ -57,29 +55,32 @@ class ChromeArgsTest(unittest.TestCase):
         self.assertNotIn('--app=https://music.apple.com/', args)
 
     def test_visible(self):
-        args = chrome.chrome_args('chrome', pathlib.Path('/p/chrome'), 9229, headless=False)
+        args = chrome.chrome_args('chrome', pathlib.Path('/p/chrome'), headless=False)
         self.assertNotIn('--headless=new', args)
         self.assertEqual(args[-1], '--app=https://music.apple.com/')
         self.assertIn('--user-data-dir=/p/chrome', args)
-        self.assertIn('--remote-debugging-port=9229', args)
+        self.assertIn('--remote-debugging-pipe', args)
         self.assertIn('--disable-features=HardwareMediaKeyHandling', args)
 
+    def test_debug_port(self):
+        args = chrome.chrome_args('chrome', '/p/chrome', debug_port=9300)
+        self.assertIn('--remote-debugging-pipe', args)
+        self.assertIn('--remote-debugging-port=9300', args)
+        self.assertIn('--remote-debugging-address=127.0.0.1', args)
 
     def test_host_through_flatpak_spawn(self):
-        args = chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome', 9229, headless=True,
+        args = chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome', headless=True,
                                   host=True)
-        self.assertEqual(args[:4], ['flatpak-spawn', '--host', '--watch-bus',
-                                    '/usr/bin/google-chrome'])
-        self.assertEqual(args[4:], chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome',
-                                                      9229, headless=True, host=False)[1:])
-        # The profile is on flatpak-spawn's own command line, which pid_alive() reads.
-        self.assertIn('--user-data-dir=/p/chrome', args)
+        self.assertEqual(args[:6], ['flatpak-spawn', '--host', '--watch-bus', '--forward-fd=3',
+                                    '--forward-fd=4', '/usr/bin/google-chrome'])
+        self.assertEqual(args[6:], chrome.chrome_args('/usr/bin/google-chrome', '/p/chrome',
+                                                      headless=True, host=False)[1:])
 
     def test_host_follows_the_sandbox(self):
         with mock.patch.object(chrome, 'in_flatpak', lambda: True):
-            self.assertEqual(chrome.chrome_args('chrome', '/p', 9228)[0], 'flatpak-spawn')
+            self.assertEqual(chrome.chrome_args('chrome', '/p')[0], 'flatpak-spawn')
         with mock.patch.object(chrome, 'in_flatpak', lambda: False):
-            self.assertEqual(chrome.chrome_args('chrome', '/p', 9228)[0], 'chrome')
+            self.assertEqual(chrome.chrome_args('chrome', '/p')[0], 'chrome')
 
 
 class HostChromeTest(unittest.TestCase):
@@ -249,26 +250,27 @@ class StateFileTest(unittest.TestCase):
                          pathlib.Path('/tmp/t/profile/engine.json'))
 
 
-class SelectTargetTest(unittest.TestCase):
+class SelectPageTest(unittest.TestCase):
     def test_first_music_page(self):
-        self.assertEqual(chrome.select_target(SAMPLE_TARGETS)['id'], 'C')
+        self.assertEqual(chrome.select_page(SAMPLE_TARGETS)['targetId'], 'C')
 
-    def test_needs_a_page_with_a_debugger_url(self):
-        self.assertIsNone(chrome.select_target([]))
-        self.assertIsNone(chrome.select_target(SAMPLE_TARGETS[:2]))
-        busy = dict(SAMPLE_TARGETS[2])
-        del busy['webSocketDebuggerUrl']  # another client is attached
-        self.assertIsNone(chrome.select_target([busy]))
-        self.assertEqual(chrome.select_target([busy, SAMPLE_TARGETS[3]])['id'], 'D')
+    def test_needs_a_page(self):
+        self.assertIsNone(chrome.select_page([]))
+        self.assertIsNone(chrome.select_page(SAMPLE_TARGETS[:2]))
+        self.assertEqual(chrome.select_page(SAMPLE_TARGETS[3:])['targetId'], 'D')
 
     def test_url_must_be_music_apple_com(self):
-        other = {'type': 'page', 'url': 'https://example.com/music.apple.com',
-                 'webSocketDebuggerUrl': 'ws://x'}
-        self.assertIsNone(chrome.select_target([other]))
+        for url in ('https://example.com/music.apple.com', 'https://music.apple.com.example.net/',
+                    'http://music.apple.com/', 'https://evil.com/?https://music.apple.com/',
+                    'https://[bad', ''):
+            with self.subTest(url=url):
+                self.assertIsNone(chrome.select_page([{'type': 'page', 'targetId': 'X',
+                                                       'url': url}]))
+        self.assertTrue(chrome.is_music_url('https://music.apple.com/us/album/x?i=1'))
 
 
 class DevToolsHttpTest(unittest.IsolatedAsyncioTestCase):
-    """wait_for_devtools, list_targets and find_target against a local /json server."""
+    """get_json against a local /json server: the developer attach's /json/version."""
 
     def setUp(self):
         test = self
@@ -276,15 +278,12 @@ class DevToolsHttpTest(unittest.IsolatedAsyncioTestCase):
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 test.requests.append(self.path)
-                if self.path == '/json/version':
-                    body = {'Browser': 'Chrome/154.0', 'webSocketDebuggerUrl': 'ws://x/browser'}
-                elif self.path == '/json/list':
-                    body = test.targets
-                else:
+                if self.path != '/json/version':
                     self.send_response(404)
                     self.end_headers()
                     return
-                data = json.dumps(body).encode()
+                data = json.dumps({'Browser': 'Chrome/154.0',
+                                   'webSocketDebuggerUrl': 'ws://x/browser'}).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(data)))
@@ -295,7 +294,6 @@ class DevToolsHttpTest(unittest.IsolatedAsyncioTestCase):
                 pass
 
         self.requests = []
-        self.targets = SAMPLE_TARGETS
         self.httpd = http.server.HTTPServer(('127.0.0.1', 0), Handler)
         self.port = self.httpd.server_port
         threading.Thread(target=self.httpd.serve_forever, args=(0.05,), daemon=True).start()
@@ -308,36 +306,15 @@ class DevToolsHttpTest(unittest.IsolatedAsyncioTestCase):
             s.bind(('127.0.0.1', 0))
             return s.getsockname()[1]
 
-    async def test_wait_for_devtools(self):
-        version = await chrome.wait_for_devtools(self.port, timeout=2)
+    async def test_get_json(self):
+        version = await chrome.get_json(self.port, '/json/version', timeout=2)
         self.assertEqual(version['Browser'], 'Chrome/154.0')
         self.assertEqual(self.requests, ['/json/version'])
-
-    async def test_wait_for_devtools_times_out(self):
-        with self.assertRaises(EngineError) as ctx:
-            await chrome.wait_for_devtools(self.free_port(), timeout=0.5)
-        self.assertEqual(ctx.exception.code, 'timeout')
 
     async def test_get_json_on_a_closed_port_is_engine_down(self):
         with self.assertRaises(EngineError) as ctx:
             await chrome.get_json(self.free_port(), '/json/version')
         self.assertEqual(ctx.exception.code, 'engine-down')
-
-    async def test_list_and_find_target(self):
-        targets = await chrome.list_targets(self.port)
-        self.assertEqual([t['id'] for t in targets], ['A', 'B', 'C', 'D'])
-        self.assertEqual((await chrome.find_target(self.port))['id'], 'C')
-        self.targets = SAMPLE_TARGETS[:1]
-        self.assertIsNone(await chrome.find_target(self.port))
-
-    async def test_wait_for_target(self):
-        self.targets = []
-        with self.assertRaises(EngineError) as ctx:
-            await chrome.wait_for_target(self.port, timeout=0.5)
-        self.assertEqual(ctx.exception.code, 'timeout')
-        self.assertGreaterEqual(len(self.requests), 2)  # it polled
-        self.targets = SAMPLE_TARGETS
-        self.assertEqual((await chrome.wait_for_target(self.port, timeout=1))['id'], 'C')
 
 
 if __name__ == '__main__':

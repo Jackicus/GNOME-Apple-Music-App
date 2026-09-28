@@ -3,9 +3,9 @@
 General: background playback (background-playback), how often the library refreshes
 (sync-interval, with when it last did), Refresh Now (app.sync), and the cache's size,
 measured in a thread, with Clear (asked first; Application.clear_cache()). Engine: the
-engine's state with Start and Stop, the browser command (browser-command), the DevTools port
-(engine-port), whether Chrome runs hidden (engine-headless) and starts with the app
-(engine-autostart), and Sign Out (app.sign-out). The rows are bound to their settings with
+engine's state with Start and Stop, the browser command (browser-command), whether Chrome runs
+hidden (engine-headless) and starts with the app (engine-autostart), and Sign Out
+(app.sign-out). The rows are bound to their settings with
 Gio.Settings.bind (the refresh interval by hand: a choice of four values); what the engine
 reads applies when it next starts (Application._make_engine). Everything the dialog connects
 to outside itself is let go when it closes.
@@ -13,14 +13,13 @@ to outside itself is let go when it closes.
 
 import asyncio
 import logging
-import os
 from gettext import gettext as _
 
 from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from ..backend import config
 from ..backend.errors import EngineError
-from ..engine import cache_size, engine_paths
+from ..engine import cache_size
 from ..sync import INTERVALS, interval_index, last_sync_text
 from ..widgets.util import connect_weak
 
@@ -30,7 +29,6 @@ log = logging.getLogger(__name__)
 BINDINGS = (
     ('background_row', 'active', 'background-playback'),
     ('browser_row', 'text', 'browser-command'),
-    ('port_row', 'value', 'engine-port'),
     ('headless_row', 'active', 'engine-headless'),
     ('autostart_row', 'active', 'engine-autostart'),
 )
@@ -50,7 +48,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
     engine_row = Gtk.Template.Child()
     engine_button = Gtk.Template.Child()
     browser_row = Gtk.Template.Child()
-    port_row = Gtk.Template.Child()
     headless_row = Gtk.Template.Child()
     autostart_row = Gtk.Template.Child()
     account_group = Gtk.Template.Child()
@@ -81,7 +78,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._handlers = [
             (settings, settings.connect('changed::sync-interval', self._update_interval)),
             (settings, settings.connect('changed::last-sync', self._on_last_sync)),
-            (settings, settings.connect('changed::engine-port', self._update_port)),
             (settings, settings.connect('changed::signed-in', self._update_account)),
             (settings, settings.connect('changed::account-name', self._update_account)),
             (engine, engine.connect('notify::state', self._update_engine)),
@@ -97,7 +93,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.connect('closed', self._on_closed)
 
         self._update_interval()
-        self._update_port()
         self._update_engine()
         self._update_account()
         self._measure()
@@ -189,7 +184,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
     def _update_engine(self, *_args):
         engine = self._engine
         state = engine.state
-        port = engine.port
         if self._app.demo:
             subtitle = _('Not used with the demo library')
         elif state == 'starting':
@@ -199,11 +193,11 @@ class PreferencesDialog(Adw.PreferencesDialog):
         elif state != 'up':
             subtitle = _('Not running')
         elif not engine.authorized:
-            subtitle = _('Running on port {port}, not signed in').format(port=port)
+            subtitle = _('Running, not signed in')
         elif engine.headless:
-            subtitle = _('Running hidden on port {port}').format(port=port)
+            subtitle = _('Running hidden')
         else:
-            subtitle = _('Running in a window on port {port}').format(port=port)
+            subtitle = _('Running in a window')
         self.engine_row.set_subtitle(subtitle)
         # Start while it is down, Stop while it is up; nothing while it changes, or while
         # the sign-in dialog has it.
@@ -231,22 +225,6 @@ class PreferencesDialog(Adw.PreferencesDialog):
             self._engine_busy = False
             if not self._closed:
                 self._update_engine()
-
-    def _update_port(self, *_args):
-        """What the port row's subtitle says: when a change applies, and the port the engine
-        really uses when that is not the setting (the .Devel build's is the next one up;
-        APPLE_MUSIC_PORT wins over both)."""
-        setting = self._settings.get_int('engine-port')
-        _profile_dir, port = engine_paths(self._app.profile, setting)
-        if os.environ.get('APPLE_MUSIC_PORT'):
-            subtitle = _('APPLE_MUSIC_PORT overrides this: the engine uses port {port}').format(
-                port=port)
-        elif port != setting:
-            subtitle = _('Applies the next time the engine starts; this development build '
-                         'uses the port after it, {port}').format(port=port)
-        else:
-            subtitle = _('Applies the next time the engine starts')
-        self.port_row.set_subtitle(subtitle)
 
     def _on_sign_out_activated(self, _row):
         self._app.activate_action('sign-out')  # asks first, over this dialog
