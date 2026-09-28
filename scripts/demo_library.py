@@ -11,16 +11,20 @@ GNOME Shell extension with the backend (see src/backend/__init__.py).
 `--albums N` (N > 40) adds generated albums, by generated artists, to the 40
 hand-written ones, for measuring big libraries: about 12 songs an album, so
 2,500 albums make 30,000 songs, or `--tracks N` songs in all when given (the
-generated albums are sized to reach it). `--playlists N` (N > 13) adds
+generated albums are sized to reach it). Their song titles are all distinct, as
+a real library's nearly are (a word and a noun, then a tail or a number where
+that pair is taken), so sorting and collating them costs what it would.
+`--playlists N` (N > 13) adds
 generated playlists, each of 22 songs, at the top level of the folders. The
 covers are drawn in parallel. The 40 hand-written albums and 13 playlists stay
 as they are whatever the options: build/demo is byte-identical.
 The last playlist is Favourite Songs, flagged by attributes.isFavourites.
 Three playlist folders, one inside another, hold some of the playlists; the
 rest are at the top level (`folders`, whose "root" entry lists the top level).
-The keys the app's sync adds beyond these (sections.songs, sections.videos,
-artUrl) are optional and left out: the demo has no loose songs, no music
-videos and nothing to fetch.
+sections.videos holds six invented music videos with 16:9 artwork, as Apple's
+is (the thumbnails 320 x 180). The other keys the app's sync adds
+(sections.songs, artUrl) are optional and left out: the demo has no loose
+songs and nothing to fetch.
 Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
 """
 import argparse
@@ -106,11 +110,6 @@ def hex_to_rgb(hex_code):
     return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
 
 
-def mix_rgb(c1, c2, t):
-    """Linearly interpolate between two RGB float tuples."""
-    return tuple(c1[i] + (c2[i] - c1[i]) * t for i in range(3))
-
-
 def wrap_text(ctx, text, max_width, font_size):
     """Wrap text to fit within max_width using Cairo text extents."""
     ctx.set_font_size(font_size)
@@ -130,23 +129,31 @@ def wrap_text(ctx, text, max_width, font_size):
     return lines
 
 
-def draw_cover(out_path, title, subtitle, badge, palette, motif, is_artist=False, size=config.COVER_SIZE):
+def draw_cover(out_path, title, subtitle, badge, palette, motif, is_artist=False, size=config.COVER_SIZE,
+               wide=False):
     """Draw a size x size square artwork with Cairo and save as JPEG via GdkPixbuf.
-    The drawing is laid out on a 512-unit square and scaled to `size`."""
+    The drawing is laid out on a 512-unit square and scaled to `size`. `wide` draws a
+    music video's 16:9 frame instead (size wide, on a 512 x 288 canvas): the motif in its
+    middle square, which is what a square tile shows of it, under a play symbol."""
     dark_rgb = hex_to_rgb(palette[0])
     mid_rgb = hex_to_rgb(palette[1])
     light_rgb = hex_to_rgb(palette[2])
 
-    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    width, height = (size, round(size * 9 / 16)) if wide else (size, size)
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
     ctx = cairo.Context(surf)
     ctx.scale(size / 512, size / 512)
 
     # 1. Base gradient
-    bg = cairo.LinearGradient(0, 0, 512, 512)
+    bg = cairo.LinearGradient(0, 0, 512, 288 if wide else 512)
     bg.add_color_stop_rgb(0.0, *dark_rgb)
     bg.add_color_stop_rgb(1.0, *mid_rgb)
     ctx.set_source(bg)
     ctx.paint()
+    if wide:  # the square design, scaled into the middle 288 x 288
+        ctx.save()
+        ctx.translate(112, 0)
+        ctx.scale(288 / 512, 288 / 512)
 
     # 2. Geometric motif
     if is_artist:
@@ -308,12 +315,25 @@ def draw_cover(out_path, title, subtitle, badge, palette, motif, is_artist=False
         ctx.set_source_rgba(mid_rgb[0], mid_rgb[1], mid_rgb[2], 0.65)
         ctx.fill()
 
+    if wide:
+        ctx.restore()
+        # A play symbol over the middle: a video, not a cover. The tiles label it.
+        ctx.arc(256, 144, 46, 0, 2 * math.pi)
+        ctx.set_source_rgba(0, 0, 0, 0.45)
+        ctx.fill()
+        ctx.move_to(242, 120)
+        ctx.line_to(242, 168)
+        ctx.line_to(282, 144)
+        ctx.close_path()
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.92)
+        ctx.fill()
+
     # 3. Readability scrim + 4. Typography: skipped for artist portraits. That
     # text (title near the bottom-left corner, the badge near the top-right
     # one) sits well outside the inscribed circle the artist tile crops this
     # image to, so it would just be clipped away; the shelf/detail views
     # already show the artist's name as their own label under the artwork.
-    if not is_artist:
+    if not is_artist and not wide:
         # 3. Readability scrim across bottom area
         scrim = cairo.LinearGradient(0, 250, 0, 512)
         scrim.add_color_stop_rgba(0.0, 0, 0, 0, 0.0)
@@ -376,12 +396,12 @@ def draw_cover(out_path, title, subtitle, badge, palette, motif, is_artist=False
     surf.flush()
     xrgb = bytes(surf.get_data())
     red, green, blue = (2, 1, 0) if sys.byteorder == "little" else (1, 2, 3)
-    rgb = bytearray(size * size * 3)
+    rgb = bytearray(width * height * 3)
     rgb[0::3] = xrgb[red::4]
     rgb[1::3] = xrgb[green::4]
     rgb[2::3] = xrgb[blue::4]
     pixbuf = GdkPixbuf.Pixbuf.new_from_bytes(
-        GLib.Bytes.new(bytes(rgb)), GdkPixbuf.Colorspace.RGB, False, 8, size, size, size * 3)
+        GLib.Bytes.new(bytes(rgb)), GdkPixbuf.Colorspace.RGB, False, 8, width, height, width * 3)
     pixbuf.savev(out_path, "jpeg", ["quality"], ["85"])
 
 
@@ -1273,6 +1293,17 @@ STATIONS_DATA = [
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
+# Music videos, each by one of the hand-written artists (an index into ARTISTS_DATA).
+VIDEOS_DATA = [
+    {"title": "Lanterns over the Shallows", "artist_idx": 0, "year": 2021},
+    {"title": "Night Drive to Nowhere", "artist_idx": 1, "year": 2022},
+    {"title": "Harbour Lights (Live at the Pier)", "artist_idx": 2, "year": 2023},
+    {"title": "Paper Moons", "artist_idx": 4, "year": 2020},
+    {"title": "Slow Burn Sunday", "artist_idx": 6, "year": 2024},
+    {"title": "Tape Loop Afternoon", "artist_idx": 10, "year": 2025},
+]
+
+
 def build_folders(playlist_ids):
     """library.json's `folders` from FOLDERS_DATA: the "root" entry first, listing the top
     level, then each folder in FOLDERS_DATA's order. playlist_ids are the playlists' ids in
@@ -1339,6 +1370,16 @@ GEN_NOUNS = [
     "Embers", "Canyons", "Clouds", "Parades", "Circuits", "Forests", "Bridges",
     "Maps", "Rooms", "Stations",
 ]
+# What a generated song title gets when its word and noun are taken: realistic
+# endings first, a number when those run out.
+GEN_TAILS = [
+    "at Dawn", "in Blue", "(Reprise)", "for Two", "Again", "(Live)", "Revisited", "on Tape",
+    "at Night", "in Motion", "(Interlude)", "Pt. II", "Undone", "(Acoustic)", "in the Rain",
+    "Overture", "(Demo)", "After Hours", "Redux", "(Edit)", "by Morning", "in Reverse",
+    "Suite", "(Instrumental)", "Once More", "at the Edge", "in Silver", "(Extended)",
+    "Theme", "Unfolding", "from Afar", "(Alternate Take)", "in Colour", "Lullaby",
+    "(Radio Mix)", "Nocturne", "Waltz", "Sketch", "(Outro)", "Coda",
+]
 GEN_FIRST = ["Ada", "Bram", "Cleo", "Dario", "Elin", "Fenna", "Gus", "Hana", "Ivo", "Juno",
              "Kaito", "Lior", "Mina", "Nils", "Oona", "Pim", "Rhea", "Sol", "Tove", "Wren"]
 GEN_LAST = ["Aldane", "Brisk", "Corran", "Dunmore", "Elsworth", "Falkner", "Greaves", "Hollin",
@@ -1380,6 +1421,8 @@ def generated_albums(count, tracks=None):
     genres = sorted({artist["genre"] for artist in ARTISTS_DATA})
     seen_artists = {artist["name"] for artist in artists}
     seen_titles = {album["title"] for album in albums}
+    seen_songs = {song for album in albums for disc in album["discs"] for song in disc}
+    tails = random.Random(17)  # its own, so the albums and artists drawn from rnd stay as they were
     counts = song_counts(count - len(albums), tracks) if tracks is not None else None
     remaining = 0
 
@@ -1392,6 +1435,21 @@ def generated_albums(count, tracks=None):
             name = f"{make()} {len(seen) + 1}"
         seen.add(name)
         return name
+
+    def song_title(base):
+        """base, or base with a tail (or at last a number) that no song has yet."""
+        title = base
+        for _ in range(20):
+            if title not in seen_songs:
+                break
+            title = f"{base} {tails.choice(GEN_TAILS)}"
+        else:
+            number = 2
+            while f"{base} {number}" in seen_songs:
+                number += 1
+            title = f"{base} {number}"
+        seen_songs.add(title)
+        return title
 
     while len(albums) < count:
         if remaining == 0:
@@ -1412,7 +1470,8 @@ def generated_albums(count, tracks=None):
             f"The {rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
         ]), seen_titles)
         song_count = counts[len(albums) - len(ALBUMS_DATA)] if counts else rnd.randint(8, 16)
-        songs = [f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}" for _ in range(song_count)]
+        songs = [song_title(f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}")
+                 for _ in range(song_count)]
         albums.append({
             "artist_idx": len(artists) - 1,
             "title": title,
@@ -1851,7 +1910,48 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         }
         radio_stations.append(station_item)
 
-    # 5. Build Shelves
+    # 5. Music videos: after the rest, with a random source of their own, so nothing above
+    # changes. 16:9 artwork, and the Item shape the sync gives them (normalize_item).
+    videos = []
+    video_rnd = random.Random(23)
+    for v_idx, v_data in enumerate(VIDEOS_DATA, 1):
+        video_id = f"i.mv{v_idx:04d}"
+        video_cat_id = str(catalog_id_base + 4000 + v_idx)
+        artist_info = artists_data[v_data["artist_idx"]]
+        palette = PALETTES[(v_idx * 11) % len(PALETTES)]
+        art_path = os.path.join(art_dir, f"{hashlib.sha1(video_id.encode('utf-8')).hexdigest()}.jpg")
+        draw_cover(
+            out_path=art_path,
+            title=v_data["title"],
+            subtitle=artist_info["name"],
+            badge=None,
+            palette=palette,
+            motif=MOTIFS[(v_idx * 7) % len(MOTIFS)],
+            is_artist=False,
+            size=cover_size,
+            wide=True,
+        )
+        dur_ms = video_rnd.randint(180, 330) * 1000
+        videos.append({
+            "id": video_id,
+            "kind": "video",
+            "title": v_data["title"],
+            "subtitle": artist_info["name"],
+            "year": v_data["year"],
+            "genre": artist_info["genre"],
+            "summary": None,
+            "art": art_path,
+            "thumb": thumb_for(art_path),
+            "artColor": palette[1],
+            "countLabel": format_duration(dur_ms),
+            "explicit": False,
+            "catalogId": video_cat_id,
+            "url": f"https://music.apple.com/us/music-video/{slug(v_data['title'])}/{video_cat_id}",
+            "play": {"kind": "musicVideo", "id": video_id},
+            "groups": [],
+        })
+
+    # 6. Build Shelves
     # Heavy Rotation: popular albums + top playlists + 1 radio station
     heavy_rotation_items = [
         albums[1],   # Islands in Suspension
@@ -1923,6 +2023,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             "artists": artists,
             "playlists": playlists,
             "radio": radio_stations,
+            "videos": videos,
         },
         "shelves": shelves,
         "folders": build_folders([playlist["id"] for playlist in playlists]),
@@ -1936,7 +2037,8 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
 
     print(
         f"demo library: {len(albums)} albums, {len(artists)} artists, "
-        f"{len(playlists)} playlists, {len(radio_stations)} radio stations in {out_dir}"
+        f"{len(playlists)} playlists, {len(radio_stations)} radio stations, "
+        f"{len(videos)} music videos in {out_dir}"
     )
 
 

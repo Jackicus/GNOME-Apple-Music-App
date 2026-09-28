@@ -124,7 +124,7 @@ class TestDemoLibrary(unittest.TestCase):
                 store = getattr(self.library, name)
                 self.assertEqual(self.store_ids(store),
                                  [item['id'] for item in sections.get(name, [])])
-        self.assertEqual(self.library.videos.get_n_items(), 0)  # the demo has no videos
+        self.assertEqual([item.kind for item in self.library.videos], ['video'] * 6)
         self.assertEqual([(shelf.key, shelf.title, shelf.items.get_n_items())
                           for shelf in self.library.shelves],
                          [(shelf['key'], shelf['title'], len(shelf['items']))

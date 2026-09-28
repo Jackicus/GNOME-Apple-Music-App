@@ -467,7 +467,9 @@ scripts/demo_library.py        invented library.json + drawn artwork (config siz
                                --albums N adds generated albums and artists, --tracks N sizes
                                them to N songs, --playlists N adds playlists; the last playlist is
                                Favourite Songs (attributes.isFavourites); `folders`: three
-                               playlist folders (l.fd002 inside l.fd001) and loose playlists
+                               playlist folders (l.fd002 inside l.fd001) and loose playlists;
+                               sections.videos: six music videos (16:9 art); generated song
+                               titles are all distinct (a tail or a number where taken)
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`
                                and isolates GSettings; gtk.py is the widget-test harness
                                (requires_gtk, pump, wait_for);
@@ -568,7 +570,7 @@ scripts/demo_library.py [--cache DIR] [--albums N] [--playlists N] [--tracks N]
                           --albums 2500 gives 30,116 songs (build/demo-2500, the Songs page's);
                           phase 19's: --cache build/demo-big --albums 3000 --playlists 300
                           --tracks 40000 (48 MB of library.json, 273 MB with the artwork).
-                          Without the new options the output is as it always was
+                          Without the options the output is always the same (build/demo)
 scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--watch MS] [--size WxH]
                  [--profile KEY]
                           startup, page switches and RSS on build/demo-big (or DIR), each run a

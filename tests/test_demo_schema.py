@@ -51,13 +51,16 @@ class TestDemoLibrarySchema(unittest.TestCase):
 
     def test_sections_presence_and_counts(self):
         sections = self.data["sections"]
-        self.assertSetEqual(set(sections.keys()), {"albums", "artists", "playlists", "radio"})
+        self.assertSetEqual(set(sections.keys()),
+                            {"albums", "artists", "playlists", "radio", "videos"})
 
-        # Around 40 albums, 15 artists, 13 playlists (Favourite Songs the last), 8 radio stations
+        # 40 albums, 15 artists, 13 playlists (Favourite Songs the last), 8 radio stations,
+        # 6 music videos
         self.assertEqual(len(sections["albums"]), 40)
         self.assertEqual(len(sections["artists"]), 15)
         self.assertEqual(len(sections["playlists"]), 13)
         self.assertEqual(len(sections["radio"]), 8)
+        self.assertEqual(len(sections["videos"]), 6)
 
     def test_shelves_schema(self):
         shelves = self.data["shelves"]
@@ -113,7 +116,7 @@ class TestDemoLibrarySchema(unittest.TestCase):
         ):
             self.assertIn(field, item, f"Item missing field: {field}")
 
-        self.assertIn(item["kind"], {"album", "playlist", "artist", "station"})
+        self.assertIn(item["kind"], {"album", "playlist", "artist", "station", "video"})
         self.assertTrue(isinstance(item["id"], str) and item["id"])
         self.assertTrue(isinstance(item["title"], str) and item["title"])
         self.assertIsInstance(item["subtitle"], str)
@@ -260,6 +263,25 @@ class TestDemoLibrarySchema(unittest.TestCase):
             self.assertEqual(st["groups"], [])
             self.assertEqual(st["countLabel"], "Radio Station")
 
+    def test_music_videos_detail(self):
+        # The Item shape the sync gives a library music video (normalize_item): a song's
+        # fields, played as MusicKit's musicVideo, with 16:9 artwork.
+        videos = self.data["sections"]["videos"]
+        artists = {artist["title"] for artist in self.data["sections"]["artists"]}
+        self.assertEqual(len({video["id"] for video in videos}), len(videos))
+        for video in videos:
+            self._validate_item(video)
+            self.assertEqual(video["kind"], "video")
+            self.assertEqual(video["play"], {"kind": "musicVideo", "id": video["id"]})
+            self.assertEqual(video["groups"], [])
+            self.assertIsNone(video["summary"])
+            self.assertIn(video["subtitle"], artists)
+            self.assertRegex(video["countLabel"], r"^\d+:\d{2}$")
+            _fmt, width, height = GdkPixbuf.Pixbuf.get_file_info(video["art"])
+            self.assertEqual((width, height), (config.COVER_SIZE, config.COVER_SIZE * 9 // 16))
+            _fmt, width, height = GdkPixbuf.Pixbuf.get_file_info(video["thumb"])
+            self.assertEqual((width, height), (config.THUMB_SIZE, config.THUMB_SIZE * 9 // 16))
+
     def test_artwork_at_config_sizes(self):
         with open(os.path.join(self.out_dir, "art", ".sizes"), encoding="utf-8") as f:
             self.assertEqual(json.load(f), {"cover": config.COVER_SIZE, "thumb": config.THUMB_SIZE})
@@ -316,6 +338,17 @@ class TestGeneratedAlbums(unittest.TestCase):
         self.assertLessEqual(max(generated) - min(generated), 10)
         with self.assertRaises(ValueError):
             self.demo.generated_albums(300, tracks=100)
+
+    def test_generated_song_titles_are_distinct(self):
+        # As a real library's nearly all are, so collating them costs what it would; the
+        # generated ones differ from the hand-written ones too.
+        _artists, albums = self.demo.generated_albums(1000, tracks=12000)
+        written = {song for album in albums[:40] for disc in album["discs"] for song in disc}
+        generated = [song for album in albums[40:] for disc in album["discs"] for song in disc]
+        self.assertEqual(len(generated), 12000 - sum(
+            len(disc) for album in albums[:40] for disc in album["discs"]))
+        self.assertEqual(len(set(generated)), len(generated))
+        self.assertFalse(written & set(generated))
 
     def test_generated_playlists(self):
         # --playlists N: the hand-written playlists, then invented ones, N with Favourite
