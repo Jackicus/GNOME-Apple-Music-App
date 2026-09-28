@@ -12,6 +12,7 @@ UI awaits.
     await engine.status()               # {ready, engine, authorized, storefront, bitrate}
     await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
     await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
+                                        # (unique=True: each id once, for a listing)
     await engine.api_all(paths)         # several reads at once; a failed one is None
     await engine.item(kind, id)         # a full Item with all its groups, its artwork fetched
                                         # (into <cache>/remote-art/ unless the library has it)
@@ -208,6 +209,48 @@ def _shape_and_keep(shaper, raw, path, cache_dir, generation):
     """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)
     unless the cache was cleared since `generation`."""
     return normalize.write_answer(path, shaper(raw, cache_dir), cache_dir, generation)
+
+
+async def _read_pages(read, path, params, page, limit, progress, concurrency):
+    """Engine.api_pages' reads through `read` (the Engine's api()): (the items in order, the
+    total Apple counted or None). A function of its own, so a stand-in engine that borrows
+    api_pages needs only an api() of its own."""
+    params = dict(params or {})
+    first = await read(path, dict(params, limit=page, offset=0))
+    items = api.page_data(first)
+    meta = first.get('meta')
+    total = meta.get('total') if isinstance(meta, dict) else None
+    total = total if isinstance(total, int) and not isinstance(total, bool) else None
+    if limit is not None:
+        total = min(total, limit) if total is not None else None
+    if progress:
+        progress(len(items), total)
+    if not items or not first.get('next') or (limit is not None and len(items) >= limit):
+        return items, total
+    if total is not None and total > len(items):
+        # Every remaining offset is known: a few pages at a time, kept in order.
+        offsets = list(range(len(items), total, page))
+        for start in range(0, len(offsets), max(1, concurrency)):
+            batch = offsets[start:start + max(1, concurrency)]
+            answers = await asyncio.gather(
+                *(read(path, dict(params, limit=page, offset=offset))
+                  for offset in batch))
+            for answer in answers:
+                items.extend(api.page_data(answer))
+            if progress:
+                progress(min(len(items), total), total)
+            if any(not api.page_data(answer) for answer in answers):
+                break  # Apple ran out early (the total counted something we do not get)
+        return items, total
+    while True:
+        answer = await read(path, dict(params, limit=page, offset=len(items)))
+        data = api.page_data(answer)
+        items.extend(data)
+        if progress:
+            progress(len(items), total)
+        if not data or not answer.get('next') or (limit is not None and len(items) >= limit):
+            break
+    return items, total
 
 
 def _made_for_you(raw, cache_dir):
@@ -780,48 +823,34 @@ class Engine(GObject.Object):
         return (answers + [None] * len(paths))[:len(paths)]
 
     async def api_pages(self, path, params=None, page=100, limit=None, progress=None,
-                        concurrency=PAGE_CONCURRENCY):
+                        concurrency=PAGE_CONCURRENCY, unique=False):
         """Every item (`data`) of a paged endpoint, `page` at a time by offset, following
         `next` until there is none or `limit` items are in hand. An endpoint whose first
         answer carries `meta.total` has its remaining pages fetched `concurrency` at a time;
         the rest are followed one by one. `progress(done, total)` is called after each page
-        (total None until it is known)."""
-        params = dict(params or {})
-        first = await self.api(path, dict(params, limit=page, offset=0))
-        items = api.page_data(first)
-        meta = first.get('meta')
-        total = meta.get('total') if isinstance(meta, dict) else None
-        total = total if isinstance(total, int) and not isinstance(total, bool) else None
+        (total None until it is known).
+
+        With `unique`, an item met twice is kept once, where it came first: when the listing
+        changes while it is read (a song added on another device), every offset after the
+        change shifts, and the item at a page's edge comes back on the next page. For a
+        listing of resources, not a playlist's tracks, where a song may be twice."""
+        items, total = await _read_pages(self.api, path, params, page, limit, progress,
+                                         concurrency)
         if limit is not None:
-            total = min(total, limit) if total is not None else None
-        if progress:
-            progress(len(items), total)
-        if not items or not first.get('next') or (limit is not None and len(items) >= limit):
-            return items[:limit] if limit is not None else items
-        if total is not None and total > len(items):
-            # Every remaining offset is known: a few pages at a time, kept in order.
-            offsets = list(range(len(items), total, page))
-            for start in range(0, len(offsets), max(1, concurrency)):
-                batch = offsets[start:start + max(1, concurrency)]
-                answers = await asyncio.gather(
-                    *(self.api(path, dict(params, limit=page, offset=offset))
-                      for offset in batch))
-                for answer in answers:
-                    items.extend(api.page_data(answer))
-                if progress:
-                    progress(min(len(items), total), total)
-                if any(not api.page_data(answer) for answer in answers):
-                    break  # Apple ran out early (the total counted something we do not get)
-            return items[:limit] if limit is not None else items
-        while True:
-            answer = await self.api(path, dict(params, limit=page, offset=len(items)))
-            data = api.page_data(answer)
-            items.extend(data)
-            if progress:
-                progress(len(items), total)
-            if not data or not answer.get('next') or (limit is not None and len(items) >= limit):
-                break
-        return items[:limit] if limit is not None else items
+            items = items[:limit]
+        if unique:
+            seen = set()
+            kept = []
+            for item in items:
+                item_id = item.get('id')
+                if item_id is None or item_id not in seen:
+                    seen.add(item_id)
+                    kept.append(item)
+            if len(kept) < len(items) or (total is not None and len(kept) < total):
+                log.debug('%s: %d items, %d of them once (%s counted)', path.partition('?')[0],
+                          len(items), len(kept), total if total is not None else 'none')
+            items = kept
+        return items
 
     async def item(self, kind, item_id):
         """One full Item of `kind` with its `groups` (an album's discs, a playlist's list, an
