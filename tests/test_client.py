@@ -605,6 +605,7 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.code, 'engine-down')
         await self.client.wait_closed()
         self.assertFalse(self.client.connected)
+        self.assertEqual(self.client.lost_reason, 'closed by Chrome')
         with self.assertRaises(EngineError) as ctx:
             await self.client.call('Anything')
         self.assertEqual(ctx.exception.code, 'engine-down')
@@ -633,6 +634,7 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(reason, ctx.exception.message)
         await asyncio.wait_for(self.client.wait_closed(), 1)
         self.assertFalse(self.client.connected)
+        self.assertEqual(self.client.lost_reason, reason)
 
     async def test_a_crashed_page_loses_the_connection(self):
         await self.assert_lost('the page crashed', lambda: self.chrome.send_event(
@@ -855,6 +857,8 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
             await self.chrome.send_event(*context_created(9))
             await asyncio.wait_for(self.client.wait_closed(), 3)
         self.assertEqual(len(navigated), 1)  # sent to music.apple.com before the last try
+        self.assertEqual(self.client.lost_reason,
+                         'music.apple.com did not come back after a navigation')
 
 
 class WebSocketClientTest(unittest.IsolatedAsyncioTestCase):

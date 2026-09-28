@@ -44,7 +44,9 @@ UI awaits.
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
 prefix), and `rated(kind, id, value)` follows love(), unlove() and rating() (the kind and id
-as they were asked, value 1 loved, 0 not), so a heart shows what a menu did. Every failure
+as they were asked, value 1 loved, 0 not), so a heart shows what a menu did, and
+`lost(reason)` says the engine went down on its own (Chrome crashed or was killed, the page
+crashed, closed or stopped answering), never for a stop, a restart or quitting. Every failure
 is an EngineError; nothing here blocks the loop: Chrome is a Gio.Subprocess (awaitable
 wait_async), the connection is the asynchronous CDPClient over Chrome's DevTools pipe (its
 descriptors 3 and 4: no port is open), and the JSON shaping and artwork HTTP of item() run in
@@ -414,6 +416,7 @@ class Engine(GObject.Object):
     __gsignals__ = {
         'event': (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
         'rated': (GObject.SignalFlags.RUN_FIRST, None, (str, str, int)),
+        'lost': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
 
     state = GObject.Property(type=str, default='down')
@@ -664,16 +667,20 @@ class Engine(GObject.Object):
         except EngineError as e:
             if e.code == 'timeout' and self._client is client:
                 log.warning('the page does not answer; the engine goes down')
-                await client.close()
+                await client.close('the page stopped answering')
 
     async def _watch_connection(self, client):
+        """The engine down when its connection goes on its own (Chrome crashed or was killed,
+        the page crashed, closed or stopped answering): `lost(reason)` first, which a stop,
+        a restart, sign-in's restarts and quitting never emit."""
         await client.wait_closed()
-        if self._client is not client:
-            return  # stop() closed it
-        log.warning('the connection to Chrome was lost; the engine is down')
         async with self._lock:
-            if self._client is client:
-                await self._stop()
+            if self._client is not client:
+                return  # stop() closed it
+            reason = client.lost_reason or 'the connection to Chrome was closed'
+            log.warning('the engine is down: %s', reason)
+            self.emit('lost', reason)
+            await self._stop()
 
     async def stop(self, grace=None):
         """End Chrome: Browser.close over the pipe and up to close_wait seconds for it to go,

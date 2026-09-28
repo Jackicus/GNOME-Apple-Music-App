@@ -321,6 +321,7 @@ class CDPClient:
         self.timeout = timeout
         self.on_timeout = None
         self.reinject_timeout = BRIDGE_TIMEOUT
+        self.lost_reason = None   # why the connection went, once it has
         self._transport = None
         self._reader_task = None
         self._next_id = 1
@@ -420,9 +421,11 @@ class CDPClient:
         tree = await self.call('Page.getFrameTree')
         self._main_frame = ((tree.get('frameTree') or {}).get('frame') or {}).get('id')
 
-    async def close(self):
+    async def close(self, reason=None):
         """Drop the connection (a pipe's close ends Chrome's end of it too). Pending calls fail
-        with 'engine-down'."""
+        with 'engine-down'; `reason`, when given, is kept as lost_reason."""
+        if reason and self.lost_reason is None:
+            self.lost_reason = reason
         transport, self._transport = self._transport, None
         self._closed = True
         reader = self._reader_task
@@ -454,6 +457,8 @@ class CDPClient:
             return
         self._closed = True
         transport, self._transport = self._transport, None
+        if self.lost_reason is None:
+            self.lost_reason = reason
         transport.close()
         log.info('CDP connection lost: %s', reason)
         self._fail_pending(
