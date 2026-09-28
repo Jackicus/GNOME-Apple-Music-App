@@ -191,7 +191,26 @@ class TestSync(unittest.TestCase):
         self.assertEqual(disc2['name'], 'Disc 2')
         self.assertEqual(len(disc2['entries']), 1)
         self.assertEqual(disc2['entries'][0]['title'], 'Bonus Track')
-        self.assertEqual(disc2['entries'][0]['index'], 0)
+        # Numbered on from disc 1: the album plays as one queue, whichever disc's row starts it.
+        self.assertEqual(disc2['play'], item['play'])
+        self.assertEqual(disc2['entries'][0]['index'], len(disc1['entries']))
+
+    def test_an_albums_entries_are_its_queue_in_order(self):
+        tracks = [{'id': f'{disc}-{number}',
+                   'attributes': {'name': f'{disc}.{number}', 'discNumber': disc,
+                                  'trackNumber': number}}
+                  for disc in (3, 1, 2) for number in (2, 1, 3)]
+        album = normalize.normalize_album({'id': 'l.a', 'attributes': {'name': 'A'}},
+                                          tracks=tracks)
+        entries = [entry for group in album['groups'] for entry in group['entries']]
+        self.assertEqual([entry['index'] for entry in entries], list(range(9)))
+        self.assertEqual([entry['title'] for entry in entries],
+                         [f'{disc}.{number}' for disc in (1, 2, 3) for number in (1, 2, 3)])
+        # An artist's groups carry them as they are: an album's positions in its own queue.
+        artist = normalize.normalize_artist({'id': 'l.r', 'attributes': {'name': 'R'}},
+                                            albums=[album])
+        self.assertEqual([entry['index'] for entry in artist['groups'][0]['entries']],
+                         list(range(9)))
 
     def test_normalize_playlist(self):
         raw_playlist = {
