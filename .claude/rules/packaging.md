@@ -23,6 +23,7 @@ paths:
   `_()`, `ngettext` or `C_`).
 - `-Dprofile=development` gives the `.Devel` app ID (desktop file, icons, metainfo, MPRIS name),
   the version with the git revision, and a `DEMO_DIR` pointing at the source tree's build/demo.
+  A release build hides `--demo` from `--help`, and there it needs `APPLE_MUSIC_CACHE`.
   Both profiles install the same GSettings schema ID and resource path.
 - The launcher (`src/apple-music.in`) calls `i18n.setup(localedir)` before anything is
   translated (it binds the domain for both Python's gettext and GtkBuilder), loads the

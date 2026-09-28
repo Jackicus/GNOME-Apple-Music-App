@@ -4,12 +4,14 @@ when a sync may start, how it quits (where errors go: tests/test_errors.py).
 """
 
 import asyncio
+import os
+import tempfile
 import unittest
 from unittest import mock
 
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
 
-from gi.repository import GObject
+from gi.repository import Gio, GObject
 
 from applemusic import main
 from applemusic.backend import config
@@ -170,6 +172,61 @@ class QuitTest(AppTestCase):
         self.app._quitting = object()
         self.app.do_activate()  # no window made: the stand-ins have none to give
         self.assertIsNone(self.app.get_active_window())
+
+
+class DemoTest(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(config.set_build_profile, 'default')
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': ''})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def app(self, profile='development', demo_dir=None):
+        return main.Application('0.9.0', f'{BASE_ID}.DemoTest', BASE_ID, profile, demo_dir)
+
+    def test_the_demo_keeps_its_settings_apart(self):
+        app = self.app(demo_dir=self.tmp.name)
+        # The desktop's settings, as a backend of their own (the tests' default is memory).
+        desktop = Gio.keyfile_settings_backend_new(
+            os.path.join(self.tmp.name, 'desktop.ini'), '/', None)
+        app.settings = Gio.Settings.new_full(app.settings.props.settings_schema, desktop, None)
+        self.assertTrue(app._use_demo())
+        self.assertTrue(app.demo)
+        self.assertEqual(os.environ['APPLE_MUSIC_CACHE'], self.tmp.name)
+        backend = app.settings.props.backend
+        self.assertIsNot(backend, desktop)
+        self.assertNotEqual(backend, Gio.SettingsBackend.get_default())
+        app.settings.set_string('last-page', 'albums')
+        Gio.Settings.sync()
+        with open(os.path.join(self.tmp.name, 'settings.ini'), encoding='utf-8') as file:
+            self.assertIn('albums', file.read())
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, 'desktop.ini')))
+
+    def test_settings_on_the_memory_backend_are_kept(self):
+        app = self.app(demo_dir=self.tmp.name)
+        settings = app.settings
+        self.assertTrue(app._use_demo())
+        self.assertIs(app.settings, settings)
+
+    def test_a_release_build_needs_a_library_named(self):
+        app = self.app(profile='default')
+        with self.assertLogs('applemusic.main', 'ERROR'):
+            self.assertFalse(app._use_demo())
+        self.assertFalse(app.demo)
+        os.environ['APPLE_MUSIC_CACHE'] = self.tmp.name  # a generated library named
+        self.assertTrue(app._use_demo())
+
+    def test_the_demo_has_no_mpris(self):
+        app = self.app(demo_dir=self.tmp.name)
+        app._use_demo()
+        app.library = FakeLibrary()
+        with mock.patch.object(main, 'Mpris') as mpris:
+            app._make_parts()
+        mpris.assert_not_called()
+        self.assertIsNone(app.mpris)
+        self.assertTrue(app.engine.demo)
 
 
 class ConstructionTest(unittest.TestCase):

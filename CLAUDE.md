@@ -146,7 +146,8 @@ sudo meson install -C _build --skip-subprojects
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
   saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
 - **Demo mode** (`--demo`, `app.demo`) has no engine: every engine command raises
-  `engine-down`, and nothing in it may start Chrome or read the real cache.
+  `engine-down`, and nothing in it may start Chrome or read the real cache. It keeps its
+  settings in the demo library (`settings.ini`), not the desktop's, and owns no MPRIS name.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
   ruff: 4-space indents, no type annotations, a docstring where a module or function is not
