@@ -26,7 +26,8 @@ call for a 50 MB file would keep the main thread's Python (every signal handler 
 waiting 300 ms. The artists' groups repeat their albums' tracks; those lists are dropped at
 parse time when the album is in the library (the artist page shows the album's own), and the
 tracks' repeated names share one string each: together they cut what 40,000 tracks cost after
-the parse by 40%. Garbage collection is paused from a load()'s call to its end (the parse and
+the parse by 40%. Each track is then kept as a tuple (TrackRecord), not a dict: 15 MB less
+again. Garbage collection is paused from a load()'s call to its end (the parse and
 the wrapping run without it) and during a Songs build, and the heap is frozen after both
 (paused_gc), so the library is never scanned again: a full collection over it cost 50 ms, a
 dropped frame each time one came round.
@@ -240,6 +241,94 @@ def raw_property(key, type, default=None, writable=False):
     return GObject.Property(type=type, default=default, getter=getter, setter=setter)
 
 
+# The keys of a Track dict (src/backend/README.md's Track shape, and the API `type`), in the
+# order a TrackRecord keeps their values.
+TRACK_FIELDS = ('id', 'catalogId', 'title', 'artist', 'album', 'trackNumber', 'discNumber',
+                'durationMs', 'durationLabel', 'explicit', 'index', 'thumb', 'type')
+_FIELDS = {name: position for position, name in enumerate(TRACK_FIELDS)}
+_CATALOG_ID = _FIELDS['catalogId']
+_ABSENT = object()  # a TRACK_FIELDS key the dict did not have
+_ALL_ABSENT = (_ABSENT,) * len(TRACK_FIELDS)
+
+
+class TrackRecord(tuple):
+    """A Track dict of library.json as a tuple of its TRACK_FIELDS values, then a dict of any
+    other keys (or None), made as the file is parsed: 40,000 tracks as dicts cost 16 MB more.
+    A numeric catalogId is kept as an int (half a string's size) and read back as the text.
+
+    It reads as the dict did, for everything that reads a Track's `raw`: get(key, default),
+    record[key], `key in record`, keys() and items() (so dict(record) is the dict again).
+    Records compare as tuples: equal when the dicts were.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, entry):
+        values = list(map(entry.get, TRACK_FIELDS, _ALL_ABSENT))  # 40,000 at parse time
+        catalog_id = values[_CATALOG_ID]
+        if type(catalog_id) is str:
+            if catalog_id.isdigit() and catalog_id.isascii() and catalog_id[0] != '0':
+                values[_CATALOG_ID] = int(catalog_id)
+        elif type(catalog_id) is int:
+            values[_CATALOG_ID] = (catalog_id,)  # a number in the file stays one
+        if entry.keys() <= _FIELDS.keys():
+            values.append(None)
+        else:
+            values.append({key: value for key, value in entry.items() if key not in _FIELDS})
+        return tuple.__new__(cls, values)
+
+    def get(self, key, default=None):
+        position = _FIELDS.get(key)
+        if position is None:
+            others = tuple.__getitem__(self, -1)
+            return default if others is None else others.get(key, default)
+        value = tuple.__getitem__(self, position)
+        if value is _ABSENT:
+            return default
+        if position == _CATALOG_ID:
+            if type(value) is int:
+                return str(value)
+            if type(value) is tuple:
+                return value[0]
+        return value
+
+    def __getitem__(self, key):
+        if not isinstance(key, str):
+            return tuple.__getitem__(self, key)
+        value = self.get(key, _ABSENT)
+        if value is _ABSENT:
+            raise KeyError(key)
+        return value
+
+    def __contains__(self, key):
+        return self.get(key, _ABSENT) is not _ABSENT
+
+    def keys(self):
+        others = tuple.__getitem__(self, -1)
+        return [name for name, value in zip(TRACK_FIELDS, self, strict=False)
+                if value is not _ABSENT] + list(others or ())
+
+    def items(self):
+        return [(key, self[key]) for key in self.keys()]
+
+
+def _compact_tracks(item):
+    """Make the track dicts of an Item dict's groups TrackRecords (in place)."""
+    for group in _dicts(item.get('groups')):
+        entries = group.get('entries')
+        if isinstance(entries, list):
+            group['entries'] = [TrackRecord(entry) if isinstance(entry, dict) else entry
+                                for entry in entries]
+
+
+def _entries(value):
+    """The track entries of a JSON list: its dicts and TrackRecords, or nothing when it is not
+    a list."""
+    if not isinstance(value, list):
+        return []
+    return [entry for entry in value if isinstance(entry, (dict, TrackRecord))]
+
+
 class Track(GObject.Object):
     """One entry of a group: the Track shape, read from `raw`, the source dict.
 
@@ -307,7 +396,7 @@ class Group(GObject.Object):
         self.play = data.get('play') or {}
         self.entries = Gio.ListStore(item_type=Track)
         self.entries.splice(0, 0, [Track(entry, self.play, thumb)
-                                   for entry in _dicts(data.get('entries'))])
+                                   for entry in _entries(data.get('entries'))])
 
 
 class Item(GObject.Object):
@@ -389,7 +478,7 @@ class Item(GObject.Object):
         if kind == 'artist' and groups:
             return albums_text(len(groups))
         if kind in ('album', 'playlist'):
-            entries = [entry for group in groups for entry in _dicts(group.get('entries'))]
+            entries = [entry for group in groups for entry in _entries(group.get('entries'))]
             if entries:
                 return songs_text(len(entries),
                                   sum(_number(entry.get('durationMs')) for entry in entries))
@@ -1004,7 +1093,7 @@ class Library(GObject.Object):
         for node in tree.folders():
             index.setdefault(('folder', node.id), node.item)
         index.setdefault(('folder', ROOT_FOLDER), tree.root.item)
-        self._loose = _dicts(sections.get('songs'))
+        self._loose = _entries(sections.get('songs'))
         if not keep:
             self._loose_tracks = {}
         self.shelves = shelves
@@ -1353,6 +1442,7 @@ def _read_library(path, reading=None):
     file's state: 'ok', 'missing' or 'unreadable'). `reading`, a threading.Event, holds the
     parse between list elements while it is clear, for HOLD_LIMIT seconds at most in all."""
     albums = set()
+    songs = set()  # the ids of the albums' tracks and the loose songs: the Songs page's count
     strings = {}
     held = [0.0]  # seconds waited for `reading` so far
 
@@ -1365,13 +1455,23 @@ def _read_library(path, reading=None):
         # _drop_artist_tracks), so they never add to the parse's peak: library.json lists the
         # albums first. Anything left (artists before albums) goes after the parse. Each
         # album's, playlist's and loose song's tracks share one string object for the
-        # names and labels they repeat (_share_strings).
-        if key == 'albums' and isinstance(value, dict):
+        # names and labels they repeat (_share_strings), and are kept as TrackRecords.
+        if not isinstance(value, dict):
+            return value
+        if key == 'albums':
             albums.add(value.get('id'))
-        elif key == 'artists' and isinstance(value, dict) and albums:
+            songs.update(entry.get('id') for group in _dicts(value.get('groups'))
+                         for entry in _dicts(group.get('entries')))
+        elif key == 'artists' and albums:
             _drop_artist_tracks({'albums': (), 'artists': [value]}, albums)
-        if key in ('albums', 'playlists', 'songs') and isinstance(value, dict):
+        if key in ('albums', 'playlists', 'songs'):
             _share_strings(value, strings)
+        if key == 'songs':
+            if value.get('id'):
+                songs.add(value.get('id'))
+            return TrackRecord(value)
+        if key in ('albums', 'playlists', 'artists'):
+            _compact_tracks(value)
         return value
 
     started = time.monotonic()
@@ -1394,11 +1494,6 @@ def _read_library(path, reading=None):
         log.warning('Cannot read %s: not a JSON object', path)
         return None, 0, 'unreadable'
     sections = data.get('sections') if isinstance(data.get('sections'), dict) else {}
-    songs = {entry.get('id')
-             for album in _dicts(sections.get('albums'))
-             for group in _dicts(album.get('groups'))
-             for entry in _dicts(group.get('entries'))}
-    songs |= {entry.get('id') for entry in _dicts(sections.get('songs')) if entry.get('id')}
     _drop_artist_tracks(sections)
     return data, len(songs), 'ok'
 
