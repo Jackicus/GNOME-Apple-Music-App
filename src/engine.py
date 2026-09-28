@@ -253,14 +253,15 @@ def album_endpoint(album_id, storefront):
             else f'/v1/catalog/{storefront}/albums/{album_id}?include=tracks')
 
 
-def _shape_item(raw, cache_dir):
-    """In a thread: the API's resource as an Item with groups, its artwork fetched."""
+def _shape_item(raw, cache_dir, generation):
+    """In a thread: the API's resource as an Item with groups, its artwork fetched (for the
+    cache of `generation`: store.py)."""
     item = normalize.normalize_item(raw, cache_dir, include_groups=True)
-    normalize.download_item_art(item, cache_dir)
+    normalize.download_item_art(item, cache_dir, generation=generation)
     return item
 
 
-def _shape_artist(raw, item_id, stubs, answers, cache_dir):
+def _shape_artist(raw, item_id, stubs, answers, cache_dir, generation):
     """In a thread: an artist resource plus its albums' answers (apiAll's list, a failed one
     None in its place, the stub standing in) as an artist Item, one group per album."""
     artist = {'id': item_id, 'type': raw.get('type', 'artists'),
@@ -271,7 +272,7 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir):
         data = answer.get('data') if isinstance(answer, dict) else None
         albums.append(data[0] if isinstance(data, list) and data else stub)
     item = normalize.normalize_artist(artist, cache_dir, albums=albums)
-    normalize.download_item_art(item, cache_dir)
+    normalize.download_item_art(item, cache_dir, generation=generation)
     return item
 
 
@@ -327,9 +328,10 @@ def _shape_suggestions(raw, cache_dir):
     return normalize.search_suggestions(raw, cache_dir)
 
 
-def _shape_and_keep(shaper, raw, path, cache_dir):
-    """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)."""
-    return normalize.write_answer(path, shaper(raw, cache_dir))
+def _shape_and_keep(shaper, raw, path, cache_dir, generation):
+    """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)
+    unless the cache was cleared since `generation`."""
+    return normalize.write_answer(path, shaper(raw, cache_dir), generation=generation)
 
 
 def _read_kept(path):
@@ -347,12 +349,12 @@ def _read_json(path):
         return None
 
 
-def _write_json(path, data):
-    """In a thread: `data` as JSON at path, atomically, the directory made first; a failure
-    is logged."""
+def _write_json(path, data, generation=None):
+    """In a thread: `data` as JSON at path, atomically, the directory made first, unless the
+    cache was cleared since `generation`; a failure is logged."""
     try:
         store.atomic_write(path, lambda file: json.dump(data, file, ensure_ascii=False),
-                           text=True)
+                           text=True, generation=generation)
     except (OSError, ValueError) as error:
         log.warning('could not keep %s: %s', path, error)
 
@@ -952,6 +954,7 @@ class Engine(GObject.Object):
         """One full Item of `kind` with its `groups` (an album's discs, a playlist's list, an
         artist's albums), its artwork fetched. Needs a signed-in engine:
         EngineError('not-signed-in') otherwise."""
+        generation = store.cache_generation()
         client = await self._ready()
         if not self.authorized:
             raise EngineError('not-signed-in', 'sign in to load items')
@@ -981,8 +984,8 @@ class Engine(GObject.Object):
             if not isinstance(answers, list):
                 answers = []
             return await asyncio.to_thread(_shape_artist, raw, str(item_id), stubs, answers,
-                                           cache_dir)
-        return await asyncio.to_thread(_shape_item, raw, cache_dir)
+                                           cache_dir, generation)
+        return await asyncio.to_thread(_shape_item, raw, cache_dir, generation)
 
     async def signin(self, timeout=SIGNIN_TIMEOUT):
         """Until MusicKit is authorized: the bridge asks the page to authorize (Apple's sign-in
@@ -1167,6 +1170,7 @@ class Engine(GObject.Object):
         kept there when Apple had any. No lyrics ({synced: False, lines: []}) is also what
         the page answers when Apple refuses (no subscription, a network failure), so an empty
         answer is not kept: the next play asks again."""
+        generation = store.cache_generation()
         catalog_song_id = str(catalog_song_id or '')
         if not CATALOG_ID_RE.fullmatch(catalog_song_id):
             raise EngineError('usage', 'lyrics need a catalog song id')
@@ -1178,7 +1182,7 @@ class Engine(GObject.Object):
         answer = lyrics_answer(
             await client.bridge('lyrics', catalog_song_id, timeout=LYRICS_TIMEOUT))
         if answer['lines']:
-            await asyncio.to_thread(_write_json, path, answer)
+            await asyncio.to_thread(_write_json, path, answer, generation)
         return answer
 
     # -- ratings and the library ---------------------------------------------------------
@@ -1338,6 +1342,7 @@ class Engine(GObject.Object):
         <cache>/landing.json for a day (no engine needed then), else the bridge's
         searchLanding (the search-landing recommendation set) shaped by normalize.search_landing
         and kept there. `refresh` asks Apple again."""
+        generation = store.cache_generation()
         path = self._kept_path(normalize.landing_cache_path(str(self.cache_dir)))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
@@ -1346,12 +1351,13 @@ class Engine(GObject.Object):
         raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'search landing')
         return await asyncio.to_thread(_shape_and_keep, normalize.search_landing, raw, path,
-                                       str(self.cache_dir))
+                                       str(self.cache_dir), generation)
 
     async def category(self, category_id, refresh=False):
         """A category's page: {id, title, shelves: [{key, title, items}]}, the curator's
         grouping as shelves (Best New Songs, New Releases, Playlists, Stations…). From
         <cache>/categories/<id>.json for a day, else the bridge's category() and kept."""
+        generation = store.cache_generation()
         category_id = str(category_id or '')
         if not category_id:
             raise EngineError('usage', 'category needs an id')
@@ -1363,7 +1369,7 @@ class Engine(GObject.Object):
         raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, f'category {category_id}')
         return await asyncio.to_thread(_shape_and_keep, normalize.category_page, raw, path,
-                                       str(self.cache_dir))
+                                       str(self.cache_dir), generation)
 
     async def browse(self, refresh=False):
         """The New page: {shelves: [{key, title, items}]}, the editorial groupings behind
@@ -1371,6 +1377,7 @@ class Engine(GObject.Object):
         shelves in Apple's order, the featured banners first ("Featured"), then Best New
         Songs, New Releases, playlists, stations, videos; items as search() has them. From
         <cache>/browse.json for a day, else fetched and kept."""
+        generation = store.cache_generation()
         path = self._kept_path(normalize.browse_cache_path(str(self.cache_dir)))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
@@ -1380,13 +1387,14 @@ class Engine(GObject.Object):
         raw = await self._api(client, BROWSE_ENDPOINT.format(storefront=storefront),
                               BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
         return await asyncio.to_thread(_shape_and_keep, normalize.editorial_shelves, raw, path,
-                                       str(self.cache_dir))
+                                       str(self.cache_dir), generation)
 
     async def made_for_you(self, refresh=False):
         """Made for You: {shelves: [{key, title, items}]}, the recommendations
         (RECOMMENDATIONS_ENDPOINT) made only of the personal mixes and stations, each a
         shelf titled as Apple titles it. From <cache>/made-for-you.json for a day, else
         fetched and kept."""
+        generation = store.cache_generation()
         path = self._kept_path(normalize.made_for_you_cache_path(str(self.cache_dir)))
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
@@ -1398,4 +1406,4 @@ class Engine(GObject.Object):
             _shape_and_keep,
             lambda answer, cache_dir: {
                 'shelves': normalize.made_for_you_shelves(answer.get('data'), cache_dir)},
-            raw, path, str(self.cache_dir))
+            raw, path, str(self.cache_dir), generation)

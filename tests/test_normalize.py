@@ -624,14 +624,14 @@ class TestArtworkDownload(unittest.TestCase):
 
         fetched = []
 
-        def fake_cache(url, cache_dir, timeout=10.0, dest_path=None):
+        def fake_cache(url, cache_dir, timeout=10.0, dest_path=None, generation=None):
             fetched.append(url)
             path = dest_path or normalize.artwork_cache_path(url, cache_dir)
             with open(path, 'wb') as f:
                 f.write(b'img')
             return path
 
-        def fake_thumb(url, cache_dir, dest_path):
+        def fake_thumb(url, cache_dir, dest_path, generation=None):
             fetched.append(url)
             with open(dest_path, 'wb') as f:
                 f.write(b'img')
@@ -656,9 +656,9 @@ class TestArtworkDownload(unittest.TestCase):
                                          cache_dir=self.tmp_dir)
         lib = {'sections': {'albums': [item]}, 'shelves': []}
         real = normalize.cache_artwork, normalize.cache_thumbnail
-        normalize.cache_artwork = lambda url, cache_dir, timeout=10.0, dest_path=None: None
+        normalize.cache_artwork = lambda url, cache_dir, **kwargs: None
 
-        def broken(url, cache_dir, dest_path):
+        def broken(url, cache_dir, dest_path, generation=None):
             raise OSError('no space left')
         normalize.cache_thumbnail = broken
         try:
@@ -708,7 +708,7 @@ class TestArtworkDownload(unittest.TestCase):
         self.assertFalse(normalize.make_thumbnail(item['art'], item['thumb']))
         fetched = []
         real = normalize.cache_artwork
-        def fake_cache_artwork(url, cache_dir, dest_path=None):
+        def fake_cache_artwork(url, cache_dir, dest_path=None, generation=None):
             fetched.append((url, dest_path))
             return dest_path
         normalize.cache_artwork = fake_cache_artwork

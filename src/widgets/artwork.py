@@ -51,6 +51,7 @@ from gi.repository import Gdk, GdkPixbuf, Gio, GLib  # noqa: E402
 
 from ..backend import config  # noqa: E402
 from ..backend import normalize  # noqa: E402
+from ..backend import store  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -133,13 +134,14 @@ class Artwork:
         Item's `artUrl`, in a thread), False when it was there already, the Item has no
         cover URL, or the fetch failed (logged; the page keeps the thumbnail). Concurrent
         calls for one cover share the download."""
+        generation = store.cache_generation()  # a wipe from here on keeps this file out
         path = item.art
         url = item.raw.get('artUrl') if isinstance(item.raw, dict) else None
         if not path or not url:
             return False
         task = self._fetches.get(path)
         if task is None:
-            task = asyncio.get_event_loop().create_task(self._fetch(path, url))
+            task = asyncio.get_event_loop().create_task(self._fetch(path, url, generation))
             self._fetches[path] = task
             task.add_done_callback(lambda _task: self._fetches.pop(path, None))
         return await asyncio.shield(task)
@@ -150,6 +152,7 @@ class Artwork:
         in a thread when it is not), or None without a URL or when the fetch failed
         (logged). Concurrent calls for one image share the download. The player bar asks
         at the cover size, so the Now Playing sheet finds the same file."""
+        generation = store.cache_generation()  # a wipe from here on keeps this file out
         path = remote_art_path(url, size)
         if not path:
             return None
@@ -157,7 +160,8 @@ class Artwork:
             return path
         task = self._fetches.get(path)
         if task is None:
-            task = asyncio.get_event_loop().create_task(self._fetch(path, sized_url(url, size)))
+            task = asyncio.get_event_loop().create_task(
+                self._fetch(path, sized_url(url, size), generation))
             self._fetches[path] = task
             task.add_done_callback(lambda _task: self._fetches.pop(path, None))
         return path if await asyncio.shield(task) or not normalize._art_missing(path) else None
@@ -174,11 +178,12 @@ class Artwork:
             return True
         return await self.fetch_remote(url, config.THUMB_SIZE) is not None
 
-    async def _fetch(self, path, url):
+    async def _fetch(self, path, url, generation):
         def fetch():
             if not normalize._art_missing(path):
                 return False
-            return normalize.cache_artwork(url, str(config.cache_dir()), dest_path=path) is not None
+            return normalize.cache_artwork(url, str(config.cache_dir()), dest_path=path,
+                                           generation=generation) is not None
         try:
             fetched = await asyncio.to_thread(fetch)
         except Exception:

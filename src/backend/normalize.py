@@ -199,7 +199,7 @@ def load_art_sizes(cache_dir):
     return dict(ART_SIZES)
 
 
-def apply_art_sizes(cache_dir, cover, thumb):
+def apply_art_sizes(cache_dir, cover, thumb, generation=None):
     """Set the sizes a sync builds at, and record them in the marker. A
     thumbnail size that differs from the marker's wipes <cache>/thumb/:
     the files keep their names whatever the size, so nothing else would
@@ -228,7 +228,7 @@ def apply_art_sizes(cache_dir, cover, thumb):
             log.debug('stale thumbnails: %s', error)
     try:
         store.atomic_write(_art_sizes_marker(cache_dir), lambda f: json.dump(wanted, f),
-                           text=True)
+                           text=True, generation=generation)
     except OSError as error:
         log.warning('could not write the art sizes marker: %s', error)
     ART_SIZES.update(wanted)
@@ -240,21 +240,22 @@ def thumb_cache_path(url, cache_dir):
     return os.path.join(cache_dir, 'thumb', artwork_filename(url))
 
 
-def make_thumbnail(src_path, dest_path, size=None):
+def make_thumbnail(src_path, dest_path, size=None, generation=None):
     """Scale the cover at `src_path` down to `dest_path`, atomically. False
-    without a scale_image installed, or when the source is not an image."""
+    without a scale_image installed, when the source is not an image, or when
+    `generation` moved (store.py)."""
     if scale_image is None:
         return False
     size = size or ART_SIZES['thumb']
     try:
-        store.atomic_create(dest_path, lambda temp: scale_image(src_path, temp, size))
-        return True
+        return store.atomic_create(dest_path, lambda temp: scale_image(src_path, temp, size),
+                                   generation=generation) is not None
     except Exception as error:  # the scaler's own errors (GLib.Error) as well as OSError
         log.debug('could not scale %s: %s', src_path, error)
         return False
 
 
-def cache_thumbnail(url, cache_dir, dest_path):
+def cache_thumbnail(url, cache_dir, dest_path, generation=None):
     """The thumbnail at `dest_path`: scaled from the cached full-size cover
     when that is on disk, fetched at the thumbnail size from `url` otherwise."""
     if not url or not dest_path:
@@ -262,12 +263,12 @@ def cache_thumbnail(url, cache_dir, dest_path):
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         return dest_path
     full = os.path.join(cache_dir, 'art', os.path.basename(dest_path))
-    if not _art_missing(full) and make_thumbnail(full, dest_path):
+    if not _art_missing(full) and make_thumbnail(full, dest_path, generation=generation):
         return dest_path
-    return cache_artwork(url, cache_dir, dest_path=dest_path)
+    return cache_artwork(url, cache_dir, dest_path=dest_path, generation=generation)
 
 
-def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
+def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None, generation=None):
     """Download artwork via urllib.request and save it atomically to <cache_dir>/art/
     (or to `dest_path`, for a thumbnail).
 
@@ -275,7 +276,7 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
     Written through a temporary file renamed over the target (store.atomic_write), without an
     fsync: a copy of what is on Apple's servers, which counts as missing if a crash left it
     empty. Returns the absolute local file path on success, or None when it failed (logged,
-    with the reason).
+    with the reason) or `generation` moved (the cache was cleared: store.py).
     """
     if not url_or_obj or not cache_dir:
         return None
@@ -292,6 +293,8 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
 
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         return dest_path
+    if not store.current(generation):
+        return None
 
     import shutil
     import urllib.error
@@ -310,8 +313,7 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
             shutil.copyfileobj(resp, file, 64 * 1024)
 
     try:
-        store.atomic_write(dest_path, fetch, fsync=False)
-        return dest_path
+        return store.atomic_write(dest_path, fetch, fsync=False, generation=generation)
     except Exception as error:  # urllib's HTTPError, URLError and timeouts, OSError
         if isinstance(error, urllib.error.HTTPError):
             error.close()  # it holds the answer's connection
@@ -349,7 +351,8 @@ def collect_art_urls(library_data):
     return {p: ART_URLS[p] for p in collect_art_paths(library_data) if p in ART_URLS}
 
 
-def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, cancelled=None):
+def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, cancelled=None,
+                 generation=None):
     """Fetch every artwork the library refers to that is not in the cache yet.
 
     Takes a library dict (paths resolved through ART_URLS) or a {path: url}
@@ -357,7 +360,10 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
     cache_artwork, with the reason) and otherwise ignored: the UI treats a
     path that is not on disk as no artwork. `progress(done, total)` is called
     (on this thread) after each fetch, and `cancelled()` is asked before each
-    result is waited for: True gives up the fetches not started yet.
+    result is waited for: True gives up the fetches not started yet. When the
+    cache's generation moves from `generation` (it was cleared: store.py), the
+    fetches not started are given up, the running ones finish writing nothing,
+    and store.CacheGone is raised.
     """
     if isinstance(library_data_or_urls, dict) and 'sections' not in library_data_or_urls:
         urls = library_data_or_urls
@@ -368,20 +374,26 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
     if not todo:
         return counts
     import concurrent.futures
-    os.makedirs(os.path.join(cache_dir, 'art'), exist_ok=True)
-    os.makedirs(os.path.join(cache_dir, 'thumb'), exist_ok=True)
+    for folder in ('art', 'thumb'):
+        if not store.make_dirs(os.path.join(cache_dir, folder), generation):
+            raise store.CacheGone(cache_dir)
     # The covers first, the thumbnails after: a thumbnail is scaled from its
     # cover when that is on disk, and fetched only when it is not.
     covers = {p: u for p, u in todo.items() if not _is_thumb_path(p, cache_dir)}
     thumbs = {p: u for p, u in todo.items() if _is_thumb_path(p, cache_dir)}
     done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for batch, fetch in ((covers, lambda p, u: cache_artwork(u, cache_dir)),
-                             (thumbs, lambda p, u: cache_thumbnail(u, cache_dir, p))):
+        for batch, fetch in (
+                (covers, lambda p, u: cache_artwork(u, cache_dir, generation=generation)),
+                (thumbs, lambda p, u: cache_thumbnail(u, cache_dir, p, generation=generation))):
             if cancelled and cancelled():
                 break
             futures = {pool.submit(fetch, path, url): url for path, url in batch.items()}
             for fut in concurrent.futures.as_completed(futures):
+                if not store.current(generation):
+                    for pending in futures:
+                        pending.cancel()
+                    raise store.CacheGone(cache_dir)
                 if cancelled and cancelled():
                     for pending in futures:
                         pending.cancel()
@@ -401,13 +413,18 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
     return counts
 
 
-def download_item_art(item, cache_dir):
+def download_item_art(item, cache_dir, generation=None):
     """Fetch what one item refers to and lacks: its cover, its thumbnail and
-    its rows' thumbnails (a playlist's), in threads, in place."""
+    its rows' thumbnails (a playlist's), in threads, in place. Nothing more
+    once the cache's generation moves from `generation` (store.py)."""
     if not isinstance(item, dict):
         return item
     paths = _item_art_paths(item)
-    download_art({p: ART_URLS[p] for p in paths if p in ART_URLS}, cache_dir)
+    try:
+        download_art({p: ART_URLS[p] for p in paths if p in ART_URLS}, cache_dir,
+                     generation=generation)
+    except store.CacheGone:
+        log.debug('item %s: the cache was cleared, its artwork left', item.get('id'))
     return item
 
 
@@ -1547,13 +1564,17 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None):
     return albums_list, artists_list
 
 
-def save_library(library_data, cache_dir, indent=2):
+def save_library(library_data, cache_dir, indent=2, generation=None):
     """Write library.json atomically and durably (store.atomic_write: a temporary file,
     fsync'd, renamed over the old one), so a reader sees the old file or the new one, never
     half of one, even after a crash. `indent` is json.dump's: None writes the compact form. A
-    failure raises, and leaves the old file and no temporary one."""
+    failure raises, and leaves the old file and no temporary one; store.CacheGone when the
+    cache was cleared since `generation` (nothing written)."""
     lib_path = os.path.join(cache_dir, 'library.json')
-    store.atomic_write(lib_path, lambda f: json.dump(library_data, f, indent=indent), text=True)
+    written = store.atomic_write(lib_path, lambda f: json.dump(library_data, f, indent=indent),
+                                 text=True, generation=generation)
+    if written is None:
+        raise store.CacheGone(cache_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -1635,13 +1656,15 @@ def made_for_you_cache_path(cache_dir):
     return os.path.join(cache_dir, 'made-for-you.json')
 
 
-def write_answer(path, answer):
-    """Keep `answer` at `path`, atomically, stamped `cached` with when.
-    Best effort: a cache that cannot be written is only a cache."""
+def write_answer(path, answer, generation=None):
+    """Keep `answer` at `path`, atomically, stamped `cached` with when; not
+    once the cache's generation has moved from `generation` (store.py). Best
+    effort: a cache that cannot be written is only a cache."""
     answer = dict(answer)
     answer['cached'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
     try:
-        store.atomic_write(path, lambda f: json.dump(answer, f), text=True)
+        store.atomic_write(path, lambda f: json.dump(answer, f), text=True,
+                           generation=generation)
     except (OSError, ValueError) as error:
         log.warning('could not keep %s: %s', path, error)
     return answer

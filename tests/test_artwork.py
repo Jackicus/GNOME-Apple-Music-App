@@ -13,6 +13,7 @@ import gi
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
+from applemusic.backend import store
 from applemusic.widgets import artwork
 
 gi.require_version('GdkPixbuf', '2.0')
@@ -41,9 +42,11 @@ class TestRemoteArt(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.fetched = []
+        self.generations = []
 
-        def fake_cache_artwork(url, cache_dir, timeout=10.0, dest_path=None):
+        def fake_cache_artwork(url, cache_dir, timeout=10.0, dest_path=None, generation=None):
             self.fetched.append(url)
+            self.generations.append(generation)
             if 'missing' in url:
                 return None
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -87,6 +90,12 @@ class TestRemoteArt(unittest.TestCase):
             self.assertNotEqual(other, first)
             self.assertEqual(self.fetched[-1], 'https://x.invalid/a/320x320bb.jpg')
         run(go())
+
+    def test_a_fetch_writes_for_the_cache_it_began_in(self):
+        loader = artwork.Artwork()
+        generation = store.cache_generation()
+        run(loader.fetch_remote('https://x.invalid/a/256x256bb.jpg', 640))
+        self.assertEqual(self.generations, [generation])
 
     def test_failures_answer_none(self):
         loader = artwork.Artwork()

@@ -107,14 +107,14 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         # for by a sync (the pages fetch covers).
         self.fetched = []
 
-        def fake_thumb(url, cache_dir, dest_path):
+        def fake_thumb(url, cache_dir, dest_path, generation=None):
             self.fetched.append(url)
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             with open(dest_path, 'wb') as file:
                 file.write(b'img')
             return dest_path
 
-        def no_cover(url, cache_dir, timeout=10.0, dest_path=None):
+        def no_cover(url, cache_dir, timeout=10.0, dest_path=None, generation=None):
             self.fail(f'a sync fetched a cover: {url}')
 
         for name, fake in (('cache_thumbnail', fake_thumb), ('cache_artwork', no_cover)):
