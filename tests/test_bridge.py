@@ -29,6 +29,22 @@ EVENTS = ('authorizationStatusDidChange', 'playbackStateDidChange', 'nowPlayingI
           'queuePositionDidChange', 'shuffleModeDidChange', 'repeatModeDidChange',
           'playbackVolumeDidChange', 'mediaPlaybackError')
 
+# Apple's TTML lyrics, as the catalog's /lyrics answers carry them (invented words): two
+# stanzas, entities, word-timed spans, a <br>, CDATA, the four time formats, a blank line.
+TTML = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal"'
+    ' xml:lang="en"><head><metadata/></head><body dur="1:02.500">'
+    '<div begin="0.5s" end="20s">'
+    '<p begin="00:00.500" end="00:04.250">Rock &amp; Roll &#8217;til dawn</p>'
+    '<p begin="4.5s" end="8s"><span begin="4.5s">Harbour</span> <span begin="5s">lights</span>'
+    '</p></div>'
+    '<div begin="20s" end="1:02.5">'
+    '<p begin="0:20.000" end="0:25.100">Out on the<br/>water</p>'
+    '<p begin="1:00:01.5" end="1:00:03"><![CDATA[Fish & chips <tonight>]]></p>'
+    '<p begin="30s"> </p></div></body></tt>'
+)
+
 # A song as MusicKit's queue and nowPlayingItem hold it (a MediaItem: id, type, attributes).
 SONG = """{
     id: 'i.song1', type: 'library-songs',
@@ -63,6 +79,7 @@ def run_scenarios(scenarios):
     parts = [HARNESS.read_text(encoding='utf-8'),
              f'const BRIDGE = {json.dumps(BRIDGE.read_text(encoding="utf-8"))};',
              f'const SONG = {SONG};',
+             f'const TTML = {json.dumps(TTML)};',
              'const SCENARIOS = {']
     for name, body in scenarios.items():
         parts.append(f'{json.dumps(name)}: async ({{bridge, mk, posted, page}}) => {{\n{body}\n}},')
@@ -284,6 +301,36 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(value['none'], {'state': 'stopped', 'track': None, 'position': 0,
                                          'duration': 0, 'shuffle': 'off', 'repeat': 'none',
                                          'volume': 1})
+
+    # -- lyrics ----------------------------------------------------------------------------
+
+    @scenario("""
+        const path = '/v1/catalog/gb/songs/1000000001/lyrics';
+        mk.apiAnswers[path] = {data: [{id: '1000000001', attributes: {ttml: TTML}}]};
+        const synced = await bridge.lyrics('1000000001');
+        mk.apiAnswers[path] = {data: [{attributes: {
+            ttml: '<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p>One</p><p>Two</p>'
+                  + '</div></body></tt>'}}]};
+        const unsynced = await bridge.lyrics('1000000001');
+        mk.apiAnswers[path] = {data: [{attributes: {ttml: '<tt><p>Rock & Roll</p></tt>'}}]};
+        const unreadable = await bridge.lyrics('1000000001');
+        mk.apiAnswers[path] = {data: []};
+        const none = await bridge.lyrics('1000000001');
+        delete mk.apiAnswers[path];   // Apple refuses: no lyrics either
+        return {synced, unsynced, unreadable, none, refused: await bridge.lyrics('1000000001')};
+    """)
+    def test_lyrics_from_ttml(self, value):
+        self.assertEqual(value['synced'], {'synced': True, 'lines': [
+            {'startMs': 500, 'endMs': 4250, 'text': 'Rock & Roll \u2019til dawn',
+             'stanza': True},
+            {'startMs': 4500, 'endMs': 8000, 'text': 'Harbour lights'},
+            {'startMs': 20000, 'endMs': 25100, 'text': 'Out on the water', 'stanza': True},
+            {'startMs': 3601500, 'endMs': 3603000, 'text': 'Fish & chips <tonight>'}]})
+        self.assertEqual(value['unsynced'], {'synced': False, 'lines': [
+            {'startMs': 0, 'endMs': 0, 'text': 'One', 'stanza': True},
+            {'startMs': 0, 'endMs': 0, 'text': 'Two'}]})
+        for key in ('unreadable', 'none', 'refused'):
+            self.assertEqual(value[key], {'synced': False, 'lines': []}, key)
 
     # -- search ----------------------------------------------------------------------------
 

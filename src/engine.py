@@ -27,7 +27,7 @@ UI awaits.
     await engine.now_playing()   # {state, track, position, duration, shuffle, repeat, volume}
     await engine.queue()         # {index, items: [Track…]}
     await engine.queue_jump(3)   # play the queue's entry at index 3 (mk.changeToMediaAtIndex)
-    await engine.lyrics(catalog_song_id)   # {synced, lines: [{startMs, endMs, text}]},
+    await engine.lyrics(catalog_song_id)   # {synced, lines: [{startMs, endMs, text[, stanza]}]},
                                            # from <cache>/lyrics/ when fetched this month
     await engine.love('song', id); await engine.unlove('album', id)   # the rating, set or gone
     await engine.rating('song', id)        # 1 loved, -1 disliked, 0 neither
@@ -80,6 +80,7 @@ from .backend import api, chrome, config, normalize, store
 from .backend.api import is_library_id, resource_type
 from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
+from .lyrics import parse_lines
 
 log = logging.getLogger(__name__)
 
@@ -153,24 +154,18 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir, generation):
 
 
 def lyrics_answer(answer):
-    """The bridge's lyrics answer as {synced: bool, lines: [{startMs, endMs, text}]}, the
-    lines kept in order with their times as integers; anything odd is no lyrics."""
-    if not isinstance(answer, dict):
-        return {'synced': False, 'lines': []}
+    """The bridge's lyrics answer, or a kept one, as {synced: bool, lines: [{startMs, endMs,
+    text, stanza (only where true)}]}: the lines as lyrics.parse_lines reads them (the one
+    validation: times as integers, entities decoded, in time order); anything odd is no
+    lyrics."""
     lines = []
-    for line in answer.get('lines') or []:
-        if not isinstance(line, dict):
-            continue
-        text = line.get('text')
-        if not isinstance(text, str) or not text.strip():
-            continue
-        start, end = line.get('startMs'), line.get('endMs')
-        lines.append({
-            'startMs': int(start) if isinstance(start, (int, float)) and start == start else 0,
-            'endMs': int(end) if isinstance(end, (int, float)) and end == end else 0,
-            'text': text.strip(),
-        })
-    return {'synced': bool(answer.get('synced')) and bool(lines), 'lines': lines}
+    for start, end, text, stanza in parse_lines(answer):
+        line = {'startMs': start, 'endMs': end, 'text': text}
+        if stanza:
+            line['stanza'] = True
+        lines.append(line)
+    synced = bool(isinstance(answer, dict) and answer.get('synced')) and bool(lines)
+    return {'synced': synced, 'lines': lines}
 
 
 def _raise_api_errors(answer, what):
