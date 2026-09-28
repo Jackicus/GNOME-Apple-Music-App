@@ -55,15 +55,21 @@ def in_flatpak():
 
 def find_chrome(command=None, path=None, host=None):
     """The executable for `command` (the configured browser), else the first of CANDIDATES
-    on `path` (default $PATH); None when there is no Chrome. With `host` (by default when
+    on `path` (default $PATH); None when there is no Chrome. A configured command that is not
+    found is logged before the candidates are tried. With `host` (by default when
     in_flatpak()) the names are resolved on the host instead (find_host_chrome). Blocking in
     the sandbox: call it in a thread."""
-    names = [name for name in (command, *CANDIDATES) if name]
     if host is None:
         host = in_flatpak()
     if host:
-        return find_host_chrome(names)
-    for name in names:
+        return find_host_chrome([name for name in (command, *CANDIDATES) if name])
+    if command:
+        found = shutil.which(command, path=path)
+        if found:
+            return found
+        log.warning("the browser command %r was not found; trying Google Chrome's usual names",
+                    command)
+    for name in CANDIDATES:
         found = shutil.which(name, path=path)
         if found:
             return found
