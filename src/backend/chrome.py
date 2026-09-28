@@ -236,12 +236,17 @@ def devtools_url(port, path):
 
 
 async def get_json(port, path, timeout=5.0):
-    """Chrome's /json answer at `path` on `port`. EngineError('engine-down') when nothing
-    answers, ('timeout') when it is slow."""
+    """Chrome's /json answer at `path` on `port`. EngineError('engine-down') when nothing, or
+    something that is not DevTools, answers; ('timeout') when it is slow."""
+    import http.client  # loaded by urllib.request in _get_json anyway
+
     try:
         return await asyncio.to_thread(_get_json, devtools_url(port, path), timeout)
     except TimeoutError as e:
         raise EngineError('timeout', f'DevTools on port {port} did not answer') from e
+    except http.client.HTTPException as e:  # not HTTP (BadStatusLine), a body cut short
+        raise EngineError('engine-down',
+                          f'no DevTools on port {port}: {type(e).__name__}') from e
     except (OSError, ValueError) as e:  # urllib.error.URLError is an OSError
         reason = getattr(e, 'reason', e)
         if isinstance(reason, TimeoutError):

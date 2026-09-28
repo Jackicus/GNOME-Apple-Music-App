@@ -13,8 +13,8 @@ importing the package imports none of its modules.
                 DevTools port) and CDPClient: one asynchronous CDP connection, attached to the
                 page by session (calls, evaluate, events, the bridge kept in the page across
                 navigations); open_page(transport), attach_devtools(port)
-    cdp.py      the RFC 6455 handshake and frame codec as pure functions, shared with
-                client.py, and the extension's blocking client on top of them
+    cdp.py      the RFC 6455 handshake and frame codec as pure functions, for client.py's
+                WebSocketTransport (the developer attach)
     bridge.js   injected into music.apple.com; drives the page's own MusicKit instance and
                 forwards its events (subscribe). Installed as data beside the Python, found
                 through config.BRIDGE_JS
@@ -43,6 +43,9 @@ cdp.py
   check_handshake, encode_frame, decode_frame, close_frame) and the one-line JS exception
   message is exception_message(); CDPClient uses them (its _read_exact became _fill_buffer over
   decode_frame). Behaviour and test_cdp.py unchanged.
+- (2026-09-28) Only the codec, CDPError and exception_message() remain: the blocking
+  CDPClient, http_get_json, discover_target and connect_to_chrome (nothing used them) are
+  gone, and the module follows this app's style.
 bridge.js
 - The page globals keep their names (window.__appleMusicLibrary{,Wanted}).
 - (Phase 9) subscribe() and unsubscribe(): MusicKit listeners (EVENT_DATA's eleven events),
@@ -87,8 +90,7 @@ config.py
 errors.py, chrome.py, client.py
 - New in phase 9 (this app's own; nothing vendored).
 tests/test_cdp.py
-- Imports applemusic.backend.cdp through the tests/__init__.py shim. The test HTTP servers poll
-  for shutdown every 50 ms instead of 500 ms (about three seconds off the suite).
+- (2026-09-28) Rewritten as pure codec tests with the blocking client's removal.
 tests/test_sync.py
 - Imports applemusic.backend.{config,sync} through the shim. TestSync and TestArtworkDownload
   pin the extension's 512/256 sizes their expected URLs were written for; TestArtSizes expects
