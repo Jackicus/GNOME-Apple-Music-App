@@ -1,0 +1,77 @@
+# Runs scripts/check.sh (byte-compile, ruff, meson build, unit tests, desktop/metainfo/schema
+# validation) on every push to main and every pull request.
+#
+# The app needs GTK 4.22 and libadwaita 1.9, which the Ubuntu runner images do not ship, so
+# the job runs in an Arch Linux container, the distribution the app is developed on.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check.sh (Arch Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: archlinux:latest
+    env:
+      LANG: C.UTF-8
+      # Widget tests (tests/gtk.py's requires_gtk) run on Xvfb with software rendering; no
+      # GPU and no accessibility bus in the container.
+      GSK_RENDERER: cairo
+      GDK_DISABLE: gl,vulkan
+      GTK_A11Y: none
+    steps:
+      - name: Name this week's package cache
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pacman package cache
+        uses: actions/cache@v6
+        with:
+          path: /var/cache/pacman/pkg
+          # Saved once per ISO week and restored from the newest otherwise; -Syu below
+          # downloads whatever changed since.
+          key: pacman-${{ runner.os }}-${{ steps.week.outputs.week }}
+          restore-keys: |
+            pacman-${{ runner.os }}-
+
+      - name: Install build and test dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git python python-gobject gtk4 libadwaita glib2 gdk-pixbuf2 \
+            meson ninja pkgconf blueprint-compiler gettext \
+            appstream desktop-file-utils adwaita-icon-theme \
+            ruff xorg-server-xvfb xorg-xauth
+          # Keep only the installed versions, so the saved cache does not grow.
+          pacman -Sc --noconfirm
+          pacman -Q gtk4 libadwaita python python-gobject meson blueprint-compiler ruff
+
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Trust the checkout
+        # The container runs as root over a workspace owned by the runner user.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Run scripts/check.sh
+        run: xvfb-run -a -s '-screen 0 1280x1024x24' scripts/check.sh
+
+      - name: Upload the Meson logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: meson-logs
+          path: build/meson-logs/
+          if-no-files-found: ignore
