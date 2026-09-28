@@ -810,10 +810,11 @@ class Window(Adw.ApplicationWindow):
 
     def prepare_quit(self):
         """The app is quitting (app.quit, or this window closing): remember the window's
-        state and hide it now, so nothing shows while the engine stops."""
+        state, close its dialogs and hide it now, so nothing shows while the engine stops."""
         if self._quitting:
             return
         self._quitting = True
+        self._close_dialogs()
         self._save_window_state()
         self._library.disconnect(self._library_handler)  # the library outlives the window
         for handler in self._settings_handlers:
@@ -825,8 +826,16 @@ class Window(Adw.ApplicationWindow):
         self.set_visible(False)
 
     def hide_for_background(self):
-        """The window closes while the music plays on (background playback): its dialogs are
-        closed, its state remembered, and it hides, to be presented again as it was."""
+        """The window closes while the music plays on (background playback): the dialog on
+        top of it and those shown as windows of their own are closed, its state remembered,
+        and it hides, to be presented again as it was."""
+        self._close_dialogs()
+        self._save_window_state()
+        self.set_visible(False)
+
+    def _close_dialogs(self):
+        """Close the dialog on top of the window (only the topmost: one under it stays in
+        the hidden window) and every dialog shown as a window of its own."""
         dialog = self.get_visible_dialog()
         if dialog is not None:
             dialog.force_close()
@@ -835,8 +844,6 @@ class Window(Adw.ApplicationWindow):
         for toplevel in Gtk.Window.list_toplevels():
             if toplevel is not self and toplevel.get_transient_for() is self:
                 toplevel.close()
-        self._save_window_state()
-        self.set_visible(False)
 
     def do_close_request(self):
         # Closing the last window quits, and quitting stops the engine first: the window

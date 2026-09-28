@@ -92,8 +92,10 @@ widgets.
   forgets the account's settings and pages, and empties the library. Clear Cache stops the
   cache's writers the same way before it deletes anything.
 - **Quitting.** Every way out (Ctrl+Q, closing the window, MPRIS Quit, SIGINT or SIGTERM)
-  activates `app.quit`: the windows save their state, the sync is cancelled, and Chrome is
-  stopped (given 6 seconds, then killed) before the app exits. If the app dies any other way,
+  activates `app.quit`: the windows save their state, close their dialogs and hide, a start of
+  the engine the app asked for is cancelled, and the sync (its thread included) and Chrome are
+  stopped, 6 seconds at most for both, Chrome then killed if it still runs, before the app
+  exits. If the app dies any other way,
   the kernel sends Chrome SIGTERM (`setpriv --pdeathsig`), and the next start ends a Chrome that
   still holds the profile. With background playback on (it is off by default), closing the
   window while music plays hides it instead; the app then quits once playback has stayed stopped

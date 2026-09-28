@@ -37,20 +37,23 @@ class FakeEngine(GObject.Object):
         self.demo = False
         self.start_blocks = False
         self.stop_blocks = False
+        self._lock = asyncio.Lock()  # as the Engine's: a stop waits for a start under way
 
     async def start(self, visible=None):
         self.calls.append('start')
-        if self.start_blocks:
-            await asyncio.get_running_loop().create_future()
-        self.state = 'up'
-        self.authorized = True
+        async with self._lock:
+            if self.start_blocks:
+                await asyncio.get_running_loop().create_future()
+            self.state = 'up'
+            self.authorized = True
 
     async def stop(self, grace=None):
         self.calls.append(('stop', grace))
-        if self.stop_blocks:
-            await asyncio.get_running_loop().create_future()
-        self.state = 'down'
-        self.authorized = False
+        async with self._lock:
+            if self.stop_blocks:
+                await asyncio.get_running_loop().create_future()
+            self.state = 'down'
+            self.authorized = False
 
     def kill(self):
         self.calls.append('kill')
@@ -122,6 +125,51 @@ class StartSyncTest(AppTestCase):
         self.app.demo = True
         self.app._update_sync_action()
         self.assertFalse(action.get_enabled())
+
+
+class QuitTest(AppTestCase):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(main.Gio.Application, 'quit',
+                                    lambda app: self.app.engine.calls.append('quit'))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def test_a_start_under_way_is_cancelled_first(self):
+        app = self.app
+        app.engine.start_blocks = True
+        app._autostart_task = asyncio.ensure_future(app.engine.start())
+        await asyncio.sleep(0)
+        started = asyncio.get_running_loop().time()
+        await app._quit()
+        self.assertLess(asyncio.get_running_loop().time() - started, 1.0)
+        self.assertTrue(app._autostart_task.cancelled())
+        self.assertEqual(app.engine.calls, ['start', ('stop', main.QUIT_GRACE), 'quit'])
+
+    async def test_a_stop_that_hangs_is_killed_then_quits(self):
+        app = self.app
+        app.engine.stop_blocks = True
+        app.engine.pid = 4242
+        with mock.patch.object(main, 'QUIT_TIMEOUT', 0.05), \
+                self.assertLogs('applemusic.main', 'WARNING'):
+            await app._quit()
+        self.assertEqual(app.engine.calls, [('stop', main.QUIT_GRACE), 'kill', 'quit'])
+
+    async def test_the_sync_is_stopped_within_the_bound(self):
+        app = self.app
+        cancelled = []
+
+        async def cancel():
+            cancelled.append(True)
+
+        app.library_sync.cancel = cancel
+        await app._quit()
+        self.assertEqual(cancelled, [True])
+
+    def test_activating_while_quitting_shows_nothing(self):
+        self.app._quitting = object()
+        self.app.do_activate()  # no window made: the stand-ins have none to give
+        self.assertIsNone(self.app.get_active_window())
 
 
 class ConstructionTest(unittest.TestCase):
