@@ -458,7 +458,9 @@ scripts/demo_library.py        invented library.json + drawn artwork (config siz
                                them to N songs, --playlists N adds playlists; the last playlist is
                                Favourite Songs (attributes.isFavourites); `folders`: three
                                playlist folders (l.fd002 inside l.fd001) and loose playlists
-tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
+tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`
+                               and isolates GSettings; gtk.py is the widget-test harness
+                               (requires_gtk, pump, wait_for);
                                fixtures/ holds invented API answers (lyrics.json: invented
                                synced lyrics for the tests and the --now-playing shot)
 pyproject.toml                 ruff config only (line length 100, E/F/W; vendored files exempt
@@ -481,7 +483,7 @@ outside the Python module goes in `data/`.
 ```
 scripts/run.sh [args]     meson setup (dev profile, prefix build/install) + install + run;
                           `--debug` (or APPLE_MUSIC_DEBUG=1) logs at DEBUG
-scripts/check.sh          compileall, ruff (skipped if not installed), unit tests, meson compile,
+scripts/check.sh          compileall, ruff (skipped if not installed), meson compile, unit tests,
                           meson tests (desktop/metainfo/schema validation); prints `check: ok`
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated
                           first when missing); no Chrome, no account. Use it for all UI work
@@ -799,8 +801,14 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   `library.track_at(play, index)` finds the track a request starts with.
 - Tests: `tests/test_<module>.py`, stdlib `unittest`, each starting with `from tests import …`
   (e.g. `SRC`, `ROOT`) before any `from applemusic import …`: discovery with `-s tests` imports test
-  modules as top-level modules and never runs `tests/__init__.py` on its own. No GTK widgets in
-  tests; UI is checked with screenshots.
+  modules as top-level modules and never runs `tests/__init__.py` on its own. Importing `tests`
+  also puts GSettings on the memory backend with this tree's schema, so no test touches the
+  desktop's settings. Logic lives in non-widget classes and pure functions, tested with
+  stand-ins (as test_mpris and test_actions do). Widget tests are allowed only through
+  `tests/gtk.py`: `@requires_gtk` on the class or test (skipped unless GTK opens a display and
+  build/src's gresource exists; check.sh compiles before the tests), template modules imported
+  inside the test, `pump()`/`wait_for()` for the main loop; each must finish in under 1 s.
+  The rest of the UI is checked with screenshots.
 - Lint: `pyproject.toml` configures ruff; imports after `gi.require_version()` need `# noqa: E402`.
 - Settings: one schema `io.github.jackicus.AppleMusic` for both profiles; new keys go in
   `data/…gschema.xml` with a summary, and are read through `app.settings`. Keys: window-width/

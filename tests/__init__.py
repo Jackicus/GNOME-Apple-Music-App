@@ -5,6 +5,10 @@ tests import it under that name without a build. `python3 -m unittest
 discover -s tests` imports test modules as top-level modules and never runs
 this file itself, so every test module starts with ``from tests import …``
 (run from the repository root, as scripts/check.sh does).
+
+It also keeps every test off the desktop's settings: GSettings goes to the memory backend,
+with this tree's schema visible (tests/gtk.py's use_test_settings(), called here, before
+any test module can start GTK or GSettings). Widget tests use tests/gtk.py's requires_gtk.
 """
 
 import importlib.util
@@ -20,3 +24,7 @@ if 'applemusic' not in sys.modules:
     _module = importlib.util.module_from_spec(_spec)
     sys.modules['applemusic'] = _module
     _spec.loader.exec_module(_module)
+
+from tests.gtk import use_test_settings  # noqa: E402  (needs ROOT, above)
+
+use_test_settings()
