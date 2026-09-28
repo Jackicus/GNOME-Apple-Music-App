@@ -22,7 +22,7 @@ from tests import ROOT
 
 from applemusic import library as library_module
 from applemusic.library import (ROOT_FOLDER, SECTIONS, Group, Item, Library, PlaylistTree,
-                                SongOrder, Track, fold, parse, paused_gc)
+                                SongOrder, Track, TrackRecord, fold, parse, paused_gc)
 
 
 def load(cache_dir, library=None):
@@ -75,6 +75,17 @@ def folder(folder_id, children, parent=ROOT_FOLDER, title=None):
     return {'id': folder_id, 'title': title or folder_id, 'parent': parent,
             'children': [{'kind': 'folder', 'id': child[2:]} if child.startswith('f:')
                          else {'kind': 'playlist', 'id': child} for child in children]}
+
+
+def plain(value):
+    """A parsed library value with its TrackRecords made dicts again, to compare with JSON."""
+    if isinstance(value, TrackRecord):
+        return dict(value)
+    if isinstance(value, dict):
+        return {key: plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [plain(item) for item in value]
+    return value
 
 
 def collation_order(tracks, column, descending=False):
@@ -157,7 +168,7 @@ class TestDemoLibrary(unittest.TestCase):
         raw = self.data['sections']['albums'][0]
         item = self.library.albums.get_item(0)
         self.assertIsInstance(item, Item)
-        self.assertEqual(item.raw, raw)
+        self.assertEqual(plain(item.raw), raw)  # its tracks are TrackRecords of the same
         self.assertEqual(item.play, raw['play'])
         for prop, key in [('id', 'id'), ('kind', 'kind'), ('title', 'title'),
                           ('subtitle', 'subtitle'), ('year', 'year'), ('genre', 'genre'),
@@ -834,6 +845,70 @@ class TestWords(unittest.TestCase):
         self.assertEqual(Item({'kind': 'album', 'title': 'Named'}).title, 'Named')
         artist.title = 'Set'
         self.assertEqual((artist.title, artist.raw['title']), ('Set', 'Set'))
+
+
+class TestTrackRecord(unittest.TestCase):
+    """A track dict kept as a tuple: it reads as the dict did."""
+
+    def test_reads_as_the_dict(self):
+        entry = dict(track('i.1', 'Song', 4), catalogId='1440833098', extra=[1, 2])
+        del entry['thumb']
+        record = TrackRecord(entry)
+        for key, value in entry.items():
+            with self.subTest(key=key):
+                self.assertEqual(record.get(key), value)
+                self.assertEqual(record[key], value)
+                self.assertIn(key, record)
+        self.assertEqual(record.get('catalogId'), '1440833098')  # kept as an int, read as text
+        self.assertIsNone(record.get('thumb'))  # absent, as from the dict
+        self.assertEqual(record.get('thumb', 'x'), 'x')
+        self.assertEqual(record.get('nothing', 7), 7)
+        self.assertNotIn('thumb', record)
+        with self.assertRaises(KeyError):
+            record['thumb']  # noqa: B018
+        self.assertEqual(dict(record), entry)
+        self.assertEqual(sorted(record.keys()), sorted(entry))
+
+    def test_catalog_ids_that_are_not_plain_numbers_stay_text(self):
+        for value in ('0123', '12a', '', '١٢٣', None, 42):
+            with self.subTest(value=value):
+                self.assertEqual(TrackRecord({'catalogId': value}).get('catalogId'), value)
+
+    def test_equal_when_the_dicts_are(self):
+        one = track('i.1', 'Song', 0)
+        self.assertEqual(TrackRecord(one), TrackRecord(dict(one)))
+        self.assertNotEqual(TrackRecord(one), TrackRecord(dict(one, title='Other')))
+        self.assertNotEqual(TrackRecord(one), TrackRecord(dict(one, other=1)))
+        without = dict(one)
+        del without['thumb']
+        self.assertNotEqual(TrackRecord(one), TrackRecord(without))  # null is not absent
+
+    def test_a_track_reads_it_as_the_dict(self):
+        entry = dict(track('i.1', 'Song', 4), catalogId=123, explicit=True, type='songs')
+        over_dict, over_record = Track(entry), Track(TrackRecord(entry))
+        for name in ('id', 'catalog-id', 'title', 'artist', 'album', 'track-number',
+                     'disc-number', 'duration-ms', 'duration-label', 'explicit', 'index',
+                     'kind', 'thumb'):
+            with self.subTest(name=name):
+                self.assertEqual(over_record.get_property(name), over_dict.get_property(name))
+        self.assertEqual(over_record.search_key, over_dict.search_key)
+
+    def test_the_parse_keeps_records(self):
+        with tempfile.TemporaryDirectory() as cache:
+            write_library(cache, [album('l.a1', 'A1', ['i.1', 'i.2'])],
+                          playlists=[dict(album('p.1', 'P', ['i.3']), kind='playlist')])
+            Path(cache, 'library.json').write_text(
+                Path(cache, 'library.json').read_text(encoding='utf-8').replace(
+                    '"sections": {', '"sections": {"songs": [{"id": "i.9", "title": "L"}], '),
+                encoding='utf-8')
+            library = load(cache)
+        album_item, playlist_item = library.albums.get_item(0), library.playlists.get_item(0)
+        for item in (album_item, playlist_item):
+            self.assertTrue(all(isinstance(entry, TrackRecord)
+                                for entry in item.raw['groups'][0]['entries']))
+        self.assertIsInstance(library._loose[0], TrackRecord)
+        self.assertEqual([t.id for t in build_songs(library)], ['i.1', 'i.2', 'i.9'])
+        self.assertEqual(library.song_count(), 3)
 
 
 class TestPausedGc(unittest.TestCase):
