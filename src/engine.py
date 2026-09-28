@@ -123,6 +123,7 @@ GROUP_RELATIONSHIPS = {'album': 'tracks', 'playlist': 'tracks', 'artist': 'album
 # The kinds add_to_library() takes (a station is followed, not added).
 ADDABLE_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
 
+
 def _shape_item(raw, cache_dir, generation):
     """In a thread: the API's resource as an Item with groups, its artwork fetched into
     <cache>/remote-art/ (normalize.place_in_remote_art; for the cache of `generation`:
