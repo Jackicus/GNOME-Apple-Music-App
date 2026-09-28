@@ -32,7 +32,8 @@ def fixture(name):
 
 
 class FakeEngine:
-    """What sync_library() asks of the engine: status(), api(), api_pages() and api_all().
+    """What sync_library() asks of the engine: status(), api(), api_pages() and api_all();
+    and start(), which LibrarySync awaits first.
 
     `answers` maps a path to an answer dict, or to a function of the params (for a paged
     endpoint answering by offset). A path with no answer is an api error, as Apple's 404
@@ -46,6 +47,9 @@ class FakeEngine:
         self.authorized = authorized
         self.calls = []
         self.state = 'up'
+
+    async def start(self, visible=None):
+        """Running already: nothing to do, as the Engine's start() says."""
 
     async def status(self):
         return {'ready': True, 'engine': True, 'authorized': self.authorized,
