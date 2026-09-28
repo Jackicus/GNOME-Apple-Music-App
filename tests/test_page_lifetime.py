@@ -152,6 +152,7 @@ def _classes():
         def __init__(self):
             super().__init__(application_id='io.github.jackicus.AppleMusic.LifetimeTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.set_default()  # the pages' app, whichever application another test made first
             self.engine = Engine()
             self.settings = Gio.Settings.new(SCHEMA_ID)
             self.demo = False

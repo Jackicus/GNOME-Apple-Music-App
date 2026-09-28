@@ -54,8 +54,8 @@ When a key or a page changes, change this list and the script together.
 ## Known gaps
 
 - libadwaita's own: `AdwSidebar` names none of its rows in sidebar mode and does not expose a
-  folder's state (the window sets both itself); `AdwShortcutsDialog`'s rows are unnamed (main.py
-  names them); `AdwComboRow` exposes an unnamed inner list item; an open `Adw.BottomSheet`
+  folder's state (the window sets both itself); `AdwShortcutsDialog`'s rows are unnamed
+  (dialogs/shortcuts.py names them); `AdwComboRow` exposes an unnamed inner list item; an open `Adw.BottomSheet`
   leaves the content behind it "showing".
 - Not checked by machine: real key presses and input methods, Orca itself, the high-contrast
   switch live, and right-to-left layouts.

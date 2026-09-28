@@ -32,8 +32,8 @@ One thread runs GTK and asyncio: the GLib main loop is the asyncio loop
 `asyncio.to_thread`; the library file is parsed in a thread of its own.
 
 ```
-Application (main.py)    app.settings, .library, .engine, .player, .mpris, .demo; app.spawn(coro),
-│                        app.toast(), app.report(error), app.player_command(coro)
+Application (main.py)    app.settings, .library, .engine, .player, .mpris, .library_sync, .demo;
+│                        app.spawn(coro), app.toast(), app.report(error), app.player_command(coro)
 ├─ Window (window.py)    AdwBottomSheet > AdwToastOverlay > AdwNavigationSplitView
 │  ├─ sidebar            AdwSidebar: sections.py's destinations, then the Playlists section
 │  │                     (sidebar.py entries over library.playlist_tree())
@@ -64,13 +64,13 @@ GSettings, one schema, so both builds share every setting, `signed-in` included.
 ```
 src/main.py, src/window.py      the Application and the Window
 src/*.py                        services and logic without widgets (engine, player, mpris, sync,
-                                cache, actions, lyrics, shortcuts, sidebar, sections): new ones
-                                go here
+                                account, background, cache, actions, lyrics, shortcuts, sidebar,
+                                sections, timing): new ones go here
 src/library.py                  the data model: GLib, GObject and Gio only, no GTK
 src/pages/<name>.py + .blp      one module per sidebar destination or pushed page (PAGES in
                                 pages/__init__.py)
 src/widgets/                    reusable widgets: tiles, shelves, rows, covers, transport, artwork
-src/dialogs/                    sign-in, preferences
+src/dialogs/                    sign-in, preferences, keyboard shortcuts
 src/backend/                    Chrome, the CDP client, bridge.js, API normalising: stdlib and
                                 asyncio only, never gi (tests/test_backend.py checks)
 src/style.css, src/icons/       the only stylesheet; bundled symbolic icons

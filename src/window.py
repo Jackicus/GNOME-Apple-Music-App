@@ -11,6 +11,7 @@ from .backend.errors import EngineError
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
 from .sidebar import SidebarEntry, SidebarItem, is_shown, parse_key, playlist_entries
+from .sync import progress_text
 
 log = logging.getLogger(__name__)
 
@@ -46,20 +47,6 @@ PLAYBACK_KEYS = _parse_keys(shortcuts.PLAYBACK)
 # playback. (Enter presses a button; Space on a plain button, a tile or a row plays or pauses.)
 SPACE_TOGGLES = (Gtk.ToggleButton, Gtk.Switch, Gtk.CheckButton)
 SPACE_KEYS = (Gdk.KEY_space, Gdk.KEY_KP_Space)
-
-
-def sync_section_names():
-    """What the sync banner calls each progress section (sync.PROGRESS_SECTIONS), translated
-    on call, after gettext is set up."""
-    return {
-        'songs': _('songs'),
-        'playlists': _('playlists'),
-        'folders': _('folders'),
-        'videos': _('music videos'),
-        'radio': _('radio'),
-        'shelves': _('shelves'),
-        'artwork': _('artwork'),
-    }
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/window.ui')
@@ -115,6 +102,12 @@ class Window(Adw.ApplicationWindow):
             self._settings.connect('changed::account-name', self._update_account),
         ]
         self._update_account()
+        # The sync banner follows the app's sync (sync.LibrarySync).
+        library_sync = self.get_application().library_sync
+        self._sync_handlers = [
+            library_sync.connect('progress', self._on_sync_progress),
+            library_sync.connect('notify::running', self._on_sync_running),
+        ]
 
         # The window's actions (their keys are shortcuts.ACCELS, set in main.py). Alt+Left:
         # the navigation views pop on their own only while the focus is in them; this goes
@@ -240,27 +233,15 @@ class Window(Adw.ApplicationWindow):
     def on_banner_sign_in(self, _banner):
         self.get_application().activate_action('sign-in')
 
-    # The sync's progress, on a banner over the content.
+    # The sync's progress, on a banner over the content, while the app's sync runs.
 
-    def show_sync_progress(self, section, done, total):
-        """Reveal the sync banner saying how far the sync is: "Syncing your library: songs
-        300 of 2,000". section is one of sync.PROGRESS_SECTIONS, or None before the first."""
-        name = sync_section_names().get(section)
-        if name is None:
-            title = _('Syncing your library…')
-        elif total:
-            title = _('Syncing your library: {section} {done} of {total}').format(
-                section=name, done=f'{done:n}', total=f'{total:n}')
-        elif done:
-            title = _('Syncing your library: {section} {done}').format(
-                section=name, done=f'{done:n}')
-        else:
-            title = _('Syncing your library: {section}…').format(section=name)
-        self.sync_banner.set_title(title)
+    def _on_sync_progress(self, _sync, section, done, total):
+        self.sync_banner.set_title(progress_text(section, done, total))
         self.sync_banner.set_revealed(True)
 
-    def hide_sync_progress(self):
-        self.sync_banner.set_revealed(False)
+    def _on_sync_running(self, library_sync, _pspec):
+        if not library_sync.props.running:
+            self.sync_banner.set_revealed(False)
 
     def open_item(self, item):
         """Show an album, artist, playlist, folder, category, station, song or video: what
@@ -815,6 +796,10 @@ class Window(Adw.ApplicationWindow):
         for handler in self._settings_handlers:
             self._settings.disconnect(handler)
         self._settings_handlers = []
+        library_sync = self.get_application().library_sync
+        for handler in self._sync_handlers:
+            library_sync.disconnect(handler)
+        self._sync_handlers = []
         self.set_visible(False)
 
     def hide_for_background(self):

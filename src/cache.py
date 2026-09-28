@@ -1,10 +1,12 @@
 """The cache directory (config.cache_dir()): what it holds, what it weighs, clearing it, and the
-JSON answers kept in it. No GTK; every function blocks, so call it in a thread.
+JSON answers kept in it; and removing a directory Chrome may still be writing to (the profile, at
+sign-out). No GTK; every function blocks, so call it in a thread.
 
     size = await asyncio.to_thread(cache_size, config.cache_dir())
     removed = await asyncio.to_thread(clear, config.cache_dir())
     answer = await asyncio.to_thread(read_kept, path)   # a kept answer under a day old, or None
     answer = await asyncio.to_thread(read_kept, path, allow_stale=True)   # older: `stale`
+    await asyncio.to_thread(remove_trees, engine.profile_dir)   # a directory, retried
 
 Every file in it is written through backend/store.py (normalize.write_answer for the kept
 answers and lyrics); what is here reads and removes. normalize.prune_caches trims it.
@@ -14,6 +16,7 @@ import logging
 import math
 import os
 import shutil
+import time
 
 from .backend import normalize, store
 
@@ -97,3 +100,22 @@ def read_kept(path, max_age=normalize.ANSWER_MAX_AGE, touch=False, allow_stale=F
         except OSError as error:
             log.debug('kept answer %s: %s', path, error)
     return answer
+
+
+def remove_trees(*paths, attempts=4, pause=0.5):
+    """Delete directories (in a thread), leaving anything that cannot be deleted. Chrome's
+    helper processes write to the profile for a moment after the browser process has exited
+    (its network service re-created `Default/Network Persistent State` in one run), so a
+    directory that comes back is removed again, a few times, `pause` seconds apart."""
+    for path in paths:
+        if not path:
+            continue
+        for attempt in range(attempts):
+            if not os.path.isdir(path):
+                break
+            if attempt:
+                time.sleep(pause)
+            log.info('removing %s', path)
+            shutil.rmtree(path, ignore_errors=True)
+        if os.path.isdir(path):
+            log.warning('%s could not be removed entirely', path)
