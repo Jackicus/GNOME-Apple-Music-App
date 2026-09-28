@@ -283,6 +283,26 @@ class BridgeTest(unittest.TestCase):
         ])
 
     @scenario("""
+        const modes = [];
+        await bridge.play('album', 'l.alb1', {shuffle: true});
+        modes.push(mk.shuffleMode);
+        await bridge.play('album', 'l.alb1', {startWith: 3});   // a track row: as it is
+        modes.push(mk.shuffleMode);
+        await bridge.play('album', 'l.alb1', {startWith: 3, shuffle: null});
+        modes.push(mk.shuffleMode);
+        await bridge.play('album', 'l.alb1', {shuffle: false});   // Play: in order
+        modes.push(mk.shuffleMode);
+        await bridge.play('album', 'l.alb1', {startWith: 1});
+        modes.push(mk.shuffleMode);
+        delete window.MusicKit.PlayerShuffleMode;   // MusicKit's numbers without the names
+        await bridge.play('album', 'l.alb1', {shuffle: true});
+        modes.push(mk.shuffleMode);
+        return modes;
+    """)
+    def test_play_turns_shuffle_on_off_or_leaves_it(self, value):
+        self.assertEqual(value, [1, 1, 1, 0, 0, 1])
+
+    @scenario("""
         mk.playbackState = 2;
         mk.isPlaying = true;
         mk.nowPlayingItem = SONG;

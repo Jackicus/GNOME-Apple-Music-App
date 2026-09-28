@@ -1123,10 +1123,12 @@ class PlaybackTest(EngineFixture):
         await self.engine.play('album', 'l.alb1')
         await self.engine.play('playlist', 'p.pl1', start_with=3)
         await self.engine.play('station', 'ra.1', shuffle=True)
+        await self.engine.play('album', 'l.alb1', shuffle=False)
         self.assertEqual(self.page.bridge_calls, [
-            ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': False}),
-            ('play', 'playlist', 'p.pl1', {'startWith': 3, 'shuffle': False}),
+            ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': None}),   # as it is
+            ('play', 'playlist', 'p.pl1', {'startWith': 3, 'shuffle': None}),
             ('play', 'station', 'ra.1', {'startWith': 0, 'shuffle': True}),
+            ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': False}),  # in order
         ])
 
     async def test_play_needs_a_signed_in_engine(self):

@@ -19,7 +19,7 @@ UI awaits.
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.unauthorize()          # revoke the session at Apple's (sign-out); True if done
     await engine.account_name()         # the name on the page, or '' (best effort)
-    await engine.play(kind, id, start_with=None, shuffle=False)   # mk.setQueue + mk.play
+    await engine.play(kind, id, start_with=None, shuffle=None)    # mk.setQueue + mk.play
     await engine.play_next(kind, id); await engine.play_later(kind, id)
     await engine.control('toggle')      # play, pause, toggle, next, previous, stop
     await engine.seek(seconds); await engine.volume(level)   # volume answers the level set
@@ -1005,15 +1005,18 @@ class Engine(GObject.Object):
             raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
         return client
 
-    async def play(self, kind, item_id, start_with=None, shuffle=False):
+    async def play(self, kind, item_id, start_with=None, shuffle=None):
         """Play an album, playlist, station, song, musicVideo or artist (its top songs) by
-        id, from queue position `start_with` (a track row), shuffled when asked: the
-        bridge's play(), that is mk.setQueue({kind: id, startWith, startPlaying}) and
-        mk.play(). Needs a signed-in engine: library ids and full songs are the account's."""
+        id, from queue position `start_with` (a track row): the bridge's play(), that is
+        mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `shuffle` True turns
+        MusicKit's shuffle on (a Shuffle button), False off (a Play button plays in order),
+        None leaves it as it is (a track row). Needs a signed-in engine: library ids and
+        full songs are the account's."""
         client = await self._require_signed_in('play')
         if not kind or item_id in (None, ''):
             raise EngineError('usage', 'play needs a kind and an id')
-        options = {'startWith': int(start_with or 0), 'shuffle': bool(shuffle)}
+        options = {'startWith': int(start_with or 0),
+                   'shuffle': None if shuffle is None else bool(shuffle)}
         await client.bridge('play', str(kind), str(item_id), options, timeout=PLAY_TIMEOUT)
 
     async def play_next(self, kind, item_id):
