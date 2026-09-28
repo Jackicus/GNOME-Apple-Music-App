@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import OrderedDict
 from gettext import gettext as _
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
@@ -17,6 +18,10 @@ log = logging.getLogger(__name__)
 PLAYLISTS = 'all-playlists'
 # The fixed destination showing the Favourite Songs playlist, which has a playlist's menu too.
 FAVOURITE_SONGS = 'favourite-songs'
+# The sidebar playlists' and folders' root pages kept once shown: past this many, the least
+# recently shown is dropped (and freed), and built again if it is shown again. The fixed
+# destinations' pages are kept for good.
+ROOT_LIMIT = 8
 
 
 def _parse_keys(table):
@@ -84,6 +89,7 @@ class Window(Adw.ApplicationWindow):
         self._destination_keys = {}  # key -> Destination, every fixed destination
         self._items_by_key = {}  # key -> Adw.SidebarItem, the fixed sections'
         self._roots = {}  # sidebar key -> its root Adw.NavigationPage, once visited
+        self._recent_roots = OrderedDict()  # playlist/folder keys in _roots, least recent first
         self._positions = {}  # sidebar key -> position in the Playlists section
         self._expanded = set(self._settings.get_strv('expanded-folders'))
         self._shown = None  # the key whose root page is at the bottom of the navigation stack
@@ -486,8 +492,7 @@ class Window(Adw.ApplicationWindow):
             if entry is not None:
                 page.set_title(entry.title)  # a renamed playlist or folder
             elif key != self._shown:
-                self.navigation_view.remove(page)
-                del self._roots[key]
+                self._drop_root(key)
         self.content_page.set_title(self._roots[self._shown].get_title())
 
     def _entry(self, key):
@@ -510,7 +515,9 @@ class Window(Adw.ApplicationWindow):
         return destination.key if destination is not None else None
 
     def _root(self, key):
-        """The root page for a sidebar key, built on its first visit and kept in the view."""
+        """The root page for a sidebar key, built on its first visit and kept in the view: a
+        fixed destination's for good, a playlist's or a folder's while it is among the
+        ROOT_LIMIT most recently shown (_trim_roots)."""
         page = self._roots.get(key)
         if page is None:
             destination = self._destination_keys.get(key)
@@ -531,7 +538,37 @@ class Window(Adw.ApplicationWindow):
             page.set_tag(key)
             self.navigation_view.add(page)
             self._roots[key] = page
+        if parse_key(key) is not None:
+            self._recent_roots[key] = None
+            self._recent_roots.move_to_end(key)
+            self._trim_roots(key)
         return page
+
+    def _trim_roots(self, keep):
+        """Drop the least recently shown playlist and folder root pages past ROOT_LIMIT, but
+        never keep's, the one shown or one in the navigation stack."""
+        surplus = len(self._recent_roots) - ROOT_LIMIT
+        if surplus <= 0:
+            return
+        stack = self.navigation_view.get_navigation_stack()
+        in_stack = [stack.get_item(position) for position in range(stack.get_n_items())]
+        for key in list(self._recent_roots):
+            if surplus <= 0:
+                break
+            if key in (keep, self._shown):
+                continue
+            page = self._roots[key]
+            if any(page is shown for shown in in_stack):
+                continue
+            self._drop_root(key)
+            surplus -= 1
+
+    def _drop_root(self, key):
+        """Remove a root page from the view and forget it: nothing else holds it, so it is
+        freed (widgets/util.py)."""
+        page = self._roots.pop(key)
+        self._recent_roots.pop(key, None)
+        self.navigation_view.remove(page)
 
     def _placeholder_page(self, destination):
         status = Adw.StatusPage(
