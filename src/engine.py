@@ -56,12 +56,11 @@ EngineError('engine-down') at once.
 The browser command (`browser_command`) and the preferred mode (`prefer_headless`) are read
 when Chrome is spawned, so a change applies at the next start and a running Chrome is left
 alone. APPLE_MUSIC_DEBUG_PORT, when set, also opens DevTools on that port of 127.0.0.1 for a
-developer (scripts/am.py --attach), with a warning at every start. cache_size() and
-clear_cache() measure and empty the cache directory (CACHE_ENTRIES), in a thread.
+developer (scripts/am.py --attach), with a warning at every start. What the cache holds and
+how it is cleared is src/cache.py's.
 """
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -72,6 +71,7 @@ from pathlib import Path
 
 from gi.repository import Gio, GLib, GObject
 
+from . import cache
 from .backend import chrome, config, normalize, store
 from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
@@ -98,7 +98,6 @@ SEARCH_TIMEOUT = 30.0     # a catalog search, its suggestions, the landing or a 
 BROWSE_TIMEOUT = 60.0     # the editorial groupings: a big answer
 SEARCH_LIMIT = 20         # hits per kind
 SUGGEST_LIMIT = 10        # completions and top hits while typing
-ANSWER_MAX_AGE = 24 * 60 * 60   # a kept landing, category, browse or made-for-you answer
 
 # The New page: the editorial groupings behind music.apple.com's own (the request it makes,
 # less its field selections and `format[resources]=map`, which flattens the answer).
@@ -107,13 +106,6 @@ BROWSE_PARAMS = {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork
 # Made for You: the recommendations, of which the mixes and stations are kept.
 RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
 RECOMMENDATIONS_PARAMS = {'limit': 25}
-
-# What the cache directory holds (config.cache_dir()), all of it fetched again as needed: the
-# library, its artwork (covers, thumbnails, remote art), lyrics, and the day-long answers
-# (landing, categories, the New page, Made for You). `items` and `library.lock` are what older
-# versions kept there (items' answers, the sync's lock), cleared with the rest.
-CACHE_ENTRIES = ('library.json', 'art', 'thumb', 'remote-art', 'lyrics', 'landing.json',
-                 'categories', 'browse.json', 'made-for-you.json', 'items', 'library.lock')
 
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
@@ -168,49 +160,6 @@ ACCOUNT_NAME_JS = r"""(() => {
   }
   return null;
 })()"""
-
-
-def cache_size(path):
-    """In a thread: the bytes the files under `path` hold (their sizes; symlinks are not
-    followed), 0 when it is not there."""
-    total = 0
-    stack = [str(path)]
-    while stack:
-        try:
-            entries = os.scandir(stack.pop())
-        except OSError:
-            continue
-        with entries:
-            for entry in entries:
-                try:
-                    if entry.is_dir(follow_symlinks=False):
-                        stack.append(entry.path)
-                    elif entry.is_file(follow_symlinks=False):
-                        total += entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    continue
-    return total
-
-
-def clear_cache(path, entries=CACHE_ENTRIES):
-    """In a thread: delete `entries` (CACHE_ENTRIES) under `path`, the cache directory,
-    leaving anything else there. Answers how many were there to delete;
-    what cannot be deleted is logged and left."""
-    removed = 0
-    for name in entries:
-        target = os.path.join(str(path), name)
-        try:
-            if os.path.isdir(target) and not os.path.islink(target):
-                shutil.rmtree(target)
-            elif os.path.lexists(target):
-                os.remove(target)
-            else:
-                continue
-            removed += 1
-        except OSError as error:
-            log.warning('could not remove %s: %s', target, error)
-    log.info('cache cleared: %d of %d entries were there', removed, len(entries))
-    return removed
 
 
 def is_library_id(item_id):
@@ -332,31 +281,6 @@ def _shape_and_keep(shaper, raw, path, cache_dir, generation):
     """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)
     unless the cache was cleared since `generation`."""
     return normalize.write_answer(path, shaper(raw, cache_dir), cache_dir, generation)
-
-
-def _read_kept(path):
-    """In a thread: the answer kept at path when it is younger than ANSWER_MAX_AGE."""
-    answer = normalize.read_answer(path, ANSWER_MAX_AGE)
-    return answer if isinstance(answer, dict) else None
-
-
-def _read_json(path):
-    """In a thread: the JSON at path, or None when it is not there or not JSON."""
-    try:
-        with open(path, encoding='utf-8') as file:
-            return json.load(file)
-    except (OSError, ValueError):
-        return None
-
-
-def _write_json(path, data, root, generation=None):
-    """In a thread: `data` as JSON at path (under the cache `root`), atomically, the directory
-    made first, unless the cache was cleared since `generation`; a failure is logged."""
-    try:
-        store.atomic_write(path, lambda file: json.dump(data, file, ensure_ascii=False),
-                           root=root, text=True, generation=generation)
-    except (OSError, ValueError) as error:
-        log.warning('could not keep %s: %s', path, error)
 
 
 def _exit_status(process):
@@ -1175,14 +1099,14 @@ class Engine(GObject.Object):
         if not CATALOG_ID_RE.fullmatch(catalog_song_id):
             raise EngineError('usage', 'lyrics need a catalog song id')
         path = self.lyrics_path(catalog_song_id)
-        cached = await asyncio.to_thread(_read_json, path)
+        cached = await asyncio.to_thread(cache.read_json, path)
         if isinstance(cached, dict) and cached.get('lines'):
             return lyrics_answer(cached)
         client = await self._ready()
         answer = lyrics_answer(
             await client.bridge('lyrics', catalog_song_id, timeout=LYRICS_TIMEOUT))
         if answer['lines']:
-            await asyncio.to_thread(_write_json, path, answer, self.cache_dir, generation)
+            await asyncio.to_thread(cache.write_json, path, answer, self.cache_dir, generation)
         return answer
 
     # -- ratings and the library ---------------------------------------------------------
@@ -1290,7 +1214,8 @@ class Engine(GObject.Object):
     # -- search and browsing -------------------------------------------------------------
     # As am.py's search, suggest, landing and category commands were, plus browse (the New
     # page) and made_for_you. Every one needs a signed-in engine, but a kept answer (the
-    # landing, a category, browse and made-for-you are kept for ANSWER_MAX_AGE) is answered
+    # landing, a category, browse and made-for-you are kept for normalize.ANSWER_MAX_AGE) is
+    # answered
     # without one. The shaping (backend.normalize) runs in a thread: it stats the artwork cache.
 
     async def search(self, term, library=False, limit=SEARCH_LIMIT, suggest=0):
@@ -1344,7 +1269,7 @@ class Engine(GObject.Object):
         and kept there. `refresh` asks Apple again."""
         generation = store.cache_generation()
         path = self._kept_path(normalize.landing_cache_path(str(self.cache_dir)))
-        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
         client = await self._require_signed_in()
@@ -1362,7 +1287,7 @@ class Engine(GObject.Object):
         if not category_id:
             raise EngineError('usage', 'category needs an id')
         path = self._kept_path(normalize.category_cache_path(str(self.cache_dir), category_id))
-        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
         client = await self._require_signed_in()
@@ -1379,7 +1304,7 @@ class Engine(GObject.Object):
         <cache>/browse.json for a day, else fetched and kept."""
         generation = store.cache_generation()
         path = self._kept_path(normalize.browse_cache_path(str(self.cache_dir)))
-        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
         client = await self._require_signed_in()
@@ -1396,7 +1321,7 @@ class Engine(GObject.Object):
         fetched and kept."""
         generation = store.cache_generation()
         path = self._kept_path(normalize.made_for_you_cache_path(str(self.cache_dir)))
-        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
         client = await self._require_signed_in()

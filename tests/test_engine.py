@@ -29,6 +29,7 @@ from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic pac
 
 from gi.events import GLibEventLoop
 
+from applemusic import cache as cache_module
 from applemusic import engine as engine_module
 from applemusic.backend import chrome, normalize, store
 from applemusic.backend import client as client_module
@@ -1478,45 +1479,6 @@ class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pathlib.Path('/nowhere/chrome').exists())
 
 
-class CacheTest(unittest.TestCase):
-    """cache_size() and clear_cache() over an invented cache directory."""
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = pathlib.Path(tmp.name)
-        self.cache = self.root / 'cache'
-        files = {
-            'library.json': 100, 'library.lock': 0, 'landing.json': 10, 'browse.json': 10,
-            'made-for-you.json': 10, 'art/l.alb1.jpg': 1000, 'art/.sizes': 20,
-            'thumb/l.alb1.jpg': 300, 'remote-art/abc.jpg': 400, 'items/album-1.json': 50,
-            'lyrics/1000000001.json': 30, 'categories/c1.json': 40, 'notes.txt': 5,
-        }
-        for name, size in files.items():
-            path = self.cache / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b'x' * size)
-        self.total = sum(files.values())
-        # A link to something outside: neither counted nor followed, only removed.
-        self.outside = self.root / 'outside'
-        self.outside.mkdir()
-        (self.outside / 'big.bin').write_bytes(b'x' * 5000)
-        (self.cache / 'art' / 'elsewhere').symlink_to(self.outside)
-
-    def test_size_adds_up_the_files(self):
-        self.assertEqual(engine_module.cache_size(self.cache), self.total)
-        self.assertEqual(engine_module.cache_size(self.root / 'missing'), 0)
-
-    def test_clear_removes_the_cache_and_leaves_the_rest(self):
-        removed = engine_module.clear_cache(self.cache)
-        self.assertEqual(removed, len(engine_module.CACHE_ENTRIES))
-        self.assertEqual(sorted(p.name for p in self.cache.iterdir()), ['notes.txt'])
-        self.assertTrue((self.outside / 'big.bin').is_file())  # the link's target stays
-        self.assertEqual(engine_module.cache_size(self.cache), 5)
-        self.assertEqual(engine_module.clear_cache(self.cache), 0)  # nothing left to clear
-        self.assertEqual(engine_module.clear_cache(self.root / 'missing'), 0)
-
-
 class KeptAfterWipeTest(unittest.TestCase):
     """The engine's writers keep nothing for a cache cleared since their command began."""
 
@@ -1530,8 +1492,7 @@ class KeptAfterWipeTest(unittest.TestCase):
                                                str(cache / 'browse.json'), str(cache),
                                                generation)
         self.assertEqual(answer['shelves'], [])
-        engine_module._write_json(cache / 'lyrics' / '1.json', {'lines': []}, cache,
-                                  generation)
+        cache_module.write_json(cache / 'lyrics' / '1.json', {'lines': []}, cache, generation)
         self.assertEqual(list(cache.iterdir()), [])
 
 

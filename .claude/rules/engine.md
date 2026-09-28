@@ -74,6 +74,8 @@ paths:
   .Devel build `chrome-devel` and `apple-music-devel`. `APPLE_MUSIC_PROFILE` and
   `APPLE_MUSIC_CACHE` override them, read on every call. The builds share every setting,
   `signed-in`, `account-name` and `last-sync` included.
+- The cache: src/cache.py knows what it holds (`CACHE_ENTRIES`), measures and clears it (the
+  entries and `*.tmp` leftovers, never an unrelated file) and reads and writes its JSON.
 - Cache writes: every file in the cache goes through `backend/store.py` (`atomic_write`, or
   `atomic_create` for a writer that wants a path, such as the thumbnail scaler): a dot-named
   temporary file beside the target, fsync'd (not artwork, a copy that counts as missing when

@@ -64,7 +64,8 @@ GSettings, one schema, so both builds share every setting, `signed-in` included.
 ```
 src/main.py, src/window.py      the Application and the Window
 src/*.py                        services and logic without widgets (engine, player, mpris, sync,
-                                actions, lyrics, shortcuts, sidebar, sections): new ones go here
+                                cache, actions, lyrics, shortcuts, sidebar, sections): new ones
+                                go here
 src/library.py                  the data model: GLib, GObject and Gio only, no GTK
 src/pages/<name>.py + .blp      one module per sidebar destination or pushed page (PAGES in
                                 pages/__init__.py)
