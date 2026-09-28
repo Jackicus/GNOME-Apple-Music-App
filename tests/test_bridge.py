@@ -229,6 +229,20 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(value, {'menu': 'Jo Bloggs', 'signingIn': None, 'footer': None,
                                  'fallback': 'Sam', 'none': None})
 
+    @scenario("""
+        const done = await bridge.signout();
+        const calls = mk.calls.map(call => call[0]);
+        mk.failures.unauthorize = new Error('Network error');
+        const refused = await bridge.signout();
+        delete window.MusicKit;
+        return {done, calls, refused, missing: await bridge.signout()};
+    """)
+    def test_signout_revokes_the_session(self, value):
+        self.assertEqual(value['done'], {'ok': True})
+        self.assertEqual(value['calls'], ['unauthorize'])
+        self.assertEqual(value['refused'], {'error': 'Network error'})
+        self.assertEqual(value['missing'], {'error': 'MusicKit not initialized'})
+
     # -- playback --------------------------------------------------------------------------
 
     @scenario("""

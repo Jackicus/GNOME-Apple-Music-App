@@ -148,6 +148,11 @@ paths:
   through `engine._process_exit()`. Chrome's helpers write to the profile for a moment after the
   browser exits, so deleting the profile retries. `scripts/am.py` runs this same Engine on
   gi.events' loop (`loop_factory=GLibEventLoop`); its modes are in scripts.md.
+- `unauthorize()` (the bridge's `signout()`, MusicKit's `unauthorize()`) revokes the Apple
+  session at Apple's end; sign-out calls it before wiping anything. Best effort: it answers
+  False and logs a warning when it cannot (engine down, page slow, MusicKit refusing), and
+  never raises. MusicKit's real answer is unverified here: never try it on the real account
+  (it signs the profile out).
 - `account_name()` is best effort: the bridge's `accountName()` reads only selectors that
   name the user (`.account-menu .user__name` first) and answers null while a sign-in control
   is on the page, whatever its language; else ''. Apple's page is Svelte with hashed class

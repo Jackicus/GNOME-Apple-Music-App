@@ -77,6 +77,8 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 |---|---|
 | `engine start [--visible\|--headless]`, `engine stop`, `engine status` | `{running, pid, port, headless}` |
 | `signin` | Restarts the engine visible at music.apple.com and calls `mk.authorize()`. `{authorized}` |
+| (bridge only) `signout()` | `{ok: true}` or `{error}`, never a throw — `mk.unauthorize()`, which revokes the session at Apple's end; the app's sign-out calls it (`Engine.unauthorize()`) before forgetting the account |
+| (bridge only) `accountName()` | the account's name as the signed-in page shows it, or null (none while a sign-in control is on the page) |
 | `status` | `{engine, authorized, storefront, bitrate}` |
 | `sync [--only albums\|artists\|playlists\|radio\|shelves]` | Fetches the missing artwork in threads at the `cover-size`/`thumb-size` settings, then writes library.json once (atomically: a temporary file renamed over it), then prunes: the artwork nothing names, and `remote-art/` to a budget. `{counts, generated}` |
 | `item <kind> <id>` | One full item with its `groups`, for a shelf or search result picked on demand; fetches its artwork too |

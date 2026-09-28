@@ -17,6 +17,7 @@ UI awaits.
     await engine.item(kind, id)         # a full Item with all its groups, its artwork fetched
                                         # (into <cache>/remote-art/ unless the library has it)
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
+    await engine.unauthorize()          # revoke the session at Apple's (sign-out); True if done
     await engine.account_name()         # the name on the page, or '' (best effort)
     await engine.play(kind, id, start_with=None, shuffle=False)   # mk.setQueue + mk.play
     await engine.play_next(kind, id); await engine.play_later(kind, id)
@@ -104,6 +105,7 @@ BROWSE_TIMEOUT = 60.0     # the editorial groupings: a big answer
 SEARCH_LIMIT = 20         # hits per kind
 SUGGEST_LIMIT = 10        # completions and top hits while typing
 ACCOUNT_NAME_POLL = 0.5   # the account name is looked for this often while waiting for it
+UNAUTHORIZE_TIMEOUT = 5.0  # MusicKit revoking the session, at sign-out
 
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
@@ -949,6 +951,27 @@ class Engine(GObject.Object):
             log.debug('authorize answered %r', result)
         except EngineError as e:
             log.debug('authorize: %s', e)
+
+    async def unauthorize(self, timeout=UNAUTHORIZE_TIMEOUT):
+        """Sign out of Apple Music in the page: the bridge's signout(), MusicKit's
+        unauthorize(), which revokes the session at Apple's end, so a copy of it stops
+        working too. Sign-out calls it before the app forgets the account. Best effort: True
+        when MusicKit said it was done; False when it could not be (the engine down, the page
+        failing or slow, MusicKit refusing), logged at WARNING. It never raises an
+        EngineError."""
+        try:
+            client = await self._ready()
+            answer = await client.bridge('signout', timeout=timeout)
+        except EngineError as e:
+            log.warning('could not sign out of Apple Music: %s', e)
+            return False
+        if isinstance(answer, dict) and answer.get('ok'):
+            log.info('signed out of Apple Music')
+            self.authorized = False
+            return True
+        error = answer.get('error') if isinstance(answer, dict) else None
+        log.warning('could not sign out of Apple Music: %s', error or 'no answer')
+        return False
 
     async def account_name(self, wait=0):
         """The account's display name as the signed-in page shows it (the bridge's
