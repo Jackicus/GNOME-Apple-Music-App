@@ -46,5 +46,7 @@ paths:
   own: installs use `--skip-subprojects`.
 - CI (`.github/workflows/ci.yml`) installs its dependencies with pacman in an Arch Linux
   container and runs `xvfb-run scripts/check.sh`. A new build or test dependency goes on its
-  pacman line too.
+  pacman line too. It has no Chrome, and the tests need none (tests.md).
+- Nothing installed (the launcher, the desktop file, the PKGBUILD, the Flatpak manifest) sets
+  `APPLE_MUSIC_DEBUG_PORT`: it opens the signed-in session to every local program (engine.md).
 - Release steps (version, metainfo release notes, tag, tarball, AUR) are in docs/release.md.

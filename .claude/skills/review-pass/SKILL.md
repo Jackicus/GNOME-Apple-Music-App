@@ -21,7 +21,8 @@ Review pass over: $ARGUMENTS
    - user-visible strings without `_()`; files missing from `po/POTFILES.in`,
      `src/meson.build` or the gresource;
    - an exception that can reach the user as a traceback instead of a toast; an engine command
-     that can run while the engine is still starting;
+     that skips `await self._ready()`, or a caller that checks `engine.state` where the command
+     would wait for a start in progress;
    - Chrome or MusicKit reached other than through `app.engine`; anything polling MusicKit;
    - custom CSS where a libadwaita style class exists, CSS outside `src/style.css`, hard-coded
      colours;

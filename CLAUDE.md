@@ -16,14 +16,14 @@ This file holds rules and pointers. A module's API is in its docstring, area rul
 ## The one hard constraint
 
 Apple Music streams are Widevine-protected. WebKitGTK cannot play them and Apple offers no public
-streaming API, so the app cannot embed music.apple.com in a WebView. The playback engine is
-Google Chrome (the real build, which ships Widevine; Chromium does not), started by the app with
-a private profile and showing music.apple.com. The app drives Apple's own MusicKit JS in that
-page over the Chrome DevTools Protocol (CDP), through an injected `src/backend/bridge.js`, and
-hears MusicKit's events through a CDP binding. Chrome is visible once, for sign-in, and headless
-after that (unless the `engine-headless` setting is off); the sound comes out of Chrome. The app
-is one long-running process with one persistent, asynchronous CDP connection. `src/backend/`
-started as a copy of the owner's GNOME Shell extension's backend and is now a fork this app owns.
+streaming API, so the app cannot embed music.apple.com in a WebView. The playback engine is Google
+Chrome (the real build, which ships Widevine; Chromium does not), started by the app with a private
+profile, showing music.apple.com. The app drives Apple's own MusicKit JS in that page over the
+Chrome DevTools Protocol (CDP) on a pipe (no port), through an injected `src/backend/bridge.js`,
+and hears MusicKit's events through a CDP binding. Chrome is visible once, for sign-in, and
+headless after that (unless `engine-headless` is off); the sound comes out of Chrome. The app is
+one long-running process with one persistent, asynchronous CDP connection. `src/backend/` started
+as a copy of the owner's GNOME Shell extension's backend and is now a fork this app owns.
 
 ## Architecture
 
@@ -43,8 +43,8 @@ Application (main.py)    app.settings, .library, .engine, .player, .mpris, .demo
 │  └─ item_actions       win.item-* actions, context menus (actions.py, widgets/context_menu.py)
 ├─ Library (library.py)  Item/Track GObjects in Gio.ListStores from the cache's library.json;
 │                        sync.py fetches and writes it; reload() keeps objects, notifies changes
-├─ Engine (engine.py)    Chrome (Gio.Subprocess) + backend CDPClient ─► bridge.js ─► MusicKit;
-│                        commands are coroutines; MusicKit events are re-emitted as `event`
+├─ Engine (engine.py)    Chrome (Gio.Subprocess, CDP on its pipe) + CDPClient ─► bridge.js ─►
+│                        MusicKit; commands are coroutines; MusicKit events re-emitted as `event`
 ├─ Player (player.py)    what is playing, as GObject properties fed by engine events; the bar,
 │                        the sheet and MPRIS follow its notify:: signals; nothing polls MusicKit
 └─ Mpris (mpris.py)      org.mpris.MediaPlayer2.<app id> on the session bus
@@ -55,8 +55,8 @@ Pages reach the app through the window's seams (`self.get_root()`): `open_item(i
 (every "play this"), `add_toast(toast)` and `item_actions`, not its internals.
 
 On disk: `$XDG_CACHE_HOME/apple-music/` (library.json, art/, thumb/, remote-art/, items/,
-lyrics/, day-long page answers), shared by both builds; `$XDG_DATA_HOME/apple-music/chrome/`
-(the Chrome profile; `chrome-devel/` for .Devel); `$XDG_RUNTIME_DIR/apple-music/engine.json`;
+lyrics/, day-long page answers; `apple-music-devel/` for .Devel);
+`$XDG_DATA_HOME/apple-music/chrome/` (the Chrome profile; `chrome-devel/` for .Devel);
 GSettings, one schema, so both builds share every setting, `signed-in` included.
 
 ## Where things go
@@ -99,7 +99,7 @@ scripts/a11y_check.py [--size 360x640] [--names]  the keyboard checklist and unn
 scripts/demo_library.py --cache build/demo-big --albums 3000 --playlists 300 --tracks 40000
                              a big invented library for measuring; then scripts/bench.py (startup,
                              page switches, memory) and scripts/scroll_test.py (per-frame work)
-scripts/am.py --help         the engine without the GUI, on the app's real profile
+scripts/am.py --help         the engine, no GUI: its own Chrome on the real profile, or --attach
 meson setup _build --prefix=/usr && meson compile -C _build
 sudo meson install -C _build --skip-subprojects
                              a system install, release profile, in a build directory of its own:
@@ -121,8 +121,8 @@ sudo meson install -C _build --skip-subprojects
   `backend.chrome` and `backend.client`; the rest of the app may import the backend's pure parts
   (`config`, `errors`, `sync`). Playback goes through `app.player`.
 - **Errors**: engine failures are `EngineError(code)`, codes in `src/backend/errors.py`
-  (`engine-down`, `not-signed-in`, `api`, `timeout`, `usage`). The user sees a toast
-  (`app.report(error)`), never a traceback.
+  (`engine-down`, `no-browser`, `not-signed-in`, `api`, `timeout`, `usage`). The user sees a
+  toast (`app.report(error)`), never a traceback.
 - **UI**: widget templates are Blueprint, `Gtk.Template` classes with
   `__gtype_name__ = 'AppleMusic<Name>'`. libadwaita widgets and style classes come before custom
   CSS, and CSS goes only in `src/style.css`. Follow the GNOME HIG. A widget that can be dropped
@@ -142,14 +142,14 @@ sudo meson install -C _build --skip-subprojects
   Ctrl+Left) must not be an application accelerator: GTK runs those before the focused widget,
   so typing would trigger them.
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
-  saves the window state and stops Chrome, which would otherwise keep running.
+  saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
 - **Demo mode** (`--demo`, `app.demo`) has no engine: every engine command raises
   `engine-down`, and nothing in it may start Chrome or read the real cache.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`). Beyond ruff: 4-space indents, no
   type annotations, a docstring where a module or function is not obvious, and comments that
-  describe the code as it is (no phase numbers, review IDs or plans). `src/backend/cdp.py` and
-  `sync.py` keep the extension's style until they are reformatted.
+  describe the code as it is (no phase numbers, review IDs or plans). `src/backend/sync.py`
+  keeps the extension's style until it is reformatted.
 - **Tests**: stdlib `unittest` in `tests/test_<module>.py`. Keep logic in non-widget classes and
   pure functions, tested with stand-ins; widget tests go through `tests/gtk.py`. Backend, model
   and service changes come with a test.
@@ -159,20 +159,20 @@ sudo meson install -C _build --skip-subprojects
 - The repository is public. No real account data in code, tests, fixtures, docs, logs or
   committed screenshots: no names, playlist or song titles, library IDs, tokens, artwork, or
   anything from the cache or the Chrome profile. Fixtures and the demo library are invented.
-- Live data stays outside the repo: `$XDG_CACHE_HOME/apple-music`, `$XDG_DATA_HOME/apple-music`,
-  `$XDG_RUNTIME_DIR/apple-music` and the app's GSettings (`account-name`, `last-page` and
+- Live data stays outside the repo: `$XDG_CACHE_HOME/apple-music` (and `apple-music-devel`),
+  `$XDG_DATA_HOME/apple-music` and the app's GSettings (`account-name`, `last-page` and
   `expanded-folders` hold names and IDs). `build/` is git-ignored.
 - `scripts/run.sh`, `scripts/am.py`, and `scripts/screenshot.py` without `--demo` use the real
   profile or cache. Use `scripts/demo.sh` and `--demo` unless the task needs the real engine.
+  `APPLE_MUSIC_DEBUG_PORT` opens the signed-in session to every local program: live checks only.
 - Don't write to a real Apple account (love, add to library or a playlist, sign out, clear the
   cache) unless the task asks for it, and put back anything you change.
 
 ## Verifying a change
 
 1. `scripts/check.sh` passes. CI (`.github/workflows/ci.yml`) runs it on every push to main and
-   every pull request, in an Arch Linux container under Xvfb with software rendering and no
-   accessibility bus: widget tests must pass there. The engine tests look Chrome up on PATH
-   without running it; CI installs a stub, and a machine with no Chrome fails them.
+   every pull request, in an Arch Linux container under Xvfb with software rendering, no
+   accessibility bus and no Chrome: widget tests must pass there.
 2. Anything visible: `scripts/screenshot.py build/<name>.png --demo --page KEY` (or
    `--open album:first`), then look at the PNG with the Read tool; also `--light`, and
    `--size 360x640` (the narrowest supported width) for anything adaptive.

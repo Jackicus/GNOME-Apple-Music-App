@@ -181,8 +181,6 @@ end to end.
 
 ## Keeping tests and dev runs off the real profile
 
-| Variable | Overrides |
-|---|---|
 Read by `config.py` on every call:
 
 | Variable | Overrides |
