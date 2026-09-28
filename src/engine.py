@@ -7,7 +7,8 @@ UI awaits.
                                         # engine is kept in whichever mode it runs
     await engine.start(visible=True)    # a window instead (sign-in); restarts if it was headless
     await engine.restart(visible=False)
-    await engine.stop()                 # SIGTERM, 5 s, SIGKILL
+    await engine.stop()                 # Browser.close, then SIGTERM, 5 s, SIGKILL
+    await engine.stop(grace=1)          # a shorter wait after SIGTERM (quitting)
     await engine.status()               # {ready, engine, authorized, storefront, bitrate}
     await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
     await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
@@ -80,6 +81,7 @@ STATES = ('down', 'starting', 'up', 'signing-in')
 PAGE_WAIT = 20.0          # a new Chrome showing music.apple.com
 BRIDGE_WAIT = 15.0        # a fresh page loading MusicKit
 CDP_TIMEOUT = 30.0        # a CDP call without a timeout of its own
+CLOSE_WAIT = 2.0          # Chrome closing on Browser.close, before SIGTERM
 STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
@@ -394,6 +396,7 @@ class Engine(GObject.Object):
         # sign-in asks for a window whatever this says.
         self.prefer_headless = True
         self.stop_grace = STOP_GRACE
+        self.close_wait = CLOSE_WAIT
         self.api_retry_delay = API_RETRY_DELAY
         self._client = None
         self._process = None   # the Gio.Subprocess running Chrome
@@ -540,26 +543,31 @@ class Engine(GObject.Object):
             if self._client is client:
                 await self._stop()
 
-    async def stop(self):
-        """End Chrome: the connection closed, SIGTERM, up to stop_grace seconds, then
-        SIGKILL. Nothing to do when it is down."""
+    async def stop(self, grace=None):
+        """End Chrome: Browser.close over the pipe and up to close_wait seconds for it to go,
+        then SIGTERM, up to `grace` seconds (stop_grace), SIGKILL. Nothing to do when it is
+        down. Chrome's process is kept until it has gone, so a stop cancelled on its way (a
+        bounded quit) still leaves kill() something to kill."""
         if self.demo:
             return
         async with self._lock:
-            await self._stop()
+            await self._stop(grace)
 
-    async def _stop(self):
+    async def _stop(self, grace=None):
         client, self._client = self._client, None
         watch, self._watch = self._watch, None
         if watch is not None and watch is not asyncio.current_task():
             watch.cancel()
+        process = self._process
         if client is not None:
             client.off(EVENT_PREFIX + '*', self._on_bridge_event)
+            if process is not None and client.connected:
+                await self._close_browser(client, process)
             await client.close()
-        pid, self._pid = self._pid, None
-        process, self._process = self._process, None
         if process is not None:
-            await self._terminate(pid, process)
+            await self._terminate(self._pid, process, grace)
+            if self._process is process:
+                self._pid = self._process = None
         else:
             await self._end_owner()  # stopping an engine that was never started here
         relay, self._relay = self._relay, None
@@ -571,16 +579,29 @@ class Engine(GObject.Object):
         self.authorized = False
         self.state = 'down'
 
-    async def _terminate(self, pid, process):
-        """SIGTERM this process's Chrome, wait, SIGKILL."""
+    async def _close_browser(self, client, process):
+        """Browser.close over the pipe, and close_wait seconds in all for Chrome to exit."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.close_wait
+        try:
+            await client.call('Browser.close', browser=True, timeout=self.close_wait)
+        except EngineError as e:  # the answer may not make it out before Chrome is gone
+            log.debug('Browser.close: %s', e)
+        await self._wait_exit(process, max(0.0, deadline - loop.time()))
+
+    async def _terminate(self, pid, process, grace=None):
+        """SIGTERM this process's Chrome, up to `grace` seconds (stop_grace), SIGKILL, and as
+        long again for it to be gone."""
         if process.get_identifier() is None:
             return  # gone already, and reaped
+        grace = self.stop_grace if grace is None else grace
         log.info('stopping Chrome %d', pid)
         self._signal(process, signal.SIGTERM)
-        if not await self._wait_exit(process, self.stop_grace):
-            log.warning('Chrome %d ignored SIGTERM for %g s; killing it', pid, self.stop_grace)
+        if not await self._wait_exit(process, grace):
+            log.warning('Chrome %d ignored SIGTERM for %g s; killing it', pid, grace)
             self._signal(process, signal.SIGKILL)
-            await self._wait_exit(process, self.stop_grace)
+            if not await self._wait_exit(process, max(grace, 1.0)):
+                log.warning('Chrome %d is still there after SIGKILL', pid)
 
     async def _end_owner(self):
         """End a Chrome this process did not start that holds the profile (its SingletonLock

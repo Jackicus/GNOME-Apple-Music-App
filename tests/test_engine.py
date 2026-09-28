@@ -209,6 +209,7 @@ class EngineFixture(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
         self.engine = TestEngine(profile_dir=self.profile)
         self.engine.stop_grace = 0.5
+        self.engine.close_wait = 0.2
         self.engine.api_retry_delay = self.api_retry_delay
         self.states = []
         self.engine.connect('notify::state', lambda e, _p: self.states.append(e.state))
@@ -304,10 +305,14 @@ class LifecycleTest(EngineFixture):
     async def test_stop_ends_chrome_and_forgets_it(self):
         await self.engine.start()
         process, _ = self.engine.spawned[0]
+        pid = self.engine.pid
         await self.engine.stop()
         self.assertEqual(self.engine.state, 'down')
         self.assertTrue(exited(process))
         self.assertIsNone(self.engine.pid)
+        # Asked to close over the pipe, it did: no signal was needed.
+        self.assertIn('Browser.close', self.chrome.methods(session=False))
+        self.assertNotIn(('term', pid), self.chrome_log())
         with self.assertRaises(EngineError) as ctx:
             await self.engine.status()
         self.assertEqual(ctx.exception.code, 'engine-down')
@@ -326,6 +331,35 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(process.get_term_sig(), signal.SIGKILL)
         self.assertGreaterEqual(time.monotonic() - started, 0.5)
         self.assertEqual(self.engine.state, 'down')
+
+    async def test_a_stop_with_a_shorter_grace(self):
+        self.chrome_mode('stubborn')
+        self.chrome.close_on_browser_close = False
+        self.engine.stop_grace = 5
+        await self.engine.start()
+        process, _ = self.engine.spawned[0]
+        started = time.monotonic()
+        await self.engine.stop(grace=0.2)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(process.get_term_sig(), signal.SIGKILL)
+
+    async def test_kill_after_a_cancelled_stop_still_kills_chrome(self):
+        self.chrome_mode('stubborn')
+        self.chrome.close_on_browser_close = False
+        self.engine.stop_grace = 1
+        await self.engine.start()
+        process, _ = self.engine.spawned[0]
+        pid = self.engine.pid
+        with self.assertRaises(TimeoutError):
+            await asyncio.wait_for(self.engine.stop(), 0.5)  # cancelled inside SIGTERM's grace
+        self.assertEqual(self.engine.pid, pid)  # not forgotten
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            self.engine.kill()
+        await self.wait_exited(process, timeout=1)
+        self.assertIn(('term', pid), self.chrome_log())
+        self.assertEqual(process.get_term_sig(), signal.SIGKILL)
+        self.assertEqual(self.engine.state, 'down')
+        self.assertIsNone(self.engine.pid)
 
     async def test_restart(self):
         await self.engine.start()
