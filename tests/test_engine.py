@@ -118,6 +118,7 @@ class EnginePage(FakePage):
         self.account = None
         self.bridge_calls = []  # (method, args) of the playback commands
         self.bridge_answers = {}  # method -> what it answers (None: {ok: True})
+        self.status_reads = 0   # the bridge's status() calls
 
     def __call__(self, message):
         expression = message['params']['expression']
@@ -127,6 +128,7 @@ class EnginePage(FakePage):
             self.bridge_calls.append((match.group(1), *args))
             return value(self.bridge_answers.get(match.group(1), {'ok': True}))
         if expression == 'window.__appleMusicLibrary.status()':
+            self.status_reads += 1
             return value(self.status())
         if expression == 'window.__appleMusicLibrary.signin()':
             self.signin_calls += 1
@@ -872,6 +874,97 @@ class LifecycleTest(EngineFixture):
         self.assertEqual((item['kind'], item['title']), ('artist', 'Paper Parachutes'))
         names = [group['name'] for group in item['groups']]
         self.assertIn('Static Skyline (Deluxe Edition)', names)
+
+    async def test_item_follows_an_artists_albums_past_the_first_page(self):
+        self.page.authorized = True
+        base = '/v1/catalog/us/artists/42'
+
+        def stubs(*numbers):
+            return [{'id': f'10000000{n}', 'type': 'albums',
+                     'attributes': {'name': f'Album {n}', 'artistName': 'Paper Parachutes'}}
+                    for n in numbers]
+
+        self.page.api_answers[f'{base}?include=albums'] = {'data': [{
+            'id': '42', 'type': 'artists', 'attributes': {'name': 'Paper Parachutes'},
+            'relationships': {'albums': {'data': stubs(1, 2),
+                                         'next': f'{base}/albums?offset=2'}}}]}
+        self.page.api_answers[f'{base}/albums?offset=2'] = {
+            'data': stubs(3, 4), 'next': f'{base}/albums?offset=4'}
+        self.page.api_answers[f'{base}/albums?offset=4'] = {'data': stubs(5)}
+        await self.engine.start()
+        with mock.patch.object(engine_module, 'ALBUM_BATCH', 2), \
+                mock.patch.object(normalize, 'download_item_art',
+                                  lambda item, cache_dir, art_urls, generation: item):
+            item = await self.engine.item('artist', '42')
+        self.assertEqual([group['name'] for group in item['groups']],
+                         ['Album 1', 'Album 2', 'Album 3', 'Album 4', 'Album 5'])
+        # The pages followed one by one, then the albums two at a time (none answers here:
+        # the stubs stand in).
+        self.assertEqual(self.page.api_calls[:3], [
+            f'{base}?include=albums', f'{base}/albums?offset=2', f'{base}/albums?offset=4'])
+        self.assertEqual(len(self.page.api_calls), 3 + 5)
+
+    async def test_item_has_all_of_a_long_playlist(self):
+        self.page.authorized = True
+        path = '/v1/catalog/us/playlists/pl.u-1'
+
+        def tracks(first, last):
+            return [{'id': f'20000{n:04}', 'type': 'songs',
+                     'attributes': {'name': f'Song {n}', 'artistName': 'The Invented Band',
+                                    'durationInMillis': 180000}}
+                    for n in range(first, last)]
+
+        self.page.api_answers[f'{path}?include=tracks'] = {'data': [{
+            'id': 'pl.u-1', 'type': 'playlists', 'attributes': {'name': 'Long Drive'},
+            'relationships': {'tracks': {'data': tracks(0, 100),
+                                         'next': f'{path}/tracks?offset=100'}}}]}
+        self.page.api_answers[f'{path}/tracks?offset=100'] = {'data': tracks(100, 150)}
+        await self.engine.start()
+        with mock.patch.object(normalize, 'download_item_art',
+                               lambda item, cache_dir, art_urls, generation: item):
+            item = await self.engine.item('playlist', 'pl.u-1')
+        entries = [entry for group in item['groups'] for entry in group['entries']]
+        self.assertEqual(len(entries), 150)
+        self.assertEqual(entries[-1]['title'], 'Song 149')
+        self.assertEqual(item['trackCount'], 150)
+
+    async def test_item_reads_the_storefront_once(self):
+        self.page.authorized = True
+        self.page.storefront = 'gb'
+        path = '/v1/catalog/gb/stations/ra.1'
+        self.page.api_answers[path] = {'data': [{
+            'id': 'ra.1', 'type': 'stations', 'attributes': {'name': 'Harbour Radio'}}]}
+        await self.engine.start()
+        reads = self.page.status_reads
+        with mock.patch.object(normalize, 'download_item_art',
+                               lambda item, cache_dir, art_urls, generation: item):
+            await self.engine.item('station', 'ra.1')
+            await self.engine.item('station', 'ra.1')
+            self.assertEqual(self.page.status_reads, reads)  # the start's status sufficed
+            self.assertEqual(self.page.api_calls, [path, path])
+            # Signed in again (another account, maybe): the next item asks once.
+            await self.chrome.send_binding('authorizationStatusDidChange',
+                                           {'authorized': True, 'status': 3})
+            await until(lambda: self.engine._storefront is None)
+            await self.engine.item('station', 'ra.1')
+            await self.engine.item('station', 'ra.1')
+        self.assertEqual(self.page.status_reads, reads + 1)
+
+    async def test_item_that_cannot_be_kept_is_api(self):
+        self.page.authorized = True
+        with open(FIXTURES / 'catalog_album.json') as f:
+            self.page.api_answers['/v1/catalog/us/albums/1724040700?include=tracks,artists'] = (
+                json.load(f))
+        await self.engine.start()
+
+        def full(*args):
+            raise OSError(28, 'No space left on device')
+
+        with mock.patch.object(engine_module, '_shape_item', full):
+            with self.assertRaises(EngineError) as ctx:
+                await self.engine.item('album', '1724040700')
+        self.assertEqual(ctx.exception.code, 'api')
+        self.assertIn('No space left on device', ctx.exception.message)
 
     async def test_signin_waits_for_the_event(self):
         await self.engine.start()
