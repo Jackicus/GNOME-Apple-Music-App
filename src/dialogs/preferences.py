@@ -19,7 +19,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from ..backend import config
 from ..backend.errors import EngineError
-from ..engine import cache_size
+from ..cache import cache_size
 from ..sync import INTERVALS, interval_index, last_sync_text
 from ..widgets.util import connect_weak
 

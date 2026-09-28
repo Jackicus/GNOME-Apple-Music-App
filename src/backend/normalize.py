@@ -23,6 +23,10 @@ log = logging.getLogger(__name__)
 # What download_art raises when it gives up (store.CacheGone, a wiped cache, is one too).
 Cancelled = store.Cancelled
 
+# How long a kept answer (landing, a category, the New page, Made for You) is answered from
+# the cache before Apple is asked again.
+ANSWER_MAX_AGE = 24 * 60 * 60
+
 # Scaling a cached cover down to its thumbnail, without fetching it again,
 # takes an image library, and nothing in the backend imports gi. The app
 # installs one here: a callable scale_image(src_path, dest_path, size) that

@@ -83,6 +83,7 @@ configure_file(
 install_data(
   '__init__.py',
   'actions.py',
+  'cache.py',
   'engine.py',
   'i18n.py',
   'library.py',

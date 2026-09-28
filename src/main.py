@@ -23,7 +23,8 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
-from .engine import Engine, clear_cache  # noqa: E402
+from .cache import clear as clear_cache  # noqa: E402
+from .engine import Engine  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
@@ -396,7 +397,7 @@ class Application(Adw.Application):
             window.show_sync_progress(section, done, total)
 
     async def clear_cache(self):
-        """Clear the cache (engine.CACHE_ENTRIES: library.json, the artwork, items, lyrics
+        """Clear the cache (cache.CACHE_ENTRIES: library.json, the artwork, items, lyrics
         and the day-long answers), after stopping a sync that is running; the library
         empties and `last-sync` is forgotten, and the library is synced again when signed
         in. Answers False (nothing done) in demo mode, whose library is the cache."""
