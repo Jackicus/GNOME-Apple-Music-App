@@ -533,7 +533,10 @@ scripts/a11y_check.py [--size WxH] [--light] [--names]
                           --size 360x640 for the narrow layout. --names starts a private AT-SPI
                           bus (its own dbus-daemon and registryd, stopped after) and lists each
                           page's focusable controls without an accessible name (libatspi)
-python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
+python3 -m unittest discover -s tests -v      unit tests alone, from the repo root (also
+                          `meson test -C build --suite unit`, as IDEs run them);
+                          tests/test_build_lists.py checks the install, blueprint, gresource
+                          and POTFILES lists name every file
 scripts/am.py [--debug] status | start [--visible] [--browser CMD] | stop | eval [--no-await] JS |
               now-playing | events
                           drives the engine without the GUI, on the app's port and profile

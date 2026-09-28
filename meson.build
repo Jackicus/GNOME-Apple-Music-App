@@ -34,6 +34,15 @@ subdir('data')
 subdir('src')
 subdir('po')
 
+# The unit tests, for `meson test` and IDEs. scripts/check.sh runs them itself (after meson
+# compile, for the widget tests' gresource) and the data tests with --no-suite unit.
+test('unit', python3,
+  args: ['-m', 'unittest', 'discover', '-s', 'tests'],
+  workdir: meson.project_source_root(),
+  timeout: 120,
+  suite: 'unit',
+)
+
 gnome.post_install(
   glib_compile_schemas: true,
   gtk_update_icon_cache: true,
