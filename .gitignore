@@ -12,3 +12,4 @@ __pycache__/
 /build-aux/aur/src/
 /build-aux/aur/pkg/
 /build-aux/aur/*.tar.*
+/.claude/worktrees/
