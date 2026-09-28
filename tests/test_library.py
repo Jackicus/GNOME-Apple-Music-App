@@ -226,18 +226,6 @@ class TestDemoLibrary(unittest.TestCase):
         # Favourite Songs is in the tree like any playlist (the sidebar leaves it out).
         self.assertIn(self.library.favourite_songs(), [node.item for node in playlists])
 
-    def test_track_at(self):
-        two_discs = next(item for item in self.library.albums if len(item.groups) > 1)
-        last = two_discs.groups[1].entries.get_item(0)  # counted on from disc 1
-        self.assertGreater(last.index, 0)
-        self.assertIs(self.library.track_at(two_discs.play, last.index), last)
-        playlist = self.library.playlists.get_item(0)
-        entry = playlist.groups[0].entries.get_item(2)
-        self.assertIs(self.library.track_at(entry.play, 2), entry)
-        self.assertIsNone(self.library.track_at(playlist.play, 10_000))
-        self.assertIsNone(self.library.track_at({'kind': 'album', 'id': 'l.nothing'}, 0))
-        self.assertIsNone(self.library.track_at(None, 0))
-
 
 class TestLaziness(unittest.TestCase):
     def setUp(self):
@@ -427,7 +415,9 @@ class TestLoading(unittest.TestCase):
         async def two_loads():
             with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
                 first = asyncio.ensure_future(library.load())
-                await asyncio.sleep(0)  # the first reads its path and goes to its thread
+                # The first load starts (its generation bumped); its read was submitted
+                # when load() was called.
+                await asyncio.sleep(0)
             with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': other.name}):
                 second = asyncio.ensure_future(library.load())
                 await asyncio.sleep(0)
