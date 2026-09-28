@@ -26,9 +26,10 @@ call for a 50 MB file would keep the main thread's Python (every signal handler 
 waiting 300 ms. The artists' groups repeat their albums' tracks; those lists are dropped at
 parse time when the album is in the library (the artist page shows the album's own), and the
 tracks' repeated names share one string each: together they cut what 40,000 tracks cost after
-the parse by 40%. Garbage collection is paused while a load wraps objects, and the heap is
-frozen after a load() and a Songs build (paused_gc), so the library is never scanned again: a
-full collection over it cost 50 ms, a dropped frame each time one came round.
+the parse by 40%. Garbage collection is paused from a load()'s call to its end (the parse and
+the wrapping run without it) and during a Songs build, and the heap is frozen after both
+(paused_gc), so the library is never scanned again: a full collection over it cost 50 ms, a
+dropped frame each time one came round.
 """
 
 import asyncio
@@ -864,9 +865,12 @@ class Library(GObject.Object):
         Wrapping happens on the caller's thread, a batch at a time, with a pause for GTK to
         paint between batches. The stores keep their identity and are refilled in place, with
         new Item objects. A missing or unreadable file leaves the library empty. A load that
-        another load() overtakes gives up at its next pause.
+        another load() overtakes gives up at its next pause. Garbage collection is paused from
+        this call (the parse runs without it) to the load's end, and the heap frozen then
+        (paused_gc); closing the coroutine unawaited resumes it too.
         """
-        return self._load(keep=False, reading=self._read())
+        pause = _Pause(freeze=True)  # before the read starts: it collects first
+        return self._load(keep=False, reading=self._read(), pause=pause)
 
     def reload(self):
         """Read library.json again (after a sync) and bring the models up to date in place.
@@ -883,9 +887,10 @@ class Library(GObject.Object):
         kept Item's title, subtitle or year changed (SORT_KEYS), so that the sort and filter
         models over them place it again (_notify_changed). A view's rows are not rebound by
         that on GTK 4.22: a widget bound to an Item follows its notify signals. As load()
-        otherwise.
+        otherwise, but for the freeze: nothing is frozen after a reload.
         """
-        return self._load(keep=True, reading=self._read())
+        pause = _Pause(freeze=False)
+        return self._load(keep=True, reading=self._read(), pause=pause)
 
     def _read(self):
         """Start reading library.json in the library's thread, now: the Future of
@@ -910,38 +915,41 @@ class Library(GObject.Object):
         """Let a parse held by hold_reading() go on."""
         self._reading.set()
 
-    async def _load(self, keep, reading):
+    async def _load(self, keep, reading, pause):
+        """load() and reload(): `reading` is the parse's Future, `pause` the _Pause of the
+        collector that the call began, left here as the load ends, however it ends."""
         self._generation += 1
         generation = self._generation
         started = time.monotonic()
         self._set_state('loading')
-        with paused_gc(freeze=not keep):
-            try:
-                data, song_count, file_state = await asyncio.wrap_future(reading)
-                reading = None  # the Future holds the parse too
-                self._paused = time.monotonic()
-                self._check(generation)
-                log.debug('Library parsed in %.0f ms', (time.monotonic() - started) * 1000)
-                if self.file_state != file_state:
-                    self.file_state = file_state
-                version = _number(data.get('version')) if data is not None else 0
-                if self.version != version:
-                    self.version = version
-                found = data is not None
-                await self._fill(data or {}, generation, keep)
-                # What the models did not take goes now, while collections are paused: after
-                # the pause, the first collection would have to scan it all.
-                del data
-            except _Superseded:
-                return
-            except BaseException:
-                # Failed, or cancelled (a sync stopped during its reload): a page waiting on
-                # 'loading' would wait forever, and a Songs build it was to do is asked again.
-                if generation == self._generation:
-                    self._songs_wanted = self._songs_wanted and self.songs_ready
-                    self._set_state('empty')
-                    self.emit('changed')
-                raise
+        try:
+            data, song_count, file_state = await asyncio.wrap_future(reading)
+            reading = None  # the Future holds the parse too
+            self._paused = time.monotonic()
+            self._check(generation)
+            log.debug('Library parsed in %.0f ms', (time.monotonic() - started) * 1000)
+            if self.file_state != file_state:
+                self.file_state = file_state
+            version = _number(data.get('version')) if data is not None else 0
+            if self.version != version:
+                self.version = version
+            found = data is not None
+            await self._fill(data or {}, generation, keep)
+            # What the models did not take goes now, while collections are paused: after the
+            # pause, the first collection would have to scan it all.
+            del data
+        except _Superseded:
+            return
+        except BaseException:
+            # Failed, or cancelled (a sync stopped during its reload): a page waiting on
+            # 'loading' would wait forever, and a Songs build it was to do is asked again.
+            if generation == self._generation:
+                self._songs_wanted = self._songs_wanted and self.songs_ready
+                self._set_state('empty')
+                self.emit('changed')
+            raise
+        finally:
+            pause.leave()
         self._song_count = song_count
         self._set_state('ready' if found else 'empty')
         log.debug('Library %s in %.0f ms: %s, %d shelves, %d songs%s', self.state,
@@ -1462,8 +1470,14 @@ class paused_gc:
     about 50 ms on 3,000 albums and 40,000 songs (a dropped frame whenever one came round),
     and pausing also spares the parse the young collections its allocations would trigger.
 
-    The price of freezing: an object alive at that moment that later becomes garbage in a
-    reference cycle (a page popped just before) is never collected. Hence no freeze for a
+    Freezing moves garbage too: a reference cycle not yet collected would never be. So a
+    pause that is to freeze collects first (4 ms at startup, before the library is read;
+    later, only what is not frozen yet is scanned), and, when something is frozen already
+    (every freeze after the first load's), collects again before it freezes, for what the
+    pause itself made garbage; the first load's end skips that, as a full collection of the
+    new library would cost 50 ms before the first frame, and all it could catch is what the
+    parse and the window's building left in cycles. The other price: an object alive at the
+    freeze that later becomes garbage in a cycle is never collected. Hence no freeze for a
     reload(), which comes after every sync while pages come and go, and keeps its objects
     anyway. Nested uses pause once and resume, freezing if any of them asked to, at the
     outermost end; the collector is left as it was found (enabled or not).
@@ -1481,6 +1495,8 @@ class paused_gc:
         if not cls._depth:
             cls._was_enabled = gc.isenabled()
             cls._freeze = False
+            if self.freeze:
+                gc.collect()
             gc.disable()
         cls._depth += 1
         cls._freeze = cls._freeze or self.freeze
@@ -1491,10 +1507,32 @@ class paused_gc:
         cls._depth -= 1
         if not cls._depth:
             if cls._freeze:
+                if gc.get_freeze_count():
+                    gc.collect()
                 gc.freeze()
             if cls._was_enabled:
                 gc.enable()
         return False
+
+
+class _Pause:
+    """A paused_gc entered when made and left once: by leave() as its load ends, or, should
+    its load's coroutine be closed before it ever ran (the first load of an app that was
+    never activated), as the coroutine lets it go, so the collector is not left paused."""
+
+    def __init__(self, freeze):
+        self._left = True  # until entered
+        self._context = paused_gc(freeze)
+        self._context.__enter__()
+        self._left = False
+
+    def leave(self):
+        if not self._left:
+            self._left = True
+            self._context.__exit__(None, None, None)
+
+    def __del__(self):
+        self.leave()
 
 
 async def yield_to_frames():
