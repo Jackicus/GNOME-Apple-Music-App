@@ -25,7 +25,7 @@ OLD_NAMES = re.compile('|'.join([
 class ConfigTest(unittest.TestCase):
     def env(self, **values):
         """Run with exactly these of the variables config reads set."""
-        names = ('APPLE_MUSIC_CACHE', 'APPLE_MUSIC_PROFILE', 'APPLE_MUSIC_PORT',
+        names = ('APPLE_MUSIC_CACHE', 'APPLE_MUSIC_PROFILE', 'APPLE_MUSIC_DEBUG_PORT',
                  'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR')
         patcher = mock.patch.dict(os.environ)
         patcher.start()
@@ -39,7 +39,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.cache_dir(), pathlib.Path('/x/cache/apple-music'))
         self.assertEqual(config.profile_dir(), pathlib.Path('/x/data/apple-music/chrome'))
         self.assertEqual(config.state_file(), pathlib.Path('/x/run/apple-music/engine.json'))
-        self.assertEqual(config.port(), 9228)
+        self.assertIsNone(config.debug_port())
 
     def test_home_fallbacks(self):
         self.env(XDG_CACHE_HOME='relative/is/ignored')
@@ -51,10 +51,10 @@ class ConfigTest(unittest.TestCase):
 
     def test_overrides(self):
         self.env(APPLE_MUSIC_CACHE='/o/cache', APPLE_MUSIC_PROFILE='/o/profile',
-                 APPLE_MUSIC_PORT='9300', XDG_RUNTIME_DIR='/x/run')
+                 APPLE_MUSIC_DEBUG_PORT='9300', XDG_RUNTIME_DIR='/x/run')
         self.assertEqual(config.cache_dir(), pathlib.Path('/o/cache'))
         self.assertEqual(config.profile_dir(), pathlib.Path('/o/profile'))
-        self.assertEqual(config.port(), 9300)
+        self.assertEqual(config.debug_port(), 9300)
         # A profile of its own keeps its engine state too, away from the real session's.
         self.assertEqual(config.state_file(), pathlib.Path('/o/profile/engine.json'))
 
@@ -62,11 +62,11 @@ class ConfigTest(unittest.TestCase):
         self.env(APPLE_MUSIC_CACHE='some/cache')
         self.assertEqual(config.cache_dir(), pathlib.Path.cwd() / 'some' / 'cache')
 
-    def test_bad_port_falls_back(self):
+    def test_a_bad_debug_port_is_none(self):
         for value in ('', 'abc', '0', '70000', '-1'):
             with self.subTest(value=value):
-                self.env(APPLE_MUSIC_PORT=value)
-                self.assertEqual(config.port(), config.DEFAULT_PORT)
+                self.env(APPLE_MUSIC_DEBUG_PORT=value)
+                self.assertIsNone(config.debug_port())
 
     def test_sizes(self):
         self.assertEqual((config.THUMB_SIZE, config.COVER_SIZE), (320, 640))

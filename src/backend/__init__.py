@@ -4,11 +4,14 @@ Pure Python and the standard library: nothing here imports gi (GTK stays in the 
 importing the package imports none of its modules.
 
     errors.py   EngineError(code, message): engine-down, not-signed-in, api, timeout, usage
-    chrome.py   finding Chrome, its argv (the host's Chrome through flatpak-spawn from a
-                Flatpak sandbox), the engine.json state (EngineState), the DevTools /json
-                polling (wait_for_devtools, list_targets, find_target, wait_for_target)
-    client.py   CDPClient: one asynchronous CDP connection (calls, evaluate, events, the
-                bridge kept in the page across navigations); connect_page(port)
+    chrome.py   finding Chrome, its argv (--remote-debugging-pipe; the host's Chrome through
+                flatpak-spawn from a Flatpak sandbox), the engine.json state (EngineState),
+                select_page() (the music.apple.com target), get_json() (a DevTools port's
+                /json, for the developer attach)
+    client.py   the transports (PipeTransport: Chrome's DevTools pipe; WebSocketTransport: a
+                DevTools port) and CDPClient: one asynchronous CDP connection, attached to the
+                page by session (calls, evaluate, events, the bridge kept in the page across
+                navigations); open_page(transport), attach_devtools(port)
     cdp.py      the RFC 6455 handshake and frame codec as pure functions, shared with
                 client.py, and the extension's blocking client on top of them
     bridge.js   injected into music.apple.com; drives the page's own MusicKit instance and
@@ -16,8 +19,8 @@ importing the package imports none of its modules.
                 through config.BRIDGE_JS
     sync.py     Apple Music API answers -> the Item and Track shapes, the artwork cache,
                 library.json
-    config.py   paths, port, the state file and artwork sizes (new here; replaces the
-                extension's GSettings)
+    config.py   paths, the developer's DevTools port, the state file and artwork sizes (new
+                here; replaces the extension's GSettings)
     README.md   the command table, error codes, the events, and the library.json/Item/Track
                 shapes
 
@@ -72,6 +75,8 @@ README.md
 config.py
 - New: cache_dir(), profile_dir(), port(), state_file() with the APPLE_MUSIC_CACHE,
   APPLE_MUSIC_PROFILE and APPLE_MUSIC_PORT overrides, THUMB_SIZE, COVER_SIZE, BRIDGE_JS.
+- (2026-09-28) port() and its environment override gave way to debug_port()
+  (APPLE_MUSIC_DEBUG_PORT, unset by default): the engine speaks CDP over a pipe.
 - (Phase 9) state_file(profile=None) is keyed by profile: the default profile's engine.json is
   in $XDG_RUNTIME_DIR/apple-music, any other profile's (an override, the .Devel build's
   chrome-devel) inside that profile; default_profile_dir().

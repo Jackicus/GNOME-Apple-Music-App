@@ -77,23 +77,10 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
 
     Adw.PreferencesGroup {
       title: _("Browser");
-      description: _("Changes to the browser command and the port apply the next time the engine starts.");
+      description: _("Changes to the browser command apply the next time the engine starts.");
 
       Adw.EntryRow browser_row {
         title: _("Browser command");
-      }
-
-      Adw.SpinRow port_row {
-        title: _("DevTools port");
-        subtitle: _("Applies the next time the engine starts");
-        numeric: true;
-
-        adjustment: Adjustment {
-          lower: 1024;
-          upper: 65535;
-          step-increment: 1;
-          page-increment: 10;
-        };
       }
 
       Adw.SwitchRow headless_row {

@@ -1,12 +1,15 @@
-"""Where the backend keeps things, which port the engine listens on, and the artwork sizes.
+"""Where the backend keeps things, the developer's DevTools port, and the artwork sizes.
 
 This replaces the extension's GSettings lookup: nothing in the backend imports gi, so these are
 plain functions over the environment, read on every call, so that a test or demo mode can point
 them elsewhere before anything uses them.
 
-    APPLE_MUSIC_CACHE    the cache directory  (default $XDG_CACHE_HOME/apple-music)
-    APPLE_MUSIC_PROFILE  Chrome's profile     (default $XDG_DATA_HOME/apple-music/chrome)
-    APPLE_MUSIC_PORT     the debugging port   (default 9228)
+    APPLE_MUSIC_CACHE       the cache directory  (default $XDG_CACHE_HOME/apple-music)
+    APPLE_MUSIC_PROFILE     Chrome's profile     (default $XDG_DATA_HOME/apple-music/chrome)
+    APPLE_MUSIC_DEBUG_PORT  a DevTools port on 127.0.0.1 beside the engine's pipe, for a
+                            developer to attach to (scripts/am.py --attach); unset by default,
+                            and a risk while set: any local program can drive the signed-in
+                            session through it
 """
 
 import os
@@ -14,7 +17,6 @@ import tempfile
 from pathlib import Path
 
 APP_DIR = 'apple-music'
-DEFAULT_PORT = 9228
 
 # Artwork edge lengths in pixels. Thumbnails are what tiles and track rows draw (a tile is at
 # most 160 logical px, so 320 covers 2x scale); covers are the detail pages' hero.
@@ -50,13 +52,13 @@ def profile_dir():
             or _xdg_dir('XDG_DATA_HOME', '.local/share') / APP_DIR / 'chrome')
 
 
-def port():
-    """Chrome's remote-debugging port on 127.0.0.1."""
+def debug_port():
+    """APPLE_MUSIC_DEBUG_PORT as a port number, or None when it is unset or not a port."""
     try:
-        value = int(os.environ.get('APPLE_MUSIC_PORT', ''))
+        value = int(os.environ.get('APPLE_MUSIC_DEBUG_PORT', ''))
     except ValueError:
-        return DEFAULT_PORT
-    return value if 0 < value < 65536 else DEFAULT_PORT
+        return None
+    return value if 0 < value < 65536 else None
 
 
 def default_profile_dir():

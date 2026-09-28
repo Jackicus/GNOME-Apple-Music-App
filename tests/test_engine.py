@@ -1,9 +1,11 @@
-"""Unit tests for src/engine.py: the Engine's lifecycle and commands against fakes.
+"""Unit tests for src/engine.py: the Engine's lifecycle and commands against a fake Chrome.
 
-Chrome is a sleeping Python process started with the profile on its command line, so the
-state file's liveness check, SIGTERM and SIGKILL are real; the DevTools wait is patched out
-and the connection goes to test_client's fake Chrome, whose page answers the bridge's calls.
-No display: the Engine is a GObject, the loop plain asyncio.
+The tests run on gi.events' GLib-backed loop, as the app does, and the Engine spawns "Chrome"
+through its own Gio.Subprocess code with the DevTools pipe on descriptors 3 and 4: only the
+binary is fake. It is tests/fake_chrome_relay.py, which relays the pipe to the fake browser the
+test runs on a Unix socket (UnixFakeChrome, test_client's FakeBrowser), so signals, exits and
+the pipe closing are real. chrome.find_chrome is patched to name it, so nothing looks for, or
+runs, a real Chrome. No display: the Engine is a GObject.
 """
 
 import asyncio
@@ -11,65 +13,90 @@ import json
 import os
 import pathlib
 import re
-import subprocess
+import shlex
+import signal
 import sys
 import tempfile
 import time
 import unittest
+import warnings
 from unittest import mock
 
 from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic package)
 
+from gi.events import GLibEventLoop
+
 from applemusic import engine as engine_module
-from applemusic.backend import chrome, config, sync
-from applemusic.backend.client import CDPClient
+from applemusic.backend import chrome, sync
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine, engine_paths, item_endpoint, resource_type
-from tests.test_client import FakeChrome, FakePage, until, value
+from tests.test_client import FakeBrowser, FakePage, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
+RELAY = pathlib.Path(__file__).parent / 'fake_chrome_relay.py'
+# PyGObject 3.56's awaitable Gio calls look the loop up through asyncio's policy, which Python
+# 3.14 deprecates; main.use_glib_event_loop() filters the same warning in the app.
+warnings.filterwarnings('ignore', r"'asyncio\.\w*policy\w*' is deprecated", DeprecationWarning)
 PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
                     'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
                     'search', 'suggest', 'searchAndSuggest', 'searchLanding', 'category',
                     'rating', 'addToLibrary', 'addToPlaylist')
-SLEEPER = 'import time; time.sleep(60)'
-STUBBORN = 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'
 
 
-class FakeProcess:
-    """What Engine._spawn returns: a real child (so signals and liveness are real) behind
-    Gio.Subprocess's methods."""
+class UnixFakeChrome(FakeBrowser):
+    """FakeBrowser behind a Unix socket, where each fake Chrome the engine starts connects
+    (its first line says its pid and argv, in `chromes`). The latest connection is the one
+    answered; drop() hangs up on it, which ends that Chrome."""
 
-    def __init__(self, argv, code=SLEEPER):
-        # The last argument is the profile flag chrome.pid_alive looks for on the command line.
-        profile_flag = next(arg for arg in argv if arg.startswith('--user-data-dir='))
-        self.argv = argv
-        self.popen = subprocess.Popen([sys.executable, '-c', code, profile_flag])
-        self.signals = []
-        # /proc/<pid>/cmdline is empty for an instant while the child execs (a few ms).
-        profile = profile_flag[len('--user-data-dir='):]
-        deadline = time.monotonic() + 2
-        while not chrome.pid_alive(self.popen.pid, profile) and time.monotonic() < deadline:
-            time.sleep(0.005)
+    def __init__(self):
+        super().__init__()
+        self.chromes = []
+        self.server = None
+        self.writer = None
 
-    def get_identifier(self):
-        return str(self.popen.pid)
+    async def start(self, path):
+        self.server = await asyncio.start_unix_server(self._serve, path, limit=1 << 24)
 
-    def send_signal(self, signum):
-        self.signals.append(signum)
-        self.popen.send_signal(signum)
+    async def _serve(self, reader, writer):
+        try:
+            hello = json.loads(await reader.readline())
+        except (ValueError, ConnectionError):
+            writer.close()
+            return
+        self.chromes.append(hello)
+        self.writer = writer
+        buffer = b''
+        try:
+            while chunk := await reader.read(1 << 20):
+                buffer += chunk
+                *messages, buffer = buffer.split(b'\0')
+                for message in messages:
+                    await self.on_message(json.loads(message))
+        except ConnectionError:
+            pass
+        finally:
+            writer.close()
 
-    def force_exit(self):
-        self.signals.append('kill')
-        self.popen.kill()
+    async def write(self, payload):
+        if self.writer is not None and not self.writer.is_closing():
+            self.writer.write(payload + b'\0')
+            await self.writer.drain()
 
-    async def wait_async(self):
-        await asyncio.to_thread(self.popen.wait)
+    async def drop(self):
+        """This Chrome goes: the relay sees the socket close and exits."""
+        if self.writer is not None:
+            self.writer.close()
 
-    def cleanup(self):
-        if self.popen.poll() is None:
-            self.popen.kill()
-            self.popen.wait()
+    async def close(self):
+        if self.writer is not None:
+            self.writer.close()
+        self.server.close()
+        await self.server.wait_closed()
+
+    @property
+    def argv(self):
+        """The latest Chrome's arguments (without the binary)."""
+        return self.chromes[-1]['argv']
 
 
 class EnginePage(FakePage):
@@ -118,35 +145,33 @@ class EnginePage(FakePage):
         return super().__call__(message)
 
     def status(self):
-        return {'ready': True, 'engine': True, 'authorized': self.authorized,
+        return {'ready': self.ready, 'engine': True, 'authorized': self.authorized,
                 'storefront': self.storefront, 'bitrate': 256}
 
 
 class TestEngine(Engine):
-    """An Engine whose Chrome is a FakeProcess and whose page is the fake's."""
+    """An Engine that keeps every Chrome it spawned (the Gio.Subprocess and its argv)."""
 
-    def __init__(self, test, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.test = test
-        self.spawned = []
-        self.connected = 0
+        self.spawned = []   # [(process, argv)]
 
     def _spawn(self, argv):
-        process = FakeProcess(argv, self.test.process_code)
-        self.spawned.append(process)
-        self.test.processes.append(process)
-        return process
+        process, transport = super()._spawn(argv)
+        self.spawned.append((process, argv))
+        return process, transport
 
-    async def _connect(self):
-        self.connected += 1
-        client = CDPClient(timeout=3)
-        await client.connect(self.test.ws_url)
-        return client
+
+def exited(process):
+    """Whether a Gio.Subprocess has ended (and been reaped)."""
+    return process.get_identifier() is None
 
 
 class EngineFixture(unittest.IsolatedAsyncioTestCase):
     """The fake Chrome, its page and a TestEngine on them. No tests of its own: the classes
     below subclass it, and a test here would run once for each of them."""
+
+    loop_factory = GLibEventLoop
 
     # Seconds before the engine's first retry of a failed API read (doubling after): short,
     # so a read that fails every attempt takes milliseconds rather than 1.5 s.
@@ -154,26 +179,33 @@ class EngineFixture(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.profile = pathlib.Path(self.tmp.name) / 'chrome-test'
-        self.cache = pathlib.Path(self.tmp.name) / 'cache'
-        self.processes = []
-        self.process_code = SLEEPER
-        self.chrome = FakeChrome()
-        self.chrome.responders['Page.getFrameTree'] = (
-            lambda m: {'frameTree': {'frame': {'id': 'main', 'url': 'https://music.apple.com/'}}})
+        self.addCleanup(self.tmp.cleanup)
+        root = pathlib.Path(self.tmp.name)
+        self.profile = root / 'chrome-test'
+        self.cache = root / 'cache'
+        self.log_file = root / 'chrome.log'
+        # The fake google-chrome-stable: the relay, on this Python.
+        self.binary = root / 'google-chrome-stable'
+        python, relay = shlex.quote(sys.executable), shlex.quote(str(RELAY))
+        self.binary.write_text(f'#!/bin/sh\nexec {python} -S {relay} "$@"\n')
+        self.binary.chmod(0o755)
+        self.chrome = UnixFakeChrome()
         self.page = EnginePage()
         self.chrome.responders['Runtime.evaluate'] = self.page
-        self.ws_url = await self.chrome.start()
-        patcher = mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': str(self.cache)})
+        await self.chrome.start(str(root / 'chrome.sock'))
+        environment = {'APPLE_MUSIC_CACHE': str(self.cache),
+                       'FAKE_CHROME_SOCKET': str(root / 'chrome.sock'),
+                       'FAKE_CHROME_LOG': str(self.log_file), 'FAKE_CHROME_MODE': ''}
+        patcher = mock.patch.dict(os.environ, environment)
         patcher.start()
         self.addCleanup(patcher.stop)
-        # Chrome is not really there to answer /json/version.
-        patcher = mock.patch.object(chrome, 'wait_for_devtools', self.fake_devtools)
+        for name in ('APPLE_MUSIC_DEBUG_PORT', 'APPLE_MUSIC_PROFILE'):
+            os.environ.pop(name, None)
+        self.browser_commands = []
+        patcher = mock.patch.object(chrome, 'find_chrome', self.find_chrome)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.devtools_waits = 0
-        self.devtools_port = 9333  # the port Chrome is expected on
-        self.engine = TestEngine(self, profile_dir=self.profile, port=9333)
+        self.engine = TestEngine(profile_dir=self.profile)
         self.engine.stop_grace = 0.5
         self.engine.api_retry_delay = self.api_retry_delay
         self.states = []
@@ -181,48 +213,68 @@ class EngineFixture(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.engine.stop()
-        for process in self.processes:
-            process.cleanup()
+        for process, _argv in self.engine.spawned:
+            if not exited(process):
+                process.force_exit()
         await self.chrome.close()
-        self.tmp.cleanup()
 
-    async def fake_devtools(self, port, timeout=15.0):
-        self.devtools_waits += 1
-        self.assertEqual(port, self.devtools_port)
-        return {'Browser': 'Fake/1'}
+    def find_chrome(self, command=None):
+        self.browser_commands.append(command)
+        return str(self.binary)
 
-    async def chrome_saw_close(self):
-        await until(lambda: any(opcode == 8 for opcode, _ in self.chrome.frames))
+    def chrome_mode(self, mode):
+        """How the next fake Chrome behaves: '', 'stubborn' or 'exit:N' (the relay's)."""
+        os.environ['FAKE_CHROME_MODE'] = mode
+
+    def chrome_log(self):
+        """What the fake Chromes did, as (event, pid) pairs."""
+        try:
+            lines = self.log_file.read_text().split()
+        except OSError:
+            return []
+        return [(lines[i], int(lines[i + 1])) for i in range(0, len(lines), 2)]
+
+    async def wait_exited(self, process, timeout=3.0):
+        await until(lambda: exited(process), timeout=timeout)
 
 
 class LifecycleTest(EngineFixture):
-    """Starting, stopping and reclaiming Chrome, the connection, and the reads the rest rests
-    on (api, status, item, sign-in, the account name)."""
+    """Starting and stopping Chrome, the connection, and the reads the rest rests on (api,
+    status, item, sign-in, the account name)."""
 
     # -- starting and stopping ------------------------------------------------------------
 
-    async def test_start_spawns_chrome_and_brings_the_bridge_up(self):
+    async def test_start_spawns_chrome_on_the_pipe_and_brings_the_bridge_up(self):
         self.assertEqual(self.engine.state, 'down')
         await self.engine.start()
         self.assertEqual(self.states, ['starting', 'up'])
         self.assertEqual(len(self.engine.spawned), 1)
-        argv = self.engine.spawned[0].argv
+        argv = self.chrome.argv
+        self.assertIn('--remote-debugging-pipe', argv)
+        self.assertFalse([arg for arg in argv if arg.startswith('--remote-debugging-port')])
+        self.assertFalse([arg for arg in argv if arg.startswith('--remote-debugging-address')])
         self.assertIn('--headless=new', argv)
         self.assertIn(f'--user-data-dir={self.profile}', argv)
-        self.assertIn('--remote-debugging-port=9333', argv)
         self.assertTrue(self.profile.is_dir())
-        self.assertEqual(self.devtools_waits, 1)
-        self.assertEqual(self.engine.connected, 1)
+        self.assertEqual(self.browser_commands, [None])
+        self.assertEqual(self.chrome.methods(session=False)[:3], [
+            'Target.setDiscoverTargets', 'Target.getTargets', 'Target.attachToTarget'])
         self.assertEqual((self.page.injections, self.page.subscriptions), (1, 1))
         self.assertTrue(self.engine.headless)
         self.assertFalse(self.engine.authorized)
-        self.assertEqual(self.engine.pid, self.engine.spawned[0].popen.pid)
-        # engine.json describes it, inside the profile (not the default profile).
-        state = chrome.EngineState.load(self.engine.state_file)
-        self.assertEqual(self.engine.state_file, self.profile / 'engine.json')
-        self.assertEqual((state.pid, state.port, state.headless, state.profile),
-                         (self.engine.pid, 9333, True, str(self.profile)))
-        self.assertTrue(state.alive)
+        self.assertEqual(self.engine.pid, self.chrome.chromes[-1]['pid'])
+        self.assertFalse((self.profile / 'engine.json').exists())
+
+    async def test_the_debug_port_is_opt_in_and_warned_about(self):
+        os.environ['APPLE_MUSIC_DEBUG_PORT'] = '9300'
+        with self.assertLogs(engine_module.log, 'WARNING') as logs:
+            await self.engine.start()
+        argv = self.chrome.argv
+        self.assertIn('--remote-debugging-pipe', argv)
+        self.assertIn('--remote-debugging-port=9300', argv)
+        self.assertIn('--remote-debugging-address=127.0.0.1', argv)
+        self.assertTrue(any('APPLE_MUSIC_DEBUG_PORT is set' in line and '127.0.0.1:9300' in line
+                            and 'any local program' in line for line in logs.output))
 
     async def test_start_reads_authorized(self):
         self.page.authorized = True
@@ -237,40 +289,39 @@ class LifecycleTest(EngineFixture):
 
     async def test_start_visible_restarts_a_headless_chrome(self):
         await self.engine.start()
-        first = self.engine.spawned[0]
+        first, _ = self.engine.spawned[0]
         await self.engine.start(visible=True)
         self.assertEqual(len(self.engine.spawned), 2)
-        self.assertIsNotNone(first.popen.poll())  # the first is gone
-        self.assertIn(15, first.signals)  # SIGTERM
-        self.assertIn('--app=https://music.apple.com/', self.engine.spawned[1].argv)
-        self.assertNotIn('--headless=new', self.engine.spawned[1].argv)
+        self.assertTrue(exited(first))
+        self.assertIn('--app=https://music.apple.com/', self.chrome.argv)
+        self.assertNotIn('--headless=new', self.chrome.argv)
         self.assertFalse(self.engine.headless)
         self.assertEqual(self.engine.state, 'up')
         self.assertEqual(self.states, ['starting', 'up', 'down', 'starting', 'up'])
 
-    async def test_stop_terminates_chrome_and_forgets_it(self):
+    async def test_stop_ends_chrome_and_forgets_it(self):
         await self.engine.start()
-        process = self.engine.spawned[0]
+        process, _ = self.engine.spawned[0]
         await self.engine.stop()
         self.assertEqual(self.engine.state, 'down')
-        self.assertIsNotNone(process.popen.poll())
-        self.assertEqual(process.signals, [15])
-        self.assertFalse(self.engine.state_file.exists())
+        self.assertTrue(exited(process))
         self.assertIsNone(self.engine.pid)
-        await self.chrome_saw_close()
         with self.assertRaises(EngineError) as ctx:
             await self.engine.status()
         self.assertEqual(ctx.exception.code, 'engine-down')
         await self.engine.stop()  # twice is fine
 
     async def test_stop_kills_a_chrome_that_ignores_sigterm(self):
-        self.process_code = STUBBORN
+        self.chrome_mode('stubborn')
         await self.engine.start()
-        process = self.engine.spawned[0]
+        process, _ = self.engine.spawned[0]
+        pid = self.engine.pid
         started = time.monotonic()
         await self.engine.stop()
-        self.assertEqual(process.signals, [15, 'kill'])
-        self.assertIsNotNone(process.popen.poll())
+        self.assertIn(('term', pid), self.chrome_log())
+        self.assertTrue(exited(process))
+        self.assertTrue(process.get_if_signaled())
+        self.assertEqual(process.get_term_sig(), signal.SIGKILL)
         self.assertGreaterEqual(time.monotonic() - started, 0.5)
         self.assertEqual(self.engine.state, 'down')
 
@@ -278,7 +329,7 @@ class LifecycleTest(EngineFixture):
         await self.engine.start()
         await self.engine.restart(visible=False)
         self.assertEqual(len(self.engine.spawned), 2)
-        self.assertIsNotNone(self.engine.spawned[0].popen.poll())
+        self.assertTrue(exited(self.engine.spawned[0][0]))
         self.assertEqual(self.engine.state, 'up')
 
     async def test_start_without_a_mode_keeps_a_running_engine(self):
@@ -291,44 +342,21 @@ class LifecycleTest(EngineFixture):
     async def test_start_without_a_mode_follows_prefer_headless(self):
         self.engine.prefer_headless = False  # engine-headless off: a window, for debugging
         await self.engine.start()
-        self.assertNotIn('--headless=new', self.engine.spawned[0].argv)
+        self.assertNotIn('--headless=new', self.chrome.argv)
         self.assertFalse(self.engine.headless)
         self.engine.prefer_headless = True
         await self.engine.restart()
-        self.assertIn('--headless=new', self.engine.spawned[1].argv)
+        self.assertIn('--headless=new', self.chrome.argv)
         self.assertTrue(self.engine.headless)
 
-    async def test_a_port_change_waits_for_the_next_start(self):
-        await self.engine.start()
-        self.engine.set_port(9444)
-        self.assertEqual(self.engine.port, 9333)  # the running Chrome keeps its own
-        self.devtools_port = 9444
-        await self.engine.restart()
-        self.assertEqual(self.engine.port, 9444)
-        self.assertIn('--remote-debugging-port=9444', self.engine.spawned[1].argv)
-        self.assertEqual(chrome.EngineState.load(self.engine.state_file).port, 9444)
-
-    async def test_a_port_change_while_down_applies_at_once(self):
-        self.engine.set_port(9555)
-        self.assertEqual(self.engine.port, 9555)
-        self.engine.set_port(9333)
-        await self.engine.start()
-        self.assertIn('--remote-debugging-port=9333', self.engine.spawned[0].argv)
-        # Changed and changed back while up: nothing waits for the next start.
-        self.engine.set_port(9444)
-        self.engine.set_port(9333)
-        await self.engine.restart()
-        self.assertIn('--remote-debugging-port=9333', self.engine.spawned[1].argv)
-
     async def test_a_failed_start_cleans_up(self):
-        self.chrome.responders['Runtime.evaluate'] = FakePage(ready=False)
+        self.page.ready = False
         with mock.patch.object(engine_module, 'BRIDGE_WAIT', 0.3):
             with self.assertRaises(EngineError) as ctx:
                 await self.engine.start()
         self.assertEqual(ctx.exception.code, 'timeout')
         self.assertEqual(self.engine.state, 'down')
-        self.assertIsNotNone(self.engine.spawned[0].popen.poll())
-        self.assertFalse(self.engine.state_file.exists())
+        await self.wait_exited(self.engine.spawned[0][0])
 
     async def test_no_chrome_is_engine_down(self):
         with mock.patch.object(chrome, 'find_chrome', lambda command: None):
@@ -340,82 +368,27 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(self.engine.spawned, [])
 
     async def test_browser_command_is_tried_first(self):
-        seen = []
-
-        def find(command):
-            seen.append(command)
-            return None
         self.engine.browser_command = 'my-chrome'
-        with mock.patch.object(chrome, 'find_chrome', find):
-            with self.assertRaises(EngineError):
-                await self.engine.start()
-        self.assertEqual(seen, ['my-chrome'])
-
-    # -- reclaiming ------------------------------------------------------------------------
-
-    def leftover(self, headless=True, port=9333):
-        """A Chrome from an earlier run, as engine.json describes it: a live process."""
-        process = FakeProcess([f'--user-data-dir={self.profile}'])
-        self.processes.append(process)
-        chrome.EngineState(process.popen.pid, port, headless, self.profile).save(
-            self.engine.state_file)
-        return process
-
-    async def test_a_live_chrome_in_the_same_mode_is_reclaimed(self):
-        leftover = self.leftover(headless=True)
         await self.engine.start()
-        self.assertEqual(self.engine.spawned, [])
-        self.assertEqual(self.engine.pid, leftover.popen.pid)
-        self.assertEqual(self.engine.state, 'up')
-        self.assertIsNone(leftover.popen.poll())
-        await self.engine.stop()
-        self.assertIsNotNone(leftover.popen.poll())  # os.kill, no process object
-        self.assertFalse(self.engine.state_file.exists())
-
-    async def test_a_live_chrome_in_the_other_mode_is_replaced(self):
-        leftover = self.leftover(headless=False)
-        await self.engine.start()
-        self.assertIsNotNone(leftover.popen.poll())
-        self.assertEqual(len(self.engine.spawned), 1)
-        self.assertEqual(self.engine.pid, self.engine.spawned[0].popen.pid)
-
-    async def test_a_live_chrome_on_another_port_is_replaced(self):
-        leftover = self.leftover(port=9444)
-        await self.engine.start()
-        self.assertIsNotNone(leftover.popen.poll())
-        self.assertEqual(len(self.engine.spawned), 1)
-
-    async def test_a_stale_state_file_is_ignored(self):
-        leftover = self.leftover()
-        leftover.cleanup()
-        await self.engine.start()
-        self.assertEqual(len(self.engine.spawned), 1)
-        self.assertEqual(chrome.EngineState.load(self.engine.state_file).pid,
-                         self.engine.spawned[0].popen.pid)
+        self.assertEqual(self.browser_commands, ['my-chrome'])
 
     # -- the connection --------------------------------------------------------------------
 
     async def test_losing_the_connection_takes_the_engine_down(self):
         await self.engine.start()
-        process = self.engine.spawned[0]
+        process, _ = self.engine.spawned[0]
         await self.chrome.drop()
         await until(lambda: self.engine.state == 'down', timeout=3)
-        self.assertIsNotNone(process.popen.poll())  # what was left of Chrome is stopped
-        self.assertFalse(self.engine.state_file.exists())
+        await self.wait_exited(process)
         self.assertFalse(self.engine.authorized)
 
     async def test_bridge_events_are_re_emitted(self):
         await self.engine.start()
         seen = []
         self.engine.connect('event', lambda e, name, data: seen.append((name, data)))
-        await self.chrome.send({'method': 'Runtime.bindingCalled', 'params': {
-            'name': '__amEvent', 'executionContextId': 1,
-            'payload': json.dumps({'name': 'playbackStateDidChange',
-                                   'data': {'state': 'playing'}})}})
-        await self.chrome.send({'method': 'Runtime.bindingCalled', 'params': {
-            'name': '__amEvent', 'executionContextId': 1,
-            'payload': json.dumps({'name': 'authorizationStatusDidChange',
-                                   'data': {'authorized': True, 'status': 1}})}})
+        await self.chrome.send_binding('playbackStateDidChange', {'state': 'playing'})
+        await self.chrome.send_binding('authorizationStatusDidChange',
+                                       {'authorized': True, 'status': 1})
         await until(lambda: len(seen) == 2)
         self.assertEqual(seen, [
             ('playbackStateDidChange', {'state': 'playing'}),
@@ -554,10 +527,8 @@ class LifecycleTest(EngineFixture):
         await until(lambda: self.engine.state == 'signing-in')
         await until(lambda: self.page.signin_calls == 1)  # mk.authorize() was asked
         self.page.authorized = True
-        await self.chrome.send({'method': 'Runtime.bindingCalled', 'params': {
-            'name': '__amEvent', 'executionContextId': 1,
-            'payload': json.dumps({'name': 'authorizationStatusDidChange',
-                                   'data': {'authorized': True, 'status': 1}})}})
+        await self.chrome.send_binding('authorizationStatusDidChange',
+                                       {'authorized': True, 'status': 1})
         self.assertTrue(await asyncio.wait_for(task, 3))
         self.assertTrue(self.engine.authorized)
         self.assertEqual(self.engine.state, 'up')
@@ -1108,7 +1079,7 @@ class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
         # A kept answer is not served either: a demo has none of Apple's.
         sync.write_answer(sync.landing_cache_path(tmp.name), {'categories': []})
-        engine = Engine(profile_dir='/nowhere/chrome', port=9999, demo=True)
+        engine = Engine(profile_dir='/nowhere/chrome', demo=True)
         await engine.start()
         await engine.start(visible=True)
         self.assertEqual(engine.state, 'down')
@@ -1168,33 +1139,20 @@ class PathsTest(unittest.TestCase):
         patcher = mock.patch.dict(os.environ)
         patcher.start()
         self.addCleanup(patcher.stop)
-        for name in ('APPLE_MUSIC_PROFILE', 'APPLE_MUSIC_PORT', 'XDG_DATA_HOME'):
+        for name in ('APPLE_MUSIC_PROFILE', 'XDG_DATA_HOME'):
             os.environ.pop(name, None)
         os.environ.update(values)
 
     def test_release_and_development(self):
         self.env(XDG_DATA_HOME='/x/data')
-        self.assertEqual(engine_paths('default', 9228),
-                         (pathlib.Path('/x/data/apple-music/chrome'), 9228))
-        self.assertEqual(engine_paths('development', 9228),
-                         (pathlib.Path('/x/data/apple-music/chrome-devel'), 9229))
-        self.assertEqual(engine_paths('development', 9300),
-                         (pathlib.Path('/x/data/apple-music/chrome-devel'), 9301))
+        self.assertEqual(engine_paths('default'), pathlib.Path('/x/data/apple-music/chrome'))
+        self.assertEqual(engine_paths('development'),
+                         pathlib.Path('/x/data/apple-music/chrome-devel'))
 
     def test_environment_wins(self):
-        self.env(XDG_DATA_HOME='/x/data', APPLE_MUSIC_PROFILE='/o/profile',
-                 APPLE_MUSIC_PORT='9400')
-        self.assertEqual(engine_paths('development', 9228), (pathlib.Path('/o/profile'), 9400))
-        self.assertEqual(engine_paths('default', 9228), (pathlib.Path('/o/profile'), 9400))
-
-    def test_state_file_follows_the_profile(self):
-        self.env(XDG_DATA_HOME='/x/data', XDG_RUNTIME_DIR='/x/run')
-        release = Engine(*engine_paths('default', 9228), demo=True)
-        devel = Engine(*engine_paths('development', 9228), demo=True)
-        self.assertEqual(release.state_file, pathlib.Path('/x/run/apple-music/engine.json'))
-        self.assertEqual(devel.state_file,
-                         pathlib.Path('/x/data/apple-music/chrome-devel/engine.json'))
-        self.assertEqual(config.state_file(devel.profile_dir), devel.state_file)
+        self.env(XDG_DATA_HOME='/x/data', APPLE_MUSIC_PROFILE='/o/profile')
+        self.assertEqual(engine_paths('development'), pathlib.Path('/o/profile'))
+        self.assertEqual(engine_paths('default'), pathlib.Path('/o/profile'))
 
 
 class EndpointTest(unittest.TestCase):
