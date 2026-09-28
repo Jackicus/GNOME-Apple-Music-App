@@ -155,29 +155,57 @@
         return Math.round(parseFloat(timeStr) * 1000);
     }
 
+    // Apple's TTML lyrics as {synced, lines: [{startMs, endMs, text, stanza?}]}. Each <p>
+    // is a line, timed when it has `begin` (the lyrics are then synced), its text the
+    // characters of its spans (a <br> a space); the first line of each <div> (a verse, a
+    // chorus) has `stanza: true`. The page's XML parser decodes the entities (&amp;,
+    // &#8217;) and CDATA; TTML it cannot read is no lyrics.
     function parseTtmlLyrics(ttml) {
+        const doc = new DOMParser().parseFromString(String(ttml), 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) {
+            return { synced: false, lines: [] };
+        }
         const lines = [];
-        const pRegex = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
-        let match;
         let synced = false;
-        while ((match = pRegex.exec(ttml)) !== null) {
-            const attrsStr = match[1];
-            const rawText = match[2].replace(/<[^>]+>/g, '').trim();
-            if (!rawText) continue;
-
-            const beginMatch = attrsStr.match(/begin="([^"]+)"/i);
-            const endMatch = attrsStr.match(/end="([^"]+)"/i);
-            const startMs = beginMatch ? parseTimeMs(beginMatch[1]) : 0;
-            const endMs = endMatch ? parseTimeMs(endMatch[1]) : 0;
-            if (beginMatch) synced = true;
-
-            lines.push({
-                startMs: startMs,
-                endMs: endMs,
-                text: rawText
-            });
+        let stanza = null;
+        for (const p of Array.from(doc.getElementsByTagNameNS('*', 'p'))) {
+            const text = elementText(p).replace(/\s+/g, ' ').trim();
+            if (!text) continue;
+            const begin = p.getAttribute('begin');
+            if (begin) synced = true;
+            const line = {
+                startMs: parseTimeMs(begin),
+                endMs: parseTimeMs(p.getAttribute('end')),
+                text: text
+            };
+            const div = enclosing(p, 'div');
+            if (div && div !== stanza) {
+                line.stanza = true;
+                stanza = div;
+            }
+            lines.push(line);
         }
         return { synced: synced, lines: lines };
+    }
+
+    // The text of an XML element: its text and CDATA, its children's, a <br> as a space.
+    function elementText(element) {
+        let text = '';
+        for (const child of Array.from(element.childNodes)) {
+            if (child.nodeType === 3 || child.nodeType === 4) {
+                text += child.nodeValue;
+            } else if (child.nodeType === 1) {
+                text += child.localName === 'br' ? ' ' : elementText(child);
+            }
+        }
+        return text;
+    }
+
+    function enclosing(node, localName) {
+        for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+            if (parent.nodeType === 1 && parent.localName === localName) return parent;
+        }
+        return null;
     }
 
     function queueSnapshot(mk) {

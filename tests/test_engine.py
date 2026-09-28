@@ -1230,6 +1230,25 @@ class PlaybackTest(EngineFixture):
         self.assertEqual(await self.engine.lyrics('1000000001'), lyrics)
         self.assertEqual(self.page.bridge_calls, [('lyrics', '1000000001')])
 
+    async def test_lyrics_are_decoded_even_when_kept_before(self):
+        await self.up()
+        self.page.bridge_answers['lyrics'] = {'synced': True, 'lines': [
+            {'startMs': 1000, 'endMs': 2000, 'text': 'Rock &amp; Roll &#8217;til dawn',
+             'stanza': True},
+            {'startMs': 2000, 'endMs': 3000, 'text': 'Again', 'stanza': False}]}
+        lyrics = await self.engine.lyrics('1000000004')
+        self.assertEqual(lyrics['lines'], [
+            {'startMs': 1000, 'endMs': 2000, 'text': 'Rock & Roll \u2019til dawn',
+             'stanza': True},
+            {'startMs': 2000, 'endMs': 3000, 'text': 'Again'}])
+        # A file an older version kept with the entities in it reads decoded.
+        path = self.cache / 'lyrics' / '1000000005.json'
+        normalize.write_answer(str(path), {'synced': False, 'lines': [
+            {'startMs': 0, 'endMs': 0, 'text': 'Salt &amp; &quot;air&quot;'}]}, str(self.cache))
+        self.assertEqual((await self.engine.lyrics('1000000005'))['lines'][0]['text'],
+                         'Salt & "air"')
+        self.assertEqual(len(self.page.bridge_calls), 1)
+
     async def test_lyrics_expire_and_a_hit_marks_them_played(self):
         await self.up()
         answer = {'synced': False, 'lines': [{'startMs': 0, 'endMs': 0, 'text': 'Tide'}]}

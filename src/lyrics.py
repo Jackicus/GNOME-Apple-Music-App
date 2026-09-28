@@ -5,16 +5,20 @@ current at a playback position, which the Now Playing sheet highlights.
     lyrics = Lyrics(answer, catalog_id)
     lyrics.synced          # True when the lines carry times (Apple's TTML had begin="…")
     lyrics.lines           # Gio.ListStore of LyricLine (start_ms, end_ms, text), in time order
-    lyrics.text            # every line on its own line: the unsynced view
+    lyrics.text            # every line on its own line, a blank line before each stanza (a
+                           # verse, a chorus: a line the answer marks `stanza`): the unsynced view
     lyrics.index_at(42.5)  # the index of the line current 42.5 s in, -1 before the first
                            # (and always for unsynced lyrics)
 
 The current line is the last one that has started: Apple's lines have end times too, but the
 highlight stays on a line through the gap before the next one, as Apple's own view does.
+parse_lines() is the one reading of an answer: the Engine keeps what it gives
+(engine.lyrics_answer), so a lyrics file cached before a fix reads as the fix would have it.
 GObject and Gio only, no GTK: tests feed it invented answers.
 """
 
 import bisect
+import html
 
 from gi.repository import Gio, GObject
 
@@ -36,18 +40,22 @@ def _ms(value):
 
 
 def parse_lines(answer):
-    """The answer's lines as (start_ms, end_ms, text) tuples: dicts with a non-blank text,
-    in time order when they carry times (a stable sort: two lines starting together keep
-    their order)."""
+    """The answer's lines as (start_ms, end_ms, text, stanza) tuples: dicts with a text that
+    is not blank, its character references decoded ("Rock &amp; Roll" was cached so once)
+    and its ends stripped, `stanza` True on the first line of a verse or a chorus; in time
+    order when they carry times (a stable sort: two lines starting together keep their
+    order)."""
     lines = []
     raw = answer.get('lines') if isinstance(answer, dict) else None
     for line in raw if isinstance(raw, list) else []:
         if not isinstance(line, dict):
             continue
         text = line.get('text')
-        if not isinstance(text, str) or not text.strip():
+        text = html.unescape(text).strip() if isinstance(text, str) else ''
+        if not text:
             continue
-        lines.append((_ms(line.get('startMs')), _ms(line.get('endMs')), text.strip()))
+        lines.append((_ms(line.get('startMs')), _ms(line.get('endMs')), text,
+                      line.get('stanza') is True))
     if isinstance(answer, dict) and answer.get('synced'):
         lines.sort(key=lambda line: line[0])
     return lines
@@ -74,9 +82,14 @@ class Lyrics(GObject.Object):
         self.synced = bool(isinstance(answer, dict) and answer.get('synced')) and bool(parsed)
         self.lines = Gio.ListStore(item_type=LyricLine)
         self.lines.splice(0, 0, [LyricLine(start_ms=start, end_ms=end, text=text)
-                                 for start, end, text in parsed])
-        self._starts = [start for start, _end, _text in parsed] if self.synced else []
-        self.text = '\n'.join(text for _start, _end, text in parsed)
+                                 for start, end, text, _stanza in parsed])
+        self._starts = [start for start, _end, _text, _stanza in parsed] if self.synced else []
+        texts = []
+        for index, (_start, _end, text, stanza) in enumerate(parsed):
+            if stanza and index:
+                texts.append('')
+            texts.append(text)
+        self.text = '\n'.join(texts)
 
     def __len__(self):
         return self.lines.get_n_items()

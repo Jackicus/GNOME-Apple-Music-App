@@ -27,11 +27,22 @@ class ParseTest(unittest.TestCase):
             {'text': None},
         ]}
         self.assertEqual(parse_lines(answer), [
-            (0, 0, 'Untimed'), (1000, 2000, 'First'), (5000, 6000, 'Second')])
+            (0, 0, 'Untimed', False), (1000, 2000, 'First', False),
+            (5000, 6000, 'Second', False)])
 
     def test_unsynced_lines_keep_their_order(self):
         answer = {'synced': False, 'lines': [{'text': 'B'}, {'text': 'A'}]}
-        self.assertEqual([text for _s, _e, text in parse_lines(answer)], ['B', 'A'])
+        self.assertEqual([text for _s, _e, text, _stanza in parse_lines(answer)], ['B', 'A'])
+
+    def test_entities_are_decoded_and_stanzas_kept(self):
+        answer = {'synced': False, 'lines': [
+            {'text': 'Rock &amp; Roll &#8217;til dawn', 'stanza': True},
+            {'text': 'Fish &amp;amp; chips'},  # escaped twice: decoded once
+            {'text': ' &#32; ', 'stanza': True},  # blank once decoded
+            {'text': 'AT&T &lt;3', 'stanza': 'yes'}]}
+        self.assertEqual(parse_lines(answer), [
+            (0, 0, 'Rock & Roll \u2019til dawn', True), (0, 0, 'Fish &amp; chips', False),
+            (0, 0, 'AT&T <3', False)])
 
     def test_nothing_from_nothing(self):
         for answer in (None, {}, {'lines': None}, {'lines': 'x'}, [], 'text'):
@@ -86,6 +97,15 @@ class LyricsObjectTest(unittest.TestCase):
         self.assertEqual(len(lyrics), 2)
         self.assertEqual(lyrics.text, 'One\nTwo')
         self.assertEqual(lyrics.index_at(30), -1)
+
+    def test_stanzas_are_parted_by_a_blank_line(self):
+        lyrics = Lyrics({'synced': True, 'lines': [
+            {'startMs': 9000, 'text': 'Chorus', 'stanza': True},
+            {'startMs': 1000, 'text': 'Verse one', 'stanza': True},
+            {'startMs': 2000, 'text': 'Verse two'},
+            {'startMs': 10000, 'text': 'Chorus again'}]})
+        self.assertEqual(lyrics.text, 'Verse one\nVerse two\n\nChorus\nChorus again')
+        self.assertEqual(len(lyrics), 4)
 
     def test_synced_without_lines_is_not_synced(self):
         lyrics = Lyrics({'synced': True, 'lines': []})
