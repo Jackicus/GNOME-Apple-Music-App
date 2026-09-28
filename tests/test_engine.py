@@ -611,6 +611,38 @@ class LifecycleTest(EngineFixture):
             await until(lambda: self.engine.state == 'down', timeout=3)
         await self.wait_exited(self.engine.spawned[0][0])
 
+    async def wedge(self, hangs):
+        """The page stops answering the evaluates `hangs(expression)` picks."""
+        page = self.page
+
+        def evaluate(message):
+            return None if hangs(message['params']['expression']) else page(message)
+        self.chrome.responders['Runtime.evaluate'] = evaluate
+        self.engine._client.timeout = 0.2
+        self.engine.probe_timeout = 0.2
+
+    async def test_a_wedged_page_takes_the_engine_down(self):
+        await self.engine.start()
+        process, _ = self.engine.spawned[0]
+        await self.wedge(lambda expression: True)
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            with self.assertRaises(EngineError) as ctx:
+                await self.engine.control('pause')
+            self.assertEqual(ctx.exception.code, 'timeout')
+            await until(lambda: self.engine.state == 'down', timeout=3)
+        await self.wait_exited(process)
+
+    async def test_a_slow_api_read_leaves_a_page_that_answers_up(self):
+        await self.engine.start()
+        await self.wedge(lambda js: js.startswith('window.__appleMusicLibrary.api('))
+        with mock.patch.object(engine_module, 'API_RETRIES', 1):
+            with self.assertRaises(EngineError) as ctx:
+                await self.engine.api('/v1/me/library/songs')
+        self.assertEqual(ctx.exception.code, 'timeout')
+        await until(lambda: self.engine._probe is not None and self.engine._probe.done())
+        self.assertEqual(self.engine.state, 'up')
+        self.assertEqual((await self.engine.status())['ready'], True)
+
     async def test_bridge_events_are_re_emitted(self):
         await self.engine.start()
         seen = []
