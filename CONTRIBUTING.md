@@ -16,7 +16,7 @@ scripts/demo.sh          # build the development profile into ./build and run it
 scripts/run.sh           # the same with the real engine (starts Chrome on your profile)
 scripts/check.sh         # byte-compile, ruff, build, unit tests, desktop/metainfo/schema checks
 python3 -m unittest discover -s tests -v                        # the unit tests alone
-scripts/screenshot.py --demo build/shot.png --page albums [--light] [--size 400x700]
+scripts/screenshot.py --demo build/shot.png --page albums [--light] [--size 360x640]
 ```
 
 `scripts/check.sh` is what CI runs (in an Arch Linux container, with widget tests on Xvfb). It
@@ -24,10 +24,11 @@ must pass before a pull request is merged.
 
 ## Conventions
 
-[CLAUDE.md](CLAUDE.md) is the project's working guide: the architecture, where new code goes and
-the code conventions (Blueprint templates, `_()` for every user-visible string, never blocking the
-main loop, list models instead of boxes of widgets, logging, settings, actions). Please read it
-before a larger change. In short:
+[docs/architecture.md](docs/architecture.md) explains how the app is put together and
+[docs/decisions.md](docs/decisions.md) why. The code conventions (Blueprint templates, `_()` for
+every user-visible string, never blocking the main loop, list models instead of boxes of widgets,
+logging, settings, actions) are in [CLAUDE.md](CLAUDE.md), with the rules for each area in
+`.claude/rules/`. Please read them before a larger change. In short:
 
 - Follow the [GNOME HIG](https://developer.gnome.org/hig/) and use libadwaita widgets and style
   classes before custom CSS.
