@@ -36,6 +36,7 @@ import asyncio
 import concurrent.futures
 import difflib
 import gc
+import heapq
 import json
 import locale
 import logging
@@ -43,6 +44,7 @@ import re
 import threading
 import time
 import unicodedata
+from array import array
 from gettext import gettext as _
 from gettext import ngettext
 
@@ -1177,10 +1179,17 @@ class SongOrder:
     way). GTK's sorters are too slow here: they read a Track's properties from C, which costs
     about 3 µs a read into Python, and a Gtk.ColumnViewSorter has no sort keys, so a
     Gtk.SortListModel sorting by it compares pairs and reads both tracks for every comparison:
-    1.6 to 6 s a click on 30,000 songs. Here each key is computed once per track (collation
-    once per distinct string) and cached, and Python sorts positions: on 30,000 songs a
-    column's first order takes 15 to 60 ms (titles, nearly all distinct, collate slowest), any
-    order after that 5 to 8 ms.
+    1.6 to 6 s a click on 30,000 songs. Here each key is computed once per track and kept, and
+    Python sorts positions.
+
+    A text column's key is a rank: its distinct texts are collated (once each) and sorted, and
+    each track keeps the number of its text's place, texts that collate alike sharing one. The
+    collation keys go once the column is ranked, and the ranks, the numbers and the tie orders
+    are kept in arrays of machine integers: 40,000 songs' four columns keep 3 MB, where
+    collation keys and lists of Python objects kept 22. Sorting by ranks orders exactly as
+    sorting by the collation keys did. On 40,000 songs (en_GB) the title order's keys are
+    prepared in 190 ms, in steps of under 10, and it is sorted in 30 ms; another order takes
+    10 to 20 ms (45 for Time's first, which computes its numbers).
     """
 
     # Column -> the keys that break its ties, most significant first.
@@ -1191,64 +1200,114 @@ class SongOrder:
         'time': ('title', 'artist'),
     }
 
-    # How many tracks' keys are computed between two pauses of prepare().
-    STEP = 5000
+    # How many tracks (or texts) the keys' computation takes on between two looks at the clock,
+    # where prepare() pauses once FRAME_BUDGET has passed: 2 ms of work or less.
+    STEP = 1000
 
     def __init__(self, tracks):
         self._tracks = list(tracks)
-        self._keys = {}  # key name -> one key per track
-        self._ties = {}  # column -> positions in the order of its tie-breakers
-        self._collated = {}  # text -> its collation key, for every column's text
+        self._keys = {}  # key name -> array: one rank or number per track
+        self._ties = {}  # column -> array: positions in the order of its tie-breakers
 
     async def prepare(self, column):
-        """Compute the keys tracks(column) needs, STEP tracks at a time with a pause for a
-        frame between (yield_to_frames), so that a page can build a big table's first order
-        without a freeze: collating 40,000 titles takes about 100 ms in one go. tracks()
-        afterwards only sorts."""
+        """Compute the keys tracks(column) needs, with a pause for a frame (yield_to_frames)
+        every FRAME_BUDGET, so that a page can build a big table's first order without a
+        freeze: collating 40,000 titles takes about 100 ms in one go. tracks() afterwards
+        only sorts."""
+        paused = time.monotonic()
         for name in (*reversed(self.TIES[column]), column):
             if name in self._keys:
                 continue
-            keys = []
-            for start in range(0, len(self._tracks), self.STEP):
-                keys.extend(self._compute(name, self._tracks[start:start + self.STEP]))
-                if start + self.STEP < len(self._tracks):
+            steps = self._computing(name)
+            while True:
+                try:
+                    next(steps)
+                except StopIteration as done:
+                    self._keys[name] = done.value
+                    break
+                if time.monotonic() - paused > FRAME_BUDGET:
                     await yield_to_frames()
-            self._keys[name] = keys
+                    paused = time.monotonic()
 
     def tracks(self, column, descending=False):
         """The tracks in column's order: 'title', 'artist', 'album' or 'time'."""
         ties = self._ties.get(column)
         if ties is None:
-            ties = list(range(len(self._tracks)))
+            order = list(range(len(self._tracks)))
             for name in reversed(self.TIES[column]):  # stable sorts, least significant first
-                ties.sort(key=self._key(name).__getitem__)
-            self._ties[column] = ties
+                order.sort(key=self._key(name).__getitem__)
+            ties = self._ties[column] = array('l', order)
         order = sorted(ties, key=self._key(column).__getitem__, reverse=descending)
         return [self._tracks[position] for position in order]
 
     def _key(self, name):
         keys = self._keys.get(name)
         if keys is None:
-            keys = self._keys[name] = self._compute(name, self._tracks)
+            steps = self._computing(name)
+            while True:
+                try:
+                    next(steps)
+                except StopIteration as done:
+                    keys = self._keys[name] = done.value
+                    break
         return keys
 
-    def _compute(self, name, tracks):
-        """The keys called name for these tracks, in their order. The raw dicts, not the
-        properties: a property read costs a microsecond, and this reads every track."""
-        if name == 'time':
-            return [_number(track.raw.get('durationMs')) for track in tracks]
-        if name == 'track':
-            return [(_number(track.raw.get('discNumber')), _number(track.raw.get('trackNumber')))
-                    for track in tracks]
-        collated = self._collated
-        keys = []
-        for track in tracks:
-            text = _text(track.raw.get(name)) or ''
-            key = collated.get(text)
-            if key is None:
-                key = collated[text] = collation_key(text)
-            keys.append(key)
+    def _computing(self, name):
+        """Compute the key called `name` of every track, in their order, as a generator that
+        yields after each STEP of work (where prepare() may pause) and returns the keys, an
+        array. The raw dicts are read, not the properties: a property read costs a
+        microsecond, and this reads every track.
+
+        'time' is the duration, 'track' the disc and track numbers as one number, which sorts
+        as the pair does. A text column's key is a rank: its distinct texts are collated,
+        sorted in runs of STEP and merged (40,000 distinct titles take 40 ms to sort in one
+        go), and each takes the next rank but for one that collates as the one before it."""
+        tracks, step = self._tracks, self.STEP
+        keys = array('l')
+        if name in ('time', 'track'):
+            for start in range(0, len(tracks), step):
+                if name == 'time':
+                    keys.extend(_clamp(_number(track.raw.get('durationMs')))
+                                for track in tracks[start:start + step])
+                else:
+                    keys.extend(_clamp(_number(track.raw.get('discNumber')) * 1_000_000
+                                       + _number(track.raw.get('trackNumber')))
+                                for track in tracks[start:start + step])
+                yield
+            return keys
+        collated = {}  # text -> its collation key, while ranking
+        texts = []
+        for start in range(0, len(tracks), step):
+            for track in tracks[start:start + step]:
+                text = _text(track.raw.get(name)) or ''
+                texts.append(text)
+                if text not in collated:
+                    collated[text] = collation_key(text)
+            yield
+        distinct = list(collated)
+        runs = []
+        for start in range(0, len(distinct), step):
+            runs.append(sorted(distinct[start:start + step], key=collated.__getitem__))
+            yield
+        ranks = {}
+        rank, previous = -1, None
+        for count, text in enumerate(heapq.merge(*runs, key=collated.__getitem__), 1):
+            key = collated[text]
+            if key != previous:
+                rank, previous = rank + 1, key
+            ranks[text] = rank
+            if count % step == 0:
+                yield
+        del collated, distinct, runs
+        for start in range(0, len(texts), step):
+            keys.extend(ranks[text] for text in texts[start:start + step])
+            yield
         return keys
+
+
+def _clamp(number):
+    """A number as an array('l') element holds it: huge values from a damaged file capped."""
+    return max(-2**62, min(number, 2**62))
 
 
 def fold(text):
