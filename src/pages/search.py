@@ -510,7 +510,8 @@ class SearchPage(Adw.NavigationPage):
         row = Adw.ActionRow(activatable=True)
         if suggestion.item is None:
             row.set_title(GLib.markup_escape_text(suggestion.display))
-            row.add_prefix(Gtk.Image(icon_name='edit-find-symbolic'))
+            row.add_prefix(Gtk.Image(icon_name='edit-find-symbolic',
+                                     accessible_role=Gtk.AccessibleRole.PRESENTATION))
         else:
             item = suggestion.item
             row.set_title(GLib.markup_escape_text(item.title))

@@ -15,6 +15,7 @@ src/mpris.py
 src/player_bar.py
 src/player_bar.blp
 src/sections.py
+src/shortcuts.py
 src/pages/__init__.py
 src/pages/artist.py
 src/pages/artist.blp

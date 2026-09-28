@@ -36,7 +36,8 @@ first shown widget with a context_item), as a right click on it would, and
 draws the popover into the shot where the compositor put it.
 --preferences opens the Preferences dialog (app.preferences) on its General page, or
 on Engine, and shoots it: inside the window when libadwaita put it there, else its
-own window (a fixed-size window that is neither maximized nor tiled gets one).
+own window (a fixed-size window that is neither maximized nor tiled gets one), at
+--size when that is narrower than 640 px.
 """
 
 import argparse
@@ -302,6 +303,11 @@ def shoot():
         return GLib.SOURCE_REMOVE
     if args.preferences and preferences is None:
         preferences = app.show_preferences(args.preferences)
+        if width < 640:
+            # A narrow --size: the dialog as narrow (a window of its own takes its content
+            # size, not the main window's).
+            preferences.set_content_width(width)
+            preferences.set_content_height(height)
         GLib.timeout_add(1200, shoot)  # shown, the cache measured
         return GLib.SOURCE_REMOVE
     if preferences is not None and preferences.get_root() is not window:

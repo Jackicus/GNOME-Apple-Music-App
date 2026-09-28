@@ -1,12 +1,32 @@
 """AppleMusicTile: an Item as a grid tile, its artwork, title and subtitle."""
 
-from gi.repository import GLib, Gtk
+from gi.repository import Adw, GLib, Gtk
 
 from . import artwork
 
-# The subtitle's look inside the tile's markup: libadwaita's dim-label opacity and about its
-# caption size.
-SUBTITLE = '<span size="smaller" alpha="55%">{}</span>'
+# The subtitle's look inside the tile's markup: about the caption size, at libadwaita's
+# dim-label opacity (its --dim-opacity: 55%, and 90% with the system's high-contrast setting,
+# which markup cannot follow by itself; subtitle_markup() does, for tiles bound after a change).
+SUBTITLE = '<span size="smaller" alpha="{alpha}%">{{}}</span>'
+DIM_OPACITY = 55
+DIM_OPACITY_HIGH_CONTRAST = 90
+_subtitle = None
+
+
+def subtitle_markup():
+    """The subtitle's markup format for the contrast setting now."""
+    global _subtitle
+    if _subtitle is None:
+        manager = Adw.StyleManager.get_default()
+        manager.connect('notify::high-contrast', _on_high_contrast)
+        _on_high_contrast(manager)
+    return _subtitle
+
+
+def _on_high_contrast(manager, *_args):
+    global _subtitle
+    alpha = DIM_OPACITY_HIGH_CONTRAST if manager.get_high_contrast() else DIM_OPACITY
+    _subtitle = SUBTITLE.format(alpha=alpha)
 
 # The placeholder's icon and size: a music note until the cover arrives, and a playlist
 # folder's big folder icon, which no cover replaces.
@@ -76,7 +96,8 @@ class Tile(Gtk.Box):
             self.label.set_text(item.title)
         else:
             self.label.set_markup(GLib.markup_escape_text(item.title) + '\n'
-                                  + SUBTITLE.format(GLib.markup_escape_text(item.subtitle)))
+                                  + subtitle_markup().format(
+                                      GLib.markup_escape_text(item.subtitle)))
         if self.get_mapped():
             self._show_art()
 

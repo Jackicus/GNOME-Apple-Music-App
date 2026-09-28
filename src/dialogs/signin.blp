@@ -21,7 +21,8 @@ template $AppleMusicSignInDialog: Adw.Dialog {
       };
 
       child: Button cancel_button {
-        label: _("Cancel");
+        label: _("_Cancel");
+        use-underline: true;
         halign: center;
         clicked => $on_cancel_clicked();
 

@@ -67,6 +67,7 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
 
               Image {
                 icon-name: "music-note-symbolic";
+                accessible-role: presentation;
               }
 
               Label {
@@ -79,7 +80,7 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
             };
 
             [end]
-            MenuButton {
+            MenuButton primary_menu_button {
               icon-name: "open-menu-symbolic";
               menu-model: primary_menu;
               tooltip-text: _("Main Menu");
@@ -114,9 +115,11 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
                 child: Box {
                   spacing: 10;
 
+                  // Decorative: the button's name is its label.
                   Adw.Avatar {
                     size: 28;
                     icon-name: "avatar-default-symbolic";
+                    accessible-role: presentation;
                   }
 
                   Label {
@@ -152,6 +155,7 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
                   Adw.Avatar account_avatar {
                     size: 28;
                     show-initials: true;
+                    accessible-role: presentation;
                   }
 
                   Label account_label {

@@ -267,6 +267,59 @@ def is_dark(rgba):
     return 0.299 * rgba.red + 0.587 * rgba.green + 0.114 * rgba.blue < 0.6
 
 
+# The text drawn on an item's colour (the hero cards' band, the category tiles): white on a
+# dark colour, style.css's .light-art black, rgb(0 0 6 / 80%), on a light one.
+LIGHT_TEXT = ((1.0, 1.0, 1.0), 1.0)
+DARK_TEXT = ((0.0, 0.0, 6 / 255), 0.8)
+# WCAG 2's AA contrast for text under 18 pt (14 pt bold), which every caption here is.
+MIN_CONTRAST = 4.5
+
+
+def _linear(channel):
+    return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def luminance(rgb):
+    """WCAG's relative luminance of an sRGB colour, (r, g, b) in 0-1."""
+    red, green, blue = (_linear(channel) for channel in rgb)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def contrast_ratio(text, opacity, background):
+    """WCAG's contrast ratio of `text` drawn at `opacity` over `background` (sRGB tuples)."""
+    shown = tuple(opacity * t + (1 - opacity) * b for t, b in zip(text, background))
+    lighter, darker = sorted((luminance(shown), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def readable_band(rgb, dark, text_opacity=1.0):
+    """The colour to draw under a caption instead of `rgb` (an sRGB tuple), so that its text
+    (white when `dark`, else the black of DARK_TEXT) at `text_opacity` reads at MIN_CONTRAST:
+    rgb itself when it does, else rgb mixed towards black (under white text) or white (under
+    black) just far enough, in steps of 2%. The hue stays; mid-tones under white text get
+    deeper (the demo's orange by about a third)."""
+    text, opacity = LIGHT_TEXT if dark else DARK_TEXT
+    opacity *= text_opacity
+    towards = (0.0, 0.0, 0.0) if dark else (1.0, 1.0, 1.0)
+    for step in range(51):
+        amount = step / 50
+        band = tuple(c * (1 - amount) + t * amount for c, t in zip(rgb, towards))
+        if contrast_ratio(text, opacity, band) >= MIN_CONTRAST:
+            return band
+    return towards
+
+
+def band_colour(rgba, text_opacity=1.0):
+    """(the Gdk.RGBA to draw under a caption, dark) for an item's colour: dark says whether
+    its text is white (is_dark), and the colour is readable_band()'s for text drawn at
+    text_opacity (a dimmed subtitle's)."""
+    dark = is_dark(rgba)
+    red, green, blue = readable_band((rgba.red, rgba.green, rgba.blue), dark, text_opacity)
+    band = Gdk.RGBA()
+    band.red, band.green, band.blue, band.alpha = red, green, blue, 1.0
+    return band, dark
+
+
 _default = None
 
 

@@ -4,8 +4,8 @@ using Adw 1;
 // The transport bar at the bottom of the window (player_bar.py): the AdwBottomSheet's bottom
 // bar. Transport on the left; the item playing (artwork, title, artist) with the seek slider
 // under it in the middle; the heart, shuffle, repeat and the volume on the right. The window's
-// breakpoint sets `compact` below 600sp, which hides the volume, the heart and the times around
-// the slider.
+// breakpoint sets `compact` below 600sp, which hides the volume, the heart, shuffle, repeat
+// (the Now Playing sheet has those two) and the times around the slider.
 template $AppleMusicPlayerBar: Adw.Bin {
   child: Box {
     spacing: 12;

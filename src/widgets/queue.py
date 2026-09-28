@@ -19,6 +19,7 @@ class QueueRow(Gtk.Box):
 
     def __init__(self):
         super().__init__(spacing=12)
+        self.list_item = None  # the Gtk.ListItem bound (its accessible description)
         self.number_label = Gtk.Inscription(min_chars=2, nat_chars=2, xalign=1,
                                             valign=Gtk.Align.CENTER)
         self.number_label.add_css_class('numeric')
@@ -83,6 +84,9 @@ class QueueView(Gtk.Stack):
         self._app = None
         self._active = False
         self._rows = {}  # bound position -> its QueueRow
+        # What a row reads to assistive technology (looked up once: rows are bound often).
+        self._label_format = _('{title}, {artist}')
+        self._playing = _('Playing')
 
         self.empty_page = Adw.StatusPage(icon_name='playlist-symbolic', title=_('Nothing Queued'),
                                          description=_('Play something to fill Up Next'))
@@ -93,7 +97,9 @@ class QueueView(Gtk.Stack):
         factory.connect('setup', self._on_setup)
         factory.connect('bind', self._on_bind)
         factory.connect('unbind', self._on_unbind)
-        self.list_view = Gtk.ListView(factory=factory, model=Gtk.NoSelection())
+        # Tab leaves the list after the entry with the focus; the arrows move between them.
+        self.list_view = Gtk.ListView(factory=factory, model=Gtk.NoSelection(),
+                                      tab_behavior=Gtk.ListTabBehavior.ITEM)
         self.list_view.add_css_class('queue-list')
         self.list_view.connect('activate', self._on_activate)
         self.scrolled = Gtk.ScrolledWindow(child=self.list_view,
@@ -122,6 +128,7 @@ class QueueView(Gtk.Stack):
         index = self._player.queue_index
         for position, row in self._rows.items():
             row.set_current(position == index)
+            self._describe(row, position == index)
         if self._active:
             self._scroll_to_current()
 
@@ -137,11 +144,27 @@ class QueueView(Gtk.Stack):
         position = list_item.get_position()
         row = list_item.get_child()
         self._rows[position] = row
-        row.bind(list_item.get_item(), position, position == self._player.queue_index)
+        entry = list_item.get_item()
+        current = position == self._player.queue_index
+        row.bind(entry, position, current)
+        row.list_item = list_item
+        title = row.title_label.get_label()
+        list_item.set_accessible_label(
+            self._label_format.format(title=title, artist=entry.artist) if entry.artist
+            else title)
+        self._describe(row, current)
+
+    def _describe(self, row, current):
+        """The entry playing is described as such (its play icon is decoration)."""
+        list_item = getattr(row, 'list_item', None)
+        if list_item is not None:
+            list_item.set_accessible_description(self._playing if current else '')
 
     def _on_unbind(self, _factory, list_item):
         position = list_item.get_position()
-        if self._rows.get(position) is list_item.get_child():
+        row = list_item.get_child()
+        row.list_item = None
+        if self._rows.get(position) is row:
             del self._rows[position]
 
     def _on_activate(self, _list_view, position):

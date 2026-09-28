@@ -2,101 +2,117 @@ using Gtk 4.0;
 using Adw 1;
 
 template $AppleMusicRadioPage: Adw.NavigationPage {
-  child: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar {
-      show-title: false;
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Narrow (a phone): two station tiles a row need narrower sides, or they would make the
+    // page wider than the window.
+    Adw.Breakpoint {
+      condition ("max-width: 400sp")
+
+      setters {
+        flow_box.margin-start: 6;
+        flow_box.margin-end: 6;
+      }
     }
 
-    content: Stack stack {
-      StackPage {
-        name: "loading";
-
-        child: Adw.Spinner {
-          width-request: 32;
-          height-request: 32;
-          halign: center;
-          valign: center;
-        };
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {
+        show-title: false;
       }
 
-      StackPage {
-        name: "empty";
+      content: Stack stack {
+        StackPage {
+          name: "loading";
 
-        child: Adw.StatusPage empty_page {
-          title: _("No Stations");
-          description: _("Radio stations you play appear here");
-        };
-      }
+          child: Adw.Spinner {
+            width-request: 32;
+            height-request: 32;
+            halign: center;
+            valign: center;
+          };
+        }
 
-      StackPage {
-        name: "items";
+        StackPage {
+          name: "empty";
 
-        child: ScrolledWindow {
-          hscrollbar-policy: never;
+          child: Adw.StatusPage empty_page {
+            title: _("No Stations");
+            description: _("Radio stations you play appear here");
+          };
+        }
 
-          styles [
-            "view",
-          ]
+        StackPage {
+          name: "items";
 
-          child: Box {
-            orientation: vertical;
-            spacing: 18;
-            margin-bottom: 18;
+          child: ScrolledWindow {
+            hscrollbar-policy: never;
 
-            Label title_label {
-              xalign: 0;
-              ellipsize: end;
-              margin-start: 24;
-              margin-end: 24;
-              margin-top: 24;
+            styles [
+              "view",
+            ]
 
-              styles [
-                "title-1",
-              ]
-            }
-
-            $AppleMusicShelf hero_shelf {
-              hero: true;
-            }
-
-            // The rest, as tiles in a flow box rather than a Gtk.GridView, which cannot sit
-            // under the shelf in one scrolled window (it stops recycling and leaves most of
-            // itself blank there): a library's recent stations are tens, not thousands.
-            Box more_box {
+            child: Box {
               orientation: vertical;
-              spacing: 6;
+              spacing: 18;
+              margin-bottom: 18;
 
-              Label {
-                label: _("More Stations");
+              Label title_label {
                 xalign: 0;
                 ellipsize: end;
                 margin-start: 24;
                 margin-end: 24;
+                margin-top: 24;
 
                 styles [
-                  "title-2",
+                  "title-1",
                 ]
               }
 
-              FlowBox flow_box {
-                homogeneous: true;
-                selection-mode: none;
-                activate-on-single-click: true;
-                min-children-per-line: 2;
-                max-children-per-line: 12;
-                column-spacing: 12;
-                valign: start;
-                // The first column's covers on the shelf's and the titles' 24px margin (a
-                // child's 3px padding), its tiles at the start of their cells.
-                margin-start: 21;
-                margin-end: 21;
-                child-activated => $on_station_activated();
+              $AppleMusicShelf hero_shelf {
+                hero: true;
               }
-            }
+
+              // The rest, as tiles in a flow box rather than a Gtk.GridView, which cannot sit
+              // under the shelf in one scrolled window (it stops recycling and leaves most of
+              // itself blank there): a library's recent stations are tens, not thousands.
+              Box more_box {
+                orientation: vertical;
+                spacing: 6;
+
+                Label {
+                  label: _("More Stations");
+                  xalign: 0;
+                  ellipsize: end;
+                  margin-start: 24;
+                  margin-end: 24;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                FlowBox flow_box {
+                  homogeneous: true;
+                  selection-mode: none;
+                  activate-on-single-click: true;
+                  min-children-per-line: 2;
+                  max-children-per-line: 12;
+                  column-spacing: 12;
+                  valign: start;
+                  // The first column's covers on the shelf's and the titles' 24px margin (a
+                  // child's 3px padding), its tiles at the start of their cells.
+                  margin-start: 21;
+                  margin-end: 21;
+                  child-activated => $on_station_activated();
+                }
+              }
+            };
           };
-        };
-      }
+        }
+      };
     };
   };
 }

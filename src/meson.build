@@ -80,6 +80,7 @@ install_data(
   'player.py',
   'player_bar.py',
   'sections.py',
+  'shortcuts.py',
   'sidebar.py',
   'sync.py',
   'window.py',

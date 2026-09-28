@@ -15,7 +15,7 @@ import bisect
 import logging
 from gettext import gettext as _
 
-from gi.repository import Adw, Gio, GObject, Gtk, Pango
+from gi.repository import Adw, Gdk, Gio, GObject, Gtk, Pango
 
 from ..backend.errors import EngineError
 from ..library import Track
@@ -121,6 +121,15 @@ class DetailPage(Adw.NavigationPage):
         self._header_factory = Gtk.SignalListItemFactory()
         self._header_factory.connect('setup', self._on_setup_header)
         self._header_factory.connect('bind', self._on_bind_header)
+        # What a track's row reads to assistive technology (looked up once: rows bind often).
+        self._label_formats = {
+            'artist': _('{title}, {artist}'),
+            'explicit': _('{label}, explicit'),
+        }
+        # Tab from Shuffle goes on into the tracks (see on_list_key_pressed).
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect('key-pressed', self.on_list_key_pressed)
+        self.list_view.add_controller(keys)
 
         self._hero_section = Gio.ListStore(item_type=GObject.Object)
         self._hero_section.append(_Hero())
@@ -314,8 +323,39 @@ class DetailPage(Adw.NavigationPage):
         list_item.set_focusable(is_track)  # the hero's buttons take the focus, not its row
         if is_track:
             row.show_track(entry, self._album_artist)
+            list_item.set_accessible_label(self._track_label(entry))
+            list_item.set_accessible_description(entry.duration_label or '')
         else:
             row.show_hero(self.hero)
+            list_item.set_accessible_label('')
+            list_item.set_accessible_description('')
+
+    def _track_label(self, track):
+        """A track row's accessible name: the title, the artist when the row shows one, and
+        whether it is explicit (the badge's)."""
+        label = track.title
+        if track.artist and (self._album_artist is None or track.artist != self._album_artist):
+            label = self._label_formats['artist'].format(title=label, artist=track.artist)
+        if track.explicit:
+            label = self._label_formats['explicit'].format(label=label)
+        return label
+
+    def on_list_key_pressed(self, _controller, keyval, _keycode, state):
+        """Tab from the hero's last button (Shuffle) into the tracks. The list's Tab leaves
+        it after the focused item (tab-behavior item), and the hero is its first item, so the
+        tracks would otherwise be reached only with Down."""
+        if keyval not in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab):
+            return False
+        if state & Gtk.accelerator_get_default_mod_mask():
+            return False
+        focus = self.get_root().get_focus() if self.get_root() is not None else None
+        if focus is None or not (focus is self.shuffle_button
+                                 or focus.is_ancestor(self.shuffle_button)):
+            return False
+        if self._rows.get_n_items() < 2:
+            return False
+        self.list_view.scroll_to(1, Gtk.ListScrollFlags.FOCUS, None)
+        return True
 
     def _on_unbind(self, _factory, list_item):
         list_item.get_child().clear(self.hero)

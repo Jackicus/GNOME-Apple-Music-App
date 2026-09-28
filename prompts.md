@@ -25,7 +25,7 @@ running and better than before.
 - [x] 15. Search, New and Made for You (2026-09-28)
 - [x] 16. Context menus and actions (play next, love, add, drag to playlist) (2026-09-28)
 - [x] 17. Preferences (2026-09-28)
-- [ ] 18. Keyboard navigation and accessibility
+- [x] 18. Keyboard navigation and accessibility (2026-09-28)
 - [ ] 19. Performance pass
 - [ ] 20. Packaging and release
 
@@ -2151,6 +2151,112 @@ Verify: scripts/check.sh; screenshots at --size 360x640 for --page home, --page 
 --open album:first and --now-playing, in both schemes; walk the checklist for real. Update
 CLAUDE.md (shortcut list, a11y rules). Tick phase 18 and commit.
 ```
+
+**Done 2026-09-28. Keyboard walkthrough** (for regressions: `scripts/a11y_check.py` walks it
+key by key, add `--size 360x640` for the narrow layout and `--names` for the accessible names;
+with a real keyboard, the same steps by hand):
+
+1. Ctrl+1: the focus is on the selected sidebar row. Down and Up move: in the wide layout they
+   select, which shows the page; in the narrow one (boxed lists) they only move. Enter shows the
+   row's page (and opens or closes a folder); a screen reader reads folders as expanded or not.
+2. Ctrl+2: the focus is on the page's content: the first tile of a grid, the Songs table, the
+   Search entry, an album's Play. Arrows move between tiles and rows, Tab leaves a grid, shelf
+   or list after one item, Enter opens a tile or plays a row, Menu or Shift+F10 opens the
+   focused item's context menu and Escape closes it.
+3. On an album or playlist: Play, Tab to Shuffle, Tab to the first track, Down, Enter plays from
+   that track. Alt+Left (or Escape inside the page) goes back.
+4. Ctrl+3: the focus is on the bar's play button (with nothing playing, on the bar itself,
+   which Enter opens as Now Playing). Space plays or pauses anywhere except in an entry, on a
+   toggle (shuffle, repeat, a switch), in a menu or in a dialog; Ctrl+Right and Ctrl+Left skip.
+5. Ctrl+N opens Now Playing with the focus on its play button; Tab goes Next, Repeat, the
+   Lyrics / Up Next toggle (Left and Right switch, Space picks), then into the list (arrows move,
+   Enter seeks to a line or plays an entry), then the close button. Escape closes the sheet and
+   the focus goes back to where it was.
+6. Ctrl+F shows Search with the cursor in the entry; Tab to the Apple Music / Your Library
+   toggle; Escape in the entry clears it.
+7. F10 opens the main menu (from a page in the narrow layout too: the sidebar comes back with
+   it); Escape closes it. Ctrl+, opens Preferences: Tab through the rows, Alt and the underlined
+   letter for Refresh Now, Clear, Start/Stop and Sign Out, Escape closes it. Ctrl+? lists every
+   shortcut, grouped (General, Navigation, Playback).
+8. With a dialog open over the window, Alt+Left, Ctrl+F, Ctrl+1 to 3, Ctrl+N and Space leave the
+   page behind it alone.
+
+**Notes for later phases.**
+
+- What exists: `src/shortcuts.py` (`ACCELS`: every accelerator, set by `main.py` in one loop;
+  `PLAYBACK`: the window's own playback keys, which `window.PLAYBACK_KEYS` parses; `sections()`:
+  the Keyboard Shortcuts dialog, whose rows `main._name_rows` names "Title: Ctrl+Q", as
+  libadwaita leaves them unnamed; `tests/test_shortcuts.py` checks that every key is listed,
+  parses, and does one thing only). New window actions `win.focus-sidebar`, `focus-content`,
+  `focus-player` (Ctrl+1, 2, 3); all window actions are off while a dialog is open over the
+  window (`Window._update_actions`, on `notify::visible-dialog`), `win.back` also while the Now
+  Playing sheet is open. `scripts/a11y_check.py` (new; see its docstring). 492 tests.
+- Keys: Space is the window's play/pause except in an editable or text view, on a
+  `Gtk.ToggleButton`/`Switch`/`CheckButton` (whose key it is), inside a popover, or while a
+  dialog is open; on a plain button, a tile or a row it plays or pauses (Enter presses and
+  activates). F10: GTK's own handler needs the primary menu button mapped, which it is not while
+  the collapsed layout shows a page, so the window's key controller shows the sidebar and pops
+  the menu up from an idle. Ctrl+F, 1 and 2 close the sheet first; Ctrl+3 with the sheet open
+  focuses the sheet's play button. Opening the sheet (any way) puts the focus on its play button
+  (the bottom sheet itself focuses its first focusable widget, the seek slider); closing it puts
+  it back (the bottom sheet's). The detail page's hero is its list's first item, so the list's
+  Tab left it after Shuffle; a capture-phase key controller on the list sends Tab from Shuffle
+  to the first track (`scroll_to(1, FOCUS)`); Shift+Tab from a track still goes to the header.
+  The lyrics and queue lists got `tab-behavior: item` (Tab walked every lyric line). Dialog
+  buttons have mnemonics (Sign-in's Cancel; Preferences' Refresh Now, Clear, Start/Stop (one
+  button, Alt+S), Sign Out; the alert dialogs had theirs).
+- Names and roles, checked over AT-SPI (below): sidebar rows are named after their items and
+  folders carry the expanded state (AdwSidebar names neither; `Window._sidebar_rows()` finds its
+  rows, one list box in the sidebar mode, one per section in the page mode, rebuilt on
+  `notify::mode`). Detail rows ("Title, Artist, explicit", the time as the description), Songs
+  rows (a `row-factory`: "Title, Artist, Album"), queue rows (the one playing described
+  "Playing"), lyric lines: `set_accessible_label` in bind, formats looked up once. The button
+  `Adw.BottomSheet` wraps the bar in (it is what opens the sheet, and was named after everything
+  in the bar) is "Now Playing", described by the item playing. The seek sliders' value text is
+  "1:05 of 3:40" (updated when the text changes, not per event); the volume button and its
+  popover slider are "Volume" with "70%". Decorative images are `presentation`: the window
+  title's note, the account avatars, the artist page's and the artist tiles' portraits, the
+  suggestion rows' search icon. The bar announces each new item, "Now playing: Title by Artist",
+  through the window (see CLAUDE.md: GTK drops an announcement from a widget no client has
+  asked about), once per item, not again after the half-second gap between queues.
+- Adaptive, at 360×640 in both schemes: Home, Albums (two columns), an album (the hero stacks),
+  the sheet (one column), Songs, Search, an artist, Radio, the sidebar page and Preferences were
+  shot and looked at; each page's content minimum width was measured against 360 px. Two pages
+  were wider than the window: the artist page (two album tiles plus its 24 px margins, 380 px)
+  and Radio (two station tiles plus 21 px margins and 12 px spacing, 386 px); a `max-width:
+  400sp` breakpoint narrows their margins (Radio's page is now in an `Adw.BreakpointBin`). The
+  compact bar (600sp) also hides shuffle and repeat, which the sheet has: the title read "Not
+  Play…" at 360 px. `screenshot.py --preferences` sizes the dialog to a narrow `--size`.
+- Colours: the only hard-coded ones are the accent and the text on an item's own colour (the
+  hero cards' band, the category tiles: white, or `rgb(0 0 6 / 80%)`), which is the content's,
+  not the scheme's. The dimmed subtitle on the hero cards (75% opacity) read at under 4.5:1 on
+  15 of the demo's 25 art colours (2.3:1 on an orange), and several titles under 4.5:1 too:
+  `artwork.band_colour()` now mixes the colour towards black under white text (towards white
+  under black) just far enough for the subtitle to reach WCAG AA, keeping the hue (the demo's
+  orange about a third deeper, most blues a fifth); category tiles likewise for their names.
+  Unit-tested in `test_artwork.py`. The grid tiles' dim subtitle is libadwaita's dim-label
+  opacity (55%: 5.9:1 on the dark view, 3.3:1 on the light one, as every dim-label in GNOME);
+  it is markup, which does not follow the high-contrast setting by itself, so `tile.py` now
+  switches it to libadwaita's 90% with it (for tiles bound after the change), and style.css
+  raises the hero subtitle under `@media (prefers-contrast: more)`.
+- Verified: the checklist above by `scripts/a11y_check.py` at 1100×760 and 360×640 (23 steps,
+  all pass), plus in-window dialogs (window maximized: the actions off, Alt+Left and Space not
+  reaching the page, Escape closing), Enter on the artist page's and Radio's flow boxes and a
+  Radio hero card, and the sheet's focus with animations on. Names: a private AT-SPI bus
+  (`--names`) and libatspi, page by page: no focusable control without a name in the app's own
+  widgets. The announcement was received as an `object:announcement` event by a libatspi
+  listener. `scripts/check.sh` passes; ruff passes.
+- Not verified: real key presses (none can be sent on this desktop; `a11y_check.py` dispatches
+  through GTK's own controllers, but not other widgets' key controllers, typing, or the input
+  method); Orca (not installed) and the GTK inspector's panel by eye (the AT-SPI dump is what it
+  shows); the high-contrast switch live (it is the desktop's setting); right-to-left layouts.
+- Left as they are (libadwaita's): `AdwComboRow` exposes an unnamed list item (the refresh
+  interval row); an open `Adw.BottomSheet` leaves the content behind it "showing" to AT-SPI;
+  the primary menu is on the sidebar page only, so F10 from a page in the narrow layout goes
+  back to the sidebar. Phase 6's note (Alt+Left with a dialog open popped the page behind it)
+  is fixed. For phase 19: the Songs table's row factory adds one small bind per row (a
+  formatted label); the sidebar rows are walked (about 30 widgets) after each playlist splice
+  and folder toggle.
 
 ## Phase 19: Performance pass
 

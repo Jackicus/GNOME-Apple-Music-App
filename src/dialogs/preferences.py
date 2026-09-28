@@ -72,7 +72,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         for child, prop, key in BINDINGS:
             settings.bind(key, getattr(self, child), prop, Gio.SettingsBindFlags.DEFAULT)
         # Start or Stop, as the engine's state says (the button is off while it changes).
-        start, stop = _('Start'), _('Stop')
+        start, stop = _('_Start'), _('_Stop')  # one button, one mnemonic: Alt+S
         self._label_binding = engine.bind_property(
             'state', self.engine_button, 'label', GObject.BindingFlags.SYNC_CREATE,
             lambda _binding, state: start if state == 'down' else stop)

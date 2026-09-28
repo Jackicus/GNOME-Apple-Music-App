@@ -5,13 +5,19 @@ from gi.repository import Graphene, Gtk
 from . import artwork
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 
+# The subtitle's opacity on the band (style.css, `.hero-caption > .dim-label`): the band is
+# made dark or light enough for it to read (artwork.band_colour).
+SUBTITLE_OPACITY = 0.75
+
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/hero_tile.ui')
 class HeroTile(Gtk.Box):
     """A 260 px cover over a two-line caption, the title and the subtitle, on a band of the
     Item's art_color (Apple's colour for the artwork's background) in white or black text,
-    whichever reads better on it; without one, on the card colour. Apple's "Top Picks for You"
-    cards, for the first shelf of Home and Radio's first stations.
+    whichever reads better on it (artwork.is_dark), the colour made deeper (or lighter) where
+    the dimmed subtitle would not read on it at WCAG's AA contrast (artwork.band_colour);
+    without one, on the card colour. Apple's "Top Picks for You" cards, for the first shelf
+    of Home and Radio's first stations.
 
     bind(item) and unbind() are called by a list factory, as for AppleMusicTile. The cover is
     an AppleMusicCover, which decodes the 640 px art while it is mapped (the 320 px thumbnail is
@@ -25,7 +31,8 @@ class HeroTile(Gtk.Box):
     title_label = Gtk.Template.Child()
     subtitle_label = Gtk.Template.Child()
 
-    _colour = None
+    _colour = None  # the item's colour
+    _band = None  # what is drawn: that colour, made readable
     _item = None
 
     @property
@@ -53,7 +60,8 @@ class HeroTile(Gtk.Box):
         if colour is not None and self._colour is not None and colour.equal(self._colour):
             return
         self._colour = colour
-        dark = colour is not None and artwork.is_dark(colour)
+        self._band, dark = (artwork.band_colour(colour, SUBTITLE_OPACITY) if colour is not None
+                            else (None, False))
         # The text colour for the band: white on a dark one, black on a light one.
         if dark:
             self.add_css_class('dark-art')
@@ -67,7 +75,7 @@ class HeroTile(Gtk.Box):
 
     def do_snapshot(self, snapshot):
         # Under the children, over the CSS background, inside the rounded clip of `overflow`.
-        if self._colour is not None:
+        if self._band is not None:
             bounds = Graphene.Rect().init(0, 0, self.get_width(), self.get_height())
-            snapshot.append_color(self._colour, bounds)
+            snapshot.append_color(self._band, bounds)
         Gtk.Box.do_snapshot(self, snapshot)

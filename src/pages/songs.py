@@ -97,6 +97,13 @@ class SongsPage(Adw.NavigationPage):
         self.album_column.set_factory(self._text_factory('album'))
         self.time_column.set_factory(self._text_factory('duration_label', numeric=True))
 
+        # Each row reads "title, artist, album" to assistive technology, the time as its
+        # description (the format looked up once: rows are rebound all the time).
+        self._row_format = _('{title}, {artist}, {album}')
+        row_factory = Gtk.SignalListItemFactory()
+        row_factory.connect('bind', self._bind_row)
+        self.column_view.set_row_factory(row_factory)
+
         self._rows = Gio.ListStore(item_type=Track)
         self._selection = Gtk.SingleSelection(model=self._rows, autoselect=False)
         self.column_view.set_model(self._selection)
@@ -256,6 +263,12 @@ class SongsPage(Adw.NavigationPage):
             cell.get_child().set_text(getattr(cell.get_item(), name))
 
         return self._factory(setup, bind)
+
+    def _bind_row(self, _factory, row):
+        track = row.get_item()
+        row.set_accessible_label(self._row_format.format(
+            title=track.title, artist=track.artist or '', album=track.album or ''))
+        row.set_accessible_description(track.duration_label or '')
 
     def _setup_title(self, _factory, cell):
         cell.set_child(SongTitle())

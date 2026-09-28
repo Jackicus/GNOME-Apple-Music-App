@@ -34,7 +34,8 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       }
 
       Adw.ButtonRow refresh_row {
-        title: _("Refresh Now");
+        title: _("_Refresh Now");
+        use-underline: true;
         start-icon-name: "view-refresh-symbolic";
         action-name: "app.sync";
       }
@@ -45,7 +46,8 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
 
         [suffix]
         Button clear_button {
-          label: _("Clear");
+          label: _("C_lear");
+          use-underline: true;
           valign: center;
           clicked => $on_clear_clicked();
         }
@@ -67,7 +69,8 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
 
         [suffix]
         Button engine_button {
-          label: _("Start");
+          label: _("_Start");
+          use-underline: true;
           valign: center;
           clicked => $on_engine_clicked();
         }
@@ -112,7 +115,8 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       // Runs app.sign-out, though not through action-name: an actionable's sensitivity is
       // its action's, and this one is off while signed out.
       Adw.ButtonRow sign_out_row {
-        title: _("Sign Out");
+        title: _("Sign _Out");
+        use-underline: true;
         activated => $on_sign_out_activated();
 
         styles [

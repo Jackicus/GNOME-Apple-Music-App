@@ -307,5 +307,49 @@ class TestArtColour(unittest.TestCase):
             self.assertFalse(artwork.is_dark(artwork.art_colour(colour)), colour)
 
 
+class TestReadableBand(unittest.TestCase):
+    """The caption band's colour: the item's, made deep or light enough for its text to read
+    at WCAG's AA contrast (4.5:1), the dimmed subtitle's too."""
+
+    # The demo library's art colours and a few more.
+    COLOURS = ('#0077b6', '#0081a7', '#0b6e4f', '#1b4965', '#219ebc', '#457b9d', '#499f68',
+               '#8d99ae', '#9d4edd', '#a23b72', '#d1495b', '#d90429', '#d97706', '#e76f51',
+               '#fca311', '#90e0ef', '#ffd166', '#ffffff', '#000000', '#808080')
+
+    @staticmethod
+    def rgb(colour):
+        return tuple(int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+    def test_contrast_ratio_matches_wcag(self):
+        self.assertAlmostEqual(artwork.contrast_ratio((1, 1, 1), 1.0, (0, 0, 0)), 21.0)
+        self.assertAlmostEqual(artwork.contrast_ratio((0, 0, 0), 1.0, (0, 0, 0)), 1.0)
+        # WCAG's example grey: #767676 on white is just over 4.5:1.
+        grey = self.rgb('#767676')
+        self.assertAlmostEqual(artwork.contrast_ratio(grey, 1.0, (1, 1, 1)), 4.54, places=2)
+
+    def test_every_caption_reads(self):
+        for colour in self.COLOURS:
+            rgba = artwork.art_colour(colour)
+            for opacity in (1.0, 0.75):
+                band, dark = artwork.band_colour(rgba, opacity)
+                text, text_opacity = artwork.LIGHT_TEXT if dark else artwork.DARK_TEXT
+                ratio = artwork.contrast_ratio(text, text_opacity * opacity,
+                                               (band.red, band.green, band.blue))
+                self.assertGreaterEqual(ratio, artwork.MIN_CONTRAST, (colour, opacity))
+
+    def test_readable_colours_are_kept(self):
+        for colour in ('#1b4965', '#000000', '#ffffff', '#ffd166'):
+            rgb = self.rgb(colour)
+            dark = artwork.is_dark(artwork.art_colour(colour))
+            self.assertEqual(artwork.readable_band(rgb, dark, 0.75), rgb, colour)
+
+    def test_white_text_deepens_the_colour(self):
+        rgb = self.rgb('#d97706')  # an orange that takes white text
+        band = artwork.readable_band(rgb, True, 0.75)
+        self.assertLess(artwork.luminance(band), artwork.luminance(rgb))
+        # The hue stays: every channel scaled by the same amount.
+        self.assertAlmostEqual(band[0] / rgb[0], band[1] / rgb[1], places=6)
+
+
 if __name__ == '__main__':
     unittest.main()

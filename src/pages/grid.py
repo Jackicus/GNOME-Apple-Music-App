@@ -91,8 +91,6 @@ class GridPage(Adw.NavigationPage):
         self._sorted = Gtk.SortListModel(
             model=self._model(), sorter=self._sorters[0] if self._sorters else None)
         self._sorted.connect('items-changed', self._update_state)
-        if len(sorts) > 1:
-            self.sort_dropdown.set_model(Gtk.StringList.new([SORTS[key][0]() for key in sorts]))
 
         factory = Gtk.SignalListItemFactory()
         factory.connect('setup', self._on_setup)
@@ -101,6 +99,10 @@ class GridPage(Adw.NavigationPage):
         self.grid_view.set_factory(factory)
         self.grid_view.set_model(Gtk.NoSelection(model=self._sorted))
         context_menu.attach(self.grid_view)
+        # After the grid has its model: setting the drop-down's selects its first choice,
+        # which scrolls the grid (on_sort_selected).
+        if len(sorts) > 1:
+            self.sort_dropdown.set_model(Gtk.StringList.new([SORTS[key][0]() for key in sorts]))
 
         self.scrolled_window.get_vadjustment().connect('value-changed', self._on_scrolled)
         self._update_state()

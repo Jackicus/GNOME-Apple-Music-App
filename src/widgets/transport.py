@@ -22,7 +22,7 @@ import logging
 import time
 from gettext import gettext as _
 
-from gi.repository import GLib
+from gi.repository import GLib, Gtk
 
 from ..backend import config
 from ..backend.errors import EngineError
@@ -93,6 +93,8 @@ class SeekControl:
         self.adjustment = adjustment
         self.elapsed_label = elapsed_label
         self.remaining_label = remaining_label
+        self._value_format = _('{position} of {duration}')  # looked up once: this runs often
+        self._value_text = None  # what the slider reads to assistive technology
         self._player = None
         self._app = None
         self._syncing = False       # the slider is being set from the Player
@@ -136,11 +138,18 @@ class SeekControl:
         self._show_times(position, duration)
 
     def _show_times(self, position, duration):
+        elapsed = format_time(position)
         if self.elapsed_label is not None:
-            self.elapsed_label.set_label(format_time(position))
+            self.elapsed_label.set_label(elapsed)
         if self.remaining_label is not None:
             self.remaining_label.set_label(
                 format_time(max(duration - position, 0), remaining=True))
+        # Assistive technology reads the slider's value as "1:05 of 3:40", not as seconds;
+        # set when the text changes (once a second at most), not at every position event.
+        text = self._value_format.format(position=elapsed, duration=format_time(duration))
+        if text != self._value_text:
+            self._value_text = text
+            self.scale.update_property([Gtk.AccessibleProperty.VALUE_TEXT], [text])
 
     def _on_change_value(self, _scale, _scroll, value):
         """The slider moved by the user (a drag, a click, the keys): show the time it points

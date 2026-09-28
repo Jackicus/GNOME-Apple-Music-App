@@ -65,8 +65,11 @@ class LyricsView(Gtk.Stack):
         factory.connect('setup', self._on_setup)
         factory.connect('bind', self._on_bind)
         factory.connect('unbind', self._on_unbind)
+        # Tab leaves the list after the line with the focus; the arrows move between lines,
+        # Enter seeks to one.
         self.list_view = Gtk.ListView(factory=factory, single_click_activate=True,
-                                      model=Gtk.NoSelection())
+                                      model=Gtk.NoSelection(),
+                                      tab_behavior=Gtk.ListTabBehavior.ITEM)
         self.list_view.add_css_class('lyrics-list')
         self.list_view.connect('activate', self._on_activate)
         self.scrolled = Gtk.ScrolledWindow(child=self.list_view,
@@ -266,7 +269,9 @@ class LyricsView(Gtk.Stack):
     def _on_bind(self, _factory, list_item):
         position = list_item.get_position()
         label = list_item.get_child()
-        label.set_label(list_item.get_item().text)
+        text = list_item.get_item().text
+        label.set_label(text)
+        list_item.set_accessible_label(text)
         self._rows[position] = label
         _set_current(label, position == self._current)
 

@@ -27,6 +27,7 @@ from .engine import Engine, clear_cache, engine_paths  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
+from .shortcuts import ACCELS, accelerator, sections  # noqa: E402
 from .sync import install_scaler, sync_due, sync_library  # noqa: E402
 from .widgets import artwork  # noqa: E402
 from .window import Window  # noqa: E402
@@ -72,16 +73,16 @@ class Application(Adw.Application):
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
 
-        self._add_action('quit', self._on_quit, ['<primary>q'])
+        self._add_action('quit', self._on_quit)
         self._add_action('about', self._on_about)
-        self._add_action('shortcuts', self._on_shortcuts, ['<primary>question'])
-        self._add_action('preferences', self._on_preferences, ['<primary>comma'])
+        self._add_action('shortcuts', self._on_shortcuts)
+        self._add_action('preferences', self._on_preferences)
         self._add_action('sign-in', self._on_sign_in)
         self._add_action('sign-out', self._on_sign_out)
-        self._add_action('sync', self._on_sync, ['<primary>r'])
-        self._add_action('now-playing', self._on_now_playing, ['<primary>n'])
+        self._add_action('sync', self._on_sync)
+        self._add_action('now-playing', self._on_now_playing)
         # Playback, enabled while something plays (the bar's buttons follow). Their keys
-        # (Space, Ctrl+Right, Ctrl+Left) are the window's (window.PLAYBACK_KEYS), not
+        # (Space, Ctrl+Right, Ctrl+Left) are the window's (shortcuts.PLAYBACK), not
         # accelerators, which GTK 4 would fire before a focused entry gets them.
         self._playback_actions = [
             self._add_action('play-pause', self._on_play_pause),
@@ -92,9 +93,10 @@ class Application(Adw.Application):
         ]
         for action in self._playback_actions:
             action.set_enabled(False)
-        self.set_accels_for_action('window.close', ['<primary>w'])
-        self.set_accels_for_action('win.back', ['<alt>Left'])
-        self.set_accels_for_action('win.search', ['<primary>f'])
+        # Every accelerator, app.* and win.* alike (shortcuts.py, which the Keyboard
+        # Shortcuts dialog lists).
+        for action, accels in ACCELS.items():
+            self.set_accels_for_action(action, list(accels))
 
         self.add_main_option('debug', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
                              _('Log debug messages'), None)
@@ -552,12 +554,10 @@ class Application(Adw.Application):
         await asyncio.sleep(0)
         log.debug('asyncio: %s', type(asyncio.get_running_loop()).__name__)
 
-    def _add_action(self, name, callback, accels=None):
+    def _add_action(self, name, callback):
         action = Gio.SimpleAction.new(name, None)
         action.connect('activate', callback)
         self.add_action(action)
-        if accels:
-            self.set_accels_for_action(f'app.{name}', accels)
         return action
 
     def _on_about(self, *_args):
@@ -575,23 +575,43 @@ class Application(Adw.Application):
         about.present(self.get_active_window())
 
     def _on_shortcuts(self, *_args):
-        section = Adw.ShortcutsSection(title=_('General'))
-        section.add(Adw.ShortcutsItem.new(_('Keyboard Shortcuts'), '<primary>question'))
-        section.add(Adw.ShortcutsItem.new(_('Preferences'), '<primary>comma'))
-        section.add(Adw.ShortcutsItem.new(_('Search'), '<primary>f'))
-        section.add(Adw.ShortcutsItem.new(_('Refresh Library'), '<primary>r'))
-        section.add(Adw.ShortcutsItem.new(_('Go Back'), '<alt>Left'))
-        section.add(Adw.ShortcutsItem.new(_('Close Window'), '<primary>w'))
-        section.add(Adw.ShortcutsItem.new(_('Quit'), '<primary>q'))
-        playback = Adw.ShortcutsSection(title=_('Playback'))
-        playback.add(Adw.ShortcutsItem.new(_('Play or Pause'), 'space'))
-        playback.add(Adw.ShortcutsItem.new(_('Next'), '<primary>Right'))
-        playback.add(Adw.ShortcutsItem.new(_('Previous'), '<primary>Left'))
-        playback.add(Adw.ShortcutsItem.new(_('Now Playing'), '<primary>n'))
+        """The Keyboard Shortcuts dialog: every accelerator and key of shortcuts.py, grouped.
+
+        libadwaita 1.9 leaves the dialog's rows without accessible names (a screen reader
+        finds only their parts), so each is named "title: keys" once it is built."""
         dialog = Adw.ShortcutsDialog()
-        dialog.add(section)
-        dialog.add(playback)
+        names = {}
+        for title, items in sections():
+            section = Adw.ShortcutsSection(title=title)
+            for item_title, key in items:
+                section.add(Adw.ShortcutsItem.new(item_title, accelerator(key)))
+                keys = [_key_label(accel) for accel in accelerator(key).split()]
+                if len(keys) > 1:
+                    keys = [_('{keys} or {key}').format(keys=', '.join(keys[:-1]),
+                                                        key=keys[-1])]
+                names[item_title] = _('{title}: {keys}').format(title=item_title, keys=keys[0])
+            dialog.add(section)
         dialog.present(self.get_active_window())
+        _name_rows(dialog, names)
+
+
+def _key_label(accel):
+    """How a key reads: "Ctrl+Q" for <primary>q."""
+    ok, key, mods = Gtk.accelerator_parse(accel)
+    return Gtk.accelerator_get_label(key, mods) if ok else accel
+
+
+def _name_rows(widget, names):
+    """Give the rows under widget whose title is a key of names that name (the shortcuts
+    dialog's AdwShortcutRows: see _on_shortcuts)."""
+    title = getattr(widget, 'get_title', None)
+    if (title is not None and isinstance(widget, Gtk.ListBoxRow)
+            and title() in names):
+        widget.update_property([Gtk.AccessibleProperty.LABEL], [names[title()]])
+    child = widget.get_first_child()
+    while child is not None:
+        _name_rows(child, names)
+        child = child.get_next_sibling()
 
 
 def remove_trees(*paths, attempts=4, pause=0.5):

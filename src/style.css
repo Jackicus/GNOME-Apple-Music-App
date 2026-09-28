@@ -143,9 +143,17 @@ listview.shelf-list > row {
   padding: 10px 12px 12px 12px;
 }
 
-/* The subtitle, less dim than a dim-label elsewhere: it sits on a colour, not the page. */
+/* The subtitle, less dim than a dim-label elsewhere: it sits on a colour, not the page (which
+   hero_tile.py makes deep or light enough for it: SUBTITLE_OPACITY). With the high-contrast
+   setting, libadwaita's dim opacity (90%). */
 .hero-caption > .dim-label {
   opacity: 0.75;
+}
+
+@media (prefers-contrast: more) {
+  .hero-caption > .dim-label {
+    opacity: var(--dim-opacity);
+  }
 }
 
 .hero-tile.dark-art {

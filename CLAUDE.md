@@ -92,7 +92,9 @@ meson.build, meson.options     project; -Dprofile=development → .Devel ID, ver
 src/apple-music.in             launcher configured by Meson: gettext, loads the gresource, main.main()
 src/main.py                    Application: app.* actions (quit, about, shortcuts, preferences,
                                sign-in, sign-out, sync, now-playing; play-pause, next, previous,
-                               shuffle, repeat, enabled while something plays), GSettings (the
+                               shuffle, repeat, enabled while something plays), every
+                               accelerator (shortcuts.ACCELS) and the Keyboard Shortcuts dialog
+                               (shortcuts.sections(); its rows named for AT-SPI), GSettings (the
                                engine follows browser-command, engine-port and engine-headless:
                                _make_engine), logging and --debug, --demo
                                (app.demo), app.library, app.engine, app.player and app.mpris
@@ -222,8 +224,13 @@ src/window.py + window.blp     Window: split view, sidebar (the Playlists sectio
                                app.report otherwise), the bottom sheet (bottom_sheet,
                                player_bar, now_playing; toggle_now_playing(); add_toast()
                                into the sheet while it is open), the playback keys
-                               (PLAYBACK_KEYS: Space, Ctrl+Right, Ctrl+Left in a capture-phase
-                               key controller that leaves editables alone), win.back, toasts,
+                               (PLAYBACK_KEYS from shortcuts.PLAYBACK: Space, Ctrl+Right,
+                               Ctrl+Left in a capture-phase key controller that leaves an
+                               entry's, a toggle's, a menu's and a dialog's keys alone; F10
+                               when the primary menu's sidebar is hidden), win.back,
+                               win.search, win.focus-sidebar/-content/-player (all off while a
+                               dialog is open: _update_actions), the sidebar rows' accessible
+                               names and folders' expanded state (_sidebar_rows), toasts,
                                window state, prepare_quit(), hide_for_background() (its dialogs
                                closed, those shown as windows of their own too); do_close_request
                                → app.close_window(self); item_actions (actions.py, made
@@ -232,6 +239,10 @@ src/window.py + window.blp     Window: split view, sidebar (the Playlists sectio
                                Songs, closed when empty) and its drop target (TrackRef onto
                                editable playlist entries; drop-enter answers COPY only there)
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
+src/shortcuts.py               every keyboard shortcut: ACCELS (action -> accelerators, set by
+                               main.py), PLAYBACK (the window's playback keys), sections() (the
+                               Keyboard Shortcuts dialog, which lists them all and F10, the
+                               context-menu keys and Escape), accelerator(key); no GTK
 src/sidebar.py                 the Playlists section's model: SidebarEntry (kind fixed/folder/
                                playlist, key, title, icon, depth, item, ancestors),
                                playlist_entries(tree), is_shown(), parse_key(), SidebarItem (an
@@ -261,8 +272,11 @@ src/player_bar.py + .blp       $AppleMusicPlayerBar: the bottom sheet's bottom b
                                play button, seek scale, shuffle/repeat toggles and artwork are
                                widgets/transport.py's helpers; a heart (HeartControl); a
                                Gtk.ScaleButton volume; `compact` (the window's 600sp
-                               breakpoint) hides the volume, the heart and the times; "Not
-                               Playing" and everything insensitive without a track
+                               breakpoint) hides the volume, the heart, shuffle, repeat and the
+                               times; "Not Playing" and everything insensitive without a track;
+                               announces each new item through the window; names the bottom
+                               sheet's button around it "Now Playing" (described by the item)
+                               and the volume "Volume" with a percentage; grab_bar_focus()
 src/widgets/now_playing.py + .blp  $AppleMusicNowPlayingSheet: the bottom sheet's sheet; header
                                with a close button (go-down-symbolic), a toast overlay, a clamp
                                (900) holding the item playing (320 px AppleMusicCover, title-2,
@@ -270,7 +284,8 @@ src/widgets/now_playing.py + .blp  $AppleMusicNowPlayingSheet: the bottom sheet'
                                the Lyrics / Up Next Adw.ToggleGroup over a Gtk.Stack; `wide`
                                (window breakpoint min-width 900sp: two columns) and `compact`
                                (600sp: 240 px artwork); measures itself tall so the sheet fills
-                               the window; set_player(player, app, bottom_sheet)
+                               the window; set_player(player, app, bottom_sheet); the focus on
+                               its play button as it opens (focus_controls())
 src/widgets/lyrics.py          $AppleMusicLyricsView (a Gtk.Stack, built in Python): synced
                                lines in a Gtk.ListView over lyrics.lines (the current line
                                `current`, the rest `dim-label`; a click seeks; the line glides
@@ -342,7 +357,9 @@ src/widgets/artwork.py         the process-wide Artwork loader (get_default(): g
                                sized_url(), remote_art_path(), remote_item(dict) (an engine
                                search/browse item's URL artwork → remote-art paths plus thumbUrl
                                and artUrl), thumb_missing(item)); art_colour(item.art_color)
-                               → Gdk.RGBA, is_dark(rgba)
+                               → Gdk.RGBA, is_dark(rgba), band_colour(rgba, text_opacity) (the
+                               colour made deep or light enough for its caption to read at
+                               WCAG AA: readable_band(), contrast_ratio(), luminance())
 src/widgets/context_menu.py    attach(view, drag=False): context menus for a view's items (a
                                GridView, ListView, ColumnView, FlowBox, ListBox or one widget):
                                a capture-phase Gtk.GestureClick (button 3) and
@@ -419,7 +436,7 @@ src/backend/                   the engine layer: vendored from the extension plu
                                write_answer()/read_answer() and the *_cache_path()s
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
-scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
+scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py a11y_check.py
 scripts/am.py                  the engine's debug CLI (no GUI): status, start [--visible], stop,
                                eval <js>, now-playing, events; the app's port and profile
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
@@ -476,7 +493,8 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           surface of its own, which the window's WidgetPaintable leaves out).
                           --preferences opens Preferences on General (or Engine) and shoots
                           the dialog: its own window here (the shot's window is fixed-size, so
-                          neither maximized nor tiled), or the window when it is inside it.
+                          neither maximized nor tiled), or the window when it is inside it;
+                          sized to --size when that is under 640 px wide.
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
                           playlists. --signed-in [NAME] shows the account button signed in
                           (memory-backend settings only; no engine)
@@ -487,6 +505,13 @@ scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size W
                           on a big library:
                           APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
                           (Songs of 30,000: --page songs --distance 40000, the whole is 1.5M px)
+scripts/a11y_check.py [--size WxH] [--light] [--names]
+                          walks the keyboard checklist (prompts.md, phase 18) on the demo
+                          library, each key dispatched through GTK's own controllers (no input
+                          can be sent on this desktop), PASS/FAIL per step, exit 1 on a failure;
+                          --size 360x640 for the narrow layout. --names starts a private AT-SPI
+                          bus (its own dbus-daemon and registryd, stopped after) and lists each
+                          page's focusable controls without an accessible name (libatspi)
 python3 -m unittest discover -s tests -v      unit tests alone, from the repo root
 scripts/am.py [--debug] status | start [--visible] [--browser CMD] | stop | eval [--no-await] JS |
               now-playing | events
@@ -719,19 +744,43 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   browser-command, engine-port, engine-headless and engine-autostart; the Engine applies the
   engine ones at its next start. A row bound with `Gio.Settings.bind` needs nothing else; an
   `i` key binds to a `double` property (the SpinRow's `value`) as it is.
-- Actions: `app.*` in `main.py`, `win.*` in `window.py`; accelerators via `set_accels_for_action`;
-  every shortcut also appears in the shortcuts dialog. GTK 4 runs application accelerators in
-  the window's *capture* phase, before the focus widget, so a bare key (Space) or an editing
-  chord (Ctrl+Left) must not be an accelerator: the playback keys are `window.PLAYBACK_KEYS`,
-  handled by a capture-phase `Gtk.EventControllerKey` on the window that skips editables and
-  disabled actions, and listed in the shortcuts dialog by hand. `app.now-playing`
-  (`<primary>n`) toggles the Now Playing sheet; Escape closes it (the sheet's own).
-  `win.search` (`<primary>f`) selects Search in the sidebar and focuses its entry.
-  `app.preferences` (`<primary>comma`, "Preferences" in the primary menu) opens Preferences.
+- Actions: `app.*` in `main.py`, `win.*` in `window.py`. Every shortcut is in `src/shortcuts.py`:
+  an accelerator in `ACCELS` (main.py sets them all), a key the window handles itself in
+  `PLAYBACK`, and each listed in `sections()`, the Keyboard Shortcuts dialog
+  (`tests/test_shortcuts.py` fails when one is not). GTK 4 runs application accelerators in the
+  window's *capture* phase, before the focus widget, so a bare key (Space) or an editing chord
+  (Ctrl+Left) must not be an accelerator: the playback keys are handled by a capture-phase
+  `Gtk.EventControllerKey` on the window that leaves them to an editable or text view, a toggle
+  (Space), a popover or a dialog, and skips disabled actions. The shortcuts: Ctrl+Q quit, Ctrl+?
+  shortcuts, Ctrl+, Preferences, Ctrl+R refresh (`app.sync`), Ctrl+N Now Playing (toggles the
+  sheet; Escape closes it, the sheet's own), Ctrl+W close, Alt+Left back (`win.back`), Ctrl+F
+  Search (`win.search`: the entry focused), Ctrl+1/2/3 the focus into the sidebar, the page's
+  content, the player bar (`win.focus-sidebar`/`-content`/`-player`), Space play/pause,
+  Ctrl+Right/Left next/previous, F10 the main menu (GTK's; the window's own when the collapsed
+  layout hides the sidebar), Menu or Shift+F10 a context menu. Window actions are disabled
+  while a dialog is open over the window (`Window._update_actions` on `notify::visible-dialog`),
+  so their keys never act on the page behind it; add new ones to `_actions` there.
   The item actions (`win.item-*`, actions.py) take their object as a target, not as state:
   a menu item is `Gio.MenuItem.set_action_and_target_value('win.item-love', Variant('(ss)',
   (kind, id)))`. New tiles or rows get context menus by exposing `context_item` and calling
   `context_menu.attach(view)` on their view (with `drag=True` where they are tracks).
+- Accessibility (phase 18): every icon-only button has `tooltip-text` (its accessible name);
+  a recycled tile or row sets `list_item.set_accessible_label()` (and a description where it
+  helps: a track's time) in bind, a `Gtk.ColumnView` row through a `row-factory`, a
+  `Gtk.FlowBoxChild` with `update_property([LABEL])`, the format looked up once; decorative
+  images (`Gtk.Image`, `Gtk.Picture`, `$AppleMusicCover`, an `Adw.Avatar` beside a name) are
+  `accessible-role: presentation`; a slider gets a name and a `VALUE_TEXT` ("1:05 of 3:40",
+  "70%"); a state the widget does not show to AT itself (a sidebar folder's expanded) is set
+  with `update_state` (EXPANDED takes an int); announcements go through the window
+  (`get_root().announce(...)`). Grids and lists have `tab-behavior: item` (Tab leaves after
+  one item, arrows move inside). Dialog buttons have mnemonics (`_Label`, `use-underline:
+  true`). Text drawn on an item's own colour gets a colour it reads on at WCAG AA
+  (`artwork.band_colour`); a dim text in markup uses libadwaita's dim opacity and follows the
+  high-contrast setting (`tile.subtitle_markup()`); style.css can use `@media
+  (prefers-contrast: more)`. No colour is hard-coded but the accent and text on an item's
+  colour. Every page fits 360 px (a `Gtk.FlowBox` of two 160 px tiles needs narrow margins
+  there: a `max-width: 400sp` breakpoint). `scripts/a11y_check.py` (and `--names`,
+  `--size 360x640`) checks all this; add a step when a new page or key is added.
 - Style: 4-space Python, single quotes, no type-annotation ceremony, a docstring where a module or
   function is not obvious. New `.py` files go in `src/meson.build`'s `install_data` list.
 
@@ -742,7 +791,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
    `scripts/screenshot.py build/shot.png --demo --page KEY` and look at the PNG with the Read tool;
    also `--light`, and `--size 400x700` for anything adaptive.
 3. Backend or model changes get a unit test in `tests/`.
-4. The real engine is only exercised when the phase needs it, and never leaves data in the repo.
+4. Keyboard or accessibility changes (or a new page): `scripts/a11y_check.py`, with
+   `--size 360x640` and `--names`.
+5. The real engine is only exercised when the phase needs it, and never leaves data in the repo.
 
 ## Privacy
 
@@ -879,7 +930,8 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   with the focus inside it) and the mouse back button (a click gesture on every button). A push
   moves the focus into the new page (the detail page's Play button), so the keys work there;
   `win.back` (`<alt>Left`, in the shortcuts dialog) does the same from the sidebar or the player
-  bar, and is disabled when there is nowhere to go back to, so the keys pass through.
+  bar, and is disabled when there is nowhere to go back to, while a dialog is open and while
+  the Now Playing sheet is open, so the keys pass through.
 - `Gtk.ColumnView.sort_by_column()` does not tell the previous primary column to drop its sort
   arrow (GTK 4.22's `gtk_column_view_sorter_set_column`); clicking a header does. Use it only
   for the initial order, or call `sort_by_column(None, …)` first.
@@ -899,6 +951,9 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `full-width: false` the bar floats as a pill the width of its controls (tried, wrong here).
   Clicking or swiping the bar opens the sheet (`can-open`); Escape and the sheet's own close
   the sheet. `bottom-bar-height` is 0 while the sheet is open, so the content grows under it.
+  With `can-open` the bar is wrapped in a focusable `Gtk.Button` (the player bar's parent; Enter
+  on it opens the sheet), whose accessible name was everything inside it: the player bar names
+  it. Opening the sheet focuses its first focusable widget; closing it restores the focus.
 - Several `Adw.Breakpoint`s on the window: only the *last* matching one applies, so the
   narrower breakpoint (600sp: `player_bar.compact`, `now_playing.compact`) repeats the wider
   one's setters (640sp: the collapsed split view). The `min-width: 900sp` one
@@ -1017,4 +1072,20 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   PyGObject 3.56 puts asyncio on the GLib loop; `main.use_glib_event_loop()` filters the
   DeprecationWarning and sets the policy. PyGObject's `Gio.Application.run` marks the GLib loop as
   the running asyncio loop only when that policy is set.
+- Accessibility plumbing (phase 18): the desktop's own AT-SPI bus is dead on this machine
+  (GTK logs "Unable to connect to the accessibility bus"), and pyatspi/Orca are not installed,
+  but the `Atspi` typelib is: `a11y_check.py --names` runs a private `dbus-daemon` with
+  `/usr/share/defaults/at-spi2/accessibility.conf` on an abstract socket plus
+  `/usr/lib/at-spi2-registryd`, and GTK and libatspi both follow `AT_SPI_BUS_ADDRESS`. An
+  `Atspi.EventListener` sees events only when it is registered before the app starts (GTK asks
+  the registry once), and after `Atspi.init()`. `Gtk.Accessible.announce()` from a widget whose
+  accessible object no client has asked for yet is dropped; from the window it is always sent
+  (`object:announcement`). AdwSidebar (1.9) names none of its rows in the sidebar mode (the page
+  mode's are `Adw.ActionRow`s, named by title) and says nothing of a folder's state; its rows
+  follow the items one to one, hidden ones too. `AdwShortcutsDialog` rows are unnamed too
+  (main.py names them) and `AdwComboRow` exposes an unnamed inner list item (left). GTK's F10
+  (`gtk-window-menubar-accel`) opens a `primary` menu button only while it is mapped. Key
+  presses cannot be synthesised here: `a11y_check.py`'s `press()` runs the controllers a real
+  event would reach (capture key and shortcut controllers from the window down, shortcut
+  controllers from the focus up, a popover's key controller), which is as close as it gets.
 - History starts at the "Scaffold: window, sidebar, build" commit; one commit (or a few) per phase.

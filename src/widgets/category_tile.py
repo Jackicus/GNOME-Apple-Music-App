@@ -9,8 +9,9 @@ from . import artwork
 class CategoryTile(Gtk.Overlay):
     """The category's name over its colour (`art_color`, Apple's colour for the curator's
     artwork, drawn in do_snapshot as the hero cards' bands are; white or black text by
-    artwork.is_dark) with its picture at the right: the curator's square artwork, which
-    shares that colour, fetched into <cache>/remote-art/ when the tile is first shown.
+    artwork.is_dark, the colour made readable by artwork.band_colour) with its picture at the
+    right: the curator's square artwork, which shares that colour, fetched into
+    <cache>/remote-art/ when the tile is first shown.
 
     bind(item) takes an Item of kind 'category' in artwork.remote_item's shape (`thumb` the
     file the picture is fetched to, `thumbUrl` where from). The landing's tiles are made
@@ -34,8 +35,9 @@ class CategoryTile(Gtk.Overlay):
         self.item = item
         self.title_label.set_text(item.title)
         colour = artwork.art_colour(item.art_color)
-        self._colour = colour
-        dark = colour is None or artwork.is_dark(colour)
+        # Made deeper (or lighter) where the name would not read on it (band_colour).
+        self._colour, dark = (artwork.band_colour(colour) if colour is not None
+                              else (None, True))
         if dark:
             self.add_css_class('dark-art')
             self.remove_css_class('light-art')

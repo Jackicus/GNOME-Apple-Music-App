@@ -18,7 +18,7 @@ keeps room for the tabs.
 
 from gettext import gettext as _
 
-from gi.repository import Adw, GObject, Gtk
+from gi.repository import Adw, GLib, GObject, Gtk
 
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .lyrics import LyricsView
@@ -62,6 +62,7 @@ class NowPlayingSheet(Adw.Bin):
         self.set_layout_manager(None)  # do_measure and do_size_allocate below
         self._player = None
         self._bottom_sheet = None
+        self._open = False
         self._wide = False
         self._compact = False
         self.lyrics_view = LyricsView()
@@ -162,6 +163,23 @@ class NowPlayingSheet(Adw.Bin):
         shown = self.tab_stack.get_visible_child_name()
         self.lyrics_view.set_active(is_open and shown == 'lyrics')
         self.queue_view.set_active(is_open and shown == 'queue')
+        if is_open and not self._open:
+            # The bottom sheet puts the focus on the sheet's first focusable widget (the seek
+            # slider); the play button is where the keyboard wants to start. After the
+            # sheet's own grab, from an idle.
+            GLib.idle_add(self._focus_on_open)
+        self._open = is_open
+
+    def _focus_on_open(self):
+        if self._bottom_sheet is not None and self._bottom_sheet.get_open():
+            self.focus_controls()
+        return GLib.SOURCE_REMOVE
+
+    def focus_controls(self):
+        """Put the focus on the play button, or on the close button with nothing playing
+        (Ctrl+3 while the sheet is open, and as it opens)."""
+        if not self.play_button.grab_focus():
+            self.close_button.grab_focus()
 
     def add_toast(self, toast):
         self.toast_overlay.add_toast(toast)

@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""Walk the keyboard checklist and list unnamed widgets, without a keyboard or a screen reader.
+
+    scripts/a11y_check.py [--size WxH] [--light] [--names]
+
+Runs the installed build (scripts/run.sh or meson install -C build first) on the demo
+library, as screenshot.py --demo does (memory settings, animations off), and walks the
+keyboard checklist of prompts.md's phase 18 key by key, printing PASS or FAIL for each step;
+the exit status is 1 when a step fails. Use --size 360x640 for the narrow layout.
+
+Keys cannot be sent to a window on this Wayland desktop, so each press is dispatched through
+GTK's own handlers as a key event would be (press()): the capture-phase key and shortcut
+controllers from the window down to the focus widget (the window's playback keys, the
+application's accelerators), then the shortcut controllers from the focus widget up to the
+window (the widgets' own keys: Tab, the arrows, Enter, Escape, the context-menu keys) and a
+popover's own key handler. Typing into an entry is not emulated (the text is set).
+
+--names also starts a private accessibility bus (a dbus-daemon with at-spi's configuration on
+an abstract socket, and at-spi2-registryd, stopped at the end; nothing on the desktop's own
+buses) and, on each page, lists the focusable controls that have no accessible name, as
+libatspi reads them: what Orca would find, and what the GTK inspector's Accessibility tab
+shows. Anything listed there is a gap (libadwaita's own widgets included).
+"""
+
+import argparse
+import asyncio
+import gettext
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+prefix = os.path.join(root, 'build', 'install')
+pkgdatadir = os.path.join(prefix, 'share', 'apple-music')
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--size', default='1100x760')
+parser.add_argument('--light', action='store_true')
+parser.add_argument('--names', action='store_true',
+                    help='list focusable controls without an accessible name (libatspi)')
+parser.add_argument('--dump', action='store_true', help=argparse.SUPPRESS)  # the lister
+args = parser.parse_args()
+
+# Roles whose focusable objects need a name of their own.
+NAMED_ROLES = {'push button', 'toggle button', 'check box', 'slider', 'spin button',
+               'combo box', 'menu item', 'list item', 'table row', 'text', 'entry', 'switch',
+               'radio button', 'link', 'page tab', 'table cell', 'button', 'tree item'}
+
+
+def list_unnamed():
+    """--dump: print the app's showing, focusable, sensitive objects with a role in
+    NAMED_ROLES and no name, one per line (role and path), from the bus in the environment."""
+    import gi
+    gi.require_version('Atspi', '2.0')
+    from gi.repository import Atspi
+
+    desktop = Atspi.get_desktop(0)
+    apps = [desktop.get_child_at_index(i) for i in range(desktop.get_child_count())]
+    app = next((a for a in apps if a is not None and a.get_name() == 'a11y_check'), None)
+    if app is None:
+        sys.exit('a11y_check: the app is not on the accessibility bus')
+
+    def walk(obj, path):
+        states = obj.get_state_set()
+        if path and not states.contains(Atspi.StateType.SHOWING):
+            return
+        role = obj.get_role_name()
+        if (role in NAMED_ROLES and not obj.get_name()
+                and states.contains(Atspi.StateType.FOCUSABLE)
+                and states.contains(Atspi.StateType.SENSITIVE)):
+            print(f'{role} in {" > ".join(path[-3:])}')
+        label = f'{role} {obj.get_name()!r}' if obj.get_name() else role
+        for i in range(obj.get_child_count()):
+            child = obj.get_child_at_index(i)
+            if child is not None:
+                walk(child, path + [label])
+
+    walk(app, [])
+
+
+if args.dump:
+    list_unnamed()
+    sys.exit(0)
+
+width, height = (int(n) for n in args.size.split('x'))
+bus_processes = []
+if args.names:
+    # A private accessibility bus: GTK and libatspi take AT_SPI_BUS_ADDRESS over the
+    # desktop's, so nothing here touches the session.
+    config_dir = tempfile.mkdtemp(prefix='a11y-check-')
+    config = os.path.join(config_dir, 'accessibility.conf')
+    address = f'unix:abstract=apple-music-a11y-check-{os.getpid()}'
+    with open('/usr/share/defaults/at-spi2/accessibility.conf', encoding='utf-8') as file:
+        text = file.read()
+    with open(config, 'w', encoding='utf-8') as file:
+        file.write(text.replace('<listen>unix:dir=/tmp</listen>', f'<listen>{address}</listen>'))
+    bus_processes.append(subprocess.Popen(['dbus-daemon', '--config-file', config, '--nofork'],
+                                          stdout=subprocess.DEVNULL))
+    time.sleep(0.5)
+    os.environ['AT_SPI_BUS_ADDRESS'] = address
+    bus_processes.append(subprocess.Popen(['/usr/lib/at-spi2-registryd'],
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    time.sleep(0.5)
+    shutil.rmtree(config_dir, ignore_errors=True)  # read by now
+
+demo_dir = os.path.join(root, 'build', 'demo')
+if not os.environ.get('APPLE_MUSIC_CACHE') and not os.path.exists(
+        os.path.join(demo_dir, 'library.json')):
+    subprocess.run([sys.executable, os.path.join(root, 'scripts', 'demo_library.py'),
+                    '--cache', demo_dir], check=True)
+
+os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(prefix, 'share', 'glib-2.0', 'schemas')
+os.environ['GSETTINGS_BACKEND'] = 'memory'
+sys.path.insert(1, pkgdatadir)
+gettext.install('apple-music')
+
+import gi  # noqa: E402
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
+from applemusic import main  # noqa: E402
+
+GLib.set_prgname('a11y_check')
+app = main.Application('0.0.0', 'io.github.jackicus.AppleMusic.A11yCheck',
+                       'io.github.jackicus.AppleMusic', 'default', demo_dir)
+app.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
+failures = []
+
+
+# -- key presses --------------------------------------------------------------------------
+
+def _parse(accel):
+    ok, key, mods = Gtk.accelerator_parse(accel)
+    return (key, int(mods)) if ok else None
+
+
+def _controllers(widget):
+    model = widget.observe_controllers()
+    return [model.get_item(i) for i in range(model.get_n_items())]
+
+
+def _shortcut(controller, key, mods, phase):
+    """Activate controller's shortcut for (key, mods) in phase: what ran, or None."""
+    if controller.get_propagation_phase() != phase:
+        return None
+    for i in range(controller.get_n_items()):
+        shortcut = controller.get_item(i)
+        trigger = shortcut.get_trigger()
+        if trigger is None or (key, mods) not in [
+                _parse(alt) for alt in trigger.to_string().split('|')]:
+            continue
+        if shortcut.get_action().activate(Gtk.ShortcutActionFlags(0), controller.get_widget(),
+                                          shortcut.get_arguments()):
+            return shortcut.get_action().to_string()
+    return None
+
+
+def press(window, accel):
+    """Dispatch a key press through GTK's handlers, as the module says. What handled it, or
+    None."""
+    key, mods = _parse(accel)
+    chain = []
+    widget = window.get_focus() or window
+    while widget is not None:
+        chain.append(widget)
+        widget = widget.get_parent()
+    state = Gdk.ModifierType(mods)
+    for widget in reversed(chain):  # capture: from the window down
+        for controller in _controllers(widget):
+            phase = controller.get_propagation_phase()
+            if (isinstance(controller, Gtk.EventControllerKey)
+                    and phase == Gtk.PropagationPhase.CAPTURE
+                    and controller.emit('key-pressed', key, 0, state)):
+                return f'{widget.__gtype__.name} key controller'
+            if isinstance(controller, Gtk.ShortcutController):
+                done = _shortcut(controller, key, mods, Gtk.PropagationPhase.CAPTURE)
+                if done:
+                    return done
+    for widget in chain:  # bubble: from the focus up
+        for controller in _controllers(widget):
+            phase = controller.get_propagation_phase()
+            if (isinstance(controller, Gtk.EventControllerKey) and isinstance(widget, Gtk.Popover)
+                    and phase == Gtk.PropagationPhase.BUBBLE
+                    and controller.emit('key-pressed', key, 0, state)):
+                return f'{widget.__gtype__.name} key controller'
+            if isinstance(controller, Gtk.ShortcutController):
+                done = _shortcut(controller, key, mods, Gtk.PropagationPhase.BUBBLE)
+                if done:
+                    return done
+    return None
+
+
+# -- the checklist -------------------------------------------------------------------------
+
+def check(name, ok, detail=''):
+    print(('PASS ' if ok else 'FAIL ') + name + (f' ({detail})' if detail and not ok else ''))
+    if not ok:
+        failures.append(name)
+
+
+def inside(widget, ancestor):
+    return widget is not None and (widget is ancestor or widget.is_ancestor(ancestor))
+
+
+def describe(widget):
+    return widget.__gtype__.name if widget is not None else 'nothing'
+
+
+async def key(window, accel, wait=0.25):
+    press(window, accel)
+    await asyncio.sleep(wait)
+
+
+def invented_playing_state():
+    """What the Player shows while the demo's first album plays (the demo cannot play)."""
+    album = app.library.albums.get_item(0)
+    entries = [dict(entry, index=position) for position, entry in enumerate(
+        entry for group in album.raw.get('groups') or [] for entry in group['entries'])]
+    return {'state': 'playing', 'track': entries[0], 'position': 65.0,
+            'duration': entries[0].get('durationMs', 0) / 1000,
+            'queue': {'index': 0, 'items': entries}}
+
+
+async def walkthrough(window):
+    narrow = window.split_view.get_collapsed()
+    print('-- sidebar')
+    await key(window, '<primary>1', 0.6)
+    check('Ctrl+1 puts the focus on the selected sidebar row',
+          isinstance(window.get_focus(), Gtk.ListBoxRow) and inside(window.get_focus(),
+                                                                     window.sidebar))
+    for _ in range(5):  # Home → New, Radio, Recently Added, Artists, Albums
+        await key(window, 'Down', 0.15)
+    if narrow:
+        focus = window.get_focus()
+        check('Down moves to Albums', getattr(focus, 'get_title', lambda: '')() == 'Albums')
+    else:
+        check('Down selects Albums and shows it', window._shown == 'albums', window._shown)
+    await key(window, 'Return', 0.6)
+    check('Enter shows Albums', window._shown == 'albums' and (
+        not narrow or window.split_view.get_show_content()))
+    print('-- grid')
+    await key(window, '<primary>2', 0.6)
+    grid = window.navigation_view.get_visible_page()
+    check('Ctrl+2 puts the focus on a tile', inside(window.get_focus(), grid.grid_view),
+          describe(window.get_focus()))
+    await key(window, 'Right')
+    await key(window, 'Down')
+    await key(window, 'Return', 1.0)
+    detail = window.navigation_view.get_visible_page()
+    check('Right, Down, Enter opens an album', getattr(detail, 'item', None) is not None
+          and detail.item.kind == 'album')
+    check('the focus is on Play', inside(window.get_focus(), detail.play_button))
+    print('-- album')
+    await key(window, 'Tab')
+    check('Tab: Shuffle', inside(window.get_focus(), detail.shuffle_button))
+    await key(window, 'Tab')
+    check('Tab: the first track', inside(window.get_focus(), detail.list_view)
+          and window.get_focus().__gtype__.name == 'GtkListItemWidget')
+    requests = []
+    play_request = window.play_request
+    window.play_request = lambda play, start_with=None, shuffle=False: requests.append(
+        start_with)
+    await key(window, 'Down')
+    await key(window, 'Return')
+    window.play_request = play_request
+    check('Down, Enter plays the second track', requests == [1], requests)
+    app.player.apply(invented_playing_state())
+    await asyncio.sleep(0.4)
+    print('-- player bar')
+    await key(window, '<primary>3')
+    check('Ctrl+3 puts the focus on the play button',
+          window.get_focus() is window.player_bar.play_button)
+    actions = []
+    activate = app.activate_action
+    app.activate_action = lambda name, *rest: actions.append(name)
+    await key(window, 'space')
+    await key(window, '<primary>Right')
+    await key(window, '<primary>Left')
+    app.activate_action = activate
+    check('Space, Ctrl+Right, Ctrl+Left: play-pause, next, previous',
+          actions == ['play-pause', 'next', 'previous'], actions)
+    print('-- Now Playing')
+    await key(window, '<primary>n', 0.8)
+    check('Ctrl+N opens the sheet with the focus on its play button',
+          window.bottom_sheet.get_open() and window.get_focus() is window.now_playing.play_button)
+    for _ in range(4):  # Next, Repeat, the tabs, a lyric line
+        await key(window, 'Tab', 0.1)
+    check('Tab reaches the lyrics', inside(window.get_focus(), window.now_playing.lyrics_view))
+    await key(window, 'Escape', 0.8)
+    check('Escape closes the sheet', not window.bottom_sheet.get_open())
+    print('-- back')
+    await key(window, '<alt>Left', 0.8)
+    check('Alt+Left goes back to Albums', window.navigation_view.get_visible_page() is grid)
+    print('-- search')
+    await key(window, '<primary>f', 0.8)
+    search = window.navigation_view.get_visible_page()
+    check('Ctrl+F shows Search with the focus in its entry',
+          window._shown == 'search' and inside(window.get_focus(), search.search_entry))
+    search.search_entry.set_text('tide')  # typed
+    await asyncio.sleep(0.4)
+    await key(window, 'Tab')
+    await key(window, 'Right')
+    await key(window, 'space', 0.8)
+    check('Tab, Right, Space: Your Library', search.mode == 'library', search.mode)
+    await key(window, '<shift>Tab')
+    await key(window, 'Escape')
+    check('Escape in the entry clears it', search.search_entry.get_text() == '')
+    print('-- menus')
+    await key(window, 'F10', 0.6)
+    menu = window.primary_menu_button.get_popover()
+    check('F10 opens the main menu', menu is not None and menu.get_visible())
+    await key(window, 'Escape', 0.4)
+    check('Escape closes it', not menu.get_visible())
+    window._select('albums')
+    await asyncio.sleep(0.4)
+    await key(window, '<primary>2', 0.6)
+    await key(window, 'Menu', 0.6)
+    popover = popovers(grid)
+    check("Menu opens the focused tile's context menu", bool(popover))
+    for each in popover:
+        each.popdown()
+    await asyncio.sleep(0.3)
+    print('-- Preferences')
+    await key(window, '<primary>comma', 1.0)
+    dialog = app._preferences
+    check('Ctrl+, opens Preferences', dialog is not None)
+    if dialog is not None:
+        toplevel = dialog.get_root()
+        press(toplevel, 'Escape')
+        await asyncio.sleep(0.8)
+        check('Escape closes it', app._preferences is None)
+
+
+def popovers(widget):
+    found = []
+    if isinstance(widget, Gtk.Popover) and widget.get_visible():
+        found.append(widget)
+    child = widget.get_first_child()
+    while child is not None:
+        found.extend(popovers(child))
+        child = child.get_next_sibling()
+    return found
+
+
+# -- names ---------------------------------------------------------------------------------
+
+async def unnamed(label):
+    process = Gio.Subprocess.new([sys.executable, os.path.abspath(__file__), '--dump'],
+                                 Gio.SubprocessFlags.STDOUT_PIPE
+                                 | Gio.SubprocessFlags.STDERR_SILENCE)
+    _ok, out, _err = await process.communicate_utf8_async(None, None)
+    lines = [line for line in (out or '').splitlines() if line]
+    print(f'{label}: {len(lines)} unnamed' + ''.join(f'\n    {line}' for line in lines))
+    return len(lines)
+
+
+async def names(window):
+    print('-- accessible names (focusable controls without one)')
+    total = 0
+    for page in ('home', 'albums', 'artists', 'songs', 'radio', 'all-playlists',
+                 'favourite-songs'):
+        window._select(page)
+        window.split_view.set_show_content(True)
+        await asyncio.sleep(1.0)
+        total += await unnamed(page)
+    for kind, store in (('album', app.library.albums), ('playlist', app.library.playlists),
+                        ('artist', app.library.artists)):
+        window.open_item(store.get_item(0))
+        await asyncio.sleep(1.0)
+        total += await unnamed(kind)
+    window._select('search')
+    await asyncio.sleep(0.5)
+    search = window.navigation_view.get_visible_page()
+    search.set_mode('library')
+    search.search_entry.set_text('the')
+    await asyncio.sleep(1.5)
+    total += await unnamed('search')
+    app.player.apply(invented_playing_state())
+    window.bottom_sheet.set_open(True)
+    await asyncio.sleep(1.0)
+    total += await unnamed('Now Playing')
+    window.bottom_sheet.set_open(False)
+    dialog = app.show_preferences()
+    await asyncio.sleep(1.0)
+    total += await unnamed('Preferences')
+    dialog.set_visible_page_name('engine')
+    await asyncio.sleep(0.5)
+    total += await unnamed('Preferences, Engine')
+    dialog.close()
+    await asyncio.sleep(0.5)
+    app.activate_action('shortcuts')
+    await asyncio.sleep(1.0)
+    total += await unnamed('Keyboard Shortcuts')
+    print(f'{total} unnamed in all')
+
+
+# -- running -------------------------------------------------------------------------------
+
+def on_startup(_app):
+    Adw.StyleManager.get_default().set_color_scheme(
+        Adw.ColorScheme.FORCE_LIGHT if args.light else Adw.ColorScheme.FORCE_DARK)
+    Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
+
+
+def on_window_added(_app, window):
+    window.set_resizable(False)  # the tiling extension leaves a fixed-size window alone
+
+
+async def run():
+    try:
+        while app.library.props.state != 'ready':
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(1.0)
+        window = app.get_active_window()
+        await walkthrough(window)
+        if args.names:
+            await names(window)
+    except Exception as error:  # a step that raised is a failure too
+        import traceback
+        traceback.print_exc()
+        failures.append(repr(error))
+    finally:
+        app.quit()
+
+
+def on_activate(_app):
+    app.settings.set_string('last-page', 'home')
+    app.settings.set_int('window-width', width)
+    app.settings.set_int('window-height', height)
+    app.settings.set_strv('expanded-folders', [])
+    app.spawn(run())
+
+
+app.connect('startup', on_startup)
+app.connect('activate', on_activate)
+app.connect('window-added', on_window_added)
+main.use_glib_event_loop()
+try:
+    app.run(['a11y_check', '--demo'])
+finally:
+    for process in reversed(bus_processes):
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=5)
+print(f'{len(failures)} failed' if failures else 'all passed')
+sys.exit(1 if failures else 0)

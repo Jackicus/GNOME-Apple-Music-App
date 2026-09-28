@@ -4,7 +4,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from . import pages, sections
+from . import pages, sections, shortcuts
 from .actions import ItemActions, TrackRef
 from .backend.errors import EngineError
 from .pages.artist import ArtistPage
@@ -22,16 +22,29 @@ PLAYLISTS = 'all-playlists'
 # The fixed destination showing the Favourite Songs playlist, which has a playlist's menu too.
 FAVOURITE_SONGS = 'favourite-songs'
 
-# The playback keys, by (keyval, modifiers) -> app action. Not application accelerators: GTK 4
-# runs those in the window's capture phase, before the focus widget, so a bare Space would fire
-# while typing in the Songs filter and Ctrl+Left would skip a track instead of a word. The
-# window's own capture-phase key controller handles them instead, and leaves an editable alone.
-PLAYBACK_KEYS = {
-    (Gdk.KEY_space, 0): 'play-pause',
-    (Gdk.KEY_KP_Space, 0): 'play-pause',
-    (Gdk.KEY_Right, Gdk.ModifierType.CONTROL_MASK): 'next',
-    (Gdk.KEY_Left, Gdk.ModifierType.CONTROL_MASK): 'previous',
-}
+
+def _parse_keys(table):
+    """{(keyval, modifiers): action} for a table of action -> accelerator strings."""
+    keys = {}
+    for name, accels in table.items():
+        for accel in accels:
+            ok, keyval, mods = Gtk.accelerator_parse(accel)
+            if ok:
+                keys[(keyval, int(mods))] = name
+    return keys
+
+
+# The playback keys (shortcuts.PLAYBACK), by (keyval, modifiers) -> app action. Not application
+# accelerators: GTK 4 runs those in the window's capture phase, before the focus widget, so a
+# bare Space would fire while typing in the Songs filter and Ctrl+Left would skip a track
+# instead of a word. The window's own capture-phase key controller handles them instead, and
+# leaves the widgets whose keys they are alone (on_key_pressed).
+PLAYBACK_KEYS = _parse_keys(shortcuts.PLAYBACK)
+
+# Where Space is the widget's own key: it toggles these, so it toggles them rather than
+# playback. (Enter presses a button; Space on a plain button, a tile or a row plays or pauses.)
+SPACE_TOGGLES = (Gtk.ToggleButton, Gtk.Switch, Gtk.CheckButton)
+SPACE_KEYS = (Gdk.KEY_space, Gdk.KEY_KP_Space)
 
 
 def sync_section_names():
@@ -53,6 +66,7 @@ class Window(Adw.ApplicationWindow):
     __gtype_name__ = 'AppleMusicWindow'
 
     toast_overlay = Gtk.Template.Child()
+    primary_menu_button = Gtk.Template.Child()
     bottom_sheet = Gtk.Template.Child()
     player_bar = Gtk.Template.Child()
     now_playing = Gtk.Template.Child()
@@ -99,20 +113,28 @@ class Window(Adw.ApplicationWindow):
         ]
         self._update_account()
 
-        # Alt+Left (main.py): the navigation views pop on their own only while the focus is in
-        # them; this goes back from anywhere in the window, and is off when there is nowhere to
-        # go, so the keys reach the focus then.
-        self._back = Gio.SimpleAction.new('back', None)
-        self._back.connect('activate', self._on_back)
-        self.add_action(self._back)
-        # Ctrl+F (main.py): the Search page, with the cursor in its entry.
-        search = Gio.SimpleAction.new('search', None)
-        search.connect('activate', self._on_search)
-        self.add_action(search)
-        self.navigation_view.connect('notify::visible-page', self._update_back)
-        self.split_view.connect('notify::collapsed', self._update_back)
-        self.split_view.connect('notify::show-content', self._update_back)
-        self._update_back()
+        # The window's actions (their keys are shortcuts.ACCELS, set in main.py). Alt+Left:
+        # the navigation views pop on their own only while the focus is in them; this goes
+        # back from anywhere in the window. Ctrl+F: the Search page, with the cursor in its
+        # entry. Ctrl+1, 2, 3: the focus into the sidebar, the page, the player bar. Each is
+        # off while a dialog is open over the window (its keys are the dialog's then), and
+        # back is off when there is nowhere to go or the Now Playing sheet is open, so the
+        # keys reach the focus.
+        self._actions = {}
+        for name, callback in (('back', self._on_back), ('search', self._on_search),
+                               ('focus-sidebar', self._on_focus_sidebar),
+                               ('focus-content', self._on_focus_content),
+                               ('focus-player', self._on_focus_player)):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect('activate', callback)
+            self.add_action(action)
+            self._actions[name] = action
+        self.navigation_view.connect('notify::visible-page', self._update_actions)
+        self.split_view.connect('notify::collapsed', self._update_actions)
+        self.split_view.connect('notify::show-content', self._update_actions)
+        self.bottom_sheet.connect('notify::open', self._update_actions)
+        self.connect('notify::visible-dialog', self._update_actions)
+        self._update_actions()
 
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect('key-pressed', self.on_key_pressed)
@@ -120,19 +142,46 @@ class Window(Adw.ApplicationWindow):
 
     def on_key_pressed(self, _controller, keyval, _keycode, state):
         """Space, Ctrl+Right and Ctrl+Left run the playback actions (PLAYBACK_KEYS) while
-        something plays, unless the focus is in an entry or a text view, whose keys they
-        are. A key nothing handles goes on to the focus widget (Space presses a button)."""
-        name = PLAYBACK_KEYS.get((keyval, state & Gtk.accelerator_get_default_mod_mask()))
+        something plays, unless the keys belong to the focus: an entry or a text view, a
+        menu (a popover), a dialog over the window, and for Space a toggle (a toggle button,
+        a switch, a check box). A key nothing handles goes on to the focus widget. F10 opens
+        the primary menu when the sidebar holding it is hidden (GTK's own F10 needs it
+        shown)."""
+        mods = int(state & Gtk.accelerator_get_default_mod_mask())
+        if keyval == Gdk.KEY_F10 and not mods:
+            return self._show_primary_menu()
+        name = PLAYBACK_KEYS.get((keyval, mods))
         if name is None:
             return False
         focus = self.get_focus()
         if isinstance(focus, (Gtk.Editable, Gtk.TextView)):
+            return False
+        if keyval in SPACE_KEYS and isinstance(focus, SPACE_TOGGLES):
+            return False
+        if self.get_visible_dialog() is not None or _in_popover(focus):
             return False
         action = self.get_application().lookup_action(name)
         if action is None or not action.get_enabled():
             return False
         self.get_application().activate_action(name)
         return True
+
+    def _show_primary_menu(self):
+        """F10 while the primary menu's button is not shown (the collapsed layout showing a
+        page): show the sidebar, then open the menu there. True when it did."""
+        button = self.primary_menu_button
+        if button.get_mapped() or self.get_visible_dialog() is not None:
+            return False  # GTK's own F10 opens it
+        if not self.split_view.get_collapsed():
+            return False
+        self._close_sheet()
+        self.split_view.set_show_content(False)
+        GLib.idle_add(self._popup_primary_menu)
+        return True
+
+    def _popup_primary_menu(self):
+        self.primary_menu_button.popup()
+        return GLib.SOURCE_REMOVE
 
     def toast(self, title):
         self.add_toast(Adw.Toast(title=title))
@@ -146,11 +195,19 @@ class Window(Adw.ApplicationWindow):
             self.toast_overlay.add_toast(toast)
 
     def toggle_now_playing(self):
-        """Open the Now Playing sheet, or close it (app.now-playing)."""
-        self.bottom_sheet.set_open(not self.bottom_sheet.get_open())
+        """Open the Now Playing sheet, or close it (app.now-playing); not while a dialog is
+        open over the window."""
+        if self.get_visible_dialog() is None:
+            self.bottom_sheet.set_open(not self.bottom_sheet.get_open())
+
+    def _close_sheet(self):
+        if self.bottom_sheet.get_open():
+            self.bottom_sheet.set_open(False)
 
     def _on_search(self, *_args):
-        """win.search: select Search in the sidebar and put the cursor in its entry."""
+        """win.search: select Search in the sidebar and put the cursor in its entry (the Now
+        Playing sheet closed first)."""
+        self._close_sheet()
         self._select('search')
         self.split_view.set_show_content(True)
         page = self._roots.get('search')
@@ -317,6 +374,9 @@ class Window(Adw.ApplicationWindow):
             self.sidebar.append(section)
 
         self.sidebar.connect('notify::selected-item', self._on_selected_item)
+        # The page mode (the collapsed layout) builds new rows: named again once built.
+        self.sidebar.connect('notify::mode', lambda *_: GLib.idle_add(
+            self._update_sidebar_accessibility))
         self.sidebar.connect('activated', self._on_activated)
         self.sidebar.connect('setup-menu', self._on_setup_menu)
         # Tracks dragged from a list (widgets/context_menu.py) drop onto playlists.
@@ -402,6 +462,7 @@ class Window(Adw.ApplicationWindow):
             self._quiet = False
         self._positions = {entry.key: position
                            for position, entry in enumerate(self._playlist_store)}
+        self._update_sidebar_accessibility()
         folders = [entry.folder_id for entry in entries if entry.kind == 'folder']
         log.debug('Sidebar: %d folders, %d playlists in %.1f ms; expanded: %s', len(folders),
                   len(entries) - len(folders), (time.perf_counter() - started) * 1000,
@@ -563,13 +624,105 @@ class Window(Adw.ApplicationWindow):
             item = self._playlist_section.get_item(position)
             item.set_visible(is_shown(entry, self._expanded))
             item.set_expanded(entry.folder_id in self._expanded)
+        self._update_sidebar_accessibility()
+
+    # The sidebar's rows, for their accessible names and states: AdwSidebar builds a row per
+    # item, hidden ones too, in item order (one Gtk.ListBox in the sidebar mode, one boxed list
+    # per section in the page mode, which it builds anew when the mode changes) and names none
+    # of them in the sidebar mode, nor says whether a folder is expanded. Found by walking its
+    # widgets; if they ever stop matching the items one to one, nothing is set.
+
+    def _sidebar_rows(self):
+        rows = []
+        for box in _descendants_of_type(self.sidebar, Gtk.ListBox):
+            index = 0
+            while (row := box.get_row_at_index(index)) is not None:
+                rows.append(row)
+                index += 1
+        return rows if len(rows) == self.sidebar.get_items().get_n_items() else []
+
+    def _sidebar_row(self, index):
+        rows = self._sidebar_rows()
+        return rows[index] if 0 <= index < len(rows) else None
+
+    def _update_sidebar_accessibility(self):
+        """Name each sidebar row after its item, and give folders their expanded state."""
+        items = self.sidebar.get_items()
+        for index, row in enumerate(self._sidebar_rows()):
+            item = items.get_item(index)
+            row.update_property([Gtk.AccessibleProperty.LABEL], [item.get_title()])
+            if isinstance(item, SidebarItem) and item.entry.kind == 'folder':
+                # An int: the state is "true, false or undefined".
+                row.update_state([Gtk.AccessibleState.EXPANDED],
+                                 [int(item.entry.folder_id in self._expanded)])
+        return GLib.SOURCE_REMOVE
 
     def _can_go_back(self):
         return (len(self.navigation_view.get_navigation_stack()) > 1
                 or (self.split_view.get_collapsed() and self.split_view.get_show_content()))
 
-    def _update_back(self, *_args):
-        self._back.set_enabled(self._can_go_back())
+    def _update_actions(self, *_args):
+        """The window's actions are off while a dialog is open over it (their keys go to the
+        dialog, not to the pages behind it); back also while the Now Playing sheet is open
+        (Escape closes that) or there is nowhere to go back to."""
+        free = self.get_visible_dialog() is None
+        for name, action in self._actions.items():
+            action.set_enabled(free)
+        self._actions['back'].set_enabled(
+            free and not self.bottom_sheet.get_open() and self._can_go_back())
+
+    # Ctrl+1, 2, 3: the focus into the sidebar, the page, the player bar.
+
+    def _on_focus_sidebar(self, *_args):
+        """win.focus-sidebar: the focus on the selected sidebar row (the sidebar shown first
+        in the collapsed layout, the sheet closed)."""
+        self._close_sheet()
+        if self.split_view.get_collapsed() and self.split_view.get_show_content():
+            self.split_view.set_show_content(False)
+            GLib.idle_add(self._focus_sidebar)  # once the sidebar's page is shown
+        else:
+            self._focus_sidebar()
+
+    def _focus_sidebar(self):
+        focus = self.get_focus()
+        if focus is None or not focus.is_ancestor(self.sidebar):
+            row = self._sidebar_row(self.sidebar.get_selected())
+            if row is None or not row.grab_focus():
+                self.sidebar.child_focus(Gtk.DirectionType.TAB_FORWARD)
+        return GLib.SOURCE_REMOVE
+
+    def _on_focus_content(self, *_args):
+        """win.focus-content: the focus on the page shown, its content first (a grid, a
+        list, an entry) rather than its header bar (the content shown first in the collapsed
+        layout, the sheet closed). Nothing moves when the focus is on the page already."""
+        self._close_sheet()
+        if self.split_view.get_collapsed() and not self.split_view.get_show_content():
+            self.split_view.set_show_content(True)
+            GLib.idle_add(self._focus_content)
+        else:
+            self._focus_content()
+
+    def _focus_content(self):
+        page = self.navigation_view.get_visible_page()
+        if page is None:
+            return GLib.SOURCE_REMOVE
+        focus = self.get_focus()
+        if focus is not None and focus.is_ancestor(page):
+            return GLib.SOURCE_REMOVE
+        toolbar = _descendant_of_type(page, Adw.ToolbarView)
+        content = toolbar.get_content() if toolbar is not None else None
+        if content is None or not content.child_focus(Gtk.DirectionType.TAB_FORWARD):
+            page.child_focus(Gtk.DirectionType.TAB_FORWARD)
+        return GLib.SOURCE_REMOVE
+
+    def _on_focus_player(self, *_args):
+        """win.focus-player: the focus on the play button, the Now Playing sheet's while it
+        is open, else the bar's; with nothing playing, on the bar itself (it opens the
+        sheet)."""
+        if self.bottom_sheet.get_open():
+            self.now_playing.focus_controls()
+        elif not self.player_bar.play_button.grab_focus():
+            self.player_bar.grab_bar_focus()
 
     def _on_back(self, *_args):
         if len(self.navigation_view.get_navigation_stack()) > 1:
@@ -625,3 +778,36 @@ class Window(Adw.ApplicationWindow):
         # (Application.close_window).
         self.get_application().close_window(self)
         return True
+
+
+def _descendants_of_type(widget, cls):
+    """The descendants of widget that are a cls, depth first (not looking inside them)."""
+    child = widget.get_first_child()
+    while child is not None:
+        if isinstance(child, cls):
+            yield child
+        else:
+            yield from _descendants_of_type(child, cls)
+        child = child.get_next_sibling()
+
+
+def _descendant_of_type(widget, cls):
+    """The first descendant of widget (depth first, itself included) that is a cls."""
+    if isinstance(widget, cls):
+        return widget
+    child = widget.get_first_child()
+    while child is not None:
+        found = _descendant_of_type(child, cls)
+        if found is not None:
+            return found
+        child = child.get_next_sibling()
+    return None
+
+
+def _in_popover(widget):
+    """Whether widget is inside a popover (a menu): its keys are the menu's."""
+    while widget is not None:
+        if isinstance(widget, Gtk.Popover):
+            return True
+        widget = widget.get_parent()
+    return False
