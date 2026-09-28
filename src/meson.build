@@ -144,6 +144,7 @@ install_data(
 # The backend package.
 install_data(
   'backend/__init__.py',
+  'backend/api.py',
   'backend/bridge.js',
   'backend/cdp.py',
   'backend/chrome.py',

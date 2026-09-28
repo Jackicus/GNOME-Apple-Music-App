@@ -73,7 +73,8 @@ from pathlib import Path
 from gi.repository import Gio, GLib, GObject
 
 from . import cache
-from .backend import chrome, config, normalize, store
+from .backend import api, chrome, config, normalize, store
+from .backend.api import is_library_id, resource_type
 from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
 
@@ -100,14 +101,6 @@ BROWSE_TIMEOUT = 60.0     # the editorial groupings: a big answer
 SEARCH_LIMIT = 20         # hits per kind
 SUGGEST_LIMIT = 10        # completions and top hits while typing
 
-# The New page: the editorial groupings behind music.apple.com's own (the request it makes,
-# less its field selections and `format[resources]=map`, which flattens the answer).
-BROWSE_ENDPOINT = '/v1/editorial/{storefront}/groupings'
-BROWSE_PARAMS = {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork'}
-# Made for You: the recommendations, of which the mixes and stations are kept.
-RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
-RECOMMENDATIONS_PARAMS = {'limit': 25}
-
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
 
@@ -116,22 +109,6 @@ CONTROL_ACTIONS = ('play', 'pause', 'toggle', 'next', 'previous', 'stop')
 SHUFFLE_MODES = ('on', 'off', 'toggle')
 REPEAT_MODES = ('none', 'one', 'all', 'cycle')
 
-# Library ids ("l." albums and playlists, "p." playlists, "r." radio, "i." songs and music
-# videos) live under /v1/me/library; anything else is the catalog's.
-LIBRARY_PREFIXES = ('l.', 'p.', 'r.', 'i.')
-
-# The Apple Music API's resource type for each kind an Item or a Track has (the singular: the
-# bridge's rating() and addToLibrary() add the "s"), for the ratings and library writes. A
-# library id takes the "library-" type. Artists have no ratings and cannot be added.
-RESOURCE_TYPES = {
-    'song': 'song',
-    'album': 'album',
-    'playlist': 'playlist',
-    'station': 'station',
-    'video': 'music-video',
-    'musicVideo': 'music-video',
-    'music-video': 'music-video',
-}
 # The kinds add_to_library() takes (a station is followed, not added).
 LIBRARY_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
 
@@ -161,46 +138,6 @@ ACCOUNT_NAME_JS = r"""(() => {
   }
   return null;
 })()"""
-
-
-def is_library_id(item_id):
-    return str(item_id).startswith(LIBRARY_PREFIXES)
-
-
-def item_endpoint(kind, item_id, storefront):
-    """The API path that answers with one full item of `kind`, as the extension's `item`
-    command asked for it: library items under /v1/me/library, the rest under the catalog."""
-    library = is_library_id(item_id)
-    if kind == 'album':
-        return (f'/v1/me/library/albums/{item_id}?include=tracks,artists' if library
-                else f'/v1/catalog/{storefront}/albums/{item_id}?include=tracks,artists')
-    if kind == 'playlist':
-        return (f'/v1/me/library/playlists/{item_id}?include=tracks' if library
-                else f'/v1/catalog/{storefront}/playlists/{item_id}?include=tracks')
-    if kind == 'artist':
-        return (f'/v1/me/library/artists/{item_id}?include=albums' if library
-                else f'/v1/catalog/{storefront}/artists/{item_id}?include=albums')
-    if kind == 'station':
-        return f'/v1/catalog/{storefront}/stations/{item_id}'
-    if kind == 'song':
-        return (f'/v1/me/library/songs/{item_id}' if library
-                else f'/v1/catalog/{storefront}/songs/{item_id}')
-    return f'/v1/catalog/{storefront}/{kind}s/{item_id}'
-
-
-def resource_type(kind, item_id):
-    """The API type (singular) the ratings of `kind` `item_id` live under: 'song' or
-    'library-song', 'album' or 'library-album'… EngineError('usage') for a kind with none."""
-    base = RESOURCE_TYPES.get(kind)
-    if base is None or item_id in (None, ''):
-        raise EngineError('usage', f'no rating for {kind or "nothing"} {item_id or ""}'.strip())
-    return f'library-{base}' if is_library_id(item_id) and base != 'station' else base
-
-
-def album_endpoint(album_id, storefront):
-    library = str(album_id).startswith(('l.', 'p.'))
-    return (f'/v1/me/library/albums/{album_id}?include=tracks' if library
-            else f'/v1/catalog/{storefront}/albums/{album_id}?include=tracks')
 
 
 def _shape_item(raw, cache_dir, generation):
@@ -233,12 +170,6 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir, generation):
     return _fetch_item_art(item, art_urls, cache_dir, generation)
 
 
-def _page_data(answer):
-    """The resources of one page: its `data` list's dicts."""
-    data = answer.get('data') if isinstance(answer, dict) else None
-    return [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []
-
-
 def lyrics_answer(answer):
     """The bridge's lyrics answer as {synced: bool, lines: [{startMs, endMs, text}]}, the
     lines kept in order with their times as integers; anything odd is no lyrics."""
@@ -262,14 +193,9 @@ def lyrics_answer(answer):
 
 def _raise_api_errors(answer, what):
     """MusicKit answers a failed request with a 200 and {"errors": [...]}: an EngineError."""
-    if isinstance(answer, dict) and answer.get('errors'):
-        errors = answer['errors']
-        first = errors[0] if isinstance(errors, list) and errors else {}
-        if not isinstance(first, dict):
-            first = {}
-        raise EngineError('api', f"{what}: {first.get('status', '?')} "
-                                 f"{first.get('title', 'error')}: "
-                                 f"{first.get('detail', '')}".strip())
+    error = api.api_error(answer, what)
+    if error is not None:
+        raise error
 
 
 def _shape_search(raw, suggestions, suggest, cache_dir):
@@ -800,6 +726,7 @@ class Engine(GObject.Object):
     async def _api(self, client, path, params=None, timeout=None):
         """One API read through the bridge, retried: MusicKit answers a failed request with a
         200 and {"errors": [...]}, which is a failure here as much as a rejected promise."""
+        where = path.partition('?')[0]  # its query stays out of messages and the log
         last = None
         for attempt in range(API_RETRIES):
             if attempt:
@@ -809,19 +736,12 @@ class Engine(GObject.Object):
             except EngineError as e:
                 if e.code == 'engine-down':
                     raise
-                last = e
+                last = EngineError(e.code, f'{where}: {e.message}')
                 continue
-            if isinstance(answer, dict) and answer.get('errors'):
-                errors = answer['errors']
-                first = errors[0] if isinstance(errors, list) and errors else {}
-                if not isinstance(first, dict):
-                    first = {}
-                last = EngineError('api', f"{first.get('status', '?')} "
-                                          f"{first.get('title', 'error')}: "
-                                          f"{first.get('detail', '')}".strip())
-                continue
-            return answer if isinstance(answer, dict) else {}
-        raise EngineError(last.code if last else 'api', f'{path}: {last.message if last else "?"}')
+            last = api.api_error(answer, where)
+            if last is None:
+                return answer if isinstance(answer, dict) else {}
+        raise last
 
     async def api(self, path, params=None, timeout=None):
         """One Apple Music API read through the page's MusicKit (the bridge's api(), that is
@@ -847,7 +767,7 @@ class Engine(GObject.Object):
         (total None until it is known)."""
         params = dict(params or {})
         first = await self.api(path, dict(params, limit=page, offset=0))
-        items = _page_data(first)
+        items = api.page_data(first)
         meta = first.get('meta')
         total = meta.get('total') if isinstance(meta, dict) else None
         total = total if isinstance(total, int) and not isinstance(total, bool) else None
@@ -866,15 +786,15 @@ class Engine(GObject.Object):
                     *(self.api(path, dict(params, limit=page, offset=offset))
                       for offset in batch))
                 for answer in answers:
-                    items.extend(_page_data(answer))
+                    items.extend(api.page_data(answer))
                 if progress:
                     progress(min(len(items), total), total)
-                if any(not _page_data(answer) for answer in answers):
+                if any(not api.page_data(answer) for answer in answers):
                     break  # Apple ran out early (the total counted something we do not get)
             return items[:limit] if limit is not None else items
         while True:
             answer = await self.api(path, dict(params, limit=page, offset=len(items)))
-            data = _page_data(answer)
+            data = api.page_data(answer)
             items.extend(data)
             if progress:
                 progress(len(items), total)
@@ -892,7 +812,7 @@ class Engine(GObject.Object):
             raise EngineError('not-signed-in', 'sign in to load items')
         status = await self.status()
         storefront = str(status.get('storefront') or 'us')
-        answer = await self._api(client, item_endpoint(kind, item_id, storefront))
+        answer = await self._api(client, api.item_endpoint(kind, item_id, storefront))
         data = answer.get('data')
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise EngineError('api', f'item not found: {kind} {item_id}')
@@ -904,7 +824,7 @@ class Engine(GObject.Object):
             stubs = [stub for stub in stubs if isinstance(stub, dict)]
             # All at once in the page, not one round trip per album: an artist with a
             # couple of dozen albums took seconds one by one.
-            endpoints = [album_endpoint(stub.get('id'), storefront) for stub in stubs]
+            endpoints = [api.album_endpoint(stub.get('id'), storefront) for stub in stubs]
             answers = []
             if endpoints:
                 try:
@@ -1155,7 +1075,7 @@ class Engine(GObject.Object):
         client = await self._require_account('read ratings')
         answer = await self._api(client, f'/v1/me/ratings/{rated}s', {'ids': str(item_id)})
         value = 0
-        for entry in _page_data(answer):
+        for entry in api.page_data(answer):
             attributes = entry.get('attributes')
             number = attributes.get('value') if isinstance(attributes, dict) else None
             if isinstance(number, int) and not isinstance(number, bool):
@@ -1172,7 +1092,7 @@ class Engine(GObject.Object):
         if is_library_id(item_id):
             raise EngineError('usage', f'{item_id} is in the library already')
         client = await self._require_account('add to your library')
-        await client.bridge('addToLibrary', RESOURCE_TYPES[kind], str(item_id))
+        await client.bridge('addToLibrary', api.RESOURCE_TYPES[kind], str(item_id))
 
     async def playlists(self):
         """The library playlists that can be added to, in the library's order: [{id,
@@ -1205,7 +1125,7 @@ class Engine(GObject.Object):
                 raise
             log.debug('catalog of %s %s: %s', kind, item_id, e)
             return None
-        for entry in _page_data(answer):
+        for entry in api.page_data(answer):
             url = (entry.get('attributes') or {}).get('url')
             if isinstance(url, str) and url.startswith('https://'):
                 return url
@@ -1308,7 +1228,7 @@ class Engine(GObject.Object):
 
     async def browse(self, refresh=False):
         """The New page: {shelves: [{key, title, items}]}, the editorial groupings behind
-        music.apple.com's own New page (BROWSE_ENDPOINT, name=music, platform=web) as
+        music.apple.com's own New page (api.BROWSE_ENDPOINT, name=music, platform=web) as
         shelves in Apple's order, the featured banners first ("Featured"), then Best New
         Songs, New Releases, playlists, stations, videos; items as search() has them. From
         <cache>/browse.json for a day, else fetched and kept."""
@@ -1319,14 +1239,14 @@ class Engine(GObject.Object):
             return kept
         client = await self._require_signed_in()
         storefront = str((await self.status()).get('storefront') or 'us')
-        raw = await self._api(client, BROWSE_ENDPOINT.format(storefront=storefront),
-                              BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
+        raw = await self._api(client, api.BROWSE_ENDPOINT.format(storefront=storefront),
+                              api.BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
         return await asyncio.to_thread(_shape_and_keep, normalize.editorial_shelves, raw, path,
                                        str(self.cache_dir), generation)
 
     async def made_for_you(self, refresh=False):
         """Made for You: {shelves: [{key, title, items}]}, the recommendations
-        (RECOMMENDATIONS_ENDPOINT) made only of the personal mixes and stations, each a
+        (api.RECOMMENDATIONS_ENDPOINT) made only of the personal mixes and stations, each a
         shelf titled as Apple titles it. From <cache>/made-for-you.json for a day, else
         fetched and kept."""
         generation = store.cache_generation()
@@ -1335,7 +1255,7 @@ class Engine(GObject.Object):
         if kept is not None:
             return kept
         client = await self._require_signed_in()
-        raw = await self._api(client, RECOMMENDATIONS_ENDPOINT, RECOMMENDATIONS_PARAMS,
+        raw = await self._api(client, api.RECOMMENDATIONS_ENDPOINT, api.RECOMMENDATIONS_PARAMS,
                               timeout=BROWSE_TIMEOUT)
         return await asyncio.to_thread(
             _shape_and_keep,
