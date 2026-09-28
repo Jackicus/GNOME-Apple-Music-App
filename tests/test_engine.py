@@ -451,6 +451,20 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(self.engine.state, 'down')
         gate.set()
 
+    async def test_kill_ends_chrome_at_once_and_is_no_loss(self):
+        lost = []
+        self.engine.connect('lost', lambda e, reason: lost.append(reason))
+        await self.engine.start()
+        process, _ = self.engine.spawned[0]
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            self.engine.kill()
+        self.assertEqual((self.engine.state, self.engine.pid), ('down', None))
+        await self.wait_exited(process)
+        self.assertEqual(process.get_term_sig(), signal.SIGKILL)
+        await asyncio.sleep(0.05)  # the pipe's end reaches the client
+        self.assertEqual(lost, [])
+        self.assertEqual(self.engine.state, 'down')
+
     async def test_restart(self):
         await self.engine.start()
         await self.engine.restart(visible=False)
