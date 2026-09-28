@@ -536,7 +536,9 @@ scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size W
                           scrolls a page (or, with --sidebar, the sidebar) of the demo library top
                           to bottom (or PX pixels) and reports the app's work per frame (mean, 90th
                           percentile, frames over the refresh interval and over 16.7 ms) and the
-                          gaps between frames over 16.7 and 33.3 ms; run it on a big library:
+                          gaps between frames over 16.7 and 33.3 ms, counted from the first frame
+                          that scrolled; it scrolls the page's grid_view/column_view/list_view once
+                          that is shown (never a status page's); run it on a big library:
                           APPLE_MUSIC_CACHE=build/demo-big scripts/scroll_test.py --page albums
                           (Songs of 40,000: --page songs --distance 40000, the whole is 2M px;
                           a fling: --speed 20000)
@@ -567,13 +569,18 @@ scripts/demo_library.py [--cache DIR] [--albums N] [--playlists N] [--tracks N]
                           phase 19's: --cache build/demo-big --albums 3000 --playlists 300
                           --tracks 40000 (48 MB of library.json, 273 MB with the artwork).
                           Without the new options the output is as it always was
-scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--size WxH] [--profile KEY]
+scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--watch MS] [--size WxH]
+                 [--profile KEY]
                           startup, page switches and RSS on build/demo-big (or DIR), each run a
                           process of its own (default 3) with medians, beside a bare Adw window
                           (the platform's floor): the Application.mark()s from the process
-                          start, every root page shown twice, RSS and anon RSS; --profile KEY
-                          prints a cProfile of that page's first switch. Keep its window
-                          visible (no frames otherwise: reported after 3 s)
+                          start, every root page shown twice with the longest frame in the
+                          --watch ms (1000) after each switch, RSS and anon RSS, and the pages
+                          step: 20 albums, 5 artists and 5 See All opened and popped, the RSS
+                          they leave after gc.collect() + malloc_trim(0) and how many of those
+                          pages are still alive (weakrefs, by class; the page-leak measure);
+                          --profile KEY prints a cProfile of that page's first switch. Keep its
+                          window visible (no frames otherwise: reported after 3 s)
 meson setup build --prefix=/usr && meson install -C build --skip-subprojects
                           system install, release profile (byte-compiled; see Distribution)
 meson dist -C build       the release tarball in build/meson-dist/ (needs a clean, committed tree)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Measure the app's startup, page switches and memory on a big demo library.
 
-    scripts/bench.py [--cache DIR] [--size WxH] [--settle MS] [--runs N] [--profile KEY]
+    scripts/bench.py [--cache DIR] [--size WxH] [--settle MS] [--watch MS] [--runs N]
+                     [--profile KEY]
 
 Runs the installed build (meson install -C build, or scripts/run.sh, first) as
 scroll_test.py does (scripts/harness.py), on the library in DIR (default
@@ -26,10 +27,19 @@ switches under 100 ms, RSS under 250 MB):
   playlist, shown once (the page built) and again (kept), each timed from the
   selection to the end of the next frame's paint, with --settle ms between them for
   the artwork to arrive, as it would for someone browsing. For Songs, also the time
-  until the songs are built and its rows painted.
+  until the songs are built and its rows painted. Beside each, the longest frame
+  (before-paint to after-paint, on the main thread) in the --watch ms after it
+  (default 1000; the next switch waits for it): work a page puts off until after its
+  first paint (Home's later shelves, the grid's columns, the Songs prepare) shows
+  there, not in the switch time.
 - memory: RSS (and the anonymous part of it, the app's own) from /proc/self/status
   after the window is mapped, the library is loaded, and every page has been browsed
   twice, and the peak (VmHWM).
+- pages: 20 albums, 5 artists and 5 See All grids opened (window.open_item and
+  open_shelf, as a tile or See All does) and popped one after the other, --settle ms
+  each: the RSS and anonymous RSS they left behind, after gc.collect() and
+  malloc_trim(0), and how many of the pages pushed are still alive (weak references),
+  by class. A page that is freed once popped leaves 0 alive.
 
 A frame that does not come (the compositor sends none to a window it does not show:
 keep the bench's window visible) is reported as missing after 3 s rather than waited
@@ -37,6 +47,8 @@ for. Scrolling is measured by scripts/scroll_test.py.
 """
 
 import argparse
+import asyncio
+import ctypes
 import gc
 import json
 import logging
@@ -45,6 +57,7 @@ import statistics
 import subprocess
 import sys
 import time
+import weakref
 
 import harness
 
@@ -54,6 +67,7 @@ CONTENT_TARGET = 1000  # ms from launch
 SWITCH_TARGET = 100  # ms
 RSS_TARGET = 250  # MB
 FRAME_TIMEOUT = 3000  # ms to wait for a frame before calling it missing
+PAGES = (('album', 20), ('artist', 5), ('shelf', 5))  # what the pages step opens and pops
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--cache', default=os.environ.get('APPLE_MUSIC_CACHE')
@@ -62,6 +76,9 @@ parser.add_argument('--cache', default=os.environ.get('APPLE_MUSIC_CACHE')
 parser.add_argument('--size', default='1100x760')
 parser.add_argument('--settle', type=int, default=300,
                     help='milliseconds between page switches (default 300)')
+parser.add_argument('--watch', type=int, default=1000,
+                    help='milliseconds after a switch whose longest frame is reported '
+                         '(default 1000)')
 parser.add_argument('--runs', type=int, default=3, help='how many runs (default 3)')
 parser.add_argument('--profile', metavar='KEY',
                     help="print a cProfile of the Python run during this page's first switch")
@@ -79,6 +96,14 @@ def rss_mb(field='VmRSS'):
     return 0.0
 
 
+def malloc_trim():
+    """Hand freed heap back to the system (glibc), so RSS counts what is still in use."""
+    try:
+        ctypes.CDLL('libc.so.6').malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
+
+
 def process_age_ms():
     """Milliseconds since this process started, from /proc/self/stat."""
     with open('/proc/self/stat', encoding='ascii') as file:
@@ -92,8 +117,15 @@ def process_age_ms():
 def run_child(*extra):
     """This script as a process of its own; its result line, parsed."""
     command = [sys.executable, os.path.abspath(__file__), '--cache', args.cache,
-               '--size', args.size, '--settle', str(args.settle), *extra]
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=300)
+               '--size', args.size, '--settle', str(args.settle), '--watch', str(args.watch),
+               *extra]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired as error:  # its output is bytes, whatever text= says
+        output = (error.stdout or b'').decode(errors='replace')
+        sys.stderr.write(output[-3000:] + (error.stderr or b'').decode(errors='replace')[-3000:]
+                         + f'bench: no result in {error.timeout:.0f} s\n')
+        return None, output
     for line in completed.stdout.splitlines():
         if line.startswith('bench-result: '):
             return json.loads(line[len('bench-result: '):]), completed.stdout
@@ -154,20 +186,25 @@ def parent():
     floor = median(bare['first_frame'] for bare in bares)
     print(f'  content painted {fmt(content)} ({verdict(content, CONTENT_TARGET)} the '
           f'{CONTENT_TARGET} ms target); a bare Adw window\'s first frame {fmt(floor)}')
-    print('  page switches (selection to the end of the next paint), first visit / again:')
+    print('  page switches (selection to the end of the next paint), first visit / again; '
+          f'the longest frame in the {args.watch} ms after each:')
     for key in first['order']:
         firsts = median(run['switches'].get(key, [None, None])[0] for run in runs)
         agains = median(run['switches'].get(key, [None, None])[1] for run in runs)
+        frame_firsts = median(run['frames'].get(key, [None, None])[0] for run in runs)
+        frame_agains = median(run['frames'].get(key, [None, None])[1] for run in runs)
         note = ''
         if key == 'songs':
             note = f'; songs built and painted {fmt(median(run["songs_ready"] for run in runs))}'
         tiles = first['tiles'].get(key)
         if tiles:
             note += f'; {tiles[0]} tiles made, {tiles[2]} in view'
-        print(f'    {key:<22} {fmt(firsts):>8} / {fmt(agains):>8}{note}')
+        print(f'    {key:<22} {fmt(firsts):>8} / {fmt(agains):>8};'
+              f' frames after {fmt(frame_firsts):>6} / {fmt(frame_agains):>6}{note}')
     longest = median(run['longest_switch'] for run in runs)
     print(f'  longest switch {fmt(longest)} ({verdict(longest, SWITCH_TARGET)} the '
-          f'{SWITCH_TARGET} ms target)')
+          f'{SWITCH_TARGET} ms target); longest frame after a switch '
+          f'{fmt(median(run["longest_frame"] for run in runs))}')
     for name, label in (('mapped', 'window mapped'), ('ready', 'library ready'),
                         ('browsed', 'every page browsed twice'), ('peak', 'peak (VmHWM)')):
         rss = median(run['rss'][name] for run in runs)
@@ -179,6 +216,17 @@ def parent():
     print(f'  RSS after browsing {verdict(browsed, RSS_TARGET)} the {RSS_TARGET} MB target; '
           f'a bare Adw window: {fmt(bare_rss, "MB")} (anon {fmt(bare_anon, "MB")})')
     print(f'  RSS added by each first visit (run 1): {first["page_rss"]}')
+    pages = [run['pages'] for run in runs if run.get('pages')]
+    if pages:
+        opened = ', '.join(f'{count} {kind}' for kind, count in pages[0]['opened'].items())
+        alive = ', '.join(f'{name} {alive} of {pushed}'
+                          for name, (alive, pushed) in pages[0]['alive'].items())
+        print(f'  pages ({opened} opened and popped): RSS '
+              f'{median(page["rss"] for page in pages):+.1f} MB (anon '
+              f'{median(page["anon"] for page in pages):+.1f} MB) after gc.collect() and '
+              f'malloc_trim(0); still alive (run 1): {alive}')
+    else:
+        print('  pages: no run finished the step')
     print(f'  garbage collections (run 1): {first["gc"]}')
 
 
@@ -255,6 +303,8 @@ def child():
     page_rss = {}  # key -> RSS added by its first visit, in MB
     page_tiles = {}  # key -> (tiles created, mapped, in view) after its first visit
     collections = []  # (generation, ms) of every garbage collection
+    frames = {}  # (key, 'first' | 'again') -> the longest frame after that switch, ms or None
+    watch = {}  # the frames watched since the last switch: its key, handlers, longest
     gc_started = {}
     songs = {}
 
@@ -315,6 +365,31 @@ def child():
             child = child.get_next_sibling()
         return created, mapped, in_view
 
+    def start_watch(key, stage):
+        """Time every frame from now until stop_watch(), keeping the longest."""
+        clock = app.get_active_window().get_frame_clock()
+        began = {}
+
+        def before_paint(_clock):
+            began['at'] = time.perf_counter()
+
+        def after_paint(_clock):
+            if 'at' in began:
+                ms = (time.perf_counter() - began.pop('at')) * 1000
+                watch['longest'] = max(watch['longest'] or 0.0, ms)
+
+        # None while no frame came: a page shown again usually draws nothing more.
+        watch.update(key=(key, stage), clock=clock, longest=None, handlers=[
+            clock.connect('before-paint', before_paint),
+            clock.connect('after-paint', after_paint)])
+
+    def stop_watch():
+        if watch:
+            for handler in watch['handlers']:
+                watch['clock'].disconnect(handler)
+            frames[watch['key']] = watch['longest']
+            watch.clear()
+
     def page_keys():
         keys = [destination.key for _title, destinations in sections.sidebar_sections()
                 for destination in destinations]
@@ -333,6 +408,7 @@ def child():
         last_rss = [rss_mb()]
 
         def visit(position):
+            stop_watch()
             if position == len(plan):
                 finish(keys)
                 return GLib.SOURCE_REMOVE
@@ -355,6 +431,7 @@ def child():
                 if timeout:
                     GLib.source_remove(timeout)
                 results[(key, stage)] = ms
+                start_watch(key, stage)
                 if profile is not None:
                     import pstats
 
@@ -373,7 +450,7 @@ def child():
                         counts = tile_counts(window.navigation_view.get_visible_page())
                         if counts:
                             page_tiles[key] = counts
-                    GLib.timeout_add(args.settle, visit, position + 1)
+                    GLib.timeout_add(max(args.settle, args.watch), visit, position + 1)
 
                 if key == 'songs' and stage == 'first' and not app.library.songs_ready:
                     wait_for_songs(started, account)
@@ -416,6 +493,8 @@ def child():
         rss['peak'] = rss_mb('VmHWM')
         switches = {key: [results.get((key, 'first')), results.get((key, 'again'))]
                     for key in keys}
+        after = {key: [frames.get((key, 'first')), frames.get((key, 'again'))]
+                 for key in keys}
         library = app.library
         window = app.get_active_window()
         result = {
@@ -430,6 +509,9 @@ def child():
             'switches': switches,
             'longest_switch': max((ms for pair in switches.values() for ms in pair
                                    if ms is not None), default=None),
+            'frames': after,
+            'longest_frame': max((ms for pair in after.values() for ms in pair
+                                  if ms is not None), default=None),
             'songs_ready': songs.get('ready'),
             'rss': rss,
             'page_rss': page_rss,
@@ -437,8 +519,80 @@ def child():
             'gc': f'{len(collections)}, {sum(g == 2 for g, _ms in collections)} full, longest '
                   f'{max((ms for _g, ms in collections), default=0):.0f} ms',
         }
-        print('bench-result: ' + json.dumps(result), flush=True)
-        GLib.timeout_add(200, app.quit)
+
+        async def pages_then_report():
+            try:
+                result['pages'] = await pages_step()
+            finally:
+                print('bench-result: ' + json.dumps(result), flush=True)
+                GLib.timeout_add(200, app.quit)
+
+        app.spawn(pages_then_report())
+
+    async def next_paint(window):
+        """Until the end of the window's next frame; False when none came in time."""
+        future = asyncio.get_running_loop().create_future()
+        clock = window.get_frame_clock()
+        handler = clock.connect(
+            'after-paint', lambda _clock: future.done() or future.set_result(True))
+        window.queue_draw()
+        try:
+            return await asyncio.wait_for(future, FRAME_TIMEOUT / 1000)
+        except TimeoutError:
+            return False
+        finally:
+            clock.disconnect(handler)
+
+    def memory():
+        gc.collect()
+        malloc_trim()
+        return rss_mb(), rss_mb('RssAnon')
+
+    async def pages_step():
+        """Open and pop albums, artists and See All grids (PAGES) over the Albums page, as a
+        tile or See All would; what they left behind (see the module)."""
+        window = app.get_active_window()
+        library = app.library
+        window._select('albums')
+        await next_paint(window)
+        await asyncio.sleep(args.settle / 1000)
+        shelves = [shelf for shelf in library.shelves if shelf.items.get_n_items()]
+        stores = {'album': library.albums, 'artist': library.artists}
+        plan = []
+        for kind, count in PAGES:
+            if kind == 'shelf':
+                plan += [(kind, shelves[i % len(shelves)]) for i in range(count if shelves else 0)]
+            else:
+                store = stores[kind]
+                plan += [(kind, store.get_item(i))
+                         for i in range(min(count, store.get_n_items()))]
+        rss_before, anon_before = memory()
+        pushed = {}  # page class -> weak references to the pages pushed
+        for kind, target in plan:
+            if kind == 'shelf':
+                window.open_shelf(target)
+            else:
+                window.open_item(target)
+            page = window.navigation_view.get_visible_page()
+            pushed.setdefault(type(page).__name__, []).append(weakref.ref(page))
+            del page
+            await next_paint(window)
+            await asyncio.sleep(args.settle / 1000)  # rows bound, artwork decoded
+            window.navigation_view.pop()
+            await next_paint(window)
+        await asyncio.sleep(0.2)
+        rss_after, anon_after = memory()
+        opened = {}
+        for kind, _target in plan:
+            name = {'album': 'albums', 'artist': 'artists', 'shelf': 'See All'}[kind]
+            opened[name] = opened.get(name, 0) + 1
+        return {
+            'opened': opened,
+            'rss': round(rss_after - rss_before, 1),
+            'anon': round(anon_after - anon_before, 1),
+            'alive': {name: [sum(ref() is not None for ref in refs), len(refs)]
+                      for name, refs in pushed.items()},
+        }
 
     app.connect('activate', on_activate)
     GLib.timeout_add_seconds(180, app.quit)  # whatever happens
