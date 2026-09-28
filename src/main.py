@@ -178,6 +178,8 @@ class Application(Adw.Application):
             self._first_load = None
         if self.mpris is not None:
             self.mpris.stop()  # the name released before the bus connection goes
+        if self.engine is not None and self.engine.pid:
+            self.engine.kill()  # a quit that never stopped it: Chrome must not outlive the app
         Adw.Application.do_shutdown(self)
 
     def _make_engine(self):
@@ -511,9 +513,11 @@ class Application(Adw.Application):
     # -- quitting ------------------------------------------------------------------------
 
     def _on_quit(self, *_args):
-        """Stop the engine, then quit: Chrome must not outlive the app. Closing the last window
-        comes here too (close_window, unless the music plays on in the background), as do
-        MPRIS Quit and the end of background playback."""
+        """Stop the engine, then quit. Closing the last window comes here too (close_window,
+        unless the music plays on in the background), as do MPRIS Quit and the end of
+        background playback. Chrome must not outlive the app: this is the clean way; if the
+        app dies otherwise, setpriv's parent-death signal (engine.with_pdeathsig) and the
+        DevTools pipe closing end it, and do_shutdown kills one a quit left running."""
         if self._quitting is None:
             self._quitting = self.spawn(self._quit())
 
