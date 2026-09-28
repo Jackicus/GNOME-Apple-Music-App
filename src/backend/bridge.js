@@ -396,13 +396,15 @@
             if (!mk) throw new Error('MusicKit not initialized');
             options = options || {};
             const startWith = options.startWith !== undefined ? Number(options.startWith) : 0;
-            const shuffle = !!options.shuffle;
 
-            if (shuffle) {
-                if (window.MusicKit && window.MusicKit.PlayerShuffleMode) {
-                    mk.shuffleMode = window.MusicKit.PlayerShuffleMode.songs;
+            // `shuffle`: true turns shuffle on (a Shuffle button), false turns it off (a
+            // Play button plays in order), null or absent leaves it as it is (a track row).
+            if (options.shuffle === true || options.shuffle === false) {
+                const modes = window.MusicKit && window.MusicKit.PlayerShuffleMode;
+                if (options.shuffle) {
+                    mk.shuffleMode = modes ? modes.songs : 1;
                 } else {
-                    mk.shuffleMode = 1;
+                    mk.shuffleMode = modes ? modes.off : 0;
                 }
             }
 
