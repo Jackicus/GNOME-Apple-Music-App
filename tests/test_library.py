@@ -1346,10 +1346,16 @@ class TestSongOrder(unittest.TestCase):
         self.assertEqual(set(order._keys), {'title', 'artist', 'album', 'track'})
         # 5 tracks in steps of 2 (3 steps): the track numbers pause after each step; a text
         # column after each step of collation and of ranks, after each sorted run of its
-        # distinct texts, and after each step of their merge.
+        # distinct texts, and after each step of their merge; the search keys after each step.
         distinct = {'title': 5, 'artist': 3, 'album': 3}
         self.assertEqual(len(pauses), 3 + sum(3 + (count + 1) // 2 + count // 2 + 3
-                                              for count in distinct.values()))
+                                              for count in distinct.values()) + 3)
+        # Every search key is made: the filter's first letter folds nothing.
+        self.assertTrue(all(t._search_key is not None for t in self.tracks))
+        pauses.clear()
+        with mock.patch.object(library_module, 'yield_to_frames', counting_yield):
+            asyncio.run(order.prepare('album'))  # its keys are there, and the search keys
+        self.assertEqual(pauses, [])
         self.assertEqual([t.id for t in order.tracks('title')], self.ids('title'))
 
     def test_same_objects_and_repeatable(self):
