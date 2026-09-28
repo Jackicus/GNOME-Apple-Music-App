@@ -166,6 +166,9 @@ def _classes():
         signing_in = GObject.Property(type=bool, default=False)
         signing_out = GObject.Property(type=bool, default=False)
 
+        def account_key(self, name):
+            return name  # the release build's keys
+
         def __init__(self):
             super().__init__(application_id='io.github.jackicus.AppleMusic.LifetimeTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)

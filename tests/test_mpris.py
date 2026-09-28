@@ -88,6 +88,9 @@ class FakeWindow:
 class FakeApp:
     """What the Player and the service ask of the Application."""
 
+    def account_key(self, name):
+        return name  # the release build's keys
+
     def __init__(self, engine):
         self.engine = engine
         self.settings = FakeSettings()

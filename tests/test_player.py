@@ -113,6 +113,9 @@ class FakeSettings:
 class FakeApp:
     """What the Player asks of the Application."""
 
+    def account_key(self, name):
+        return name  # the release build's keys
+
     def __init__(self, engine, signed_in=True, demo=False):
         self.engine = engine
         self.settings = FakeSettings(signed_in)

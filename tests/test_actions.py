@@ -245,6 +245,9 @@ class FakeLibrary:
 
 
 class FakeApp:
+    def account_key(self, name):
+        return name  # the release build's keys
+
     def __init__(self):
         self.engine = FakeEngine()
         self.player = FakePlayer(self.engine)

@@ -58,6 +58,10 @@ QUIT_GRACE = 3.0
 # The notification that stands in for a toast while the window is closed and the music plays.
 BACKGROUND_NOTIFICATION = 'background-error'
 
+# The settings that belong to a Chrome profile's sign-in: the development build, which has a
+# profile (and a cache) of its own, keeps them under keys of its own (account_key()).
+ACCOUNT_KEYS = ('signed-in', 'account-name', 'last-sync')
+
 
 class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library: the development
@@ -271,6 +275,14 @@ class Application(Adw.Application):
         self.library.resume_reading()  # present() waits for the compositor
         window.present()
 
+    def account_key(self, name):
+        """The settings key that holds `name` (one of ACCOUNT_KEYS) for this build: the
+        development build's `name`-devel, since its Chrome profile, which holds the sign-in,
+        is not the release build's; `name` itself otherwise."""
+        if self.profile == 'development' and name in ACCOUNT_KEYS:
+            return name + '-devel'
+        return name
+
     def mark(self, name, painted=None):
         """A startup mark (timing.StartupMarks.mark): 'window-mapped', 'library-ready',
         'albums-bound'…, with `painted` a mark for the end of the frame being drawn.
@@ -290,7 +302,7 @@ class Application(Adw.Application):
     # -- the engine ----------------------------------------------------------------------
 
     def _autostart_wanted(self):
-        return (not self.demo and self.settings.get_boolean('signed-in')
+        return (not self.demo and self.settings.get_boolean(self.account_key('signed-in'))
                 and self.settings.get_boolean('engine-autostart'))
 
     async def _autostart(self):
@@ -306,7 +318,7 @@ class Application(Adw.Application):
             self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
             return
         # The engine up started a sync if one was due (LibrarySync.schedule()).
-        if not self.settings.get_string('account-name'):
+        if not self.settings.get_string(self.account_key('account-name')):
             # Sign-in may have missed the name (the page renders it late); try again now.
             try:
                 name = await self.engine.account_name(wait=10)
@@ -314,7 +326,7 @@ class Application(Adw.Application):
                 log.debug('account name after autostart: %s', error)
                 return
             if name:
-                self.settings.set_string('account-name', name)
+                self.settings.set_string(self.account_key('account-name'), name)
                 log.info('account name read from the page after autostart')
 
     def start_engine(self):
@@ -404,7 +416,8 @@ class Application(Adw.Application):
     def _follow_account(self):
         """The actions that depend on the account and the sync follow them (do_startup,
         once the sync exists)."""
-        self.settings.connect('changed::signed-in', self._update_sync_action)
+        self.settings.connect('changed::' + self.account_key('signed-in'),
+                              self._update_sync_action)
         self.library_sync.connect('notify::running', self._update_sync_action)
         self._update_sync_action()
 
@@ -412,7 +425,7 @@ class Application(Adw.Application):
         self._sync_action.set_enabled(
             not self.demo and not self.signing_in and not self.signing_out
             and not self.library_sync.props.running
-            and self.settings.get_boolean('signed-in'))
+            and self.settings.get_boolean(self.account_key('signed-in')))
 
     def _on_account_changing(self, *_args):
         for action in self._account_actions:
@@ -479,7 +492,8 @@ class Application(Adw.Application):
         if self.demo and code == 'engine-down':
             self.refuse_in_demo()
             return
-        if code == 'not-signed-in' and not self.settings.get_boolean('signed-in'):
+        signed_in = self.settings.get_boolean(self.account_key('signed-in'))
+        if code == 'not-signed-in' and not signed_in:
             self.activate_action('sign-in')
             return
         self.toast(*error_message(code))

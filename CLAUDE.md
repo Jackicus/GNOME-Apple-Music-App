@@ -57,7 +57,7 @@ Pages reach the app through the window's seams (`self.get_root()`): `open_item(i
 On disk: `$XDG_CACHE_HOME/apple-music/` (library.json, art/, thumb/, remote-art/,
 lyrics/, day-long page answers; `apple-music-devel/` for .Devel);
 `$XDG_DATA_HOME/apple-music/chrome/` (the Chrome profile; `chrome-devel/` for .Devel);
-GSettings, one schema, so both builds share every setting, `signed-in` included.
+GSettings, one schema for both builds; the sign-in's keys are each build's own (`account_key()`).
 
 ## Where things go
 
@@ -137,7 +137,8 @@ sudo meson install -C _build --skip-subprojects
 - **Strings**: every user-visible string goes through `_()` (or `ngettext`, `C_`), `_("…")` in
   Blueprint, and its file is in `po/POTFILES.in`. Source strings are en-GB ("Favourite").
 - **Settings**: one schema for both builds. A new key goes in
-  `data/io.github.jackicus.AppleMusic.gschema.xml` with a summary; read it through `app.settings`.
+  `data/io.github.jackicus.AppleMusic.gschema.xml` with a summary; read it through `app.settings`
+  (`signed-in`, `account-name`, `last-sync` through `app.account_key()`: `-devel` for .Devel).
 - **Actions and shortcuts**: `app.*` in main.py, `win.*` in window.py (the item actions in
   actions.py). Every shortcut goes in `src/shortcuts.py`, which feeds the accelerators and the
   Keyboard Shortcuts dialog (tests/test_shortcuts.py). A bare key or an editing chord (Space,
@@ -162,8 +163,8 @@ sudo meson install -C _build --skip-subprojects
   committed screenshots: no names, playlist or song titles, library IDs, tokens, artwork, or
   anything from the cache or the Chrome profile. Fixtures and the demo library are invented.
 - Live data stays outside the repo: `$XDG_CACHE_HOME/apple-music` (and `apple-music-devel`),
-  `$XDG_DATA_HOME/apple-music` and the app's GSettings (`account-name`, `last-page` and
-  `expanded-folders` hold names and IDs). `build/` is git-ignored.
+  `$XDG_DATA_HOME/apple-music` and the app's GSettings (`account-name`(`-devel`), `last-page`
+  and `expanded-folders` hold names and IDs). `build/` is git-ignored.
 - `scripts/run.sh`, `scripts/am.py`, and `scripts/screenshot.py` without `--demo` use the real
   profile or cache. Use `scripts/demo.sh` and `--demo` unless the task needs the real engine.
   `APPLE_MUSIC_DEBUG_PORT` opens the signed-in session to every local program: live checks only.

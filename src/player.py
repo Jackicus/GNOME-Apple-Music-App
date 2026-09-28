@@ -446,7 +446,7 @@ class Player(GObject.Object):
             raise EngineError('engine-down', 'no engine with the demo library')
         if self._engine.state != 'down':
             return
-        if not self._app.settings.get_boolean('signed-in'):
+        if not self._app.settings.get_boolean(self._app.account_key('signed-in')):
             raise EngineError('not-signed-in', 'sign in to Apple Music to play')
         self._app.toast(_('Starting playback engine…'))
         await self._engine.start()

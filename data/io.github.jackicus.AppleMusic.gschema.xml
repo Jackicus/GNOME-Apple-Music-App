@@ -58,6 +58,21 @@
       <summary>When the library was last synced</summary>
       <description>The time the library was last fetched from Apple Music in full, as an ISO 8601 timestamp; empty before the first sync.</description>
     </key>
+    <key name="signed-in-devel" type="b">
+      <default>false</default>
+      <summary>Signed in to Apple Music, for the development build's own Chrome profile</summary>
+      <description>As signed-in, for the development build (-Dprofile=development), whose Chrome profile and cache are its own.</description>
+    </key>
+    <key name="account-name-devel" type="s">
+      <default>''</default>
+      <summary>Account display name, for the development build's own Chrome profile</summary>
+      <description>As account-name, for the development build.</description>
+    </key>
+    <key name="last-sync-devel" type="s">
+      <default>''</default>
+      <summary>When the library was last synced, for the development build's own cache</summary>
+      <description>As last-sync, for the development build.</description>
+    </key>
     <key name="sync-interval" type="i">
       <range min="0" max="168"/>
       <default>6</default>
