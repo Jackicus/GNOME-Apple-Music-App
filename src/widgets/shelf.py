@@ -4,6 +4,7 @@ from gettext import gettext as _
 
 from gi.repository import GObject, Gtk
 
+from . import context_menu
 from .hero_tile import HeroTile
 from .tile import Tile
 
@@ -12,7 +13,8 @@ from .tile import Tile
 class Shelf(Gtk.Box):
     """A shelf of Items (a library.Shelf, bound with bind_shelf()) as a row of tiles under its
     title, an optional subtitle and an optional "See All" button (`see-all`), which opens the
-    shelf as a grid (window.open_shelf). Activating a tile opens its item (window.open_item).
+    shelf as a grid (window.open_shelf). Activating a tile opens its item (window.open_item);
+    a right click, a long press or the Menu key opens its context menu (context_menu.py).
 
     The row is a horizontal Gtk.ListView, the scrolled window's own child, so its tiles are
     recycled as it scrolls, whatever the page around it does. With `hero`, the tiles are
@@ -73,6 +75,7 @@ class Shelf(Gtk.Box):
         """Show a library.Shelf: its title, and its items, which the row follows as they change."""
         if shelf is self.shelf:
             return
+        context_menu.attach(self.list_view)  # once: here, as GtkBuilder skips __init__
         self.shelf = shelf
         self.title_label.set_label(shelf.title)
         self.title_label.set_visible(bool(shelf.title))

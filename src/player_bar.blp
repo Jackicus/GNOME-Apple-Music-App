@@ -3,8 +3,9 @@ using Adw 1;
 
 // The transport bar at the bottom of the window (player_bar.py): the AdwBottomSheet's bottom
 // bar. Transport on the left; the item playing (artwork, title, artist) with the seek slider
-// under it in the middle; shuffle, repeat and the volume on the right. The window's breakpoint
-// sets `compact` below 600sp, which hides the volume and the times around the slider.
+// under it in the middle; the heart, shuffle, repeat and the volume on the right. The window's
+// breakpoint sets `compact` below 600sp, which hides the volume, the heart and the times around
+// the slider.
 template $AppleMusicPlayerBar: Adw.Bin {
   child: Box {
     spacing: 12;
@@ -153,6 +154,19 @@ template $AppleMusicPlayerBar: Adw.Bin {
     Box {
       spacing: 4;
       valign: center;
+
+      // Whether the item playing is loved: a click loves or unloves it (widgets/transport.py).
+      ToggleButton heart_button {
+        icon-name: "heart-outline-symbolic";
+        tooltip-text: _("Favourite");
+        sensitive: false;
+        valign: center;
+
+        styles [
+          "flat",
+          "heart-button",
+        ]
+      }
 
       ToggleButton shuffle_button {
         icon-name: "media-playlist-shuffle-symbolic";

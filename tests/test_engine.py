@@ -24,13 +24,14 @@ from applemusic import engine as engine_module
 from applemusic.backend import chrome, config, sync
 from applemusic.backend.client import CDPClient
 from applemusic.backend.errors import EngineError
-from applemusic.engine import Engine, engine_paths, item_endpoint
+from applemusic.engine import Engine, engine_paths, item_endpoint, resource_type
 from tests.test_client import FakeChrome, FakePage, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
                     'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
-                    'search', 'suggest', 'searchAndSuggest', 'searchLanding', 'category')
+                    'search', 'suggest', 'searchAndSuggest', 'searchLanding', 'category',
+                    'rating', 'addToLibrary', 'addToPlaylist')
 SLEEPER = 'import time; time.sleep(60)'
 STUBBORN = 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'
 
@@ -709,6 +710,142 @@ class PlaybackTest(EngineTest):
             self.assertEqual(raised.exception.code, 'engine-down')
 
 
+class LibraryWriteTest(EngineTest):
+    """love, unlove, rating, add_to_library, playlists, add_to_playlist and catalog_url: the
+    bridge calls am.py made, with the API's types for library and catalog ids, all needing a
+    signed-in engine. The fake page records the writes; nothing reaches Apple."""
+
+    async def up(self, authorized=True):
+        self.page.authorized = authorized
+        await self.engine.start()
+
+    async def test_love_and_unlove_rate_by_type(self):
+        await self.up()
+        rated = []
+        self.engine.connect('rated', lambda _e, kind, item_id, value: rated.append(
+            (kind, item_id, value)))
+        await self.engine.love('song', '1000000001')
+        await self.engine.love('song', 'i.song1')
+        await self.engine.unlove('album', 'l.alb1')
+        await self.engine.love('playlist', 'pl.u-1')
+        await self.engine.love('video', '1000000009')
+        await self.engine.unlove('station', 'ra.1')
+        self.assertEqual(self.page.bridge_calls, [
+            ('rating', 'song', '1000000001', True),
+            ('rating', 'library-song', 'i.song1', True),
+            ('rating', 'library-album', 'l.alb1', False),
+            ('rating', 'playlist', 'pl.u-1', True),
+            ('rating', 'music-video', '1000000009', True),
+            ('rating', 'station', 'ra.1', False)])
+        self.assertEqual(rated, [('song', '1000000001', 1), ('song', 'i.song1', 1),
+                                 ('album', 'l.alb1', 0), ('playlist', 'pl.u-1', 1),
+                                 ('video', '1000000009', 1), ('station', 'ra.1', 0)])
+
+    async def test_rating_reads_the_ids_form(self):
+        await self.up()
+        self.page.api_answers['/v1/me/ratings/songs'] = {
+            'data': [{'id': '1000000001', 'type': 'ratings', 'attributes': {'value': 1}}]}
+        self.page.api_answers['/v1/me/ratings/library-albums'] = {'data': []}
+        rated = []
+        self.engine.connect('rated', lambda _e, *args: rated.append(args))
+        self.assertEqual(await self.engine.rating('song', '1000000001'), 1)
+        self.assertEqual(await self.engine.rating('album', 'l.alb1'), 0)
+        self.assertEqual(self.page.api_params[-2:], [{'ids': '1000000001'}, {'ids': 'l.alb1'}])
+        self.assertEqual(rated, [('song', '1000000001', 1), ('album', 'l.alb1', 0)])
+
+    async def test_nothing_to_rate(self):
+        await self.up()
+        for kind, item_id in (('artist', '1'), ('folder', 'x'), ('song', ''), (None, '1')):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.love(kind, item_id)
+            self.assertEqual(raised.exception.code, 'usage')
+        self.assertEqual(self.page.bridge_calls, [])
+
+    async def test_add_to_library_takes_catalog_ids(self):
+        await self.up()
+        await self.engine.add_to_library('album', '1000000002')
+        await self.engine.add_to_library('song', '1000000003')
+        await self.engine.add_to_library('video', '1000000004')
+        self.assertEqual(self.page.bridge_calls, [
+            ('addToLibrary', 'album', '1000000002'), ('addToLibrary', 'song', '1000000003'),
+            ('addToLibrary', 'music-video', '1000000004')])
+        for kind, item_id in (('album', 'l.alb1'), ('song', 'i.1'), ('artist', '5'),
+                              ('station', 'ra.1'), ('song', '')):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.add_to_library(kind, item_id)
+            self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_playlists_are_the_editable_ones(self):
+        await self.up()
+        self.page.api_answers['/v1/me/library/playlists'] = {'data': [
+            {'id': 'p.1', 'attributes': {'name': 'Road Trip', 'canEdit': True}},
+            {'id': 'p.2', 'attributes': {'name': 'Favourite Songs', 'canEdit': False}},
+            {'id': 'p.3', 'attributes': {'name': 'Kitchen'}},
+            {'id': '', 'attributes': {'name': 'Nameless'}}]}
+        self.assertEqual(await self.engine.playlists(), [
+            {'id': 'p.1', 'title': 'Road Trip'}, {'id': 'p.3', 'title': 'Kitchen'}])
+
+    async def test_add_to_playlist_types_the_song(self):
+        await self.up()
+        await self.engine.add_to_playlist('p.1', 'i.song1')
+        await self.engine.add_to_playlist('p.1', '1000000001')
+        self.assertEqual(self.page.bridge_calls, [
+            ('addToPlaylist', 'p.1', 'i.song1', 'library-songs'),
+            ('addToPlaylist', 'p.1', '1000000001', 'songs')])
+        for playlist_id, song_id in (('pl.u-1', '1'), ('', '1'), ('p.1', '')):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.add_to_playlist(playlist_id, song_id)
+            self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_a_refused_write_is_api(self):
+        await self.up()
+
+        def refuse(message):
+            expression = message['params']['expression']
+            if 'addToPlaylist' in expression:
+                return {'result': {'type': 'object'}, 'exceptionDetails': {
+                    'text': 'Uncaught', 'exception': {
+                        'description': 'Error: HTTP 403 Forbidden: Not allowed'}}}
+            return page(message)
+
+        page = self.page
+        self.chrome.responders['Runtime.evaluate'] = refuse
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.add_to_playlist('p.1', 'i.song1')
+        self.assertEqual(raised.exception.code, 'api')
+        self.assertIn('403', raised.exception.message)
+
+    async def test_catalog_url_of_a_library_album(self):
+        await self.up()
+        self.page.api_answers['/v1/me/library/albums/l.alb1/catalog'] = {'data': [
+            {'id': '1000000002', 'type': 'albums',
+             'attributes': {'url': 'https://music.apple.com/gb/album/x/1000000002'}}]}
+        self.page.api_answers['/v1/me/library/albums/l.alb2/catalog'] = {'data': []}
+        self.assertEqual(await self.engine.catalog_url('album', 'l.alb1'),
+                         'https://music.apple.com/gb/album/x/1000000002')
+        self.assertIsNone(await self.engine.catalog_url('album', 'l.alb2'))
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.catalog_url('album', '1000000002')
+        self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_writes_need_a_signed_in_engine(self):
+        for coro in (self.engine.love('song', '1'), self.engine.rating('song', '1'),
+                     self.engine.add_to_library('song', '1'), self.engine.playlists(),
+                     self.engine.add_to_playlist('p.1', '1')):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'engine-down')
+        await self.up(authorized=False)
+        for coro in (self.engine.unlove('song', '1'), self.engine.rating('song', '1'),
+                     self.engine.add_to_library('album', '1'), self.engine.playlists(),
+                     self.engine.add_to_playlist('p.1', 'i.1'),
+                     self.engine.catalog_url('album', 'l.1')):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'not-signed-in')
+        self.assertEqual(self.page.bridge_calls, [])
+
+
 def curator(curator_id, name, short=None):
     return {'id': curator_id, 'type': 'apple-curators', 'attributes': {
         'name': name, 'shortName': short or name,
@@ -983,8 +1120,24 @@ class EndpointTest(unittest.TestCase):
                          '/v1/catalog/us/artists/9?include=albums')
         self.assertEqual(item_endpoint('station', 'ra.1', 'us'), '/v1/catalog/us/stations/ra.1')
         self.assertEqual(item_endpoint('song', 'l.s', 'us'), '/v1/me/library/songs/l.s')
+        self.assertEqual(item_endpoint('song', 'i.s', 'us'), '/v1/me/library/songs/i.s')
         self.assertEqual(item_endpoint('song', '5', 'us'), '/v1/catalog/us/songs/5')
         self.assertEqual(item_endpoint('video', '7', 'us'), '/v1/catalog/us/videos/7')
+
+
+class ResourceTypeTest(unittest.TestCase):
+    def test_types(self):
+        self.assertEqual(resource_type('song', '1'), 'song')
+        self.assertEqual(resource_type('song', 'i.1'), 'library-song')
+        self.assertEqual(resource_type('album', 'l.1'), 'library-album')
+        self.assertEqual(resource_type('playlist', 'p.1'), 'library-playlist')
+        self.assertEqual(resource_type('playlist', 'pl.1'), 'playlist')
+        self.assertEqual(resource_type('video', 'i.1'), 'library-music-video')
+        self.assertEqual(resource_type('musicVideo', '1'), 'music-video')
+        self.assertEqual(resource_type('station', 'ra.1'), 'station')
+        for kind, item_id in (('artist', '1'), ('category', '1'), ('song', None)):
+            with self.assertRaises(EngineError):
+                resource_type(kind, item_id)
 
 
 if __name__ == '__main__':

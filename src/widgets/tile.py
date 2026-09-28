@@ -20,7 +20,8 @@ class Tile(Gtk.Box):
     over a centred name.
 
     A playlist folder (an Item of kind 'folder') has no cover: its tile shows a folder icon.
-    bind(item) and unbind() are called by a list factory as tiles are recycled. The cover is
+    bind(item) and unbind() are called by a list factory as tiles are recycled; the Item bound
+    is the tile's `context_item`, whose menu the view shows (widgets/context_menu.py). The cover is
     asked for only while the tile is mapped, which in a Gtk.GridView means on screen (the grid
     binds many more tiles than it shows), and let go of when it is unmapped, so the textures
     alive are about the ones on screen plus the Artwork cache.
@@ -56,6 +57,11 @@ class Tile(Gtk.Box):
         self.avatar.set_visible(artist)
         self.label.set_xalign(0.5 if artist else 0)
         self.label.set_min_lines(1 if artist else 3)
+
+    @property
+    def context_item(self):
+        """The Item shown, for its context menu (widgets/context_menu.py)."""
+        return self._item
 
     def bind(self, item):
         self._item = item

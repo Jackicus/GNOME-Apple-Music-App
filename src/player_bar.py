@@ -5,11 +5,12 @@ shown comes from the Player's properties: the play button's icon from `state`, t
 artist and artwork from `track` (the artwork fetched by Artwork.fetch_remote at the cover
 size, so the Now Playing sheet and MPRIS find the same file), the seek slider and the times
 from `position` and `duration`, the toggles from `shuffle` and `repeat`, the volume button
-from `volume`. The previous, play and next buttons run the app's actions (app.previous,
-app.play-pause, app.next: enabled while something plays); the toggles and the sliders call
-the Player's coroutines, and a failure is toasted by the app. The play button, the seek
-slider, the toggles and the artwork are the pieces widgets/transport.py shares with the
-Now Playing sheet.
+from `volume`, the heart from the engine's rating of the track (HeartControl). The previous,
+play and next buttons run the app's actions (app.previous, app.play-pause, app.next: enabled
+while something plays); the toggles and the sliders call the Player's coroutines, and a
+failure is toasted by the app. The play button, the seek slider, the toggles, the heart and
+the artwork are the pieces widgets/transport.py holds, shared (but the heart) with the Now
+Playing sheet.
 """
 
 from gettext import gettext as _
@@ -17,8 +18,8 @@ from gettext import gettext as _
 from gi.repository import Adw, GObject, Gtk
 
 from .widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
-from .widgets.transport import (ModeControl, PlayButton, RemoteCover, SeekControl, run_command,
-                                track_subtitle)
+from .widgets.transport import (HeartControl, ModeControl, PlayButton, RemoteCover, SeekControl,
+                                run_command, track_subtitle)
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/player_bar.ui')
@@ -38,6 +39,7 @@ class PlayerBar(Adw.Bin):
     seek_adjustment = Gtk.Template.Child()
     elapsed_label = Gtk.Template.Child()
     remaining_label = Gtk.Template.Child()
+    heart_button = Gtk.Template.Child()
     shuffle_button = Gtk.Template.Child()
     repeat_button = Gtk.Template.Child()
     volume_button = Gtk.Template.Child()
@@ -52,6 +54,7 @@ class PlayerBar(Adw.Bin):
         self._seek = SeekControl(self.seek_scale, self.seek_adjustment, self.elapsed_label,
                                  self.remaining_label)
         self._modes = ModeControl(self.shuffle_button, self.repeat_button)
+        self._heart = HeartControl(self.heart_button)
         self._art = RemoteCover(self.cover)
 
     def _get_compact(self):
@@ -59,11 +62,13 @@ class PlayerBar(Adw.Bin):
 
     def _set_compact(self, compact):
         self.volume_button.set_visible(not compact)
+        self.heart_button.set_visible(not compact)  # the title keeps the room (400 px)
         self.elapsed_label.set_visible(not compact)
         self.remaining_label.set_visible(not compact)
 
     compact = GObject.Property(type=bool, default=False, getter=_get_compact, setter=_set_compact,
-                               nick='Compact', blurb='Hide the volume and the times (narrow)')
+                               nick='Compact',
+                               blurb='Hide the volume, the heart and the times (narrow)')
 
     def set_player(self, player, app):
         """Follow `player`; `app` spawns the commands and reports their failures."""
@@ -72,6 +77,7 @@ class PlayerBar(Adw.Bin):
         self._play.attach(player)
         self._seek.attach(player, app)
         self._modes.attach(player, app)
+        self._heart.attach(player, app)
         self._art.attach(player, app)
         player.connect('notify::track', lambda *_: self._update_track())
         player.connect('notify::volume', lambda *_: self._update_volume())

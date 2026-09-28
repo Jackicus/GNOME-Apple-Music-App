@@ -19,6 +19,17 @@
   padding: 0;
 }
 
+/* The heart: a loved item's is filled in the accent colour, without a toggle's checked
+   background (the shape says it). */
+.heart-button:checked {
+  background: none;
+  color: var(--accent-color);
+}
+
+.heart-button:checked:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
 /* Grid pages (pages/grid.blp). The top padding scrolls with the tiles and leaves room for the
    page title laid over it: the title's 24px + 12px margins and a title-1 line, which grows with
    the text size as em does. Narrow sides keep two 160px tiles within a 360px window. */

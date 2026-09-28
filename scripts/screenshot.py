@@ -3,7 +3,7 @@
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
-                          [--now-playing [lyrics|queue]] [--search TERM]
+                          [--now-playing [lyrics|queue]] [--search TERM] [--context-menu]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -30,6 +30,9 @@ tests/fixtures/lyrics.json, the album's cover as its artwork) and opens the Now
 Playing sheet on its Lyrics tab, or on Up Next with "queue". With --demo only.
 --search TERM shows the Search page in Your Library mode with TERM typed (the
 results of the offline filter; the engine is never started here).
+--context-menu pops up the context menu of the page's first tile or row (the
+first shown widget with a context_item), as a right click on it would, and
+draws the popover into the shot where the compositor put it.
 """
 
 import argparse
@@ -61,6 +64,8 @@ parser.add_argument('--now-playing', metavar='TAB', nargs='?', const='lyrics',
                     help='an invented item playing, the Now Playing sheet open on TAB')
 parser.add_argument('--search', metavar='TERM',
                     help='the Search page in Your Library mode with TERM typed')
+parser.add_argument('--context-menu', action='store_true',
+                    help="pop up the context menu of the page's first tile or row")
 args = parser.parse_args()
 if args.search:
     args.page = 'search'
@@ -83,7 +88,7 @@ import gi  # noqa: E402
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
 
 Gio.Resource.load(os.path.join(pkgdatadir, 'applemusic.gresource'))._register()
 from applemusic import main  # noqa: E402
@@ -137,6 +142,7 @@ SECTIONS = {'album': 'albums', 'artist': 'artists', 'playlist': 'playlists', 'st
 opened = False
 sheet_opened = False
 searched = False
+menu_opened = False
 
 # --now-playing: the invented item's artwork URL. Its cover is copied to where
 # Artwork.fetch_remote would put this URL's 640 px image, so nothing is fetched.
@@ -200,8 +206,62 @@ def open_item(window):
     window.open_item(item)
 
 
+def first_context_widget(widget):
+    """The first mapped widget under `widget` with a context_item, depth first."""
+    if getattr(widget, 'context_item', None) is not None and widget.get_mapped():
+        return widget
+    child = widget.get_first_child()
+    while child is not None:
+        if child.get_mapped():
+            found = first_context_widget(child)
+            if found is not None:
+                return found
+        child = child.get_next_sibling()
+    return None
+
+
+def open_context_menu(window):
+    """--context-menu: the first tile's or row's menu, pointing into it as a click would."""
+    from applemusic.widgets import context_menu
+
+    widget = first_context_widget(window.navigation_view.get_visible_page())
+    if widget is None:
+        sys.exit('screenshot: nothing on the page has a context menu')
+    x, y = widget.get_width() * 0.6, widget.get_height() * 0.35
+    if context_menu.popup(widget, widget.context_item, x, y) is None:
+        sys.exit('screenshot: the first item has no menu')
+
+
+def popovers(widget, found):
+    """The popovers shown under widget (children of the widgets they point from)."""
+    if isinstance(widget, Gtk.Popover) and widget.get_mapped():
+        found.append(widget)
+    child = widget.get_first_child()
+    while child is not None:
+        popovers(child, found)
+        child = child.get_next_sibling()
+    return found
+
+
+def draw_popovers(window, snapshot):
+    """Draw the window's popovers over it, each where its surface is: a popup's position is
+    relative to the window's surface, both offset by their shadows' margins."""
+    window_x, window_y = window.get_surface_transform()
+    for popover in popovers(window, []):
+        surface = popover.get_surface()
+        popover_x, popover_y = popover.get_surface_transform()
+        point = Graphene.Point()
+        point.x = surface.get_position_x() + popover_x - window_x
+        point.y = surface.get_position_y() + popover_y - window_y
+        snapshot.save()
+        snapshot.translate(point)
+        Gtk.WidgetPaintable(widget=popover).snapshot(
+            snapshot, popover.get_width(), popover.get_height())
+        snapshot.restore()
+
+
 def shoot():
-    global opened, sheet_opened, searched
+    global opened, sheet_opened, searched, menu_opened
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -227,9 +287,15 @@ def shoot():
         search_library(window)
         GLib.timeout_add(1500, shoot)  # after the debounce, the songs built, artwork decoded
         return GLib.SOURCE_REMOVE
+    if args.context_menu and not menu_opened:
+        menu_opened = True
+        open_context_menu(window)
+        GLib.timeout_add(800, shoot)  # the popover shown and placed
+        return GLib.SOURCE_REMOVE
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()
     paintable.snapshot(snapshot, window.get_width(), window.get_height())
+    draw_popovers(window, snapshot)
     texture = window.get_renderer().render_texture(snapshot.to_node(), None)
     texture.save_to_png(args.out)
     print(args.out)

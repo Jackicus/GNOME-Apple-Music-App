@@ -23,7 +23,9 @@ In all, a click re-sorts the table in 30 to 50 ms and a keystroke refilters it i
 rebinding included.
 
 Clicking a column header re-sorts; typing in the header's entry refilters (after the entry's
-own short delay). Activating a row (Enter, double-click) asks the window to play it.
+own short delay). Activating a row (Enter, double-click) asks the window to play it; a right
+click, a long press or the Menu key opens its context menu, and a row drags onto a sidebar
+playlist (widgets/context_menu.py).
 """
 
 from gettext import gettext as _
@@ -32,6 +34,7 @@ from gettext import ngettext
 from gi.repository import Adw, Gio, Gtk
 
 from ..library import SongOrder, Track, fold
+from ..widgets import context_menu
 from ..widgets.song_title import SongTitle
 
 
@@ -97,6 +100,8 @@ class SongsPage(Adw.NavigationPage):
         self._rows = Gio.ListStore(item_type=Track)
         self._selection = Gtk.SingleSelection(model=self._rows, autoselect=False)
         self.column_view.set_model(self._selection)
+        # Every cell of a row finds the row's Track in its title cell (SongTitle.context_item).
+        context_menu.attach(self.column_view, drag=True)
 
         # The songs are put in this order when the page is realized.
         self.column_view.sort_by_column(self.title_column, Gtk.SortType.ASCENDING)

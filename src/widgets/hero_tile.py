@@ -26,8 +26,15 @@ class HeroTile(Gtk.Box):
     subtitle_label = Gtk.Template.Child()
 
     _colour = None
+    _item = None
+
+    @property
+    def context_item(self):
+        """The Item shown, for its context menu (widgets/context_menu.py)."""
+        return self._item
 
     def bind(self, item):
+        self._item = item
         # 260 px at a scale of 2 wants the 640 px art. The same paths again (an item rebound
         # because its artwork has arrived, as a search's shelves do) are looked for again.
         if not self.cover.set_paths(item.art, item.thumb):
@@ -37,6 +44,7 @@ class HeroTile(Gtk.Box):
         self._set_colour(artwork.art_colour(item.art_color))
 
     def unbind(self):
+        self._item = None
         self.cover.set_paths()
 
     def _set_colour(self, colour):

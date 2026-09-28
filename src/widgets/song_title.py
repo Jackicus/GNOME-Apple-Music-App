@@ -31,6 +31,12 @@ class SongTitle(Gtk.Box):
         self._token = None
         self._artwork = artwork.get_default()
 
+    @property
+    def context_item(self):
+        """The row's Track, for the Songs table's context menu and drag: the other cells of
+        a row find it here (widgets/context_menu.py)."""
+        return self._track
+
     def bind(self, track):
         self._track = track
         self._path = track.thumb

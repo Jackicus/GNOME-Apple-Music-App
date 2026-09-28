@@ -23,7 +23,7 @@ running and better than before.
 - [x] 13. MPRIS (2026-09-28)
 - [x] 14. Now Playing sheet, queue, lyrics (2026-09-28)
 - [x] 15. Search, New and Made for You (2026-09-28)
-- [ ] 16. Context menus and actions (play next, love, add, drag to playlist)
+- [x] 16. Context menus and actions (play next, love, add, drag to playlist) (2026-09-28)
 - [ ] 17. Preferences
 - [ ] 18. Keyboard navigation and accessibility
 - [ ] 19. Performance pass
@@ -1922,6 +1922,74 @@ track, Open in Browser launches the page, drag onto a playlist adds. Screenshot 
 context menu open (add --context-menu to screenshot.py that pops it on the first tile).
 Update CLAUDE.md (actions.py, the DnD types, bundled icons). Tick phase 16 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- What exists: `src/actions.py` (`ItemActions`, made by the window as `window.item_actions`
+  before the sidebar; the nine `win.item-*` actions on a `(ss)` (kind, id) target, the
+  playlist one `(sss)`; `build_menu()` per kind and the other pure helpers, unit-tested in
+  `tests/test_actions.py` with a stand-in window, app and engine), `src/widgets/context_menu.py`
+  (`attach(view, drag=False)` on the grid, detail, Songs, search songs and top hits, artist
+  and radio flow boxes, and every shelf; `popup()`), the engine's `love`, `unlove`, `rating`,
+  `add_to_library`, `playlists`, `add_to_playlist`, `catalog_url` and its `rated(kind, id,
+  value)` signal, the bar's heart (`transport.HeartControl`), the sidebar's playlist menu and
+  drop target, `screenshot.py --context-menu`, and the two bundled hearts. Tiles, hero tiles,
+  track rows and the Songs title cell expose `context_item`; a widget elsewhere gets a menu by
+  doing the same and attaching its view.
+- What each menu offers (only where it applies): Play (albums, playlists, songs, stations,
+  catalog artists), Play Next and Play Later (albums, playlists, songs; a song by its catalog
+  id), Favourite or Remove from Favourites (songs, albums, playlists, stations, videos; not
+  Favourite Songs itself), Add to Library (catalog ids only), Add to Playlist (songs; the
+  library's editable playlists in the sidebar's order, folders flattened), Open in Browser and
+  Copy Link (whatever has a page). Folders, categories and the library's own artists (the
+  sync's made-up `l.art_…` ids) have no menu; a loose song's stand-in album (`l.alb_…`) only
+  Play. The sidebar's menu is Play, Play Next, Open in Browser on playlist entries and
+  Favourite Songs; folders and All Playlists get none (AdwSidebar shows an empty popover for
+  an empty model, so the window closes it from a high-priority idle before it is drawn).
+- Decisions: the labels say "Favourite" / "Remove from Favourites" (Apple renamed Love; the
+  sidebar has Favourite Songs), the actions keep the plan's item-love/item-unlove names;
+  toasts "Added to Favourite Songs" for a song, "Added to Favourites" for the rest. Whether an
+  item is loved is not in the library: `now_playing()` has no loved state, so the heart reads
+  `engine.rating()` (GET `/v1/me/ratings/<type>s?ids=<id>`; the single-item path is a 404 for
+  an unrated item) once per item, and a menu reads it as it opens and swaps its item when the
+  answer differs; both follow `rated` after. Songs are rated by catalog id, albums, playlists,
+  stations and videos by their own id (a library id through the `library-` type). The heart
+  has no toast (its fill is the answer); it is hidden in the compact bar (400 px), where it
+  squeezed the title to "Not Playi…". Drops go only to playlist entries whose Item is
+  `editable` (a library playlist, not Favourite Songs, not Apple's `canEdit: false`); the sync
+  now keeps `canEdit: false` in the Item's attributes (checked after a sync). Every sidebar
+  item has `drag-motion-activate` off. A touchscreen drag scrolls; the
+  long press opens the menu. The bridge's `addToPlaylist` takes the song's type (a library
+  song is `library-songs`); "i." ids count as library ids now, which also sends
+  `item('song', 'i.…')` to the library path. Open in Browser for a library album asks the
+  engine for its catalog page and falls back to the web player's `/library/albums/<id>`.
+- Verified live (the real Application with the Devel id in-process on the dev engine and the
+  real cache, memory-backend settings; a sync first, reads only; volume 0.2): one library song
+  that was not loved (rating 0) played from its album row; the heart showed unloved, a click on
+  it loved the song (rating read back 1, heart filled); its context menu then offered Remove
+  from Favourites, whose action unloved it (rating 0, the heart followed through `rated`, toast
+  "Removed from Favourite Songs"); Favourite Songs had the same songs before and after. Play
+  Next put another song right after the one playing (queue 3 → 4, at index + 1), Play Later put
+  a third at the end (4 → 5), both toasted, Up Next followed. Open in Browser gave the album's
+  catalog page, a playlist's library page and the song's `/<sf>/song/<id>` (recorded instead
+  of launched; `Gtk.UriLauncher` took the URL); a drop emitted on a sidebar playlist called
+  `add_to_playlist(playlist, song)` and one on Favourite Songs was refused; Add to Library went
+  to the call. Those two were stand-ins for the run, so nothing was added. The Add to Playlist
+  submenu listed 32 of the 34 playlists. In demo mode, by a script: the sidebar's menu (and
+  none on a folder), the drop, the Menu key through the view's shortcut (the focused tile's
+  menu), a right click through the capture gesture (the tile under the point; on the Songs
+  table's album column, the row's menu pointing there), the submenu, the heart following
+  `rated`. No real input was synthesised.
+- For Jack to check by hand: Add to Library on a search result, Add to Playlist from a row's
+  submenu, and dragging a track from an album, a playlist or Songs onto a sidebar playlist (the
+  toast, then the playlist after a refresh); a real right click, long press, Menu key and
+  Shift+F10; Open in Browser opening the default browser on the right page (a library album
+  shows its catalog page, a playlist of his the web player's library page).
+- Not done: no menu on Up Next rows or on the detail page's hero (no "…" button); Favourite
+  Songs and the library are not refreshed after a love or an add until the next sync; a catalog
+  item already in the library still offers Add to Library (Apple ignores the repeat); the
+  playlist submenu is one flat list (no folder headings); `engine.playlists()` is ported and
+  tested but the menus use the library's playlists.
 
 ## Phase 17: Preferences
 

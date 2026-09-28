@@ -564,11 +564,13 @@
             return { items: items };
         },
 
-        addToPlaylist: async function (playlistId, songId) {
+        // `type` is the song's resource type: 'songs' for a catalog id (the
+        // default, as am.py sent it), 'library-songs' for a library one.
+        addToPlaylist: async function (playlistId, songId, type) {
             const path = '/v1/me/library/playlists/' + playlistId + '/tracks';
             return await apiWrite(path, {}, {
                 method: 'POST',
-                body: { data: [{ id: songId, type: 'songs' }] }
+                body: { data: [{ id: songId, type: type || 'songs' }] }
             });
         },
 

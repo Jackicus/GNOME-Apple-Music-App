@@ -20,7 +20,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from ..backend.errors import EngineError
 from ..library import Item, Track, fold
-from ..widgets import artwork
+from ..widgets import artwork, context_menu
 from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
@@ -153,6 +153,8 @@ class SearchPage(Adw.NavigationPage):
         factory.connect('unbind', self._on_song_unbind)
         self.songs_list.set_factory(factory)
         self.songs_list.set_model(Gtk.NoSelection(model=self._songs_shown))
+        context_menu.attach(self.songs_list, drag=True)
+        context_menu.attach(self.suggestions_list)  # the top hits' rows
 
     @staticmethod
     def _app():
@@ -519,6 +521,7 @@ class SearchPage(Adw.NavigationPage):
             cover.add_css_class('small')
             cover.set_paths(item.thumb, item.art)
             row.add_prefix(cover)
+            row.context_item = item  # its context menu (widgets/context_menu.py)
             if artwork.thumb_missing(item):
                 self._app().spawn(self._fetch_row_art(item, cover))
         return row

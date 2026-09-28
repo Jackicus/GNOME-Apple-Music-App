@@ -70,6 +70,7 @@ configure_file(
 
 install_data(
   '__init__.py',
+  'actions.py',
   'engine.py',
   'library.py',
   'lyrics.py',
@@ -109,6 +110,7 @@ install_data(
   'widgets/__init__.py',
   'widgets/artwork.py',
   'widgets/category_tile.py',
+  'widgets/context_menu.py',
   'widgets/cover.py',
   'widgets/hero_tile.py',
   'widgets/lyrics.py',

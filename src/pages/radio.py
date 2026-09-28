@@ -5,6 +5,7 @@ from gettext import gettext as _
 from gi.repository import Adw, Gio, Gtk
 
 from ..library import Item, Shelf as ShelfModel
+from ..widgets import context_menu
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.tile import Tile
 
@@ -41,6 +42,7 @@ class RadioPage(Adw.NavigationPage):
         self.empty_page.set_icon_name(icon_name)
         self._more = Gio.ListStore(item_type=Item)
         self.flow_box.bind_model(self._more, self._create_tile)
+        context_menu.attach(self.flow_box)
         self._update()
 
     # The library outlives the window, so the page listens to it only while it is shown.

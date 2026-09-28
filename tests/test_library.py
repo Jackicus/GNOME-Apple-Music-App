@@ -278,6 +278,19 @@ class TestLaziness(unittest.TestCase):
         write_library(self.cache, [album('l.a1', 'One', ['i.1'])])
         self.assertIsNone(load(self.cache).favourite_songs())
 
+    def test_editable(self):
+        """Songs can be added to library playlists, not to Favourite Songs, one whose canEdit
+        is false, a catalog playlist or anything else."""
+        self.assertTrue(Item({'id': 'p.1', 'kind': 'playlist'}).editable)
+        self.assertTrue(Item({'id': 'l.pl1', 'kind': 'playlist'}).editable)  # the demo's
+        self.assertTrue(Item({'id': 'p.1', 'kind': 'playlist', 'attributes': {}}).editable)
+        for raw in ({'id': 'p.2', 'kind': 'playlist', 'attributes': {'isFavourites': True}},
+                    {'id': 'p.3', 'kind': 'playlist', 'attributes': {'canEdit': False}},
+                    {'id': 'pl.u-4', 'kind': 'playlist'}, {'id': 'l.a', 'kind': 'album'},
+                    {'id': 'p.5', 'kind': 'folder'}, {'kind': 'playlist'}):
+            with self.subTest(raw=raw):
+                self.assertFalse(Item(raw).editable)
+
     def test_properties_notify(self):
         item = Item({'id': 'l.x', 'kind': 'album', 'title': 'Before'})
         seen = []

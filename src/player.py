@@ -22,6 +22,7 @@ the playback commands as thin coroutines over the engine.
     await player.seek(seconds); await player.set_volume(level)
     await player.set_shuffle(True) / toggle_shuffle(); set_repeat('all') / cycle_repeat()
     await player.play_next(kind, id) / play_later(kind, id)
+    await player.ensure_engine()  # start a down engine when signed in (the item actions)
 
 The properties change only from the engine's events (playbackStateDidChange,
 nowPlayingItemDidChange, playbackTimeDidChange, playbackDurationDidChange,
@@ -426,9 +427,10 @@ class Player(GObject.Object):
 
     # -- commands ------------------------------------------------------------------------
 
-    async def _ensure_engine(self):
-        """The engine up for a play request: started first when it is down and the account
-        is signed in (a toast meanwhile); EngineError('not-signed-in') when it is not."""
+    async def ensure_engine(self):
+        """The engine up for a play request (or any command of the account's: the item
+        actions use it too): started first when it is down and the account is signed in (a
+        toast meanwhile); EngineError('not-signed-in') when it is not."""
         if self._app.demo:
             raise EngineError('engine-down', 'no engine with the demo library')
         if self._engine.state != 'down':
@@ -445,18 +447,18 @@ class Player(GObject.Object):
         item_id = play.get('id') if isinstance(play, dict) else None
         if not kind or item_id in (None, ''):
             raise EngineError('usage', 'nothing to play')
-        await self._ensure_engine()
+        await self.ensure_engine()
         log.info('play %s %s%s%s', kind, item_id,
                  f' from {start_with}' if start_with is not None else '',
                  ' shuffled' if shuffle else '')
         await self._engine.play(kind, item_id, start_with=start_with, shuffle=shuffle)
 
     async def play_next(self, kind, item_id):
-        await self._ensure_engine()
+        await self.ensure_engine()
         await self._engine.play_next(kind, item_id)
 
     async def play_later(self, kind, item_id):
-        await self._ensure_engine()
+        await self.ensure_engine()
         await self._engine.play_later(kind, item_id)
 
     async def toggle(self):

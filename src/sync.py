@@ -23,6 +23,8 @@ What the web player asks for, found by watching its requests (2026-09-28):
 - the favourites playlist: with `extend=tags` a library playlist's `attributes.tags` holds
   `"favorited"` for Favourite Songs (the one the user cannot edit or delete). It becomes
   `attributes: {isFavourites: true}` in the Item (library.FAVOURITES), as the demo has it.
+  A playlist whose `attributes.canEdit` is false (Favourite Songs, one of Apple's added to the
+  library) gets `canEdit: false` there too (library.EDITABLE).
 - Songs: `/v1/me/library/songs?limit=100&offset=N` (the answer carries `meta.total` and
   `next`); Music Videos: `/v1/me/library/music-videos?limit=100&offset=N`; Recently Added:
   `/v1/me/library/recently-added?limit=25`, paged by `next` (no total).
@@ -46,7 +48,7 @@ from gi.repository import GdkPixbuf  # noqa: E402
 from .backend import config  # noqa: E402
 from .backend import sync as backend  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
-from .library import FAVOURITES, ROOT_FOLDER  # noqa: E402
+from .library import EDITABLE, FAVOURITES, ROOT_FOLDER  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -348,10 +350,18 @@ def loose_songs(raw_songs, cache_dir):
 
 
 def flag_favourites(item, raw):
-    """Mark the playlist Item as Favourite Songs when Apple's tags say so."""
-    tags = (raw.get('attributes') or {}).get('tags')
+    """Mark the playlist Item as Favourite Songs when Apple's tags say so, and as one that
+    cannot be added to when Apple's canEdit is false (Favourite Songs, a playlist of Apple's
+    or someone else's added to the library): the Add to Playlist menu leaves those out."""
+    attributes = raw.get('attributes') or {}
+    flags = {}
+    tags = attributes.get('tags')
     if isinstance(tags, list) and FAVOURITE_TAG in tags:
-        item['attributes'] = {FAVOURITES: True}
+        flags[FAVOURITES] = True
+    if attributes.get('canEdit') is False:
+        flags[EDITABLE] = False
+    if flags:
+        item['attributes'] = flags
 
 
 def add_art_urls(library_data):

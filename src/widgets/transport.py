@@ -1,9 +1,15 @@
 """The transport pieces the player bar and the Now Playing sheet share, each a plain object
 over widgets a template built: the play/pause button's icon (PlayButton), the seek slider
-with its times (SeekControl), the shuffle and repeat toggles (ModeControl) and a cover
-following the item's remote artwork (RemoteCover). `attach(player, app)` makes one follow
+with its times (SeekControl), the shuffle and repeat toggles (ModeControl), a cover
+following the item's remote artwork (RemoteCover), and the bar's heart (HeartControl, which
+talks to the engine rather than the Player). `attach(player, app)` makes one follow
 the Player's properties and send its commands through the Player; a command that fails is
 toasted by the app (run_command) and the widget put back to the Player's state.
+
+The heart (HeartControl) shows whether the item playing is loved: unloved as each item
+starts, then what the engine's rating() answers (one read per item, nothing polled), and
+whatever its `rated` signal says after (the heart's own love, a context menu's); a click
+loves or unloves the item's catalog song, and puts the heart back when that fails.
 
 The seek slider ignores incoming positions while it is dragged and until the seek it sent
 has taken (MusicKit reports a position near the target, or SEEK_HOLD passes). The repeat
@@ -224,6 +230,77 @@ class ModeControl:
         finally:
             self._syncing = False
         run_command(self._app, self._player.set_repeat(mode), self.update)
+
+
+class HeartControl:
+    """A Gtk.ToggleButton that loves the item playing: see the module."""
+
+    def __init__(self, button):
+        self.button = button
+        self._player = None
+        self._app = None
+        self._syncing = False
+        self._reading = None  # the task reading the item's rating
+        button.connect('toggled', self._on_toggled)
+
+    def attach(self, player, app):
+        self._player = player
+        self._app = app
+        player.connect('notify::track', lambda *_: self._on_track())
+        app.engine.connect('rated', self._on_rated)
+        app.engine.connect('notify::state', lambda *_: self._on_track())
+        self._on_track()
+
+    def target(self):
+        """('song', id) for the item playing (its catalog id, else its own), or None."""
+        track = self._player.track if self._player is not None else None
+        if track is None:
+            return None
+        song_id = track.catalog_id or track.id
+        return ('song', song_id) if song_id else None
+
+    def _on_track(self):
+        target = self.target()
+        self.show(False)
+        self.button.set_sensitive(target is not None)
+        if self._reading is not None and not self._reading.done():
+            self._reading.cancel()
+        self._reading = None
+        engine = self._app.engine if self._app is not None else None
+        if (target is not None and engine is not None and not self._app.demo
+                and engine.state == 'up' and engine.authorized):
+            self._reading = self._app.spawn(self._read(target))
+
+    async def _read(self, target):
+        try:
+            await self._app.engine.rating(*target)  # answered through `rated`
+        except EngineError as error:
+            log.debug('rating of the item playing: %s', error)
+
+    def _on_rated(self, _engine, kind, item_id, value):
+        if (kind, item_id) == self.target():
+            self.show(value == 1)
+
+    def show(self, loved):
+        self._syncing = True
+        try:
+            self.button.set_active(loved)
+        finally:
+            self._syncing = False
+        self.button.set_icon_name('heart-filled-symbolic' if loved else 'heart-outline-symbolic')
+        self.button.set_tooltip_text(_('Remove from Favourites') if loved else _('Favourite'))
+
+    def _on_toggled(self, button):
+        if self._syncing:
+            return
+        target = self.target()
+        if target is None or self._app is None:
+            return
+        loved = button.get_active()
+        self.show(loved)
+        engine = self._app.engine
+        coro = engine.love(*target) if loved else engine.unlove(*target)
+        run_command(self._app, coro, lambda: self.show(not loved))
 
 
 class RemoteCover:

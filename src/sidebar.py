@@ -96,7 +96,10 @@ class SidebarItem(Adw.SidebarItem):
     __gtype_name__ = 'AppleMusicSidebarItem'
 
     def __init__(self, entry):
-        super().__init__(title=entry.title, icon_name=entry.icon_name)
+        # Not activated by a drag hovering over it: a track is dropped onto a playlist, and
+        # switching pages under the drag would take the list it came from away.
+        super().__init__(title=entry.title, icon_name=entry.icon_name,
+                         drag_motion_activate=False)
         self.entry = entry
         self._arrow = None
         if entry.kind == 'folder':

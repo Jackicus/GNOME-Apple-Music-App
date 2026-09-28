@@ -47,7 +47,11 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │            app.player.play() (the engine started first if down; sign-in if out) │
 │   PlayerBar (player_bar.py): transport (app.previous/play-pause/next), the item  │
 │            playing with its artwork (Artwork.fetch_remote → remote-art/), seek   │
-│            slider and times, shuffle, repeat, volume; follows app.player only    │
+│            slider and times, a heart (engine.rating/love/unlove of the song),    │
+│            shuffle, repeat, volume; follows app.player (the heart: `rated`)      │
+│   window.item_actions (actions.py): win.item-* on a (kind, id) target; context   │
+│            menus (widgets/context_menu.py) on tiles, rows, top hits and sidebar  │
+│            playlists; track rows drag a TrackRef onto sidebar playlists          │
 │   NowPlayingSheet (widgets/now_playing.py): 320 px artwork, titles, transport,   │
 │            seek (widgets/transport.py, shared with the bar), then Lyrics         │
 │            (widgets/lyrics.py: the current line by position, click seeks) and    │
@@ -61,6 +65,7 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │   async CDPClient ─► bridge.js ─► MusicKit; start/stop/restart, status(),        │
 │   item() (a shelf item's groups, on demand), signin(), account_name();           │
 │   play/play_next/play_later/control/seek/volume/shuffle/repeat/now_playing/queue │
+│   love/unlove/rating (`rated` signal)/add_to_library/playlists/add_to_playlist   │
 │   MusicKit events ─► `event` signal ─► app.player (player.py: state, track,      │
 │   position, duration, shuffle, repeat, volume, queue + queue_index, lyrics       │
 │   (engine.lyrics() once per song, cached); never polled) ─► PlayerBar, the       │
@@ -93,7 +98,8 @@ src/main.py                    Application: app.* actions (quit, about, shortcut
                                path (sync cancelled, engine stopped first), use_glib_event_loop()
 src/sync.py                    sync_library(engine, library, progress): the whole sync (fetch
                                through the engine, normalise in a thread, thumbnails, library.json,
-                               prune, library.reload()); the endpoints and the favourites tag;
+                               prune, library.reload()); the endpoints and the favourites tag
+                               (and Apple's canEdit false, kept as attributes.canEdit);
                                install_scaler() (GdkPixbuf as the backend's scale_image)
 src/engine.py                  Engine (GObject: state down/starting/up/signing-in, authorized,
                                headless, `event` signal): Chrome's lifecycle in the app, the one
@@ -109,8 +115,14 @@ src/engine.py                  Engine (GObject: state down/starting/up/signing-i
                                landing() (landing.json), category(id) (categories/),
                                browse() (browse.json: the New page's editorial groupings),
                                made_for_you() (made-for-you.json: the recommendations made of
-                               personal mixes and stations)); engine_paths(profile, port)
-                               (chrome-devel and port+1 for the .Devel build), item_endpoint()
+                               personal mixes and stations); the account's: love(kind, id),
+                               unlove(kind, id), rating(kind, id) (1/0/-1; love, unlove and
+                               rating emit `rated(kind, id, value)`), add_to_library(kind,
+                               catalog id), playlists() (the editable ones), add_to_playlist(
+                               playlist id, song id), catalog_url(kind, library id));
+                               engine_paths(profile, port) (chrome-devel and port+1 for the
+                               .Devel build), item_endpoint(), resource_type(kind, id) (the
+                               API type: 'song', 'library-album'…; "i." ids are the library's)
 src/player.py                  Player (GObject, no GTK): state (MusicKit PlaybackStates name),
                                track (NowPlaying: id, catalog_id, title, artist, album,
                                duration_ms, artwork_url, index, explicit; or None), position,
@@ -123,7 +135,8 @@ src/player.py                  Player (GObject, no GTK): state (MusicKit Playbac
                                now_playing() refresh() when it comes up (apply(dict), which
                                also takes `queue` and `lyrics`; apply_queue(snapshot));
                                commands play(play, start_with, shuffle) (starts a down engine
-                               when signed in, else not-signed-in), toggle, pause, resume, next,
+                               when signed in, else not-signed-in: ensure_engine(), which the
+                               item actions use too), toggle, pause, resume, next,
                                previous, stop, queue_jump(index), seek, set_volume,
                                set_shuffle, toggle_shuffle, set_repeat, cycle_repeat, play_next,
                                play_later; `error` signal; format_time()
@@ -152,8 +165,10 @@ src/library.py                 the model: Library (state empty/loading/ready, 'c
                                favourite_songs(), track_at(play, index), playlist_tree(),
                                folder_items(id), async load (new objects) and reload (in place,
                                by id); songs filled by async build_songs(), songs-ready), Item
-                               (favourites; merge(data, replace); kind 'folder' for a playlist
-                               folder), Group, Track (search_key), Shelf (GType
+                               (favourites; editable (a library playlist songs can be added
+                               to: not Favourite Songs, not canEdit false); merge(data,
+                               replace); kind 'folder' for a playlist folder), Group, Track
+                               (search_key), Shelf (GType
                                AppleMusicShelfModel: the widget is AppleMusicShelf),
                                PlaylistTree/TreeNode (the folders); SongOrder (the Songs table's
                                orders), fold(), collation_key(), apply_diff(store, items);
@@ -172,19 +187,43 @@ src/window.py + window.blp     Window: split view, sidebar (the Playlists sectio
                                into the sheet while it is open), the playback keys
                                (PLAYBACK_KEYS: Space, Ctrl+Right, Ctrl+Left in a capture-phase
                                key controller that leaves editables alone), win.back, toasts,
-                               window state, prepare_quit()
+                               window state, prepare_quit(); item_actions (actions.py, made
+                               before the sidebar); the Playlists section's menu-model
+                               (_sidebar_menu, filled on setup-menu for a playlist or Favourite
+                               Songs, closed when empty) and its drop target (TrackRef onto
+                               editable playlist entries; drop-enter answers COPY only there)
 src/sections.py                the fixed sidebar destinations (key, title, icon), grouped as on the web
 src/sidebar.py                 the Playlists section's model: SidebarEntry (kind fixed/folder/
                                playlist, key, title, icon, depth, item, ancestors),
                                playlist_entries(tree), is_shown(), parse_key(), SidebarItem (an
-                               Adw.SidebarItem holding its entry; a folder's arrow suffix)
+                               Adw.SidebarItem holding its entry; a folder's arrow suffix;
+                               drag-motion-activate off, as on every sidebar item)
+src/actions.py                 ItemActions(window, app): the win.* item actions, target "(ss)"
+                               (kind, id: an Item's, or 'song' and a Track's id): item-play,
+                               item-play-next, item-play-later, item-love, item-unlove,
+                               item-add-to-library, item-open-in-browser (Gtk.UriLauncher;
+                               launch() is the seam), item-copy-link; item-add-to-playlist
+                               "(sss)" (playlist id, kind, id). Each awaits the engine after
+                               player.ensure_engine() and toasts, or app.report()s the error;
+                               demo mode toasts "Not available…". menu_for(obj) (remembers obj
+                               for its actions; asks engine.rating() as the menu opens and
+                               swaps Favourite / Remove from Favourites), fill_sidebar_menu(),
+                               playlists() (tree order, editable only), drop(playlist, ref),
+                               can_drop(), link(). Pure helpers (tests/test_actions.py):
+                               build_menu(obj, playlists, loved, storefront), describe(),
+                               can_play/queue_target/rating_target/library_target/
+                               playlist_song(obj), web_url(obj, storefront) (item url; library
+                               playlist → /library/playlist/<id>, library album →
+                               /library/albums/<id> or its catalog page; track →
+                               /<sf>/song/<catalog id>), set_favourite(); TrackRef (GObject:
+                               song_id, title), the drag type
 src/player_bar.py + .blp       $AppleMusicPlayerBar: the bottom sheet's bottom bar; set_player(player,
                                app) once; previous/play-pause/next run the app actions; the
                                play button, seek scale, shuffle/repeat toggles and artwork are
-                               widgets/transport.py's helpers; a Gtk.ScaleButton volume;
-                               `compact` (the window's 600sp breakpoint) hides the volume and
-                               the times; "Not Playing" and everything insensitive without a
-                               track
+                               widgets/transport.py's helpers; a heart (HeartControl); a
+                               Gtk.ScaleButton volume; `compact` (the window's 600sp
+                               breakpoint) hides the volume, the heart and the times; "Not
+                               Playing" and everything insensitive without a track
 src/widgets/now_playing.py + .blp  $AppleMusicNowPlayingSheet: the bottom sheet's sheet; header
                                with a close button (go-down-symbolic), a toast overlay, a clamp
                                (900) holding the item playing (320 px AppleMusicCover, title-2,
@@ -206,8 +245,10 @@ src/widgets/queue.py           $AppleMusicQueueView (a Gtk.Stack): Up Next, a Gt
 src/widgets/transport.py       the transport pieces the bar and the sheet share: run_command(app,
                                coro, on_error), track_subtitle(track), PlayButton, SeekControl
                                (settle, hold and tolerance for a seek), ModeControl (shuffle and
-                               repeat toggles), RemoteCover (fetch_remote at the cover size);
-                               each `attach(player, app)`
+                               repeat toggles), RemoteCover (fetch_remote at the cover size),
+                               HeartControl (the bar's heart: unloved at each item, then
+                               engine.rating() once, then the `rated` signal; a click loves or
+                               unloves the catalog song); each `attach(player, app)`
 src/pages/__init__.py          PAGES: destination key → factory; create(destination, library);
                                playlist(library, id, title) and folder(library, id, title, root)
                                for the sidebar's playlists and folders
@@ -263,6 +304,20 @@ src/widgets/artwork.py         the process-wide Artwork loader (get_default(): g
                                search/browse item's URL artwork → remote-art paths plus thumbUrl
                                and artUrl), thumb_missing(item)); art_colour(item.art_color)
                                → Gdk.RGBA, is_dark(rgba)
+src/widgets/context_menu.py    attach(view, drag=False): context menus for a view's items (a
+                               GridView, ListView, ColumnView, FlowBox, ListBox or one widget):
+                               a capture-phase Gtk.GestureClick (button 3) and
+                               Gtk.GestureLongPress (touch) picking the widget under the
+                               pointer, a Gtk.ShortcutController (Menu, Shift+F10) for the
+                               focused row; with drag, a Gtk.DragSource giving a TrackRef
+                               (Gdk.ContentProvider.new_for_value; not from a touchscreen).
+                               A widget offers a menu through its `context_item` (Item or
+                               Track, None when unbound): Tile, HeroTile, TrackRow,
+                               SongTitle (the Songs row's other cells find it), the search
+                               page's top-hit rows. popup(widget, obj, x, y): a
+                               Gtk.PopoverMenu from window.item_actions.menu_for(obj),
+                               parented to the widget, no arrow, at the pointer (halign start)
+                               or beside the widget; unparented at an idle after it closes
 src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist(); a folder's
                                big folder icon) and one Gtk.Inscription
 src/widgets/hero_tile.py + .blp  $AppleMusicHeroTile: a 260 px AppleMusicCover over a two-line
@@ -283,7 +338,9 @@ src/widgets/track_row.py + .blp  $AppleMusicTrackRow: number (albums) or 40 px t
 src/style.css                  auto-loaded app CSS: accent colour and a few small classes
 src/icons/*-symbolic.svg       bundled icons, aliased into icons/scalable/actions/ by the gresource
                                (music-note, playlist, broadcast, media-playlist-shuffle,
-                               media-playlist-repeat, media-playlist-repeat-song)
+                               media-playlist-repeat, media-playlist-repeat-song, heart-outline,
+                               heart-filled: drawn in 16 px with Adwaita's 2 px stroke, the
+                               outline a filled ring with fill-rule evenodd)
 src/applemusic.gresource.xml   compiled .ui files (every .blp's, flat in build/src whatever its
                                source directory: window.ui, player_bar.ui, grid.ui, songs.ui,
                                detail.ui, artist.ui, home.ui, radio.ui, signin.ui, tile.ui,
@@ -355,7 +412,7 @@ scripts/demo.sh [args]    run.sh --demo: the app on the invented library in buil
                           first when missing); no Chrome, no account. Use it for all UI work
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
                       [--expand ID[,ID…]] [--signed-in [NAME]] [--now-playing [lyrics|queue]]
-                      [--search TERM]
+                      [--search TERM] [--context-menu]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
                           --demo as demo.sh (without it the real cache is read); waits for the
@@ -373,6 +430,10 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           --search TERM shows the Search page in Your Library mode with
                           TERM typed (the offline filter's results; --page search alone shows
                           the landing's engine-down state under --demo).
+                          --context-menu pops up the first tile's or row's context menu (the
+                          page's first mapped widget with a context_item) and draws the
+                          popover into the shot at its surface's position (a popover is a
+                          surface of its own, which the window's WidgetPaintable leaves out).
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
                           playlists. --signed-in [NAME] shows the account button signed in
                           (memory-backend settings only; no engine)
@@ -608,6 +669,10 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   disabled actions, and listed in the shortcuts dialog by hand. `app.now-playing`
   (`<primary>n`) toggles the Now Playing sheet; Escape closes it (the sheet's own).
   `win.search` (`<primary>f`) selects Search in the sidebar and focuses its entry.
+  The item actions (`win.item-*`, actions.py) take their object as a target, not as state:
+  a menu item is `Gio.MenuItem.set_action_and_target_value('win.item-love', Variant('(ss)',
+  (kind, id)))`. New tiles or rows get context menus by exposing `context_item` and calling
+  `context_menu.attach(view)` on their view (with `drag=True` where they are tracks).
 - Style: 4-space Python, single quotes, no type-annotation ceremony, a docstring where a module or
   function is not obvious. New `.py` files go in `src/meson.build`'s `install_data` list.
 
@@ -657,6 +722,20 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
     suffix) says whether they show. In page mode the suffix sits before the row's own arrow.
     Selecting does not scroll the list to the item (a restored playlist far down stays off
     screen; the API has no scroll-to).
+  - Context menus (phase 16): the triggers are the sidebar's own (each row's
+    `Gtk.GestureClick` for any button and touch `Gtk.GestureLongPress`, a sidebar-level
+    Menu/Shift+F10 → `menu.popup`); it emits `setup-menu(item)`, then shows one
+    `Gtk.PopoverMenu` (parented to the sidebar) built from the section's `menu-model`. An empty
+    model still shows an empty popover, so the window pops it down from a high-priority idle
+    for a folder or All Playlists. `setup-menu(None)` (closed) can arrive *after* the next
+    item's `setup-menu`, and before the chosen action runs: never clear the menu on None. A
+    script opens the menu by emitting the row's long-press `pressed(x, y)`
+    (`sidebar.activate_action('menu.popup')` from a script did nothing).
+  - Drops: `setup_drop_target(Gdk.DragAction.COPY, [TrackRef])` takes Python GObject classes;
+    `drop-enter(index)` returns the action (0 refuses the item), `drop(index, value, action)`
+    gets the TrackRef itself (emitting it with a `GObject.Value(TrackRef, ref)` works for
+    tests). Items' `drag-motion-activate` defaults to TRUE (hovering a drag activates the item,
+    switching pages under the drag); every item here sets it FALSE.
 - Blueprint 0.22: `template $AppleMusicWindow: Adw.ApplicationWindow {}`; a custom widget used in a
   template (`$AppleMusicPlayerBar`) needs its Python class imported before the template is built
   (hence `from .player_bar import PlayerBar  # noqa: F401` in `window.py`); `[top]`/`[bottom]`/`[end]`
@@ -675,7 +754,31 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   lends GdkPixbuf for scaling covers into thumbnails (unset, thumbnails are fetched).
 - Icons in `src/icons/` resolve by `icon-name` through the resource alias; symbolic SVGs use a `#222`
   fill and are recoloured. Adwaita no longer ships some legacy names (`emblem-favorite-symbolic` is
-  gone); bundle anything not in `/usr/share/icons/Adwaita/symbolic/`.
+  gone); bundle anything not in `/usr/share/icons/Adwaita/symbolic/`. Draw with fills only (a
+  stroke keeps its colour when recoloured); an outline is a ring, `fill-rule="evenodd"`, with
+  Adwaita's 2 px weight at 16 px (compare `non-starred-symbolic`). The hearts are drawn from
+  two circles and their tangents (arcs, so they stay crisp).
+- Context menus and drags (phase 16, `widgets/context_menu.py`): controllers go on the view,
+  not the recycled tiles; the right click and long press in the *capture* phase and claimed,
+  so the list item's own click gesture (which selects on release) never sees them. A popover
+  can be parented to any widget with a layout manager (a Gtk.Box tile or row); `pointing-to`
+  may lie outside the parent (the Songs table's album column points from the title cell).
+  Unparent it from an idle after `closed`: the menu item's action runs after the popover
+  closes and finds `win.*` through the popover's parent. A `Gtk.PopoverMenu` submenu is named
+  by its label (`visible-submenu` 'Add to Playlist' opens it from a script). The DnD type is
+  `actions.TrackRef` (GType `AppleMusicTrackRef`: song_id, title), offered with
+  `Gdk.ContentProvider.new_for_value(ref)`; the drag icon is a `Gtk.WidgetPaintable` of the
+  row. `Gdk.Clipboard.set(text)` works from Python (it is `set_value`, shadowing the varargs
+  `set`).
+- The web player's own routes (read from its router, 2026-09-28): a library playlist is
+  `https://music.apple.com/library/playlist/<p. id>`, a library album
+  `https://music.apple.com/library/albums/<l. id>` (only its owner can open either; a library
+  album's catalog page comes from `/v1/me/library/albums/<id>/catalog`); a catalog song
+  `https://music.apple.com/<sf>/song/<id>` redirects to its canonical address. Ratings: GET
+  `/v1/me/ratings/<type>s/<id>` answers 404 for an unrated item, the `?ids=` form `{data: []}`;
+  a loved item is `{type: 'ratings', attributes: {value: 1}}`. The library's artist ids
+  (`l.art_…`) and loose songs' stand-in albums (`l.alb_…`) are made up by the sync: nothing
+  of Apple's answers to them, so they get no rating, link or queue entries.
 - `screenshot.py` uses a `.Screenshot` app ID and renders after 1.2 s, and not before the library
   has loaded, so content that arrives later still needs a longer delay; it prints a harmless at-spi
   warning (and, on this desktop, an Adwaita one about gtk-application-prefer-dark-theme). It makes
@@ -683,6 +786,9 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   shots have no maximize button.
   It calls `main.use_glib_event_loop()` itself, since it builds the Application without `main()`.
   In the collapsed (narrow) layout it shows the page when `--page` is given, the sidebar otherwise.
+  Popovers are surfaces of their own, not in the window's paintable: `--context-menu` draws
+  each mapped popover at its `Gdk.Popup` position (relative to the window's surface) plus its
+  surface transform, minus the window's.
 - A `Gtk.GridView` recycles only as the direct scrollable child of a `Gtk.ScrolledWindow`: in a
   box inside a viewport it creates a few hundred tiles and leaves the rest blank. So the grid
   page's `title-1` title is an overlay child, laid over the grid's CSS top padding (which scrolls

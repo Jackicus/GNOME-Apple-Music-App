@@ -7,7 +7,7 @@ from gi.repository import Adw, Gio, Gtk
 
 from ..backend.errors import EngineError
 from ..library import Item
-from ..widgets import artwork
+from ..widgets import artwork, context_menu
 from ..widgets.tile import Tile
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ class ArtistPage(Adw.NavigationPage):
         self._status = None
         self._albums = Gio.ListStore(item_type=Item)
         self.flow_box.bind_model(self._albums, self._create_tile)
+        context_menu.attach(self.flow_box)
         self._show()
 
     def _show(self):

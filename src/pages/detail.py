@@ -19,7 +19,7 @@ from gi.repository import Adw, Gio, GObject, Gtk, Pango
 
 from ..backend.errors import EngineError
 from ..library import Track
-from ..widgets import artwork
+from ..widgets import artwork, context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
 
@@ -117,6 +117,7 @@ class DetailPage(Adw.NavigationPage):
         factory.connect('bind', self._on_bind)
         factory.connect('unbind', self._on_unbind)
         self.list_view.set_factory(factory)
+        context_menu.attach(self.list_view, drag=True)  # the tracks' menus, dragged to playlists
         self._header_factory = Gtk.SignalListItemFactory()
         self._header_factory.connect('setup', self._on_setup_header)
         self._header_factory.connect('bind', self._on_bind_header)

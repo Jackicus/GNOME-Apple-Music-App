@@ -12,6 +12,7 @@ from gettext import gettext as _
 from gi.repository import Adw, Gio, GObject, Gtk
 
 from ..library import Item
+from ..widgets import context_menu
 from ..widgets.tile import Tile
 
 
@@ -99,6 +100,7 @@ class GridPage(Adw.NavigationPage):
         factory.connect('unbind', self._on_unbind)
         self.grid_view.set_factory(factory)
         self.grid_view.set_model(Gtk.NoSelection(model=self._sorted))
+        context_menu.attach(self.grid_view)
 
         self.scrolled_window.get_vadjustment().connect('value-changed', self._on_scrolled)
         self._update_state()

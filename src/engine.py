@@ -23,6 +23,12 @@ UI awaits.
     await engine.queue_jump(3)   # play the queue's entry at index 3 (mk.changeToMediaAtIndex)
     await engine.lyrics(catalog_song_id)   # {synced, lines: [{startMs, endMs, text}]},
                                            # from <cache>/lyrics/ when fetched before
+    await engine.love('song', id); await engine.unlove('album', id)   # the rating, set or gone
+    await engine.rating('song', id)        # 1 loved, -1 disliked, 0 neither
+    await engine.add_to_library('album', catalog_id)
+    await engine.playlists()               # [{id, title}]: the library playlists one can edit
+    await engine.catalog_url('album', library_id)   # its music.apple.com page, or None
+    await engine.add_to_playlist(playlist_id, song_id)
     await engine.search(term, library=False, limit=20, suggest=0)   # {shelves, items[, terms]}
     await engine.suggest(term, limit=10)   # {terms: [{term, display}], items}
     await engine.landing()       # {categories}: the search page's Browse Categories
@@ -34,9 +40,11 @@ UI awaits.
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
-prefix). Every failure is an EngineError; nothing here blocks the loop: Chrome is a
-Gio.Subprocess (awaitable wait_async), the connection is the asynchronous CDPClient, and the
-JSON shaping and artwork HTTP of item() run in a thread. A Chrome that outlived an earlier
+prefix), and `rated(kind, id, value)` follows love(), unlove() and rating() (the kind and id
+as they were asked, value 1 loved, 0 not), so a heart shows what a menu did. Every failure
+is an EngineError; nothing here blocks the loop: Chrome is a Gio.Subprocess (awaitable
+wait_async), the connection is the asynchronous CDPClient, and the JSON shaping and artwork
+HTTP of item() run in a thread. A Chrome that outlived an earlier
 app process is reclaimed from engine.json when its mode matches. In demo mode (`demo=True`)
 start() and stop() do nothing and every command raises EngineError('engine-down') at once.
 """
@@ -91,9 +99,24 @@ CONTROL_ACTIONS = ('play', 'pause', 'toggle', 'next', 'previous', 'stop')
 SHUFFLE_MODES = ('on', 'off', 'toggle')
 REPEAT_MODES = ('none', 'one', 'all', 'cycle')
 
-# Library ids ("l." albums and playlists, "p." playlists, "r." radio) live under /v1/me/library;
-# anything else is the catalog's.
-LIBRARY_PREFIXES = ('l.', 'p.', 'r.')
+# Library ids ("l." albums and playlists, "p." playlists, "r." radio, "i." songs and music
+# videos) live under /v1/me/library; anything else is the catalog's.
+LIBRARY_PREFIXES = ('l.', 'p.', 'r.', 'i.')
+
+# The Apple Music API's resource type for each kind an Item or a Track has (the singular: the
+# bridge's rating() and addToLibrary() add the "s"), for the ratings and library writes. A
+# library id takes the "library-" type. Artists have no ratings and cannot be added.
+RESOURCE_TYPES = {
+    'song': 'song',
+    'album': 'album',
+    'playlist': 'playlist',
+    'station': 'station',
+    'video': 'music-video',
+    'musicVideo': 'music-video',
+    'music-video': 'music-video',
+}
+# The kinds add_to_library() takes (a station is followed, not added).
+LIBRARY_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
 
 # Where the signed-in page shows the account: the sidebar's footer (the reference layout). The
 # page is Apple's (Svelte, hashed class names) and changes; signed out, the footer holds
@@ -164,6 +187,15 @@ def item_endpoint(kind, item_id, storefront):
         return (f'/v1/me/library/songs/{item_id}' if library
                 else f'/v1/catalog/{storefront}/songs/{item_id}')
     return f'/v1/catalog/{storefront}/{kind}s/{item_id}'
+
+
+def resource_type(kind, item_id):
+    """The API type (singular) the ratings of `kind` `item_id` live under: 'song' or
+    'library-song', 'album' or 'library-album'… EngineError('usage') for a kind with none."""
+    base = RESOURCE_TYPES.get(kind)
+    if base is None or item_id in (None, ''):
+        raise EngineError('usage', f'no rating for {kind or "nothing"} {item_id or ""}'.strip())
+    return f'library-{base}' if is_library_id(item_id) and base != 'station' else base
 
 
 def album_endpoint(album_id, storefront):
@@ -294,6 +326,7 @@ class Engine(GObject.Object):
 
     __gsignals__ = {
         'event': (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
+        'rated': (GObject.SignalFlags.RUN_FIRST, None, (str, str, int)),
     }
 
     state = GObject.Property(type=str, default='down')
@@ -873,6 +906,108 @@ class Engine(GObject.Object):
         if answer['lines']:
             await asyncio.to_thread(_write_json, path, answer)
         return answer
+
+    # -- ratings and the library ---------------------------------------------------------
+    # As am.py's love, unlove, add-to-library, playlists and add-to-playlist were: writes
+    # through the bridge's rating(), addToLibrary() and addToPlaylist() (MusicKit's request
+    # builder, judged by the HTTP status: a refusal is EngineError('api') with Apple's
+    # "HTTP 403 Forbidden: …"), each needing a signed-in engine.
+
+    def _require_account(self, what):
+        client = self._require_up()
+        if not self.authorized:
+            raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
+        return client
+
+    async def love(self, kind, item_id):
+        """Love (favourite) a song, album, playlist, station or music video: PUT
+        /v1/me/ratings/<type>s/<id> with the value 1. A library id rates the library item,
+        a catalog id the catalog's; loving a song adds it to Favourite Songs."""
+        await self._rate(kind, item_id, True)
+
+    async def unlove(self, kind, item_id):
+        """Take the rating away (DELETE /v1/me/ratings/<type>s/<id>)."""
+        await self._rate(kind, item_id, False)
+
+    async def _rate(self, kind, item_id, love):
+        rated = resource_type(kind, item_id)
+        client = self._require_account('rate items')
+        await client.bridge('rating', rated, str(item_id), bool(love))
+        self.emit('rated', str(kind), str(item_id), 1 if love else 0)
+
+    async def rating(self, kind, item_id):
+        """The item's rating: 1 loved, -1 disliked, 0 neither (a read of
+        /v1/me/ratings/<type>s?ids=<id>, which answers an empty list for an item without
+        one, where the single-item path answers a 404)."""
+        rated = resource_type(kind, item_id)
+        client = self._require_account('read ratings')
+        answer = await self._api(client, f'/v1/me/ratings/{rated}s', {'ids': str(item_id)})
+        value = 0
+        for entry in _page_data(answer):
+            attributes = entry.get('attributes')
+            number = attributes.get('value') if isinstance(attributes, dict) else None
+            if isinstance(number, int) and not isinstance(number, bool):
+                value = max(-1, min(1, number))
+                break
+        self.emit('rated', str(kind), str(item_id), value)
+        return value
+
+    async def add_to_library(self, kind, item_id):
+        """Add a catalog song, album, playlist or music video to the library (POST
+        /v1/me/library?ids[<type>s]=<id>). A library id is refused: it is there already."""
+        if kind not in LIBRARY_KINDS or item_id in (None, ''):
+            raise EngineError('usage', f'cannot add {kind or "nothing"} to the library')
+        if is_library_id(item_id):
+            raise EngineError('usage', f'{item_id} is in the library already')
+        client = self._require_account('add to your library')
+        await client.bridge('addToLibrary', RESOURCE_TYPES[kind], str(item_id))
+
+    async def playlists(self):
+        """The library playlists that can be added to, in the library's order: [{id,
+        title}] (every page of /v1/me/library/playlists, those whose canEdit is false,
+        Favourite Songs among them, left out)."""
+        self._require_account('list playlists')
+        entries = await self.api_pages('/v1/me/library/playlists')
+        playlists = []
+        for entry in entries:
+            attributes = entry.get('attributes') or {}
+            if not isinstance(attributes, dict) or attributes.get('canEdit') is False:
+                continue
+            playlists.append({'id': str(entry.get('id') or ''),
+                              'title': str(attributes.get('name') or '')})
+        return [playlist for playlist in playlists if playlist['id']]
+
+    async def catalog_url(self, kind, item_id):
+        """The music.apple.com page of a library item's catalog equivalent (its
+        /v1/me/library/<type>s/<id>/catalog relationship), or None when it has none (a
+        playlist of the user's, an upload). A catalog id is refused: its Item has the URL."""
+        rated = resource_type(kind, item_id)
+        if not rated.startswith('library-') or rated == 'library-station':
+            raise EngineError('usage', f'{item_id} is not a library item')
+        client = self._require_account('look items up')
+        try:
+            answer = await self._api(client, f'/v1/me/library/{rated[len("library-"):]}s/'
+                                             f'{item_id}/catalog')
+        except EngineError as e:
+            if e.code == 'engine-down':
+                raise
+            log.debug('catalog of %s %s: %s', kind, item_id, e)
+            return None
+        for entry in _page_data(answer):
+            url = (entry.get('attributes') or {}).get('url')
+            if isinstance(url, str) and url.startswith('https://'):
+                return url
+        return None
+
+    async def add_to_playlist(self, playlist_id, song_id):
+        """Add a song to the end of a library playlist (POST /v1/me/library/playlists/<id>/
+        tracks): a library song ("i." id) as `library-songs`, a catalog one as `songs`."""
+        playlist_id, song_id = str(playlist_id or ''), str(song_id or '')
+        if not is_library_id(playlist_id) or not song_id:
+            raise EngineError('usage', 'add to playlist needs a library playlist and a song')
+        song_type = 'library-songs' if is_library_id(song_id) else 'songs'
+        client = self._require_account('add to playlists')
+        await client.bridge('addToPlaylist', playlist_id, song_id, song_type)
 
     # -- search and browsing -------------------------------------------------------------
     # As am.py's search, suggest, landing and category commands were, plus browse (the New

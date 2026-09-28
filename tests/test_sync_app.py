@@ -20,7 +20,7 @@ from applemusic.backend import config
 from applemusic.backend import sync as backend
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine
-from applemusic.library import FAVOURITES, ROOT_FOLDER, Library
+from applemusic.library import EDITABLE, FAVOURITES, ROOT_FOLDER, Library
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 
@@ -146,11 +146,12 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(sections['songs'][0]), {
             'id', 'catalogId', 'title', 'artist', 'album', 'trackNumber', 'discNumber',
             'durationMs', 'durationLabel', 'explicit', 'index', 'thumb'})
-        # Playlists, with Favourite Songs flagged as the demo flags it, from Apple's tag.
+        # Playlists, with Favourite Songs flagged as the demo flags it, from Apple's tag, and
+        # as not editable (canEdit false); the editable ones carry no attributes.
         flagged = [p['id'] for p in sections['playlists'] if p.get('attributes')]
         self.assertEqual(flagged, ['p.favs0'])
         self.assertEqual(next(p for p in sections['playlists'] if p['id'] == 'p.favs0')
-                         ['attributes'], {FAVOURITES: True})
+                         ['attributes'], {FAVOURITES: True, EDITABLE: False})
         self.assertTrue(all(p['groups'][0]['entries'] for p in sections['playlists']))
         # Videos are Items of kind video, played as MusicKit's musicVideo.
         self.assertEqual([(v['kind'], v['play']['kind']) for v in sections['videos']],

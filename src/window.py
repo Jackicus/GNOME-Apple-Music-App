@@ -2,9 +2,10 @@ import logging
 import time
 from gettext import gettext as _
 
-from gi.repository import Adw, Gdk, Gio, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from . import pages, sections
+from .actions import ItemActions, TrackRef
 from .backend.errors import EngineError
 from .pages.artist import ArtistPage
 from .pages.detail import DetailPage
@@ -18,6 +19,8 @@ log = logging.getLogger(__name__)
 
 # The first destination of the Playlists section, whose items the library's playlists follow.
 PLAYLISTS = 'all-playlists'
+# The fixed destination showing the Favourite Songs playlist, which has a playlist's menu too.
+FAVOURITE_SONGS = 'favourite-songs'
 
 # The playback keys, by (keyval, modifiers) -> app action. Not application accelerators: GTK 4
 # runs those in the window's capture phase, before the focus widget, so a bare Space would fire
@@ -77,6 +80,9 @@ class Window(Adw.ApplicationWindow):
         self._quiet = False  # the selection changes, but not by the user: show nothing
         self._quitting = False
 
+        # The win.item-* actions the context menus run (actions.py), before the sidebar,
+        # whose playlists' menu is theirs.
+        self.item_actions = ItemActions(self, self.get_application())
         self._build_sidebar()
         self._update_playlists()
         self.player_bar.set_player(self.get_application().player, self.get_application())
@@ -297,10 +303,14 @@ class Window(Adw.ApplicationWindow):
                 self._positions = {destination.key: position
                                    for position, destination in enumerate(destinations)}
                 section.bind_model(self._playlist_store, self._create_playlist_item)
+                # The playlists' context menu: filled for the item it opens on (setup-menu).
+                self._sidebar_menu = Gio.Menu()
+                section.set_menu_model(self._sidebar_menu)
             else:
                 for destination in destinations:
                     item = Adw.SidebarItem(title=destination.title,
-                                           icon_name=destination.icon_name)
+                                           icon_name=destination.icon_name,
+                                           drag_motion_activate=False)
                     section.append(item)
                     self._destinations[item] = destination
                     self._items_by_key[destination.key] = item
@@ -308,6 +318,60 @@ class Window(Adw.ApplicationWindow):
 
         self.sidebar.connect('notify::selected-item', self._on_selected_item)
         self.sidebar.connect('activated', self._on_activated)
+        self.sidebar.connect('setup-menu', self._on_setup_menu)
+        # Tracks dragged from a list (widgets/context_menu.py) drop onto playlists.
+        self.sidebar.setup_drop_target(Gdk.DragAction.COPY, [TrackRef])
+        self.sidebar.connect('drop-enter', self._on_drop_enter)
+        self.sidebar.connect('drop', self._on_drop)
+
+    def _sidebar_playlist(self, item):
+        """The playlist Item a sidebar item shows: a playlist entry's, or Favourite Songs';
+        None for a folder, All Playlists and the other sections' items."""
+        if not isinstance(item, SidebarItem):
+            return None
+        entry = item.entry
+        if entry.kind == 'playlist':
+            return entry.item
+        if entry.kind == 'fixed' and entry.key == FAVOURITE_SONGS:
+            return self._library.favourite_songs()
+        return None
+
+    def _on_setup_menu(self, _sidebar, item):
+        """The Playlists section's context menu opens on item: point it at the playlist
+        (Play, Play Next, Open in Browser). Nothing to offer (a folder, All Playlists): the
+        menu is closed before it is drawn, since AdwSidebar would show it empty. None: it
+        closed, before its action runs, so the menu is left as it is."""
+        if item is None:
+            return
+        self.item_actions.fill_sidebar_menu(self._sidebar_menu, self._sidebar_playlist(item))
+        if not self._sidebar_menu.get_n_items():
+            GLib.idle_add(self._close_sidebar_menu, priority=GLib.PRIORITY_HIGH)
+
+    def _close_sidebar_menu(self):
+        child = self.sidebar.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Popover) and child.get_visible():
+                child.popdown()
+            child = child.get_next_sibling()
+        return GLib.SOURCE_REMOVE
+
+    def _drop_playlist(self, index):
+        """The playlist a track dropped on the item at index goes to: only a playlist entry
+        that takes songs (not a folder, not a fixed item)."""
+        item = self.sidebar.get_item(index)
+        if not isinstance(item, SidebarItem) or item.entry.kind != 'playlist':
+            return None
+        playlist = item.entry.item
+        return playlist if self.item_actions.can_drop(playlist) else None
+
+    def _on_drop_enter(self, _sidebar, index):
+        return Gdk.DragAction.COPY if self._drop_playlist(index) is not None else 0
+
+    def _on_drop(self, _sidebar, index, value, _action):
+        playlist = self._drop_playlist(index)
+        if playlist is None:
+            return False
+        return self.item_actions.drop(playlist, value)
 
     def _create_playlist_item(self, entry):
         item = SidebarItem(entry)

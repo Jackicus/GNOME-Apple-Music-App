@@ -45,6 +45,9 @@ bridge.js
   remembered in window.__appleMusicListeners so a repeat is a no-op and a newer bridge replaces
   an older one's. queue() is queueSnapshot(), shared with the queueItemsDidChange event.
 - (Phase 14) queueJump(index): mk.changeToMediaAtIndex, for the app's Up Next list.
+- (Phase 16) addToPlaylist(playlistId, songId, type): the song's resource type is a third,
+  optional argument ('songs', upstream's fixed value, when left out; the app sends
+  'library-songs' for a library "i." id). rating(), addToLibrary() and playlists() unchanged.
 sync.py
 - Imports config; DEFAULT_ART_SIZES are config.COVER_SIZE/THUMB_SIZE, 640/320 (were 512/256).
   The art/.sizes marker and apply_art_sizes/load_art_sizes are unchanged.

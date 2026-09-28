@@ -12,10 +12,13 @@ class TrackRow(Gtk.Box):
 
     bind() and unbind() are called by a list factory as rows are recycled; the thumbnail is
     drawn only while the row is on screen (Cover). Activating the row is the list's business:
-    the page plays the track's group from the track (window.play_request).
+    the page plays the track's group from the track (window.play_request). The Track bound is
+    the row's `context_item`: the view's context menu and drag (widgets/context_menu.py).
     """
 
     __gtype_name__ = 'AppleMusicTrackRow'
+
+    _track = None
 
     number_label = Gtk.Template.Child()
     cover = Gtk.Template.Child()
@@ -24,9 +27,15 @@ class TrackRow(Gtk.Box):
     artist_label = Gtk.Template.Child()
     duration_label = Gtk.Template.Child()
 
+    @property
+    def context_item(self):
+        """The Track shown, for its context menu and its drag (widgets/context_menu.py)."""
+        return self._track
+
     def bind(self, track, album_artist=None):
         """Show track. album_artist given: an album's row, numbered, with the artist shown only
         when it is not the album's; None: a playlist's row, with thumbnail and artist."""
+        self._track = track
         album = album_artist is not None
         self.number_label.set_visible(album)
         self.cover.set_visible(not album)
@@ -43,4 +52,5 @@ class TrackRow(Gtk.Box):
         self.duration_label.set_text(track.duration_label)
 
     def unbind(self):
+        self._track = None
         self.cover.set_paths()

@@ -46,6 +46,10 @@ FRAME_BUDGET = 0.008
 # sync maps Apple's own flag onto it.
 FAVOURITES = 'isFavourites'
 
+# The key in a playlist's raw `attributes` that is false when songs cannot be added to it
+# (Apple's canEdit, which the sync copies there when it is false).
+EDITABLE = 'canEdit'
+
 # The id of the folders entry that lists the top level: the playlists and folders in no folder.
 ROOT_FOLDER = 'root'
 
@@ -200,6 +204,18 @@ class Item(GObject.Object):
         """Whether this is the Favourite Songs playlist: attributes.isFavourites in the raw Item."""
         attributes = self.raw.get('attributes')
         return isinstance(attributes, dict) and attributes.get(FAVOURITES) is True
+
+    @property
+    def editable(self):
+        """Whether songs can be added to this: a library playlist (Apple's "p." id, or the
+        demo's "l.") that is not Favourite Songs and whose attributes do not say canEdit
+        false. A catalog playlist is not."""
+        if self._kind != 'playlist' or not str(self._id or '').startswith(('p.', 'l.')):
+            return False
+        attributes = self.raw.get('attributes')
+        if not isinstance(attributes, dict):
+            return True
+        return attributes.get(FAVOURITES) is not True and attributes.get(EDITABLE) is not False
 
     @property
     def groups(self):
