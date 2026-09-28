@@ -223,7 +223,9 @@ class TestReloadTells(ReloadCase):
                  'countLabel': '2 songs', 'art': None, 'url': 'https://example.com/x'},
                 {'year': True, 'catalogId': 12345}]
         for raw in raws:
-            item = Item(dict(raw, id='l.x', kind='album'))
+            # A playlist: an album or artist without a title is called by its kind, which a
+            # merge does not change.
+            item = Item(dict(raw, id='p.x', kind='playlist'))
             for name, key, read in Item._MERGED:
                 with self.subTest(raw=raw, name=name):
                     self.assertEqual(read(item.raw.get(key)), item.get_property(name))

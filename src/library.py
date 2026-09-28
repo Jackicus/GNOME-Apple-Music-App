@@ -42,6 +42,8 @@ import re
 import threading
 import time
 import unicodedata
+from gettext import gettext as _
+from gettext import ngettext
 
 from gi.repository import Gio, GLib, GObject
 
@@ -74,6 +76,30 @@ EDITABLE = 'canEdit'
 # The id of the folders entry that lists the top level: the playlists and folders in no folder.
 ROOT_FOLDER = 'root'
 
+def N_(text):
+    """Mark a string for translation where it is defined; _() translates it where it is used."""
+    return text
+
+
+# Home's shelves of the library's own are titled by key, in the app's language: the sync
+# writes English titles into library.json (which older versions show).
+FIXED_SHELF_TITLES = {
+    # Translators: a shelf on the Home page, as Apple Music names it: the albums,
+    # playlists and stations played most lately.
+    'heavy-rotation': N_('Heavy Rotation'),
+    # Translators: a shelf on the Home page: what was added to the library last.
+    'recently-added': N_('Recently Added'),
+}
+
+# What an Item of that kind is called when it has no title (unknown_title()).
+UNKNOWN_TITLES = {
+    # Translators: in place of the name of an album that has none.
+    'album': N_('Unknown Album'),
+    # Translators: in place of the name of an artist that has none.
+    'artist': N_('Unknown Artist'),
+}
+_unknown_titles = {}  # kind -> its UNKNOWN_TITLES entry translated, looked up once
+
 # A track's kind by the API resource `type` its entry carries: what it is rated and added as.
 TRACK_KINDS = {'songs': 'song', 'library-songs': 'song',
                'music-videos': 'video', 'library-music-videos': 'video'}
@@ -101,6 +127,64 @@ def _reader(type, default=None):
     if type is int:
         return _number
     return lambda value: _text(value) or default
+
+
+def _is_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def unknown_title(kind):
+    """What an Item of `kind` is called when it has no title (UNKNOWN_TITLES, translated once
+    per process), or '' for a kind without such a name."""
+    text = _unknown_titles.get(kind)
+    if text is None:
+        source = UNKNOWN_TITLES.get(kind)
+        if source is None:
+            return ''
+        text = _unknown_titles[kind] = _(source)
+    return text
+
+
+def songs_text(count, duration_ms=None):
+    """An album's or playlist's caption: '12 songs, 43 min', or '12 songs' without a total
+    time."""
+    # Translators: how many songs an album or a playlist has.
+    songs = ngettext('{count} song', '{count} songs', count).format(count=f'{count:n}')
+    if duration_ms is None:
+        return songs
+    # Translators: an album's or a playlist's songs, then their total time: "12 songs, 43 min".
+    return _('{songs}, {duration}').format(songs=songs, duration=duration_text(duration_ms))
+
+
+def duration_text(duration_ms):
+    """A total time in hours and minutes, as a caption gives it: '43 min', '1 hr 5 min',
+    '2 hr' (at least a minute when there is any time at all)."""
+    minutes = max(1, round(duration_ms / 60000)) if duration_ms > 0 else 0
+    hours, minutes = divmod(minutes, 60)
+    if hours and minutes:
+        # Translators: a total time in hours and minutes, abbreviated: "1 hr 5 min".
+        return _('{hours} hr {minutes} min').format(hours=f'{hours:n}', minutes=f'{minutes:n}')
+    if hours:
+        # Translators: a total time in whole hours, abbreviated: "2 hr".
+        return ngettext('{hours} hr', '{hours} hr', hours).format(hours=f'{hours:n}')
+    # Translators: a total time in minutes, abbreviated: "43 min".
+    return ngettext('{minutes} min', '{minutes} min', minutes).format(minutes=f'{minutes:n}')
+
+
+def albums_text(count):
+    """An artist's caption: '3 albums'."""
+    # Translators: how many albums of an artist the library has.
+    return ngettext('{count} album', '{count} albums', count).format(count=f'{count:n}')
+
+
+def shelf_title(key, title):
+    """A library.json shelf's title as Home shows it: the app's own words for its fixed
+    shelves (FIXED_SHELF_TITLES), Apple's title for a recommendation, which comes in the
+    account's language, and 'For You' for a recommendation without one."""
+    if key in FIXED_SHELF_TITLES:
+        return _(FIXED_SHELF_TITLES[key])
+    # Translators: the title of a shelf of Apple Music's recommendations that has none.
+    return title or _('For You')
 
 
 def model_property(name, type, default=None):
@@ -234,6 +318,10 @@ class Item(GObject.Object):
     A reload keeps the Item and merge()s the new dict into it: each property that changed is
     notified, and `groups-changed` says the groups are new (`groups` is then a new list of new
     Groups), so a widget or page showing the Item follows it by those signals.
+
+    The words are the app's, in its language, never the data's: an album or artist without a
+    title is called 'Unknown Album' or 'Unknown Artist' (unknown_title()), and `count-label`
+    is made from the counts the sync writes (count_text()).
     """
 
     __gtype_name__ = 'AppleMusicItem'
@@ -242,9 +330,20 @@ class Item(GObject.Object):
         'groups-changed': (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
+    def _get_title(self):
+        return _text(self.raw.get('title')) or unknown_title(_text(self.raw.get('kind')))
+
+    def _set_title(self, value):
+        self.raw['title'] = value
+
+    def _get_count_label(self):
+        if self._count is None:
+            self._count = self.count_text()
+        return self._count
+
     id = raw_property('id', str, writable=True)
     kind = raw_property('kind', str, writable=True)
-    title = raw_property('title', str, '', writable=True)
+    title = GObject.Property(type=str, default='', getter=_get_title, setter=_set_title)
     subtitle = raw_property('subtitle', str, '', writable=True)
     year = raw_property('year', int, 0, writable=True)
     genre = raw_property('genre', str, writable=True)
@@ -252,7 +351,8 @@ class Item(GObject.Object):
     art = raw_property('art', str, writable=True)
     thumb = raw_property('thumb', str, writable=True)
     art_color = raw_property('artColor', str, writable=True)
-    count_label = raw_property('countLabel', str, '', writable=True)
+    count_label = GObject.Property(type=str, default='', getter=_get_count_label,
+                                   flags=GObject.ParamFlags.READABLE)
     explicit = raw_property('explicit', bool, False, writable=True)
     catalog_id = raw_property('catalogId', str, writable=True)
     url = raw_property('url', str, writable=True)
@@ -262,6 +362,35 @@ class Item(GObject.Object):
         self.raw = data
         self.play = data.get('play') or {}
         self._groups = None
+        self._count = None  # count-label's text, made when first read (merge() forgets it)
+
+    # The raw keys count_text() reads, groups aside.
+    _COUNT_KEYS = ('trackCount', 'durationMs', 'albumCount', 'countLabel')
+
+    def count_text(self):
+        """The caption's count: an album's or playlist's `trackCount` songs and `durationMs`
+        total time ('12 songs, 43 min'), an artist's `albumCount` albums ('3 albums'); else
+        the English `countLabel` a library.json from before those counts holds; else the
+        counts of its groups; else ''. count-label is this, kept (bind never runs gettext)."""
+        raw = self.raw
+        kind = raw.get('kind')
+        if kind == 'artist' and _is_count(raw.get('albumCount')):
+            return albums_text(raw['albumCount'])
+        if kind in ('album', 'playlist') and _is_count(raw.get('trackCount')):
+            duration = raw.get('durationMs')
+            return songs_text(raw['trackCount'], duration if _is_count(duration) else None)
+        legacy = _text(raw.get('countLabel'))
+        if legacy:
+            return legacy
+        groups = _dicts(raw.get('groups'))
+        if kind == 'artist' and groups:
+            return albums_text(len(groups))
+        if kind in ('album', 'playlist'):
+            entries = [entry for group in groups for entry in _dicts(group.get('entries'))]
+            if entries:
+                return songs_text(len(entries),
+                                  sum(_number(entry.get('durationMs')) for entry in entries))
+        return ''
 
     @property
     def favourites(self):
@@ -292,13 +421,14 @@ class Item(GObject.Object):
 
     # The properties an `item` answer refreshes: the name, the raw key it reads, and how its
     # getter reads the value (merge() compares the raw values so, without a GObject call).
+    # count-label is made from several keys (_COUNT_KEYS and the groups).
     _MERGED = tuple((name, key, _reader(type, default)) for name, key, type, default in (
         ('title', 'title', str, ''), ('subtitle', 'subtitle', str, ''),
         ('genre', 'genre', str, None), ('summary', 'summary', str, None),
         ('art', 'art', str, None), ('thumb', 'thumb', str, None),
-        ('art-color', 'artColor', str, None), ('count-label', 'countLabel', str, ''),
-        ('catalog-id', 'catalogId', str, None), ('url', 'url', str, None),
-        ('year', 'year', int, 0), ('explicit', 'explicit', bool, False)))
+        ('art-color', 'artColor', str, None), ('catalog-id', 'catalogId', str, None),
+        ('url', 'url', str, None), ('year', 'year', int, 0),
+        ('explicit', 'explicit', bool, False)))
 
     def merge(self, data, replace=False):
         """Take a fresh Item dict for this item into this object: the raw dict updated (or
@@ -325,6 +455,7 @@ class Item(GObject.Object):
                 groups_changed = True
         merged = [entry for entry in self._MERGED if replace or entry[1] in data]
         before = [read(old.get(key)) for _name, key, read in merged]
+        counts = [old.get(key) for key in self._COUNT_KEYS]
         if replace:
             self.raw = data
         else:
@@ -335,14 +466,20 @@ class Item(GObject.Object):
         raw = self.raw
         changed = [name for (name, key, read), value in zip(merged, before, strict=True)
                    if read(raw.get(key)) != value]
-        for name in changed:
-            self.notify(name)
         if data.get('play'):
             self.play = data['play']
         if self.kind == 'album' and 'thumb' in changed:
             groups_changed = True  # its Tracks hold the album's thumbnail: new ones hold the new
         if groups_changed:
             self._groups = None
+        if self._count is not None and (
+                groups_changed or counts != [raw.get(key) for key in self._COUNT_KEYS]):
+            shown, self._count = self._count, None
+            if self.count_label != shown:
+                changed.append('count-label')
+        for name in changed:
+            self.notify(name)
+        if groups_changed:
             self.emit('groups-changed')
         return changed
 
@@ -828,7 +965,8 @@ class Library(GObject.Object):
         shelves = []
         kept = {shelf.key: shelf for shelf in self.shelves} if keep else {}
         for raw in _dicts(data.get('shelves')):
-            key, title = _text(raw.get('key')) or '', _text(raw.get('title')) or ''
+            key = _text(raw.get('key')) or ''
+            title = shelf_title(key, _text(raw.get('title')))
             items = [shelf_item(item) for item in _dicts(raw.get('items'))]
             shelf = kept.pop(key, None)
             if shelf is None:
