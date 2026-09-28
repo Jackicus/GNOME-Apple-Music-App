@@ -4,8 +4,8 @@ A native GNOME client for Apple Music. GTK 4.22, libadwaita 1.9, Python 3.14 wit
 Blueprint for UI, Meson, gettext. GPL-2.0-or-later. App ID `io.github.jackicus.AppleMusic`
 (`.Devel` under `-Dprofile=development`); resource base path `/io/github/jackicus/AppleMusic`.
 It should feel like a GNOME core app (Nautilus, Music, Settings) while laying out its pages like
-the Apple Music web player. The phased plan, one ready-to-paste prompt per session, is in
-`prompts.md`. This file is what every session needs regardless of phase: what exists and the rules.
+the Apple Music web player. `prompts.md` is a finished build log (all 20 phases done; it moves
+to docs/history/ in WP12). This file is what every session needs: what exists and the rules.
 
 ## The one hard constraint
 
@@ -22,8 +22,6 @@ asynchronous CDP connection instead of the extension's process-per-command.
 
 ## Architecture
 
-Parts marked `*` exist only once their phase in `prompts.md` is done.
-
 ```
 GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 ┌──────────────────────────────────────────────────────────────────────────────────┐
@@ -38,8 +36,8 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │            destination's root page (pages/, built on first visit and kept, each  │
 │            with its own header bar): Home and Radio (shelves), GridPages, the    │
 │            SongsPage (ColumnView), Favourite Songs and each sidebar playlist (a  │
-│            DetailPage), each folder (a GridPage of its folders and playlists),   │
-│            placeholders for the rest; tiles → window.open_item() pushes a        │
+│            DetailPage), each folder (a GridPage of its folders and playlists);   │
+│            tiles → window.open_item() pushes a                                   │
 │            DetailPage (album, playlist), an ArtistPage or a folder's GridPage,   │
 │            or plays a station; a shelf's See All →                               │
 │            window.open_shelf() pushes a GridPage; track rows, Play, Shuffle,     │
@@ -115,7 +113,7 @@ src/main.py                    Application: app.* actions (quit, about, shortcut
                                thread, the library emptied, last-sync forgotten, a sync when
                                signed in), background playback (close_window(window): hide and
                                hold() while playing and background-playback is on, else quit;
-                               in_background; the window shown again releases; playback
+                               the window shown again releases; playback
                                stopped for BACKGROUND_GRACE (10 s) quits), the quit path (hold
                                released, sync cancelled, engine stopped first),
                                use_glib_event_loop()
@@ -208,7 +206,7 @@ src/dialogs/preferences.py + .blp  $AppleMusicPreferencesDialog (Adw.Preferences
                                dialog is let go on `closed`
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
-                               favourite_songs(), track_at(play, index), playlist_tree(),
+                               favourite_songs(), playlist_tree(),
                                folder_items(id), load() (new objects) and reload() (in place,
                                by id): coroutines whose file is read, in the library's thread,
                                from the call; hold_reading()/resume_reading(); songs filled by
@@ -229,8 +227,8 @@ src/window.py + window.blp     Window: split view, sidebar (the Playlists sectio
                                account button (Sign In, or the name over a Sign Out menu), the
                                signed-out banner and the sync banner (show_sync_progress/
                                hide_sync_progress), the content's AdwNavigationView and its
-                               root pages (pages.create, pages.playlist/folder, or a
-                               placeholder), last-page restore, open_item(item),
+                               root pages (pages.create, pages.playlist/folder),
+                               last-page restore, open_item(item),
                                open_shelf(shelf), play_request(play, start_with=None,
                                shuffle=False) → app.player.play (sign-in when signed out,
                                app.report otherwise), the bottom sheet (bottom_sheet,
@@ -733,7 +731,7 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
 - Background playback (phase 17, `background-playback`, off by default): the window's close
   request goes to `app.close_window(window)`. With the setting on and `player.active`, the
   window closes its dialogs (those shown as windows of their own too), hides, and the app is
-  `hold()`ed (`app.in_background`); the hidden window stays in the app, so MPRIS Raise and a
+  `hold()`ed; the hidden window stays in the app, so MPRIS Raise and a
   second launch `present()` it, and it becoming visible releases the hold. While hidden, the
   app watches the Player: once `player.stopped` (no item, or none/stopped/ended/completed;
   paused keeps it) has lasted `BACKGROUND_GRACE` (10 s: MusicKit passes through ended and
@@ -763,7 +761,8 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
 - `library.reload()` (after a sync) matches everything by kind and id: kept Items get
   `merge(raw, replace=True)` (properties set where changed, groups and Tracks kept when the
   group dicts are equal), stores get `apply_diff` (difflib over object ids, so unchanged runs
-  are not spliced), changed Items are spliced over themselves so bound rows rebind, Shelf
+  are not spliced), changed Items are spliced over themselves (GTK 4.22 does not rebind a
+  same-object splice: bound rows keep their old values; see C054/C083), Shelf
   objects are kept by key, folder Items by id, the Songs store is left alone when nothing
   moved. `load()` still makes new objects (sign-out, the first load).
 - Demo mode: `--demo` sets `app.demo = True`, runs as its own instance (`NON_UNIQUE`) and points
@@ -795,8 +794,9 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   `widgets.artwork.remote_item(dict)` turns that into paths under `<cache>/remote-art/`
   (`thumb` at 320, `art` at 640, with `thumbUrl`/`artUrl`), `pages.shelves.remote_shelves()`
   wraps them as `library.Shelf`s of `Item`s, and `fetch_shelf_art(shelves)` fetches the missing
-  thumbnails a few at a time, splicing each item over itself so its tile rebinds
-  (`HeroTile.bind` refreshes its cover when the paths are unchanged for that reason). Opening
+  thumbnails a few at a time, splicing each item over itself (GTK 4.22 does not rebind a
+  same-object splice; see C054/C083; `HeroTile.bind` refreshes its cover when the paths are
+  unchanged). Opening
   such an item works as for a Home shelf's: `DetailPage` fetches its groups through
   `engine.item()` and merges the sync-style paths in. `ShelvesPage` is the page for any of
   these answers; the landing's categories are Items of kind `category` (opened by
@@ -825,8 +825,7 @@ meson dist -C build       the release tarball in build/meson-dist/ (needs a clea
   page filtered by `text` (the library search's See All on its songs);
   `play_request(play, start_with=None, shuffle=False)` is every "play this": a track row passes
   `track.play, start_with=track.index` (its group's target and its place in that queue), Play and
-  Shuffle `item.play` (with `shuffle=True`). It toasts until phase 12 hands it to the engine;
-  `library.track_at(play, index)` finds the track a request starts with.
+  Shuffle `item.play` (with `shuffle=True`); it goes to `app.player.play()`.
 - Tests: `tests/test_<module>.py`, stdlib `unittest`, each starting with `from tests import …`
   (e.g. `SRC`, `ROOT`) before any `from applemusic import …`: discovery with `-s tests` imports test
   modules as top-level modules and never runs `tests/__init__.py` on its own. Importing `tests`
@@ -974,9 +973,10 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   `build/install/share/apple-music/applemusic`, where the gresource also lives. `tests/__init__.py`
   registers `src/` under that name (spec_from_file_location + sys.modules) for the tests;
   `scripts/demo_library.py` does the same to reach `applemusic.backend`.
-- The vendored backend and its tests keep upstream's style (double quotes, annotations, long
-  lines, which pyproject exempts from E501) so a refresh from the extension diffs cleanly (see the
-  "Refresh the vendored backend" prompt); new backend modules follow this file's style. Nothing in
+- src/backend is a fork owned by this app (D7): phases 9, 11 and 14-16 rewrote parts of cdp.py,
+  sync.py and bridge.js, so it no longer diffs cleanly against the extension. Its vendored files
+  still use upstream's style (pyproject exempts them from Q, E501, UP and B) until they are
+  reformatted; new backend modules follow this file's style. Nothing in
   `src/backend/` imports gi (a test checks); `sync.scale_image` is the hook through which the app
   lends GdkPixbuf for scaling covers into thumbnails (unset, thumbnails are fetched).
 - Icons in `src/icons/` resolve by `icon-name` through the resource alias; symbolic SVGs use a `#222`
@@ -1134,11 +1134,12 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   (the `.Devel` build 9229 and `chrome-devel`) so they can run side by side, which also means a
   separate sign-in per profile.
 - The engine layer (phase 9): `EngineState.alive` is the pid *and* `--user-data-dir=<profile>`
-  on its `/proc` command line, so a reused pid is never mistaken for our Chrome; the state file
+  on its `/proc` command line, a substring match (P09-5: `…/chrome` also matches
+  `…/chrome-devel`, so a reused pid can be mistaken; D1 removes the state file); the state file
   is keyed by profile (`config.state_file(profile)`: the default profile's in
   `$XDG_RUNTIME_DIR/apple-music/engine.json`, any other's inside the profile). A
-  `Runtime.addBinding` is per CDP session: each connection registers `__amEvent` itself and
-  the last one to connect owns the page's `window.__amEvent`. `Runtime.enable` replays
+  `Runtime.addBinding` is per CDP session: each connection registers `__amEvent` itself, and
+  every connection that has registered it receives each call. `Runtime.enable` replays
   `executionContextCreated` for existing contexts; the client re-injects only once
   `ensure_bridge()` has been asked for, and only for the main frame's default context
   (iframes such as Apple's sign-in get their own). MusicKit's `PlaybackStates` names
