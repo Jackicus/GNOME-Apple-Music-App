@@ -76,6 +76,17 @@
         return 'HTTP ' + res.status + (detail ? ' ' + detail : '');
     }
 
+    // Where the signed-in page shows the account's name: the sidebar's account menu
+    // (`.account-menu .user__name`, seen on 2026-09-28), then names of the same kind in
+    // case Apple renames it. Only selectors that name the user: the page is Svelte with
+    // hashed class names, and anything broader (the footer's buttons and spans) can hold
+    // "Sign In" in the page's language.
+    const ACCOUNT_NAME_SELECTORS = [
+        '.account-menu .user__name', '.user__name',
+        '[data-testid="user-menu-name"]', '[data-testid="account-name"]',
+        '.navigation__account-name', '.account-name', '.user-name'
+    ];
+
     function formatDuration(ms) {
         if (!ms || ms <= 0) return '0:00';
         const totalSec = Math.floor(ms / 1000);
@@ -296,6 +307,27 @@
                 storefront: (mk && mk.storefrontId) ? mk.storefrontId : 'us',
                 bitrate: (mk && typeof mk.bitrate === 'number') ? mk.bitrate : 256
             };
+        },
+
+        // The account's display name as the page shows it, or null. None while a
+        // sign-in control is on the page (signed out, or the moment after
+        // authorization before Apple renders the account menu), whatever the
+        // page's language; none that is not a short text. Never a guess.
+        accountName: function () {
+            if (document.querySelector('.auth-content .signin, button.signin')) return null;
+            for (const selector of ACCOUNT_NAME_SELECTORS) {
+                let elements;
+                try {
+                    elements = document.querySelectorAll(selector);
+                } catch {
+                    continue;
+                }
+                for (const element of elements) {
+                    const text = (element.textContent || '').trim().replace(/\s+/g, ' ');
+                    if (text && text.length <= 64) return text;
+                }
+            }
+            return null;
         },
 
         signin: async function () {

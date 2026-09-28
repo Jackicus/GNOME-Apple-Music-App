@@ -103,6 +103,7 @@ SEARCH_TIMEOUT = 30.0     # a catalog search, its suggestions, the landing or a 
 BROWSE_TIMEOUT = 60.0     # the editorial groupings: a big answer
 SEARCH_LIMIT = 20         # hits per kind
 SUGGEST_LIMIT = 10        # completions and top hits while typing
+ACCOUNT_NAME_POLL = 0.5   # the account name is looked for this often while waiting for it
 
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
@@ -118,34 +119,6 @@ GROUP_RELATIONSHIPS = {'album': 'tracks', 'playlist': 'tracks', 'artist': 'album
 
 # The kinds add_to_library() takes (a station is followed, not added).
 ADDABLE_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
-
-# Where the signed-in page shows the account: the sidebar's footer (the reference layout). The
-# page is Apple's (Svelte, hashed class names) and changes; signed out, the footer holds
-# `div.auth-content` with the `button.signin` "Sign In" (checked 2026-09-27), so that
-# container is where the account goes. No selector for the signed-in state is known to be
-# stable, so the candidates are tried in turn and the first with a short, non-empty text that
-# is not a prompt or a menu label is taken; none gives '', never a guess.
-ACCOUNT_NAME_JS = r"""(() => {
-  const candidates = [
-    '.account-menu .user__name', '.user__name',
-    '[data-testid="user-menu-name"]', '[data-testid="account-name"]',
-    '.auth-content [class*="name"]', '.auth-content [data-testid*="name"]',
-    '.navigation__account-name', '.account-name', '.user-name',
-    '.auth-content button span', '.auth-content span', '.auth-content button',
-    'nav footer button[aria-haspopup] span:not([class*="icon"])',
-  ];
-  const bad = /^(sign in|log in|sign out|log out|open in music\b.*|account|menu|settings)$/i;
-  for (const selector of candidates) {
-    let elements;
-    try { elements = document.querySelectorAll(selector); } catch { continue; }
-    for (const element of elements) {
-      const text = (element.textContent || '').trim().replace(/\s+/g, ' ');
-      if (text && text.length <= 64 && !bad.test(text)) return text;
-    }
-  }
-  return null;
-})()"""
-
 
 def _shape_item(raw, cache_dir, generation):
     """In a thread: the API's resource as an Item with groups, its artwork fetched into
@@ -975,15 +948,16 @@ class Engine(GObject.Object):
             log.debug('authorize: %s', e)
 
     async def account_name(self, wait=0):
-        """The account's display name as the signed-in page shows it, or '' when no known
-        element holds one. Never a guess. Apple's page renders the account menu a moment
-        after authorization, so `wait` seconds of polling (every half second) covers the
-        gap right after sign-in."""
+        """The account's display name as the signed-in page shows it (the bridge's
+        accountName(): only elements that name the user, none while a sign-in control is on
+        the page), or '' when none does. Never a guess. Apple's page renders the account menu
+        a moment after authorization, so `wait` seconds of polling (every
+        ACCOUNT_NAME_POLL) cover the gap right after sign-in."""
         deadline = time.monotonic() + wait
         while True:
             client = await self._ready()
             try:
-                name = await client.evaluate(ACCOUNT_NAME_JS, await_promise=False, timeout=5)
+                name = await client.bridge('accountName', timeout=5)
             except EngineError as e:
                 if e.code == 'engine-down':
                     raise
@@ -995,7 +969,7 @@ class Engine(GObject.Object):
                     return name
             if time.monotonic() >= deadline:
                 return ''
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(ACCOUNT_NAME_POLL)
 
     # -- playback ------------------------------------------------------------------------
     # Thin wrappers over the bridge's methods of the same names, which the Player calls; the
