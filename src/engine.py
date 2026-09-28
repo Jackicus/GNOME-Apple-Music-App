@@ -800,7 +800,15 @@ class Engine(GObject.Object):
             return False
 
     def kill(self):
-        """SIGKILL Chrome now, without waiting: the last resort when stop() ran out of time."""
+        """SIGKILL Chrome now, without waiting: the last resort when stop() ran out of time.
+        The connection is let go of as a stop would (it ends as Chrome does), so no `lost`
+        follows."""
+        client, self._client = self._client, None
+        watch, self._watch = self._watch, None
+        if watch is not None and watch is not asyncio.current_task():
+            watch.cancel()
+        if client is not None:
+            client.off(EVENT_PREFIX + '*', self._on_bridge_event)
         pid, self._pid = self._pid, None
         process, self._process = self._process, None
         if process is not None and process.get_identifier() is not None:
