@@ -31,9 +31,10 @@ from gi.events import GLibEventLoop
 
 from applemusic import engine as engine_module
 from applemusic.backend import chrome, sync
+from applemusic.backend import client as client_module
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine, item_endpoint, resource_type
-from tests.test_client import FakeBrowser, FakePage, until, value
+from tests.test_client import FakeBrowser, FakePage, context_created, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 RELAY = pathlib.Path(__file__).parent / 'fake_chrome_relay.py'
@@ -578,6 +579,36 @@ class LifecycleTest(EngineFixture):
         await self.engine.start()
         await self.chrome.send_event('Inspector.targetCrashed', {})
         await until(lambda: self.engine.state == 'down', timeout=3)
+        await self.wait_exited(self.engine.spawned[0][0])
+
+    async def test_the_bridge_comes_back_after_a_slow_navigation(self):
+        self.page.authorized = True
+        await self.engine.start()
+        self.assertTrue(self.engine.authorized)
+        self.engine._client.reinject_timeout = 0.2
+        seen = []
+        self.engine.connect('event', lambda e, name, data: seen.append(name))
+        subscriptions = self.page.subscriptions
+        self.page.bridge = None        # a new document
+        self.page.ready = False        # with MusicKit still loading
+        self.page.authorized = False   # and the account signed out meanwhile
+        with self.assertLogs(client_module.log, 'WARNING'):
+            await self.chrome.send_event(*context_created(9))
+            await asyncio.sleep(0.3)   # a try gives up
+            self.page.ready = True     # MusicKit arrives
+            await until(lambda: 'bridgeReset' in seen, timeout=3)
+        self.assertEqual(self.page.subscriptions, subscriptions + 1)  # events flow again
+        await until(lambda: not self.engine.authorized)  # the status read again
+        self.assertEqual(self.engine.state, 'up')
+
+    async def test_a_page_that_never_comes_back_takes_the_engine_down(self):
+        await self.engine.start()
+        self.engine._client.reinject_timeout = 0.1
+        self.page.bridge = None
+        self.page.ready = False
+        with self.assertLogs(client_module.log, 'WARNING'):
+            await self.chrome.send_event(*context_created(9))
+            await until(lambda: self.engine.state == 'down', timeout=3)
         await self.wait_exited(self.engine.spawned[0][0])
 
     async def test_bridge_events_are_re_emitted(self):
