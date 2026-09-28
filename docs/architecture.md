@@ -100,8 +100,10 @@ widgets.
   still holds the profile. With background playback on (it is off by default), closing the
   window while music plays hides it instead; the app then quits once playback has stayed stopped
   for 10 seconds.
-- **Demo mode.** `--demo` reads an invented library from build/demo and has no engine at all,
-  so every page and screenshot works without Chrome or an account.
+- **Demo mode.** `--demo` reads an invented library from build/demo (a release build lists no
+  `--demo` and needs `APPLE_MUSIC_CACHE` for it) and has no engine at all, so every page and
+  screenshot works without Chrome or an account. Its settings are its own (settings.ini beside
+  the library) and it takes no MPRIS name, so it runs beside the real app.
 
 ## Data
 

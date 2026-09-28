@@ -659,11 +659,7 @@ class Window(Adw.ApplicationWindow):
 
     def _save_expanded(self):
         """Show or hide the items the expanded folders hold, and store the folders, a second
-        after the last toggle (and when the window closes), rather than at every click.
-
-        Ids of folders the library no longer has are kept: a demo run shares the settings with
-        the real library, whose folders it lacks.
-        """
+        after the last toggle (and when the window closes), rather than at every click."""
         if self._expanded_save is None:
             self._expanded_save = GLib.timeout_add_seconds(1, self._on_expanded_timeout)
         for position in range(self._fixed_count, self._playlist_store.get_n_items()):

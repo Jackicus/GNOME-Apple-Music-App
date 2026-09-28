@@ -59,7 +59,7 @@ QUIT_GRACE = 3.0
 class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library: the development
     launcher passes the source tree's build/demo, where scripts/demo_library.py writes it; a
-    release launcher passes '' and --demo reads build/demo under the working directory.
+    release launcher passes '', and --demo then needs APPLE_MUSIC_CACHE.
     `signing-in` is true while the sign-in flow runs (account.sign_in(), to its end after the
     dialog has closed), `signing-out` while account.sign_out() runs: the account's actions and
     Refresh Library are off meanwhile."""
@@ -135,29 +135,45 @@ class Application(Adw.Application):
 
         self.add_main_option('debug', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
                              _('Log debug messages'), None)
-        self.add_main_option('demo', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+        # --demo is for developers: listed in --help by the development build only.
+        hidden = GLib.OptionFlags.NONE if profile == 'development' else GLib.OptionFlags.HIDDEN
+        self.add_main_option('demo', 0, hidden, GLib.OptionArg.NONE,
                              _('Show an invented library instead of yours, without the engine'),
                              None)
 
     def do_handle_local_options(self, options):
         if options.contains('debug'):
             logging.getLogger().setLevel(logging.DEBUG)
-        if options.contains('demo'):
-            self._use_demo()
+        if options.contains('demo') and not self._use_demo():
+            return 1
         return -1  # carry on with the default handling
 
     def _use_demo(self):
-        """Point the backend's cache at the demo library, before anything reads it.
+        """Show the demo library, before anything reads the cache: False (and a message)
+        when there is none to show.
 
-        An APPLE_MUSIC_CACHE already set wins, so a bigger generated library can be shown the
-        same way. The demo runs as an instance of its own rather than raising a running app.
+        The library is the development launcher's DEMO_DIR (the source tree's build/demo),
+        or the one APPLE_MUSIC_CACHE names (a bigger generated library, say). The demo runs
+        as an instance of its own rather than raising a running app, and keeps its settings
+        in the demo library's directory (settings.ini), apart from the desktop's; settings
+        on the memory backend (tests, the developer scripts) are kept as they are.
         """
+        if not os.environ.get('APPLE_MUSIC_CACHE'):
+            if not self.demo_dir:
+                log.error('--demo needs a demo library: the development build has one, or '
+                          'set APPLE_MUSIC_CACHE to a directory scripts/demo_library.py wrote')
+                return False
+            os.environ['APPLE_MUSIC_CACHE'] = os.path.abspath(self.demo_dir)
         self.demo = True
         self.set_flags(self.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
-        if not os.environ.get('APPLE_MUSIC_CACHE'):
-            demo_dir = self.demo_dir or os.path.join('build', 'demo')
-            os.environ['APPLE_MUSIC_CACHE'] = os.path.abspath(demo_dir)
+        backend = self.settings.props.backend
+        if GObject.type_name(backend.__gtype__) != 'GMemorySettingsBackend':
+            path = os.path.join(config.cache_dir(), 'settings.ini')
+            self.settings = Gio.Settings.new_full(
+                self.settings.props.settings_schema,
+                Gio.keyfile_settings_backend_new(path, '/', None), None)
         log.info('Demo mode: the library in %s', config.cache_dir())
+        return True
 
     def do_startup(self):
         self.mark('startup')
@@ -170,6 +186,17 @@ class Application(Adw.Application):
         # What follows, to the window's present(), is Python, which would share the GIL
         # with the parse: it waits meanwhile (Library.hold_reading()).
         self.library.hold_reading()
+        self._make_parts()
+        install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
+        # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
+        # default, which would end the process at once, before the engine is stopped.
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_signal, signum)
+
+    def _make_parts(self):
+        """The engine, the player, the sync, background playback and MPRIS (the media
+        controls and keys, as this app): not in demo mode, which would take the real app's
+        name on the bus."""
         self.engine = self._make_engine()
         self.engine.connect('lost', self._on_engine_lost)
         self.player = Player(self)
@@ -182,13 +209,9 @@ class Application(Adw.Application):
         self.background = BackgroundPlayback(
             self.player, hold=self.hold, release=self.release,
             quit=lambda: self.activate_action('quit'))
-        self.mpris = Mpris(self)  # the media controls and keys, as this app
-        self.mpris.start()
-        install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
-        # A terminal's Ctrl+C or a kill still stops Chrome: the launcher left SIGINT at its
-        # default, which would end the process at once, before the engine is stopped.
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_signal, signum)
+        if not self.demo:
+            self.mpris = Mpris(self)
+            self.mpris.start()
 
     def do_shutdown(self):
         if self._first_load is not None:  # never activated: the read is dropped
