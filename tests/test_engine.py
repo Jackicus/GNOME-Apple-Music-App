@@ -1418,9 +1418,28 @@ class PdeathsigTest(unittest.TestCase):
         finally:
             os.close(read)
         self.assertFalse(gone_within(child, 0))
+        # setpriv asks for the signal (prctl) just before it execs the program. Killing the
+        # parent before then sends nothing, so wait until the child is no longer setpriv.
+        self.assertTrue(execed_within(child, 'setpriv', 5.0), 'setpriv never ran the program')
         app.kill()
         app.wait()
         self.assertTrue(gone_within(child, 1.0), 'the grandchild outlived its parent')
+
+
+def execed_within(pid, launcher, timeout):
+    """Whether process `pid` has replaced the program `launcher` by another within `timeout`
+    seconds (its argv[0] no longer names the launcher)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            argv0 = pathlib.Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0', 1)[0]
+        except OSError:
+            return False
+        if os.path.basename(argv0).decode(errors='replace') != launcher:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
 
 
 def gone_within(pid, timeout):
