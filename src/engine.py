@@ -1007,7 +1007,8 @@ class Engine(GObject.Object):
 
     async def play(self, kind, item_id, start_with=None, shuffle=None):
         """Play an album, playlist, station, song, musicVideo or artist (its top songs) by
-        id, from queue position `start_with` (a track row): the bridge's play(), that is
+        id, or `songs` (song ids joined by commas: a stand-in album of loose songs), from
+        queue position `start_with` (a track row): the bridge's play(), that is
         mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `shuffle` True turns
         MusicKit's shuffle on (a Shuffle button), False off (a Play button plays in order),
         None leaves it as it is (a track row). Needs a signed-in engine: library ids and

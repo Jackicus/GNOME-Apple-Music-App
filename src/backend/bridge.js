@@ -211,6 +211,34 @@
         return null;
     }
 
+    // What setQueue, playNext and playLater take for one kind ('album', 'playlist',
+    // 'station', 'song', 'musicVideo'…) and id. `songs` is song ids joined by commas: the
+    // library's stand-in album for its loose songs, which Apple has no album for.
+    function queueOptions(kind, id) {
+        const options = {};
+        options[kind] = kind === 'songs' ? String(id).split(',').filter(Boolean) : id;
+        return options;
+    }
+
+    // An artist plays its top songs (the library's or the catalog's), or its station when
+    // it has none.
+    async function artistQueue(mk, id) {
+        try {
+            const sf = mk.storefrontId || 'us';
+            const isLib = id.startsWith('l.') || id.startsWith('r.');
+            const endpoint = isLib
+                ? `/v1/me/library/artists/${id}/view/top-songs`
+                : `/v1/catalog/${sf}/artists/${id}/view/top-songs`;
+            const res = await apiCall(endpoint, { limit: 100 });
+            if (res && res.data && res.data.length > 0) {
+                return { songs: res.data.map(function (s) { return s.id; }) };
+            }
+        } catch {
+            // No top songs to be had: the station.
+        }
+        return { station: id };
+    }
+
     function queueSnapshot(mk) {
         if (!mk || !mk.queue) {
             return { index: 0, items: [] };
@@ -418,34 +446,9 @@
                 }
             }
 
-            const queueObj = { startWith: startWith, startPlaying: true };
-            if (kind === 'album') {
-                queueObj.album = id;
-            } else if (kind === 'playlist') {
-                queueObj.playlist = id;
-            } else if (kind === 'station') {
-                queueObj.station = id;
-            } else if (kind === 'song') {
-                queueObj.song = id;
-            } else if (kind === 'artist') {
-                try {
-                    const sf = mk.storefrontId || 'us';
-                    const isLib = id.startsWith('l.') || id.startsWith('r.');
-                    const endpoint = isLib
-                        ? `/v1/me/library/artists/${id}/view/top-songs`
-                        : `/v1/catalog/${sf}/artists/${id}/view/top-songs`;
-                    const res = await apiCall(endpoint, { limit: 100 });
-                    if (res && res.data && res.data.length > 0) {
-                        queueObj.songs = res.data.map(function (s) { return s.id; });
-                    } else {
-                        queueObj.station = id;
-                    }
-                } catch {
-                    queueObj.station = id;
-                }
-            } else {
-                queueObj[kind] = id;
-            }
+            const queueObj = kind === 'artist' ? await artistQueue(mk, id) : queueOptions(kind, id);
+            queueObj.startWith = startWith;
+            queueObj.startPlaying = true;
 
             // MusicKit refusing (an item not in this storefront, no subscription…)
             // answers {error, code} rather than throwing, so its code reaches the app.
@@ -461,18 +464,14 @@
         playNext: async function (kind, id) {
             const mk = getMusicKit();
             if (!mk) throw new Error('MusicKit not initialized');
-            const q = {};
-            q[kind === 'song' ? 'song' : kind] = id;
-            await mk.playNext(q);
+            await mk.playNext(queueOptions(kind, id));
             return { ok: true };
         },
 
         playLater: async function (kind, id) {
             const mk = getMusicKit();
             if (!mk) throw new Error('MusicKit not initialized');
-            const q = {};
-            q[kind === 'song' ? 'song' : kind] = id;
-            await mk.playLater(q);
+            await mk.playLater(queueOptions(kind, id));
             return { ok: true };
         },
 

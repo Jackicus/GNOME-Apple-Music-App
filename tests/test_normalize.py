@@ -547,6 +547,32 @@ class TestSync(unittest.TestCase):
         self.assertEqual([artist['title'] for artist in artists], [''])
         self.assertEqual(len(albums[0]['groups'][0]['entries']), 2)
 
+    def test_a_stand_in_album_plays_its_songs(self):
+        def song(song_id, number, album=None):
+            raw = {'id': song_id, 'type': 'library-songs', 'attributes': {
+                'name': f'Song {number}', 'artistName': 'The Invented Band',
+                'albumName': 'Loose Ends', 'trackNumber': number, 'discNumber': 1}}
+            if album:
+                raw['relationships'] = {'albums': {'data': [{'id': album, 'type': 'library-albums',
+                                                             'attributes': {'name': 'Tidewater'}}]}}
+            return raw
+
+        songs = [song('i.c', 3), song('i.a', 1), song('i.real', 1, album='l.alb1'), song('i.b', 2)]
+        albums, artists = normalize.group_songs_into_albums_and_artists(songs)
+        stand_in = next(album for album in albums if album['id'].startswith('l.alb_'))
+        real = next(album for album in albums if album['id'] == 'l.alb1')
+        play = {'kind': 'songs', 'id': 'i.a,i.b,i.c'}  # in the entries' order
+        self.assertEqual(stand_in['play'], play)
+        self.assertEqual([group['play'] for group in stand_in['groups']], [play])
+        entries = stand_in['groups'][0]['entries']
+        self.assertEqual([(entry['id'], entry['index']) for entry in entries],
+                         [('i.a', 0), ('i.b', 1), ('i.c', 2)])
+        self.assertEqual(real['play'], {'kind': 'album', 'id': 'l.alb1'})  # a real one as it was
+        # The artist's group for it plays the same.
+        band = next(artist for artist in artists if artist['title'] == 'The Invented Band')
+        self.assertEqual([(group['name'], group['play']) for group in band['groups']],
+                         [('Loose Ends', play)])
+
     def test_group_songs_into_albums_and_artists(self):
         songs = [
             {
