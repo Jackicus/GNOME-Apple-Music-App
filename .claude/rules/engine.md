@@ -31,7 +31,11 @@ paths:
   another time (a 5xx, a 429, an `{errors}` answer without a status, a rejected promise); a
   4xx or a timeout raises at once (`api.is_final`), with Apple's HTTP status as
   `EngineError.status`, so a caller can take a 404 to mean "none". A read a person waits on
-  (an item, a rating, a link) has `READ_TIMEOUT`, 15 s.
+  (an item, a rating, a link) has `READ_TIMEOUT`, 15 s. The account's commands start with
+  `_require_signed_in(what)`; the storefront they use is the one the start's (or sign-in's,
+  or the last `status()`'s) status read gave, read again only after the authorization
+  changes. `item()` follows Apple's `next` links, so an artist has all its albums and a
+  playlist all its tracks.
 - Only `EngineError(code, message)` leaves the backend and the Engine. A new failure kind gets a
   code in `backend/errors.py` and a sentence in `Application.report()` (`no-browser`, no Chrome
   to find or spawn, still has the generic one). `start()` raises nothing else: a Chrome that

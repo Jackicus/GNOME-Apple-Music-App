@@ -61,6 +61,9 @@ def item_endpoint(kind, item_id, storefront):
     if kind == 'song':
         return (f'/v1/me/library/songs/{item_id}' if library
                 else f'/v1/catalog/{storefront}/songs/{item_id}')
+    if RESOURCE_TYPES.get(kind) == 'music-video':
+        return (f'/v1/me/library/music-videos/{item_id}' if library
+                else f'/v1/catalog/{storefront}/music-videos/{item_id}')
     return f'/v1/catalog/{storefront}/{kind}s/{item_id}'
 
 

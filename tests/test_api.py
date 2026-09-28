@@ -35,7 +35,10 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(item_endpoint('song', 'l.s', 'us'), '/v1/me/library/songs/l.s')
         self.assertEqual(item_endpoint('song', 'i.s', 'us'), '/v1/me/library/songs/i.s')
         self.assertEqual(item_endpoint('song', '5', 'us'), '/v1/catalog/us/songs/5')
-        self.assertEqual(item_endpoint('video', '7', 'us'), '/v1/catalog/us/videos/7')
+        for kind in ('video', 'musicVideo', 'music-video'):
+            self.assertEqual(item_endpoint(kind, '7', 'us'), '/v1/catalog/us/music-videos/7')
+        self.assertEqual(item_endpoint('video', 'i.v', 'us'), '/v1/me/library/music-videos/i.v')
+        self.assertEqual(item_endpoint('curator', '5', 'us'), '/v1/catalog/us/curators/5')
 
 
 class ResourceTypeTest(unittest.TestCase):

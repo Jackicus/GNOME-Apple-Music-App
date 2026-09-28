@@ -13,7 +13,7 @@ UI awaits.
     await engine.api(path, params)      # one Apple Music API read (mk.api.music), retried
     await engine.api_pages(path, params, page=100)   # every item of a paged endpoint
     await engine.api_all(paths)         # several reads at once; a failed one is None
-    await engine.item(kind, id)         # a full Item with its groups, its artwork fetched
+    await engine.item(kind, id)         # a full Item with all its groups, its artwork fetched
                                         # (into <cache>/remote-art/ unless the library has it)
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.account_name()         # the name on the page, or '' (best effort)
@@ -91,6 +91,8 @@ SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
 API_RETRIES = 3           # tries of an API read that may pass another time (api.is_final)
 API_RETRY_DELAY = 0.5     # before the first retry of a failed API read; doubles after
 READ_TIMEOUT = 15.0       # one read a person waits on: an item's page, a rating, a link
+RELATIONSHIP_PAGES = 50   # pages of an item's relationship followed past the first, at most
+ALBUM_BATCH = 25          # an artist's albums asked of the page at once
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
 LYRICS_TIMEOUT = 30.0     # one catalog read, parsed in the page
@@ -106,6 +108,10 @@ CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
 CONTROL_ACTIONS = ('play', 'pause', 'toggle', 'next', 'previous', 'stop')
 SHUFFLE_COMMANDS = ('on', 'off', 'toggle')
 REPEAT_COMMANDS = ('none', 'one', 'all', 'cycle')
+
+# The relationship of an item() answer that holds its groups' contents, which Apple pages
+# (25 albums, 100 tracks), giving a `next` link for the rest.
+GROUP_RELATIONSHIPS = {'album': 'tracks', 'playlist': 'tracks', 'artist': 'albums'}
 
 # The kinds add_to_library() takes (a station is followed, not added).
 ADDABLE_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
@@ -278,6 +284,7 @@ class Engine(GObject.Object):
         self._starting = None  # (Future, headless) of the start under way
         self._tasks = set()    # small tasks of the engine's own, held until they end
         self._probe = None     # the task asking a page that timed out whether it answers
+        self._storefront = None  # the account's, as the last status read had it
 
     @property
     def pid(self):
@@ -403,6 +410,7 @@ class Engine(GObject.Object):
         await client.subscribe()  # finds the bridge in place; events from now on
         status = await client.bridge('status')
         self.authorized = bool(isinstance(status, dict) and status.get('authorized'))
+        self._storefront = status.get('storefront') if isinstance(status, dict) else None
         self.state = 'up'
         self._watch = asyncio.create_task(self._watch_connection(client), name='engine-watch')
         log.info('engine up: %s', 'authorized' if self.authorized else 'not signed in')
@@ -556,6 +564,7 @@ class Engine(GObject.Object):
             except Exception:
                 relay.cancel()
         self.authorized = False
+        self._storefront = None
         self.state = 'down'
 
     async def _close_browser(self, client, process):
@@ -665,6 +674,7 @@ class Engine(GObject.Object):
             authorized = bool(data.get('authorized'))
             if authorized != self.authorized:
                 self.authorized = authorized
+            self._storefront = None  # the account's may differ: the next status says
         elif name == 'bridgeReset':
             # The page loaded a new document, and the bridge is back in it: what MusicKit
             # held (the sign-in, the queue) may have changed with it. The Player hears it too.
@@ -698,15 +708,27 @@ class Engine(GObject.Object):
         return self._client
 
     async def status(self):
-        """The bridge's status: {ready, engine, authorized, storefront, bitrate}."""
+        """The bridge's status: {ready, engine, authorized, storefront, bitrate}. It keeps
+        `authorized` and the storefront the commands use current."""
         client = await self._ready()
         status = await client.bridge('status')
         if not isinstance(status, dict):
             raise EngineError('api', 'the page gave no status')
+        self._take_status(status)
+        return status
+
+    def _take_status(self, status):
         authorized = bool(status.get('authorized'))
         if authorized != self.authorized:
             self.authorized = authorized
-        return status
+        self._storefront = str(status.get('storefront') or '') or None
+
+    async def _current_storefront(self):
+        """The account's storefront ('gb'): as the last status read had it (the start's, or
+        sign-in's), read again only when none has since the authorization changed."""
+        if not self._storefront:
+            await self.status()
+        return self._storefront or 'us'
 
     async def _api(self, client, path, params=None, timeout=None):
         """One API read through the bridge. MusicKit answers a failed request with a 200 and
@@ -745,9 +767,11 @@ class Engine(GObject.Object):
     async def api_all(self, paths, timeout=60):
         """Several reads at once in the page (the bridge's apiAll): one answer per path, in
         order, None where one failed."""
+        paths = list(paths)
         client = await self._ready()
-        answers = await client.bridge('apiAll', list(paths), timeout=timeout)
-        return answers if isinstance(answers, list) else []
+        answers = await client.bridge('apiAll', paths, timeout=timeout)
+        answers = answers if isinstance(answers, list) else []
+        return (answers + [None] * len(paths))[:len(paths)]
 
     async def api_pages(self, path, params=None, page=100, limit=None, progress=None,
                         concurrency=PAGE_CONCURRENCY):
@@ -795,41 +819,69 @@ class Engine(GObject.Object):
 
     async def item(self, kind, item_id):
         """One full Item of `kind` with its `groups` (an album's discs, a playlist's list, an
-        artist's albums), its artwork fetched. Needs a signed-in engine:
-        EngineError('not-signed-in') otherwise."""
+        artist's albums), all of them however Apple pages them, its artwork fetched. Needs a
+        signed-in engine: EngineError('not-signed-in') otherwise; a file that cannot be
+        written is EngineError('api')."""
         generation = store.cache_generation()
-        client = await self._ready()
-        if not self.authorized:
-            raise EngineError('not-signed-in', 'sign in to load items')
-        status = await self.status()
-        storefront = str(status.get('storefront') or 'us')
+        client = await self._require_signed_in('load items')
+        storefront = await self._current_storefront()
         answer = await self._api(client, api.item_endpoint(kind, item_id, storefront),
                                  timeout=READ_TIMEOUT)
         data = answer.get('data')
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise EngineError('api', f'item not found: {kind} {item_id}')
-        raw = data[0]
+        raw = await self._whole_relationship(client, data[0], GROUP_RELATIONSHIPS.get(kind))
         cache_dir = str(self.cache_dir)
-        if kind == 'artist':
-            relationships = raw.get('relationships') or {}
-            stubs = ((relationships.get('albums') or {}).get('data') or [])
-            stubs = [stub for stub in stubs if isinstance(stub, dict)]
-            # All at once in the page, not one round trip per album: an artist with a
-            # couple of dozen albums took seconds one by one.
-            endpoints = [api.album_endpoint(stub.get('id'), storefront) for stub in stubs]
-            answers = []
-            if endpoints:
-                try:
-                    answers = await client.bridge('apiAll', endpoints, timeout=60)
-                except EngineError as e:
-                    if e.code == 'engine-down':
-                        raise
-                    log.warning('the albums of artist %s: %s', item_id, e)
-            if not isinstance(answers, list):
-                answers = []
-            return await asyncio.to_thread(_shape_artist, raw, str(item_id), stubs, answers,
-                                           cache_dir, generation)
-        return await asyncio.to_thread(_shape_item, raw, cache_dir, generation)
+        try:
+            if kind == 'artist':
+                stubs, answers = await self._artist_albums(raw, item_id, storefront)
+                return await asyncio.to_thread(_shape_artist, raw, str(item_id), stubs,
+                                               answers, cache_dir, generation)
+            return await asyncio.to_thread(_shape_item, raw, cache_dir, generation)
+        except OSError as e:
+            raise EngineError('api', f'{kind} {item_id}: {e.strerror or e}') from e
+
+    async def _whole_relationship(self, client, raw, name):
+        """`raw` with its relationship `name` whole: Apple's `next` links followed (at most
+        RELATIONSHIP_PAGES of them) and their resources added to its `data`."""
+        relationships = raw.get('relationships')
+        relationship = relationships.get(name) if isinstance(relationships, dict) else None
+        if not isinstance(relationship, dict) or not relationship.get('next'):
+            return raw
+        data = api.page_data(relationship)
+        link = relationship.get('next')
+        for _ in range(RELATIONSHIP_PAGES):
+            if not isinstance(link, str) or not link.startswith('/v1/'):
+                break
+            answer = await self._api(client, link, timeout=READ_TIMEOUT)
+            page = api.page_data(answer)
+            if not page:
+                break
+            data += page
+            link = answer.get('next')
+        else:
+            log.warning('%s of %s: more than %d pages, the rest left out', name, raw.get('id'),
+                        RELATIONSHIP_PAGES)
+        whole = {key: value for key, value in relationship.items() if key != 'next'}
+        return dict(raw, relationships=dict(relationships, **{name: dict(whole, data=data)}))
+
+    async def _artist_albums(self, raw, item_id, storefront):
+        """An artist's album stubs and each album's answer with its tracks, in order (None
+        where one failed): ALBUM_BATCH at a time in the page, not one round trip per album."""
+        relationships = raw.get('relationships') or {}
+        stubs = api.page_data(relationships.get('albums'))
+        endpoints = [api.album_endpoint(stub.get('id'), storefront) for stub in stubs]
+        answers = []
+        for start in range(0, len(endpoints), ALBUM_BATCH):
+            batch = endpoints[start:start + ALBUM_BATCH]
+            try:
+                answers += await self.api_all(batch, timeout=60)
+            except EngineError as e:
+                if e.code == 'engine-down':
+                    raise
+                log.warning('the albums of artist %s: %s', item_id, e)
+                answers += [None] * len(batch)
+        return stubs, answers
 
     async def signin(self, timeout=SIGNIN_TIMEOUT):
         """Until MusicKit is authorized: the bridge asks the page to authorize (Apple's sign-in
@@ -866,7 +918,7 @@ class Engine(GObject.Object):
                     log.debug('sign-in poll: %s', e)  # the page is navigating, mostly
                     status = None
                 if isinstance(status, dict) and status.get('authorized'):
-                    self.authorized = True
+                    self._take_status(status)
                     log.info('signed in')
                     return True
                 if loop.time() >= deadline:
@@ -915,10 +967,12 @@ class Engine(GObject.Object):
     # outcome shows up as MusicKit events (the `event` signal), which is where the Player
     # takes its state from, not from these answers.
 
-    async def _require_signed_in(self):
+    async def _require_signed_in(self, what):
+        """The client, for a command of the account's: 'not-signed-in' ("sign in to Apple
+        Music to <what>") when MusicKit is not authorized."""
         client = await self._ready()
         if not self.authorized:
-            raise EngineError('not-signed-in', 'sign in to Apple Music to play')
+            raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
         return client
 
     async def play(self, kind, item_id, start_with=None, shuffle=False):
@@ -926,7 +980,7 @@ class Engine(GObject.Object):
         id, from queue position `start_with` (a track row), shuffled when asked: the
         bridge's play(), that is mk.setQueue({kind: id, startWith, startPlaying}) and
         mk.play(). Needs a signed-in engine: library ids and full songs are the account's."""
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('play')
         if not kind or item_id in (None, ''):
             raise EngineError('usage', 'play needs a kind and an id')
         options = {'startWith': int(start_with or 0), 'shuffle': bool(shuffle)}
@@ -934,12 +988,12 @@ class Engine(GObject.Object):
 
     async def play_next(self, kind, item_id):
         """Queue an item right after the one playing (mk.playNext)."""
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('play')
         await client.bridge('playNext', str(kind), str(item_id), timeout=PLAY_TIMEOUT)
 
     async def play_later(self, kind, item_id):
         """Queue an item at the end (mk.playLater)."""
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('play')
         await client.bridge('playLater', str(kind), str(item_id), timeout=PLAY_TIMEOUT)
 
     async def control(self, action):
@@ -1037,12 +1091,6 @@ class Engine(GObject.Object):
     # is EngineError('api') with Apple's "HTTP 403 Forbidden: …"), and the reads beside them
     # (rating, catalog_url), each needing a signed-in engine.
 
-    async def _require_account(self, what):
-        client = await self._ready()
-        if not self.authorized:
-            raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
-        return client
-
     async def love(self, kind, item_id):
         """Love (favourite) a song, album, playlist, station or music video: PUT
         /v1/me/ratings/<type>s/<id> with the value 1. A library id rates the library item,
@@ -1055,7 +1103,7 @@ class Engine(GObject.Object):
 
     async def _rate(self, kind, item_id, love):
         rated = resource_type(kind, item_id)
-        client = await self._require_account('rate items')
+        client = await self._require_signed_in('rate items')
         await client.bridge('rating', rated, str(item_id), bool(love))
         self.emit('rated', str(kind), str(item_id), 1 if love else 0)
 
@@ -1064,7 +1112,7 @@ class Engine(GObject.Object):
         /v1/me/ratings/<type>s?ids=<id>, which answers an empty list for an item without
         one, where the single-item path answers a 404)."""
         rated = resource_type(kind, item_id)
-        client = await self._require_account('read ratings')
+        client = await self._require_signed_in('read ratings')
         answer = await self._api(client, f'/v1/me/ratings/{rated}s', {'ids': str(item_id)},
                                  timeout=READ_TIMEOUT)
         value = 0
@@ -1084,7 +1132,7 @@ class Engine(GObject.Object):
             raise EngineError('usage', f'cannot add {kind or "nothing"} to the library')
         if is_library_id(item_id):
             raise EngineError('usage', f'{item_id} is in the library already')
-        client = await self._require_account('add to your library')
+        client = await self._require_signed_in('add to your library')
         await client.bridge('addToLibrary', api.RESOURCE_TYPES[kind], str(item_id))
 
     async def catalog_url(self, kind, item_id):
@@ -1094,7 +1142,7 @@ class Engine(GObject.Object):
         rated = resource_type(kind, item_id)
         if not rated.startswith('library-') or rated == 'library-station':
             raise EngineError('usage', f'{item_id} is not a library item')
-        client = await self._require_account('look items up')
+        client = await self._require_signed_in('look items up')
         try:
             answer = await self._api(client, f'/v1/me/library/{rated[len("library-"):]}s/'
                                              f'{item_id}/catalog', timeout=READ_TIMEOUT)
@@ -1116,7 +1164,7 @@ class Engine(GObject.Object):
         if not is_library_id(playlist_id) or not song_id:
             raise EngineError('usage', 'add to playlist needs a library playlist and a song')
         song_type = 'library-songs' if is_library_id(song_id) else 'songs'
-        client = await self._require_account('add to playlists')
+        client = await self._require_signed_in('add to playlists')
         await client.bridge('addToPlaylist', playlist_id, song_id, song_type)
 
     # -- search and browsing -------------------------------------------------------------
@@ -1134,7 +1182,7 @@ class Engine(GObject.Object):
         term = ' '.join(str(term or '').split())
         if not term:
             raise EngineError('usage', 'search needs a term')
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('search')
         raw = await client.bridge('search', term, int(limit), timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'search')
         return await asyncio.to_thread(normalize.search_results, raw, str(self.cache_dir))
@@ -1145,7 +1193,7 @@ class Engine(GObject.Object):
         term = ' '.join(str(term or '').split())
         if not term:
             raise EngineError('usage', 'suggest needs a term')
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('search')
         raw = await client.bridge('suggest', term, int(limit), timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'suggestions')
         return await asyncio.to_thread(normalize.search_suggestions, raw, str(self.cache_dir))
@@ -1168,7 +1216,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('browse')
         raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'search landing')
         return await asyncio.to_thread(_shape_and_keep, normalize.search_landing, raw, path,
@@ -1186,7 +1234,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('browse')
         raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, f'category {category_id}')
         return await asyncio.to_thread(_shape_and_keep, normalize.category_page, raw, path,
@@ -1203,8 +1251,8 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
-        client = await self._require_signed_in()
-        storefront = str((await self.status()).get('storefront') or 'us')
+        client = await self._require_signed_in('browse')
+        storefront = await self._current_storefront()
         raw = await self._api(client, api.BROWSE_ENDPOINT.format(storefront=storefront),
                               api.BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
         return await asyncio.to_thread(_shape_and_keep, normalize.editorial_shelves, raw, path,
@@ -1220,7 +1268,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(cache.read_kept, path)
         if kept is not None:
             return kept
-        client = await self._require_signed_in()
+        client = await self._require_signed_in('browse')
         raw = await self._api(client, api.RECOMMENDATIONS_ENDPOINT, api.RECOMMENDATIONS_PARAMS,
                               timeout=BROWSE_TIMEOUT)
         return await asyncio.to_thread(
