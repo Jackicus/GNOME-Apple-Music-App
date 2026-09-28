@@ -246,6 +246,25 @@ class BridgeTest(unittest.TestCase):
                                          'duration': 0, 'shuffle': 'off', 'repeat': 'none',
                                          'volume': 1})
 
+    # -- search ----------------------------------------------------------------------------
+
+    @scenario("""
+        mk.apiAnswers['/v1/catalog/gb/search'] = {results: {}};
+        mk.apiAnswers['/v1/catalog/gb/search/suggestions'] = {results: {}};
+        const search = await bridge.search('harbour', 5);
+        const suggest = await bridge.suggest('harb');
+        return {search, suggest, calls: mk.calls};
+    """)
+    def test_search_and_suggest_ask_the_catalog(self, value):
+        self.assertEqual(value['search'], {'results': {}})
+        self.assertEqual(value['calls'], [
+            ['api.music', '/v1/catalog/gb/search',
+             {'term': 'harbour', 'types': 'albums,artists,music-videos,playlists,songs,stations',
+              'limit': 5, 'with': 'topResults'}],
+            ['api.music', '/v1/catalog/gb/search/suggestions',
+             {'term': 'harb', 'kinds': 'terms,topResults',
+              'types': 'albums,artists,music-videos,playlists,songs,stations', 'limit': 10}]])
+
     # -- writes ----------------------------------------------------------------------------
 
     @scenario("""

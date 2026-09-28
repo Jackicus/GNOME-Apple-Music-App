@@ -43,7 +43,7 @@ RELAY = pathlib.Path(__file__).parent / 'fake_chrome_relay.py'
 warnings.filterwarnings('ignore', r"'asyncio\.\w*policy\w*' is deprecated", DeprecationWarning)
 PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
                     'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
-                    'search', 'suggest', 'searchAndSuggest', 'searchLanding', 'category',
+                    'search', 'suggest', 'searchLanding', 'category',
                     'rating', 'addToLibrary', 'addToPlaylist')
 
 
@@ -558,7 +558,7 @@ class LifecycleTest(EngineFixture):
     # -- a Chrome already on the profile ----------------------------------------------------
 
     def leftover(self, lock=True):
-        """A Chrome another process left on the profile (scripts/am.py's, or one an app crash
+        """A Chrome another process left on the profile (the debug CLI's, or one an app crash
         left): a live process with the profile on its command line, which the profile's
         SingletonLock names."""
         self.profile.mkdir(parents=True, exist_ok=True)
@@ -894,7 +894,7 @@ class LifecycleTest(EngineFixture):
 
 
 class PlaybackTest(EngineFixture):
-    """The playback commands: thin calls into the bridge, their arguments as am.py sent
+    """The playback commands: thin calls into the bridge, their arguments as the bridge takes
     them, their answers shaped, and the errors when the engine is down or signed out."""
 
     async def up(self, authorized=True):
@@ -1061,9 +1061,9 @@ class PlaybackTest(EngineFixture):
 
 
 class LibraryWriteTest(EngineFixture):
-    """love, unlove, rating, add_to_library, playlists, add_to_playlist and catalog_url: the
-    bridge calls am.py made, with the API's types for library and catalog ids, all needing a
-    signed-in engine. The fake page records the writes; nothing reaches Apple."""
+    """love, unlove, rating, add_to_library, add_to_playlist and catalog_url: the bridge
+    calls, with the API's types for library and catalog ids, all needing a signed-in engine.
+    The fake page records the writes; nothing reaches Apple."""
 
     async def up(self, authorized=True):
         self.page.authorized = authorized
@@ -1125,16 +1125,6 @@ class LibraryWriteTest(EngineFixture):
                 await self.engine.add_to_library(kind, item_id)
             self.assertEqual(raised.exception.code, 'usage')
 
-    async def test_playlists_are_the_editable_ones(self):
-        await self.up()
-        self.page.api_answers['/v1/me/library/playlists'] = {'data': [
-            {'id': 'p.1', 'attributes': {'name': 'Road Trip', 'canEdit': True}},
-            {'id': 'p.2', 'attributes': {'name': 'Favourite Songs', 'canEdit': False}},
-            {'id': 'p.3', 'attributes': {'name': 'Kitchen'}},
-            {'id': '', 'attributes': {'name': 'Nameless'}}]}
-        self.assertEqual(await self.engine.playlists(), [
-            {'id': 'p.1', 'title': 'Road Trip'}, {'id': 'p.3', 'title': 'Kitchen'}])
-
     async def test_add_to_playlist_types_the_song(self):
         await self.up()
         await self.engine.add_to_playlist('p.1', 'i.song1')
@@ -1180,14 +1170,14 @@ class LibraryWriteTest(EngineFixture):
 
     async def test_writes_need_a_signed_in_engine(self):
         for coro in (self.engine.love('song', '1'), self.engine.rating('song', '1'),
-                     self.engine.add_to_library('song', '1'), self.engine.playlists(),
+                     self.engine.add_to_library('song', '1'),
                      self.engine.add_to_playlist('p.1', '1')):
             with self.assertRaises(EngineError) as raised:
                 await coro
             self.assertEqual(raised.exception.code, 'engine-down')
         await self.up(authorized=False)
         for coro in (self.engine.unlove('song', '1'), self.engine.rating('song', '1'),
-                     self.engine.add_to_library('album', '1'), self.engine.playlists(),
+                     self.engine.add_to_library('album', '1'),
                      self.engine.add_to_playlist('p.1', 'i.1'),
                      self.engine.catalog_url('album', 'l.1')):
             with self.assertRaises(EngineError) as raised:
@@ -1204,8 +1194,8 @@ def curator(curator_id, name, short=None):
 
 
 class SearchTest(EngineFixture):
-    """search, suggest, landing, category, browse and made_for_you: the bridge calls as the
-    extension's am.py made them, the shaping, and the day-long caches."""
+    """search, suggest, landing, category, browse and made_for_you: the bridge calls, the
+    shaping, and the day-long caches."""
 
     async def up(self, authorized=True):
         self.page.authorized = authorized
@@ -1229,7 +1219,7 @@ class SearchTest(EngineFixture):
         await self.up()
         self.page.bridge_answers['search'] = self.fixture('search_results.json')
         answer = await self.engine.search('  paper   parachutes ')
-        self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper parachutes', False, 20))
+        self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper parachutes', 20))
         self.assertEqual([shelf['key'] for shelf in answer['shelves']],
                          ['artists', 'songs', 'albums', 'playlists'])
         self.assertEqual(answer['shelves'][2]['key'], 'albums')
@@ -1239,29 +1229,9 @@ class SearchTest(EngineFixture):
         self.assertEqual(album['groups'], [])
         self.assertTrue(album['art'].startswith('https://'))  # not on disk: a catalog URL
         self.assertIsNone(album['thumb'])
-        # The library's search, with a limit.
-        await self.engine.search('paper', library=True, limit=5)
-        self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper', True, 5))
-
-    async def test_search_with_suggestions_in_one_round_trip(self):
-        await self.up()
-        self.page.bridge_answers['searchAndSuggest'] = {
-            'search': self.fixture('search_results.json'),
-            'suggestions': {'results': {'suggestions': [
-                {'kind': 'terms', 'searchTerm': 'paper', 'displayTerm': 'paper'},
-                {'kind': 'terms', 'searchTerm': 'paper parachutes',
-                 'displayTerm': 'paper parachutes'},
-                {'kind': 'terms', 'searchTerm': 'paper planes', 'displayTerm': 'paper planes'},
-            ]}}}
-        answer = await self.engine.search('paper', suggest=2)
-        self.assertEqual(self.page.bridge_calls[-1], ('searchAndSuggest', 'paper', False, 20, 2))
-        self.assertEqual([term['term'] for term in answer['terms']], ['paper', 'paper parachutes'])
-        self.assertEqual(len(answer['shelves']), 4)
-        # No suggestions (the page's promise failed): a search all the same.
-        self.page.bridge_answers['searchAndSuggest'] = {
-            'search': self.fixture('search_results.json'), 'suggestions': None}
-        answer = await self.engine.search('paper', suggest=3)
-        self.assertEqual((len(answer['shelves']), answer['terms']), (4, []))
+        # With a limit (per kind).
+        await self.engine.search('paper', limit=5)
+        self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper', 5))
 
     async def test_search_errors(self):
         await self.up()
