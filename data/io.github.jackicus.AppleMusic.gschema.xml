@@ -73,6 +73,16 @@
       <summary>When the library was last synced, for the development build's own cache</summary>
       <description>As last-sync, for the development build.</description>
     </key>
+    <key name="last-page-devel" type="s">
+      <default>'home'</default>
+      <summary>Last page shown, for the development build's own library</summary>
+      <description>As last-page, for the development build.</description>
+    </key>
+    <key name="expanded-folders-devel" type="as">
+      <default>[]</default>
+      <summary>Expanded playlist folders, for the development build's own library</summary>
+      <description>As expanded-folders, for the development build.</description>
+    </key>
     <key name="sync-interval" type="i">
       <range min="0" max="168"/>
       <default>6</default>

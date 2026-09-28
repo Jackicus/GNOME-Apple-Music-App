@@ -75,7 +75,8 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._settings = self.get_application().settings
-        self._account_key = self.get_application().account_key  # this build's key for a setting
+        # The build's key for a setting of the account's (the .Devel build has its own).
+        self._account_key = self.get_application().account_key
         self._library = self.get_application().library
         self._destinations = {}  # the fixed sections' Adw.SidebarItem -> Destination
         self._destination_keys = {}  # key -> Destination, every fixed destination
@@ -83,7 +84,7 @@ class Window(Adw.ApplicationWindow):
         self._roots = {}  # sidebar key -> its root Adw.NavigationPage, once visited
         self._recent_roots = OrderedDict()  # playlist/folder keys in _roots, least recent first
         self._positions = {}  # sidebar key -> position in the Playlists section
-        self._expanded = set(self._settings.get_strv('expanded-folders'))
+        self._expanded = set(self._settings.get_strv(self._account_key('expanded-folders')))
         self._shown = None  # the key whose root page is at the bottom of the navigation stack
         self._quiet = False  # the selection changes, but not by the user: show nothing
         self._quitting = False
@@ -99,7 +100,7 @@ class Window(Adw.ApplicationWindow):
                                     self.bottom_sheet)
         self._library_handler = self._library.connect('changed', self._on_library_changed)
         self._restore_window_state()
-        self._restore_page(self._settings.get_string('last-page'))
+        self._restore_page(self._settings.get_string(self._account_key('last-page')))
 
         # The account button and the banner follow the signed-in and account-name keys, and
         # the button is off while signing out; the sync banner follows the app's sync
@@ -793,7 +794,7 @@ class Window(Adw.ApplicationWindow):
         if self._expanded_save is not None:
             GLib.source_remove(self._expanded_save)
             self._expanded_save = None
-        self._settings.set_strv('expanded-folders', sorted(self._expanded))
+        self._settings.set_strv(self._account_key('expanded-folders'), sorted(self._expanded))
 
     def _save_window_state(self):
         """The settings the window keeps, written as it closes or hides: its size, the page
@@ -804,7 +805,7 @@ class Window(Adw.ApplicationWindow):
         self._settings.set_int('window-height', height)
         self._settings.set_boolean('window-maximized', self.is_maximized())
         if self._shown is not None:
-            self._settings.set_string('last-page', self._shown)
+            self._settings.set_string(self._account_key('last-page'), self._shown)
         self._write_expanded()
 
     def prepare_quit(self):

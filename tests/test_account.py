@@ -47,6 +47,9 @@ class FakeEngine(GObject.Object):
         self.closed_after_signin = False
         self.name = 'Invented Person'
         self.name_gate = None
+        self.unauthorize_waits = False
+        self.refuse_starts = None
+        self.refused_at_stop = None
 
     async def start(self, visible=None):
         self.calls.append(('start', visible))
@@ -83,10 +86,13 @@ class FakeEngine(GObject.Object):
 
     async def unauthorize(self, timeout=None):
         self.calls.append('unauthorize')
+        if self.unauthorize_waits:
+            await asyncio.get_running_loop().create_future()
         return True
 
     async def stop(self, grace=None):
         self.calls.append('stop')
+        self.refused_at_stop = self.refuse_starts
         self.state = 'down'
 
 
@@ -218,9 +224,14 @@ class SignOutTest(AccountTestCase):
         app = self.make_app()
         app.settings.set_string('last-page', 'playlist:p.pl123')
         await account.sign_out(app)
-        self.assertEqual(self.calls, ['unauthorize', 'bump', 'cancel', 'stop', 'wipe',
-                                      'refresh-art', 'load', 'forget-pages'])
+        # The sync first (revoking the session would fail it), the generation bumped before
+        # the wipe, and once more at the end for what a page fetched meanwhile.
+        self.assertEqual(self.calls, ['cancel', 'unauthorize', 'bump', 'stop', 'wipe',
+                                      'refresh-art', 'load', 'forget-pages', 'bump'])
         self.assertEqual(app.library_sync.held_while, [True])
+        # No Chrome may start while the profile goes; after, it may again.
+        self.assertEqual(app.engine.refused_at_stop, 'signing out')
+        self.assertIsNone(app.engine.refuse_starts)
         self.assertEqual(app.toasts, ['Signed out'])
         self.assertFalse(app.signing_out)
         for key in ACCOUNT_KEYS:
@@ -239,7 +250,7 @@ class SignOutTest(AccountTestCase):
     async def test_a_stopped_engine_is_started_to_revoke(self):
         app = self.make_app(engine_state='down')
         await account.sign_out(app)
-        self.assertEqual(self.calls[:3], [('start', False), 'unauthorize', 'bump'])
+        self.assertEqual(self.calls[:4], ['cancel', ('start', False), 'unauthorize', 'bump'])
 
     async def test_an_engine_that_will_not_start_does_not_stop_the_wipe(self):
         app = self.make_app(engine_state='down')
@@ -266,7 +277,22 @@ class SignOutTest(AccountTestCase):
         app = self.make_app(engine_state='down')
         app.settings.set_boolean('signed-in', False)
         await account.sign_out(app)
-        self.assertEqual(self.calls[0], 'bump')
+        self.assertEqual(self.calls[:2], ['cancel', 'bump'])
+
+    async def test_quitting_cuts_the_revocation_short_and_the_wipe_goes_on(self):
+        app = self.make_app()
+        app.engine.unauthorize_waits = True
+        task = asyncio.ensure_future(account.sign_out(app))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertIsNotNone(app.revocation)
+        app.revocation.cancel()  # as the quit does
+        with self.assertLogs('applemusic.account', 'INFO'):
+            await task
+        self.assertIn('wipe', self.calls)
+        self.assertFalse(app.settings.get_boolean('signed-in'))
+        self.assertFalse(self.profile.exists())
+        self.assertIsNone(app.revocation)
 
     async def test_demo_does_nothing(self):
         app = self.make_app()

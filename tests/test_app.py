@@ -168,6 +168,31 @@ class QuitTest(AppTestCase):
         await app._quit()
         self.assertEqual(cancelled, [True])
 
+    async def test_a_sign_out_under_way_is_let_finish(self):
+        app = self.app
+        order = []
+        revocation = app.revocation = asyncio.ensure_future(
+            asyncio.get_running_loop().create_future())
+
+        async def sign_out():
+            await asyncio.wait([revocation])  # as account.sign_out() waits for it
+            await asyncio.sleep(0.05)  # the wipe
+            order.append('wiped')
+
+        async def finish():
+            await asyncio.get_running_loop().create_future()  # the name read, say
+
+        app._sign_out_task = asyncio.ensure_future(sign_out())
+        app.sign_in_finish = asyncio.ensure_future(finish())
+        await asyncio.sleep(0)
+        app.engine.calls = order
+        await app._quit()
+        self.assertTrue(revocation.cancelled())
+        self.assertTrue(app.sign_in_finish.cancelled())
+        self.assertEqual(order, [('stop', main.QUIT_GRACE), 'wiped', 'quit'])
+        app.settings.set_boolean('signed-in', True)
+        self.assertIsNone(app.library_sync.start())  # held: nothing starts while quitting
+
     def test_activating_while_quitting_shows_nothing(self):
         self.app._quitting = object()
         self.app.do_activate()  # no window made: the stand-ins have none to give

@@ -295,6 +295,9 @@ class Engine(GObject.Object):
         self.close_wait = CLOSE_WAIT
         self.probe_timeout = PROBE_TIMEOUT
         self.api_retry_delay = API_RETRY_DELAY
+        # While set (a reason), start() refuses with 'engine-down': sign-out sets it while it
+        # stops Chrome and deletes the profile, which a Chrome started meanwhile would rewrite.
+        self.refuse_starts = None
         self._client = None
         self._process = None   # the Gio.Subprocess running Chrome
         self._pid = None       # its pid
@@ -377,9 +380,12 @@ class Engine(GObject.Object):
                 headless = self.prefer_headless
             else:
                 headless = not visible
+            if self.state != 'down' and self.headless == headless:
+                return
+            if self.refuse_starts:  # checked here: a start may have waited for a stop's lock
+                raise EngineError('engine-down',
+                                  f'the engine cannot start now: {self.refuse_starts}')
             if self.state != 'down':
-                if self.headless == headless:
-                    return
                 log.info('the engine is %s; restarting it %s',
                          'headless' if self.headless else 'visible',
                          'headless' if headless else 'visible')

@@ -1810,6 +1810,26 @@ class KeptAfterWipeTest(unittest.TestCase):
         self.assertEqual(list(cache.iterdir()), [])
 
 
+class RefuseStartsTest(unittest.IsolatedAsyncioTestCase):
+    """Engine.refuse_starts: sign-out's guard while it deletes the profile."""
+
+    async def test_a_refused_start_spawns_nothing(self):
+        engine = Engine(profile_dir=tempfile.mkdtemp(prefix='refused-'))
+        self.addCleanup(shutil.rmtree, engine.profile_dir, ignore_errors=True)
+        engine.refuse_starts = 'signing out'
+        with mock.patch.object(chrome, 'find_chrome',
+                               side_effect=AssertionError('looked for Chrome')):
+            with self.assertRaises(EngineError) as raised:
+                await engine.start()
+            self.assertEqual(raised.exception.code, 'engine-down')
+            self.assertEqual(engine.state, 'down')
+            # A running engine in the mode asked for is kept, refused or not.
+            engine.state = 'up'
+            await engine.start()
+            await engine.start(visible=False)
+        engine.refuse_starts = None
+
+
 class BrowserVersionTest(unittest.IsolatedAsyncioTestCase):
     """Engine.browser_version(): the About dialog's line on Chrome, from a stand-in client."""
 

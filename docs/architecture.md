@@ -85,12 +85,13 @@ widgets.
   sync, restarts Chrome visible on music.apple.com and waits until MusicKit is authorized;
   from then on it is committed (the dialog closes, closing Chrome's window changes nothing),
   and it reads the account name if it can, restarts Chrome headless (if `engine-headless` is
-  on) and syncs. Sign-out asks first, then revokes the Apple
-  session through MusicKit (starting a stopped engine for it, 20 seconds at most), stops every
-  job that writes the cache (the cache's generation is bumped, the sync cancelled and waited
-  for, its thread included), stops Chrome, deletes the profile and what the cache holds,
-  forgets the account's settings and pages, and empties the library. Clear Cache stops the
-  cache's writers the same way before it deletes anything.
+  on) and syncs. Sign-out asks first, then stops the sync (waited for, its thread included),
+  revokes the Apple session through MusicKit (starting a stopped engine for it, 20 seconds at
+  most), stops every other job that writes the cache (the cache's generation is bumped),
+  stops Chrome and keeps it from starting, deletes the profile and what the cache holds,
+  forgets the account's settings and pages, and empties the library; quitting meanwhile cuts
+  only the revocation short. Clear Cache stops the cache's writers the same way before it
+  deletes anything.
 - **Quitting.** Every way out (Ctrl+Q, closing the window, MPRIS Quit, SIGINT or SIGTERM)
   activates `app.quit`: the windows save their state, close their dialogs and hide, a start of
   the engine the app asked for is cancelled, and the sync (its thread included) and Chrome are
@@ -119,7 +120,8 @@ names the process that holds it.
 
 The development build (`-Dprofile=development`) has its own app ID, Chrome profile and cache,
 so it runs beside a release build. It shares the release build's settings, but for the
-sign-in's own: whether it is signed in, the account's name and the last sync (`-devel` keys).
+account's own: whether it is signed in, the account's name, the last sync, the last page and
+the open folders (`-devel` keys).
 
 ## Further reading
 
