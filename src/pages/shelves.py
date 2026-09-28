@@ -17,7 +17,7 @@ from gettext import gettext as _
 from gi.repository import Adw, Gio, Gtk
 
 from ..backend.errors import EngineError
-from ..library import Item, Shelf as ShelfModel
+from ..library import N_, Item, Shelf as ShelfModel
 from ..widgets import artwork
 from ..widgets.shelf import Shelf
 from ..widgets.util import connect_weak
@@ -27,11 +27,37 @@ log = logging.getLogger(__name__)
 # Thumbnails fetched at once for a page of shelves (the downloads run in threads).
 ART_CONCURRENCY = 6
 
+# The headings of a search's shelves, by the key the engine gives each (normalize.search_results).
+SEARCH_TITLES = {
+    # Translators: the first shelf of a search's results: Apple's best few hits of any kind.
+    'top': N_('Top Results'),
+    'artists': N_('Artists'),
+    'albums': N_('Albums'),
+    'songs': N_('Songs'),
+    'playlists': N_('Playlists'),
+    'music-videos': N_('Music Videos'),
+    'stations': N_('Stations'),
+}
+
+
+def shelf_title(data):
+    """A shelf's heading in the app's language: the name of its kind for a search's shelf
+    (SEARCH_TITLES, by key), 'Featured' for the New page's banners, Apple's own title for the
+    rest (it comes in the account's language), and 'Made for You' for a recommendation that
+    has none."""
+    if data.get('featured'):
+        # Translators: the shelf of banners at the top of the New page.
+        return _('Featured')
+    title = SEARCH_TITLES.get(str(data.get('key') or ''))
+    if title is not None:
+        return _(title)
+    return str(data.get('title') or '') or _('Made for You')
+
 
 def remote_shelves(dicts):
-    """library.Shelf objects for the engine's shelf dicts ({key, title, items}), the items
-    wrapped as Items with their artwork under remote-art; a shelf with nothing in it, or an
-    item without an id and a kind, is left out."""
+    """library.Shelf objects for the engine's shelf dicts ({key, title, items}), titled by
+    shelf_title(), the items wrapped as Items with their artwork under remote-art; a shelf with
+    nothing in it, or an item without an id and a kind, is left out."""
     shelves = []
     for data in dicts or []:
         if not isinstance(data, dict):
@@ -39,8 +65,7 @@ def remote_shelves(dicts):
         items = [Item(artwork.remote_item(entry)) for entry in data.get('items') or []
                  if isinstance(entry, dict) and entry.get('id') and entry.get('kind')]
         if items:
-            shelves.append(ShelfModel(str(data.get('key') or ''), str(data.get('title') or ''),
-                                      items))
+            shelves.append(ShelfModel(str(data.get('key') or ''), shelf_title(data), items))
     return shelves
 
 

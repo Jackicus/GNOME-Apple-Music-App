@@ -10,12 +10,17 @@ import gi
 
 from tests import ROOT
 
-from applemusic.backend import config
+from applemusic.backend import config, normalize
 
 gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import GdkPixbuf  # noqa: E402
 
 REPO_DIR = str(ROOT)
+
+
+# The numbers each kind of Item carries for its caption, as the normaliser writes them.
+COUNTS = {'album': ('trackCount', 'durationMs'), 'playlist': ('trackCount', 'durationMs'),
+          'artist': ('albumCount',), 'video': ('durationMs',)}
 
 
 class TestDemoLibrarySchema(unittest.TestCase):
@@ -112,10 +117,14 @@ class TestDemoLibrarySchema(unittest.TestCase):
         self.assertIsInstance(item, dict)
         for field in (
             'id', 'kind', 'title', 'subtitle', 'year', 'genre',
-            'summary', 'art', 'thumb', 'artColor', 'countLabel', 'explicit',
+            'summary', 'art', 'thumb', 'artColor', 'explicit',
             'catalogId', 'url', 'play', 'groups'
         ):
             self.assertIn(field, item, f'Item missing field: {field}')
+        # Counts, never words: the app makes those (library.Item.count_text).
+        self.assertNotIn('countLabel', item)
+        for field in COUNTS.get(item['kind'], ()):
+            self.assertIsInstance(item[field], int, f'{item["kind"]} {field}')
 
         self.assertIn(item['kind'], {'album', 'playlist', 'artist', 'station', 'video'})
         self.assertTrue(isinstance(item['id'], str) and item['id'])
@@ -183,6 +192,8 @@ class TestDemoLibrarySchema(unittest.TestCase):
             for expected_idx, track in enumerate(total_tracks):
                 self.assertEqual(track['index'], expected_idx)
                 self.assertEqual(track['album'], alb['title'])
+            self.assertEqual(alb['trackCount'], len(total_tracks))
+            self.assertEqual(alb['durationMs'], sum(t['durationMs'] for t in total_tracks))
 
         self.assertTrue(two_disc_found, 'Expected at least one 2-disc album')
 
@@ -194,8 +205,10 @@ class TestDemoLibrarySchema(unittest.TestCase):
             self.assertEqual(artist['play']['kind'], 'artist')
             self.assertEqual(artist['play']['id'], artist['id'])
 
+            self.assertEqual(artist['subtitle'], '')  # no word of the data's
             # Groups represent albums
             self.assertGreater(len(artist['groups']), 0)
+            self.assertEqual(artist['albumCount'], len(artist['groups']))
             for group in artist['groups']:
                 self.assertTrue(group['name'])
                 self.assertEqual(group['play']['kind'], 'album')
@@ -216,6 +229,7 @@ class TestDemoLibrarySchema(unittest.TestCase):
             self.assertGreater(len(group['entries']), 0)
             for idx, track in enumerate(group['entries']):
                 self.assertEqual(track['index'], idx)
+            self.assertEqual(pl['trackCount'], len(group['entries']))
 
     def test_one_favourites_playlist(self):
         # The flag the app looks for (applemusic.library.FAVOURITES) is on one playlist only, and
@@ -264,7 +278,6 @@ class TestDemoLibrarySchema(unittest.TestCase):
             self.assertEqual(st['play']['kind'], 'station')
             self.assertEqual(st['play']['id'], st['id'])
             self.assertEqual(st['groups'], [])
-            self.assertEqual(st['countLabel'], 'Radio Station')
 
     def test_music_videos_detail(self):
         # The Item shape the sync gives a library music video (normalize_item): a song's
@@ -279,11 +292,30 @@ class TestDemoLibrarySchema(unittest.TestCase):
             self.assertEqual(video['groups'], [])
             self.assertIsNone(video['summary'])
             self.assertIn(video['subtitle'], artists)
-            self.assertRegex(video['countLabel'], r'^\d+:\d{2}$')
+            self.assertGreater(video['durationMs'], 0)
             _fmt, width, height = GdkPixbuf.Pixbuf.get_file_info(video['art'])
             self.assertEqual((width, height), (config.COVER_SIZE, config.COVER_SIZE * 9 // 16))
             _fmt, width, height = GdkPixbuf.Pixbuf.get_file_info(video['thumb'])
             self.assertEqual((width, height), (config.THUMB_SIZE, config.THUMB_SIZE * 9 // 16))
+
+    def test_the_demo_has_the_normalisers_shapes(self):
+        # Each kind of Item has the keys the real sync gives it (normalize), no more, no less,
+        # apart from this app's own additions (library.json's `attributes`, `artUrl`).
+        real = {
+            'album': normalize.normalize_album({'id': 'l.a', 'attributes': {'name': 'A'}}),
+            'playlist': normalize.normalize_playlist({'id': 'p.1', 'attributes': {'name': 'P'}}),
+            'artist': normalize.normalize_artist({'id': 'l.r', 'attributes': {'name': 'R'}}),
+            'station': normalize.normalize_station({'id': 'ra.1', 'attributes': {'name': 'S'}}),
+            'video': normalize.normalize_item({'id': '1', 'type': 'library-music-videos',
+                                               'attributes': {'name': 'V'}}),
+        }
+        additions = {'attributes', 'artUrl'}
+        for name, items in self.data['sections'].items():
+            if name == 'songs':
+                continue  # Tracks, not Items
+            for item in items:
+                with self.subTest(section=name, id=item['id']):
+                    self.assertEqual(set(item) - additions, set(real[item['kind']]))
 
     def test_artwork_at_config_sizes(self):
         with open(os.path.join(self.out_dir, 'art', '.sizes'), encoding='utf-8') as f:

@@ -46,13 +46,6 @@ class TestSync(unittest.TestCase):
         self.assertEqual(normalize.format_duration(3600000), '1:00:00')
         self.assertEqual(normalize.format_duration(3661000), '1:01:01')
 
-    def test_format_count_label(self):
-        self.assertEqual(normalize.format_count_label(1), '1 song')
-        self.assertEqual(normalize.format_count_label(10), '10 songs')
-        self.assertEqual(normalize.format_count_label(12, 43 * 60 * 1000), '12 songs, 43 min')
-        self.assertEqual(normalize.format_count_label(15, 65 * 60 * 1000), '15 songs, 1 hr 5 min')
-        self.assertEqual(normalize.format_count_label(20, 120 * 60 * 1000), '20 songs, 2 hr')
-
     def test_format_color(self):
         self.assertIsNone(normalize.format_color(None))
         self.assertIsNone(normalize.format_color(''))
@@ -181,6 +174,9 @@ class TestSync(unittest.TestCase):
         self.assertEqual(item['summary'], 'A classic easycore record.')
         self.assertEqual(item['artColor'], '#112233')
         self.assertEqual(item['play'], {'kind': 'album', 'id': 'l.alb123'})
+        # Counts, not words: the model says "3 songs, 8 min".
+        self.assertEqual((item['trackCount'], item['durationMs']), (3, 500000))
+        self.assertNotIn('countLabel', item)
 
         # Two discs
         self.assertEqual(len(item['groups']), 2)
@@ -325,8 +321,7 @@ class TestSync(unittest.TestCase):
 
         self.assertEqual([s['key'] for s in out['shelves']],
                          ['top', 'artists', 'songs', 'albums', 'playlists'])
-        self.assertEqual([s['title'] for s in out['shelves']],
-                         ['Top Results', 'Artists', 'Songs', 'Albums', 'Playlists'])
+        self.assertEqual([s['title'] for s in out['shelves']], [''] * 5)  # the page's words
         top = out['shelves'][0]['items']
         self.assertEqual([it['kind'] for it in top], ['song', 'album'])
         self.assertEqual(top[0]['groups'], [])
@@ -366,7 +361,7 @@ class TestSync(unittest.TestCase):
         }}
         out = normalize.search_results(raw, self.tmp_dir)
         self.assertEqual([(s['key'], s['title']) for s in out['shelves']],
-                         [('music-videos', 'Music Videos')])
+                         [('music-videos', '')])
         video = out['shelves'][0]['items'][0]
         self.assertEqual(video['kind'], 'video')
         self.assertEqual(video['title'], 'Orbit Parade')
@@ -490,6 +485,29 @@ class TestSync(unittest.TestCase):
         self.assertEqual(item['subtitle'], 'Apple Music')
         self.assertEqual(item['summary'], 'The new music that matters.')
         self.assertEqual(item['groups'], [])
+
+    def test_counts_are_numbers(self):
+        # Without its tracks (a shelf item): Apple's count, and no total time.
+        shelf_album = normalize.normalize_album({'id': '1', 'attributes': {'name': 'A',
+                                                                           'trackCount': 11}})
+        self.assertEqual((shelf_album['trackCount'], shelf_album['durationMs']), (11, None))
+        empty = normalize.normalize_playlist({'id': 'p.1', 'attributes': {'name': 'P'}}, tracks=[])
+        self.assertEqual((empty['trackCount'], empty['durationMs']), (0, None))
+        playlist = normalize.normalize_playlist(
+            {'id': 'p.2', 'attributes': {'name': 'P'}},
+            tracks=[{'id': 'i.1', 'attributes': {'name': 'T', 'durationInMillis': 61000}}])
+        self.assertEqual((playlist['trackCount'], playlist['durationMs']), (1, 61000))
+        artist = normalize.normalize_artist({'id': 'l.r', 'attributes': {'name': 'R'}},
+                                            albums=[shelf_album, playlist])
+        self.assertEqual(artist['albumCount'], 2)
+        song = normalize.normalize_item({'id': '9', 'type': 'songs',
+                                         'attributes': {'name': 'S', 'durationInMillis': 1000}})
+        self.assertEqual(song['durationMs'], 1000)
+        station = normalize.normalize_station({'id': 'ra.1', 'attributes': {'name': 'S'}})
+        for item in (shelf_album, empty, playlist, artist, song, station):
+            with self.subTest(kind=item['kind']):
+                self.assertNotIn('countLabel', item)
+        self.assertNotIn('trackCount', station)
 
     def test_nothing_is_attributed_to_anyone_made_up(self):
         station = normalize.normalize_station({'id': 'ra.1', 'attributes': {'name': 'S'}})

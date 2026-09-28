@@ -6,8 +6,8 @@ Writes library.json in the shape src/backend/README.md describes, the covers
 and thumbnails it names (drawn here, at config's COVER_SIZE and THUMB_SIZE)
 and the art/.sizes marker, into DIR (default build/demo). Every artist, album,
 song, playlist, station and person in it is invented; only the curator labels
-mimic Apple's own ("Apple Music Chill", "Apple Music Radio"). Vendored from the
-GNOME Shell extension with the backend (see src/backend/__init__.py).
+mimic Apple's own ("Apple Music Chill", "Apple Music Radio"). It came from the
+GNOME Shell extension with the backend, and is this app's own now.
 `--albums N` (N > 40) adds generated albums, by generated artists, to the 40
 hand-written ones, for measuring big libraries: about 12 songs an album, so
 2,500 albums make 30,000 songs, or `--tracks N` songs in all when given (the
@@ -1291,7 +1291,7 @@ PLAYLISTS_DATA = [
 # Apple's has none.
 FAVOURITES_DATA = {
     'title': 'Favourite Songs',
-    'subtitle': 'Apple Music',
+    'subtitle': '',  # a library playlist: no curator
     'summary': 'The songs you love, newest first.',
     'size': 36,
 }
@@ -1416,19 +1416,6 @@ def format_duration(ms):
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f'{minutes}:{seconds:02d}'
-
-
-def format_count_label(track_count, total_ms):
-    """Format count label like '12 songs, 43 min' or '24 songs, 1 hr 25 min'."""
-    mins = round(total_ms / 60000)
-    if mins >= 60:
-        hrs = mins // 60
-        rem_mins = mins % 60
-        time_str = f'{hrs} hr {rem_mins} min' if rem_mins else f'{hrs} hr'
-    else:
-        time_str = f'{mins} min'
-    song_unit = 'song' if track_count == 1 else 'songs'
-    return f'{track_count} {song_unit}, {time_str}'
 
 
 # ---------------------------------------------------------------------------
@@ -1725,7 +1712,6 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             })
 
         total_ms = sum(t['durationMs'] for t in album_all_tracks)
-        count_label = format_count_label(len(album_all_tracks), total_ms)
         album_explicit = any(t['explicit'] for t in album_all_tracks)
 
         album_item = {
@@ -1739,7 +1725,8 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             'art': art_path,
             'thumb': thumb_path,
             'artColor': palette[1],
-            'countLabel': count_label,
+            'trackCount': len(album_all_tracks),
+            'durationMs': total_ms,
             'explicit': album_explicit,
             'catalogId': album_cat_id,
             'url': album_url,
@@ -1773,13 +1760,11 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
 
         artist_albs = artist_albums_map[art_idx - 1]
         artist_groups = []
-        total_songs = 0
         for alb in artist_albs:
             # Flatten tracks from album groups
             alb_tracks = []
             for g in alb['groups']:
                 alb_tracks.extend(g['entries'])
-            total_songs += len(alb_tracks)
 
             artist_groups.append({
                 'name': alb['title'],
@@ -1787,20 +1772,18 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
                 'entries': alb_tracks,
             })
 
-        count_label = f'{len(artist_albs)} albums, {total_songs} songs'
-
         artist_item = {
             'id': artist_id,
             'kind': 'artist',
             'title': art_data['name'],
-            'subtitle': 'Artist',
+            'subtitle': '',
             'year': None,
             'genre': art_data['genre'],
             'summary': art_data['bio'],
             'art': art_path,
             'thumb': thumb_for(art_path),
             'artColor': palette[1],
-            'countLabel': count_label,
+            'albumCount': len(artist_albs),
             'explicit': False,
             'catalogId': artist_cat_id,
             'url': artist_url,
@@ -1866,7 +1849,6 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             })
 
         total_ms = sum(t['durationMs'] for t in playlist_tracks)
-        count_label = format_count_label(len(playlist_tracks), total_ms)
         playlist_explicit = any(t['explicit'] for t in playlist_tracks)
 
         playlist_item = {
@@ -1880,7 +1862,8 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             'art': art_path,
             'thumb': thumb_for(art_path),
             'artColor': palette[1],
-            'countLabel': count_label,
+            'trackCount': len(playlist_tracks),
+            'durationMs': total_ms,
             'explicit': playlist_explicit,
             'catalogId': playlist_cat_id,
             'url': playlist_url,
@@ -1903,7 +1886,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
     draw_cover(
         out_path=art_path,
         title=FAVOURITES_DATA['title'],
-        subtitle=FAVOURITES_DATA['subtitle'],
+        subtitle='Apple Music',  # the picture's words, as before
         badge='PLAYLIST',
         palette=('#2b0914', '#d90429', '#ffb4a2'),
         motif='concentric_rings',
@@ -1940,8 +1923,8 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         'art': art_path,
         'thumb': thumb_for(art_path),
         'artColor': '#d90429',
-        'countLabel': format_count_label(len(favourite_tracks),
-                                         sum(t['durationMs'] for t in favourite_tracks)),
+        'trackCount': len(favourite_tracks),
+        'durationMs': sum(t['durationMs'] for t in favourite_tracks),
         'explicit': any(t['explicit'] for t in favourite_tracks),
         'catalogId': None,
         'url': None,
@@ -1984,7 +1967,6 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             'art': art_path,
             'thumb': thumb_for(art_path),
             'artColor': palette[1],
-            'countLabel': 'Radio Station',
             'explicit': False,
             'catalogId': station_cat_id,
             'url': station_url,
@@ -2027,7 +2009,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             'art': art_path,
             'thumb': thumb_for(art_path),
             'artColor': palette[1],
-            'countLabel': format_duration(dur_ms),
+            'durationMs': dur_ms,
             'explicit': False,
             'catalogId': video_cat_id,
             'url': f"https://music.apple.com/us/music-video/{slug(v_data['title'])}/{video_cat_id}",

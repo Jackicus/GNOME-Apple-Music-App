@@ -54,11 +54,13 @@ class EditorialShelvesTest(unittest.TestCase):
         out = normalize.editorial_shelves(self.raw, self.tmp.name)
         shelves = out['shelves']
         self.assertEqual([(s['key'], s['title'], len(s['items'])) for s in shelves], [
-            ('new-banners', 'Featured', 2),      # the banners' items, the uploaded video left out
+            ('new-banners', '', 2),      # the banners' items, the uploaded video left out
             ('new-best-new-songs', 'Best New Songs', 2),
             ('new-new-releases', 'New Releases', 2),  # the nameless album left out
             ('new-stations', 'Stations', 1),
         ])  # the rooms (links only) and the link row are not shelves
+        # The banners are the one featured shelf, untitled: the New page has the word.
+        self.assertEqual([s.get('featured', False) for s in shelves], [True, False, False, False])
 
     def test_featured_holds_the_banners_items_as_their_kinds(self):
         featured = normalize.editorial_shelves(self.raw, self.tmp.name)['shelves'][0]
