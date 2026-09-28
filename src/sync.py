@@ -108,6 +108,11 @@ CHECK_MIN = 60
 CHECK_MAX = 60 * 60
 RETRY_DELAY = 15 * 60
 
+# The failures a sync reports as any command would (errors.error_message: the engine missing
+# or down, the account signed out), with the button that helps; any other is "Could not
+# sync your library" with Retry.
+REPORTED = ('no-browser', 'engine-down', 'not-signed-in')
+
 
 def interval_index(hours):
     """The INTERVALS position for a sync-interval value; one set outside the choices (the
@@ -553,32 +558,42 @@ def _previous_library(cache_dir):
 # -- the app's sync ----------------------------------------------------------------------
 
 
-def section_names():
-    """What the sync banner calls each progress section (PROGRESS_SECTIONS), translated on
-    call, after gettext is set up."""
+def progress_texts():
+    """{section: (the sentence with a count, the one without)} for each of PROGRESS_SECTIONS,
+    translated on call, after gettext is set up; `{done}` and `{total}` are filled in with
+    the numbers as the locale writes them."""
+    # Translators: the sync banner, while the stations played last and Apple's
+    # recommendations for the Home page are fetched.
+    recommendations = _('Syncing recommendations…')
     return {
-        'songs': _('songs'),
-        'playlists': _('playlists'),
-        'folders': _('folders'),
-        'videos': _('music videos'),
-        'radio': _('radio'),
-        'shelves': _('shelves'),
-        'artwork': _('artwork'),
+        # Translators: the sync banner, while the library's songs are fetched: "Syncing
+        # songs: 300 of 2,000".
+        'songs': (_('Syncing songs: {done} of {total}'), _('Syncing songs…')),
+        # Translators: the sync banner, while each playlist's songs are fetched.
+        'playlists': (_('Syncing playlists: {done} of {total}'), _('Syncing playlists…')),
+        # Translators: the sync banner, while the folders the playlists are in are fetched.
+        'folders': (_('Syncing playlist folders: {done} of {total}'),
+                    _('Syncing playlist folders…')),
+        # Translators: the sync banner, while the library's music videos are fetched.
+        'videos': (_('Syncing music videos: {done} of {total}'), _('Syncing music videos…')),
+        # A step or two each: no count.
+        'radio': (recommendations, recommendations),
+        'shelves': (recommendations, recommendations),
+        # Translators: the sync banner, while the covers' small versions are downloaded.
+        'artwork': (_('Downloading artwork: {done} of {total}'), _('Downloading artwork…')),
     }
 
 
 def progress_text(section, done, total):
-    """The banner's sentence for a progress report: "Syncing your library: songs 300 of
-    2,000". `section` is one of PROGRESS_SECTIONS, or '' before the first."""
-    name = section_names().get(section)
-    if name is None:
+    """The banner's sentence for a progress report (section one of PROGRESS_SECTIONS, '' as
+    the sync starts; total None until known): "Syncing songs: 300 of 2,000"."""
+    texts = progress_texts().get(section)
+    if texts is None:
         return _('Syncing your library…')
-    if total:
-        return _('Syncing your library: {section} {done} of {total}').format(
-            section=name, done=f'{done:n}', total=f'{total:n}')
-    if done:
-        return _('Syncing your library: {section} {done}').format(section=name, done=f'{done:n}')
-    return _('Syncing your library: {section}…').format(section=name)
+    counted, uncounted = texts
+    if not total:
+        return uncounted
+    return counted.format(done=f'{done:n}', total=f'{total:n}')
 
 
 class LibrarySync(GObject.Object):
@@ -701,13 +716,17 @@ class LibrarySync(GObject.Object):
             log.info('sync stopped: %s', error)  # the cache was cleared under it
             return
         except EngineError as error:
-            log.warning('sync: %s', error)
             self._failed_at = self._clock()
-            if error.code == 'not-signed-in':
-                app.report(error)
+            if error.code in REPORTED:
+                app.report(error)  # its sentence, and the button that helps
             else:
-                app.toast(_('Could not sync your library: {message}').format(
-                    message=error.message), _('Retry'), 'app.sync')
+                log.warning('sync: %s', error)
+                app.toast(_('Could not sync your library'), _('Retry'), 'app.sync')
+            return
+        except Exception:
+            self._failed_at = self._clock()
+            log.exception('sync failed')
+            app.toast(_('Could not sync your library'), _('Retry'), 'app.sync')
             return
         finally:
             live[0] = False
