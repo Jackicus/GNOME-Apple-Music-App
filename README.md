@@ -96,8 +96,8 @@ with the window closed, turn on background playback in Preferences.
 The development build uses `~/.local/share/apple-music/chrome-devel/` and
 `~/.cache/apple-music-devel/` instead.
 
-- **Sign Out** (in the account menu at the bottom of the sidebar) stops Chrome
-  and deletes both the Chrome profile and the cache.
+- **Sign Out** (in the account menu at the bottom of the sidebar) signs out of
+  Apple Music, stops Chrome and deletes both the Chrome profile and the cache.
 - **Preferences › General › Cache › Clear** deletes only the cache.
 - To remove everything by hand, quit the app first, then run:
 
@@ -120,8 +120,8 @@ scripts/am.py status    # drive the engine without the GUI (status, eval, now-pl
 ```
 
 The development build installs beside a release build, with its own app ID,
-Chrome profile and cache, and shares the release build's settings (the signed-in
-state included). `--demo` never starts Chrome. `docs/architecture.md` describes
+Chrome profile, cache and sign-in, and shares the release build's other
+settings. `--demo` never starts Chrome. `docs/architecture.md` describes
 the architecture, `CLAUDE.md` the conventions, and `docs/history/build-plan.md`
 holds the plan the app was built from.
 

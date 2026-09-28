@@ -5,17 +5,18 @@
 
 do_startup makes the parts (a picture of them is in CLAUDE.md): the Library, whose first
 load() starts reading library.json at once; the Engine (Chrome, stopped); the Player over it;
-Mpris; LibrarySync (sync.py), which runs the syncs. do_activate builds the Window (imported
-only then) and starts the engine when the settings ask. What happens elsewhere: the sync in
-sync.py, signing out and clearing the cache in account.py, background playback in
-background.py, the startup marks in timing.py, the Keyboard Shortcuts dialog in
-dialogs/shortcuts.py.
+LibrarySync (sync.py), which runs the syncs and schedules them; BackgroundPlayback; Mpris.
+do_activate builds the Window (imported only then) and starts the engine when the settings
+ask. What happens elsewhere: the sync in sync.py, signing in and out and clearing the cache
+in account.py, background playback in background.py, the words for each error in errors.py,
+the startup marks in timing.py, the About and Keyboard Shortcuts dialogs in dialogs/.
 
 Every coroutine the app starts goes through spawn(); every message for the user through
-toast(), and every EngineError through report(). Quitting (app.quit, or closing the window
-while nothing plays in the background) hides the window, stops the engine within
-QUIT_TIMEOUT, and only then quits. --demo shows an invented library without the engine
-(_use_demo).
+toast(), and every EngineError through report(). The account's settings are read through
+account_key() (the development build has its own). Quitting (app.quit, or closing the window
+while nothing plays in the background) hides the window, stops the sync and the engine
+within QUIT_TIMEOUT, and only then quits. --demo shows an invented library without the
+engine, with settings of its own (_use_demo).
 """
 
 import asyncio
@@ -397,8 +398,8 @@ class Application(Adw.Application):
             return
         dialog = Adw.AlertDialog(
             heading=_('Sign Out of Apple Music?'),
-            body=_('The engine stops, and your library, artwork and sign-in cached on this '
-                   'computer are removed.'),
+            body=_('You are signed out of Apple Music, and your library, artwork and sign-in '
+                   'kept on this computer are removed.'),
         )
         dialog.add_response('cancel', _('_Cancel'))
         dialog.add_response('sign-out', _('Sign _Out'))

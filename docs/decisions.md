@@ -18,7 +18,10 @@ changes, change it here, with the date. The plan they came from is in
 - **The development build's own paths** (2026-09-28). The .Devel build has its own cache
   (`$XDG_CACHE_HOME/apple-music-devel`) beside its own Chrome profile, chosen in
   `backend/config.py` from the build profile, so a development sync, Clear Cache or Sign Out
-  never rewrites or deletes the release build's library. The settings stay shared (see Open).
+  never rewrites or deletes the release build's library. The settings are shared but for the
+  sign-in's: `signed-in`, `account-name` and `last-sync` have `-devel` twins for the .Devel
+  build (`Application.account_key()`), whose profile holds a sign-in of its own; a
+  development build starts signed out, with an empty library.
 - **The player at the bottom** (2026-09-27). A full-width bar at the bottom of the window, as
   in GNOME Music, with Now Playing as an `AdwBottomSheet` that slides up over the content and
   holds Lyrics and Up Next. The web player puts its player at the top; the bottom keeps the
@@ -103,6 +106,3 @@ changes, change it here, with the date. The plan they came from is in
 
 - The app icon and the display name "Apple Music" resemble Apple's own; whether to change them
   is the owner's call.
-- The development build shares the release build's settings, `signed-in`, `account-name` and
-  `last-sync` included, though each has its own Chrome profile and cache: signing in one build
-  marks the other signed in when its profile is not.
