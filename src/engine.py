@@ -436,6 +436,7 @@ class Engine(GObject.Object):
         self._watch = None     # the task waiting for the connection to drop
         self._relay = None     # the task relaying Chrome's stderr to the log (DEBUG only)
         self._lock = asyncio.Lock()
+        self._starting = None  # (Future, headless) of the start under way
 
     @property
     def pid(self):
@@ -453,9 +454,48 @@ class Engine(GObject.Object):
         `prefer_headless` is off. Asked for a mode, a running Chrome in the other mode is
         stopped first; one in the same mode is kept. EngineError when Chrome or the page will
         not come up, and only EngineError: anything unexpected is logged and becomes
-        'engine-down'."""
+        'engine-down'.
+
+        A start already under way is joined rather than queued behind it, when it suits
+        (any start without a mode, the same mode asked): its outcome, success or error, is
+        this call's too. Cancelling the call that started it cancels the start (its waiters
+        get 'engine-down'); cancelling a joined call leaves the start running."""
         if self.demo:
             return
+        if self._starting is not None:
+            future, headless = self._starting
+            if visible is None or headless == (not visible):
+                await self._join_start(future)
+                return
+        future = asyncio.get_running_loop().create_future()
+        starting = self._starting = (
+            future, self.prefer_headless if visible is None else not visible)
+        try:
+            await self._start_locked(visible)
+        except BaseException as e:
+            if not future.done():
+                future.set_exception(e if isinstance(e, EngineError) else EngineError(
+                    'engine-down', 'the engine was stopped while it started'))
+            raise
+        else:
+            if not future.done():
+                future.set_result(None)
+        finally:
+            if self._starting is starting:
+                self._starting = None
+            if not future.cancelled() and future.done():
+                future.exception()  # retrieved, whether anyone joined or not
+
+    @staticmethod
+    async def _join_start(future):
+        """Wait for a start under way, its failure raised here as an EngineError of the same
+        code. The start goes on when the waiter is cancelled."""
+        await asyncio.wait({future})
+        error = future.exception()
+        if error is not None:
+            raise EngineError(error.code, error.message) from error
+
+    async def _start_locked(self, visible):
         async with self._lock:
             if visible is None:
                 if self.state != 'down':
@@ -748,14 +788,21 @@ class Engine(GObject.Object):
 
     # -- commands ----------------------------------------------------------------------------
 
-    def _require_up(self):
-        if self.demo or self._client is None or self.state not in ('up', 'signing-in'):
+    async def _ready(self):
+        """The client, for a command: a start in progress is waited for (its failure is the
+        command's); 'engine-down' when the engine is down, since commands never start Chrome
+        themselves."""
+        if self.demo:
+            raise EngineError('engine-down', 'the engine is not running')
+        if self._starting is not None:
+            await self._join_start(self._starting[0])
+        if self._client is None or self.state not in ('up', 'signing-in'):
             raise EngineError('engine-down', 'the engine is not running')
         return self._client
 
     async def status(self):
         """The bridge's status: {ready, engine, authorized, storefront, bitrate}."""
-        client = self._require_up()
+        client = await self._ready()
         status = await client.bridge('status')
         if not isinstance(status, dict):
             raise EngineError('api', 'the page gave no status')
@@ -795,13 +842,13 @@ class Engine(GObject.Object):
         mk.api.music(path, params)), retried a few times; the answer's body as a dict
         ({data: [...], meta, next…}). EngineError('api') when Apple says no, 'engine-down'
         when there is no engine."""
-        client = self._require_up()
+        client = await self._ready()
         return await self._api(client, path, params, timeout)
 
     async def api_all(self, paths, timeout=60):
         """Several reads at once in the page (the bridge's apiAll): one answer per path, in
         order, None where one failed."""
-        client = self._require_up()
+        client = await self._ready()
         answers = await client.bridge('apiAll', list(paths), timeout=timeout)
         return answers if isinstance(answers, list) else []
 
@@ -853,7 +900,7 @@ class Engine(GObject.Object):
         """One full Item of `kind` with its `groups` (an album's discs, a playlist's list, an
         artist's albums), its artwork fetched, the answer kept at <cache>/items/. Needs a
         signed-in engine: EngineError('not-signed-in') otherwise."""
-        client = self._require_up()
+        client = await self._ready()
         if not self.authorized:
             raise EngineError('not-signed-in', 'sign in to load items')
         status = await self.status()
@@ -890,7 +937,7 @@ class Engine(GObject.Object):
         in the visible Chrome window), then the authorizationStatusDidChange event or a poll
         of the status every SIGNIN_POLL seconds says so. The one place the app polls.
         True when signed in; EngineError('timeout') after `timeout` seconds."""
-        client = self._require_up()
+        client = await self._ready()
         if self.authorized:
             return True
         self.state = 'signing-in'
@@ -948,7 +995,7 @@ class Engine(GObject.Object):
         gap right after sign-in."""
         deadline = time.monotonic() + wait
         while True:
-            client = self._require_up()
+            client = await self._ready()
             try:
                 name = await client.evaluate(ACCOUNT_NAME_JS, await_promise=False, timeout=5)
             except EngineError as e:
@@ -969,8 +1016,8 @@ class Engine(GObject.Object):
     # now-playing/queue commands were; the outcome shows up as MusicKit events (the `event`
     # signal), which is where the Player takes its state from, not from these answers.
 
-    def _require_signed_in(self):
-        client = self._require_up()
+    async def _require_signed_in(self):
+        client = await self._ready()
         if not self.authorized:
             raise EngineError('not-signed-in', 'sign in to Apple Music to play')
         return client
@@ -980,7 +1027,7 @@ class Engine(GObject.Object):
         id, from queue position `start_with` (a track row), shuffled when asked: the
         bridge's play(), that is mk.setQueue({kind: id, startWith, startPlaying}) and
         mk.play(). Needs a signed-in engine: library ids and full songs are the account's."""
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         if not kind or item_id in (None, ''):
             raise EngineError('usage', 'play needs a kind and an id')
         options = {'startWith': int(start_with or 0), 'shuffle': bool(shuffle)}
@@ -988,30 +1035,30 @@ class Engine(GObject.Object):
 
     async def play_next(self, kind, item_id):
         """Queue an item right after the one playing (mk.playNext)."""
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         await client.bridge('playNext', str(kind), str(item_id), timeout=PLAY_TIMEOUT)
 
     async def play_later(self, kind, item_id):
         """Queue an item at the end (mk.playLater)."""
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         await client.bridge('playLater', str(kind), str(item_id), timeout=PLAY_TIMEOUT)
 
     async def control(self, action):
         """One of CONTROL_ACTIONS: play, pause, toggle, next, previous, stop."""
         if action not in CONTROL_ACTIONS:
             raise EngineError('usage', f'unknown control action: {action}')
-        client = self._require_up()
+        client = await self._ready()
         await client.bridge('control', action)
 
     async def seek(self, seconds):
         """Jump to `seconds` into the item playing (mk.seekToTime)."""
-        client = self._require_up()
+        client = await self._ready()
         await client.bridge('seek', max(0.0, float(seconds)))
 
     async def volume(self, level):
         """Set MusicKit's volume, 0 to 1 (the engine's own, not the system's; Apple's page
         keeps it across restarts). Answers the level as MusicKit has it after the set."""
-        client = self._require_up()
+        client = await self._ready()
         level = min(1.0, max(0.0, float(level)))
         answer = await client.bridge('volume', level)
         value = answer.get('volume') if isinstance(answer, dict) else None
@@ -1022,7 +1069,7 @@ class Engine(GObject.Object):
         as MusicKit has them after the change."""
         if mode not in SHUFFLE_MODES:
             raise EngineError('usage', f'unknown shuffle mode: {mode}')
-        client = self._require_up()
+        client = await self._ready()
         answer = await client.bridge('shuffle', mode)
         return answer if isinstance(answer, dict) else {}
 
@@ -1030,14 +1077,14 @@ class Engine(GObject.Object):
         """Repeat none, one, all, or cycle through them; answers as shuffle() does."""
         if mode not in REPEAT_MODES:
             raise EngineError('usage', f'unknown repeat mode: {mode}')
-        client = self._require_up()
+        client = await self._ready()
         answer = await client.bridge('repeat', mode)
         return answer if isinstance(answer, dict) else {}
 
     async def now_playing(self):
         """What plays: {state, track, position, duration, shuffle, repeat, volume}, the state
         the coarse playing/paused/stopped and the track the Track shape (or None)."""
-        client = self._require_up()
+        client = await self._ready()
         answer = await client.bridge('nowPlaying')
         if not isinstance(answer, dict):
             raise EngineError('api', 'the page gave no now-playing answer')
@@ -1045,7 +1092,7 @@ class Engine(GObject.Object):
 
     async def queue(self):
         """The queue: {index, items: [Track…]}."""
-        client = self._require_up()
+        client = await self._ready()
         answer = await client.bridge('queue')
         return answer if isinstance(answer, dict) else {'index': 0, 'items': []}
 
@@ -1054,7 +1101,7 @@ class Engine(GObject.Object):
         queue position and now-playing events follow."""
         if isinstance(index, bool) or not isinstance(index, int) or index < 0:
             raise EngineError('usage', f'not a queue index: {index!r}')
-        client = self._require_up()
+        client = await self._ready()
         await client.bridge('queueJump', index, timeout=PLAY_TIMEOUT)
 
     def lyrics_path(self, catalog_song_id):
@@ -1075,7 +1122,7 @@ class Engine(GObject.Object):
         cached = await asyncio.to_thread(_read_json, path)
         if isinstance(cached, dict) and cached.get('lines'):
             return lyrics_answer(cached)
-        client = self._require_up()
+        client = await self._ready()
         answer = lyrics_answer(
             await client.bridge('lyrics', catalog_song_id, timeout=LYRICS_TIMEOUT))
         if answer['lines']:
@@ -1088,8 +1135,8 @@ class Engine(GObject.Object):
     # builder, judged by the HTTP status: a refusal is EngineError('api') with Apple's
     # "HTTP 403 Forbidden: …"), each needing a signed-in engine.
 
-    def _require_account(self, what):
-        client = self._require_up()
+    async def _require_account(self, what):
+        client = await self._ready()
         if not self.authorized:
             raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
         return client
@@ -1106,7 +1153,7 @@ class Engine(GObject.Object):
 
     async def _rate(self, kind, item_id, love):
         rated = resource_type(kind, item_id)
-        client = self._require_account('rate items')
+        client = await self._require_account('rate items')
         await client.bridge('rating', rated, str(item_id), bool(love))
         self.emit('rated', str(kind), str(item_id), 1 if love else 0)
 
@@ -1115,7 +1162,7 @@ class Engine(GObject.Object):
         /v1/me/ratings/<type>s?ids=<id>, which answers an empty list for an item without
         one, where the single-item path answers a 404)."""
         rated = resource_type(kind, item_id)
-        client = self._require_account('read ratings')
+        client = await self._require_account('read ratings')
         answer = await self._api(client, f'/v1/me/ratings/{rated}s', {'ids': str(item_id)})
         value = 0
         for entry in _page_data(answer):
@@ -1134,14 +1181,14 @@ class Engine(GObject.Object):
             raise EngineError('usage', f'cannot add {kind or "nothing"} to the library')
         if is_library_id(item_id):
             raise EngineError('usage', f'{item_id} is in the library already')
-        client = self._require_account('add to your library')
+        client = await self._require_account('add to your library')
         await client.bridge('addToLibrary', RESOURCE_TYPES[kind], str(item_id))
 
     async def playlists(self):
         """The library playlists that can be added to, in the library's order: [{id,
         title}] (every page of /v1/me/library/playlists, those whose canEdit is false,
         Favourite Songs among them, left out)."""
-        self._require_account('list playlists')
+        await self._require_account('list playlists')
         entries = await self.api_pages('/v1/me/library/playlists')
         playlists = []
         for entry in entries:
@@ -1159,7 +1206,7 @@ class Engine(GObject.Object):
         rated = resource_type(kind, item_id)
         if not rated.startswith('library-') or rated == 'library-station':
             raise EngineError('usage', f'{item_id} is not a library item')
-        client = self._require_account('look items up')
+        client = await self._require_account('look items up')
         try:
             answer = await self._api(client, f'/v1/me/library/{rated[len("library-"):]}s/'
                                              f'{item_id}/catalog')
@@ -1181,7 +1228,7 @@ class Engine(GObject.Object):
         if not is_library_id(playlist_id) or not song_id:
             raise EngineError('usage', 'add to playlist needs a library playlist and a song')
         song_type = 'library-songs' if is_library_id(song_id) else 'songs'
-        client = self._require_account('add to playlists')
+        client = await self._require_account('add to playlists')
         await client.bridge('addToPlaylist', playlist_id, song_id, song_type)
 
     # -- search and browsing -------------------------------------------------------------
@@ -1200,7 +1247,7 @@ class Engine(GObject.Object):
         term = ' '.join(str(term or '').split())
         if not term:
             raise EngineError('usage', 'search needs a term')
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         suggest = max(0, int(suggest or 0))
         if suggest:
             answer = await client.bridge('searchAndSuggest', term, bool(library), int(limit),
@@ -1221,7 +1268,7 @@ class Engine(GObject.Object):
         term = ' '.join(str(term or '').split())
         if not term:
             raise EngineError('usage', 'suggest needs a term')
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         raw = await client.bridge('suggest', term, int(limit), timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'suggestions')
         return await asyncio.to_thread(_shape_suggestions, raw, str(self.cache_dir))
@@ -1243,7 +1290,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, 'search landing')
         return await asyncio.to_thread(_shape_and_keep, sync.search_landing, raw, path,
@@ -1260,7 +1307,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
         _raise_api_errors(raw, f'category {category_id}')
         return await asyncio.to_thread(_shape_and_keep, sync.category_page, raw, path,
@@ -1276,7 +1323,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         storefront = str((await self.status()).get('storefront') or 'us')
         raw = await self._api(client, BROWSE_ENDPOINT.format(storefront=storefront),
                               BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
@@ -1292,7 +1339,7 @@ class Engine(GObject.Object):
         kept = None if refresh else await asyncio.to_thread(_read_kept, path)
         if kept is not None:
             return kept
-        client = self._require_signed_in()
+        client = await self._require_signed_in()
         raw = await self._api(client, RECOMMENDATIONS_ENDPOINT, RECOMMENDATIONS_PARAMS,
                               timeout=BROWSE_TIMEOUT)
         return await asyncio.to_thread(

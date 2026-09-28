@@ -370,6 +370,71 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(self.engine.state, 'down')
         self.assertIsNone(self.engine.pid)
 
+    def hold_the_start(self):
+        """The fake Chrome's page attach waits for the Event returned: the start stays in
+        progress until it is set."""
+        gate = asyncio.Event()
+        attach = self.chrome.browser_Target_attachToTarget
+
+        async def held(message):
+            await gate.wait()
+            return attach(message)
+        self.chrome.browser_responders['Target.attachToTarget'] = held
+        return gate
+
+    async def test_a_command_waits_for_a_start_in_progress(self):
+        self.page.authorized = True
+        gate = self.hold_the_start()
+        starting = asyncio.create_task(self.engine.start())
+        await until(lambda: self.engine.state == 'starting')
+        play = asyncio.create_task(self.engine.play('album', 'l.1'))
+        status = asyncio.create_task(self.engine.status())
+        await asyncio.sleep(0.05)
+        self.assertFalse(play.done())  # waiting, not failing with engine-down
+        gate.set()
+        await starting
+        await play
+        self.assertEqual((await status)['ready'], True)
+        self.assertEqual(self.page.bridge_calls[-1][:3], ('play', 'album', 'l.1'))
+
+    async def test_concurrent_starts_share_one_chrome(self):
+        gate = self.hold_the_start()
+        starts = [asyncio.create_task(self.engine.start()) for _ in range(3)]
+        await until(lambda: self.engine.state == 'starting')
+        gate.set()
+        await asyncio.gather(*starts)
+        self.assertEqual(len(self.engine.spawned), 1)
+        self.assertEqual(self.states, ['starting', 'up'])
+
+    async def test_a_failing_start_fails_every_waiter_with_its_code(self):
+        self.page.ready = False
+        with mock.patch.object(engine_module, 'BRIDGE_WAIT', 0.3):
+            results = await asyncio.gather(
+                self.engine.start(), self.engine.start(), self.engine.control('pause'),
+                return_exceptions=True)
+        self.assertEqual([getattr(r, 'code', r) for r in results], ['timeout'] * 3)
+        self.assertEqual(len(self.engine.spawned), 1)
+        self.assertEqual(self.engine.state, 'down')
+
+    async def test_a_cancelled_start_fails_its_waiters_and_a_cancelled_waiter_not_the_start(self):
+        gate = self.hold_the_start()
+        starting = asyncio.create_task(self.engine.start())
+        await until(lambda: self.engine.state == 'starting')
+        waiter = asyncio.create_task(self.engine.start())
+        command = asyncio.create_task(self.engine.status())
+        await asyncio.sleep(0.02)
+        waiter.cancel()  # the start goes on
+        await asyncio.sleep(0.02)
+        self.assertEqual(self.engine.state, 'starting')
+        starting.cancel()  # the start itself: stopped, and the command told so
+        with self.assertRaises(asyncio.CancelledError):
+            await starting
+        with self.assertRaises(EngineError) as ctx:
+            await command
+        self.assertEqual(ctx.exception.code, 'engine-down')
+        self.assertEqual(self.engine.state, 'down')
+        gate.set()
+
     async def test_restart(self):
         await self.engine.start()
         await self.engine.restart(visible=False)
