@@ -6,6 +6,14 @@ cd "$(dirname "$0")/.."
 prefix="$PWD/build/install"
 if [ ! -f build/build.ninja ]; then  # build/ alone may be just build/demo
   meson setup build --prefix="$prefix" -Dprofile=development
+elif ! meson introspect build --buildoptions | python3 -c '
+import json, sys
+options = {option["name"]: option["value"] for option in json.load(sys.stdin)}
+sys.exit(options.get("prefix") != sys.argv[1] or options.get("profile") != "development")
+' "$prefix"; then
+  # Configured otherwise (a release install into /usr, say): back to the development
+  # profile in build/install rather than building into the wrong place.
+  meson configure build -Dprefix="$prefix" -Dprofile=development
 fi
 meson install -C build --quiet
 

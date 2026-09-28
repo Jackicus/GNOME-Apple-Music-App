@@ -1,7 +1,7 @@
 project(
   'apple-music',
   version: '0.9.0',
-  meson_version: '>= 1.1.0',
+  meson_version: '>= 1.2.0',  # get_option('python.bytecompile') (src/meson.build)
   license: 'GPL-2.0-or-later',
   default_options: ['warning_level=2', 'werror=false'],
 )

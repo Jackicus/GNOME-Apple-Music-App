@@ -487,7 +487,8 @@ outside the Python module goes in `data/`.
 
 ```
 scripts/run.sh [args]     meson setup (dev profile, prefix build/install) + install + run;
-                          `--debug` (or APPLE_MUSIC_DEBUG=1) logs at DEBUG
+                          `--debug` (or APPLE_MUSIC_DEBUG=1) logs at DEBUG. run.sh and check.sh
+                          reconfigure a build/ set up with another prefix or profile
 scripts/check.sh          compileall, ruff (skipped if not installed), meson compile, unit tests,
                           meson tests (desktop/metainfo/schema validation); prints `check: ok`
 scripts/demo.sh [args]    run.sh --demo: the app on the invented library in build/demo (generated

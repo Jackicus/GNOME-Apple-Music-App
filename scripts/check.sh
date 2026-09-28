@@ -9,8 +9,17 @@ if command -v ruff >/dev/null; then
 else
   echo "check: ruff not installed, lint skipped"
 fi
+prefix="$PWD/build/install"
 if [ ! -f build/build.ninja ]; then  # build/ alone may be just build/demo
-  meson setup build --prefix="$PWD/build/install" -Dprofile=development
+  meson setup build --prefix="$prefix" -Dprofile=development
+elif ! meson introspect build --buildoptions | python3 -c '
+import json, sys
+options = {option["name"]: option["value"] for option in json.load(sys.stdin)}
+sys.exit(options.get("prefix") != sys.argv[1] or options.get("profile") != "development")
+' "$prefix"; then
+  # Configured otherwise (a release install into /usr, say): back to the development
+  # profile in build/install rather than building into the wrong place.
+  meson configure build -Dprefix="$prefix" -Dprofile=development
 fi
 # Before the unit tests: the widget tests (tests/gtk.py) load build/src's gresource.
 meson compile -C build
