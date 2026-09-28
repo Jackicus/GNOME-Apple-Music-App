@@ -50,7 +50,7 @@ jobs:
       - name: Install build and test dependencies
         run: |
           pacman -Syu --noconfirm --needed \
-            git python python-gobject gtk4 libadwaita glib2 gdk-pixbuf2 \
+            git python python-gobject python-cairo gtk4 libadwaita glib2 gdk-pixbuf2 \
             meson ninja pkgconf blueprint-compiler gettext \
             appstream desktop-file-utils adwaita-icon-theme \
             ruff xorg-server-xvfb xorg-xauth
@@ -64,6 +64,15 @@ jobs:
       - name: Trust the checkout
         # The container runs as root over a workspace owned by the runner user.
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Stand in for Google Chrome
+        # The engine tests fake Chrome's process and DevTools endpoint but still look the
+        # binary up on PATH (never running it). Until their fixture patches that lookup
+        # (https://github.com/Jackicus/GNOME-Apple-Music-App/issues/2), a stub is enough.
+        run: |
+          printf '#!/bin/sh\necho "CI stub: Google Chrome is not installed" >&2\nexit 1\n' \
+            > /usr/local/bin/google-chrome-stable
+          chmod +x /usr/local/bin/google-chrome-stable
 
       - name: Run scripts/check.sh
         run: xvfb-run -a -s '-screen 0 1280x1024x24' scripts/check.sh
