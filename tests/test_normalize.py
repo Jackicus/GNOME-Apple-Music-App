@@ -104,14 +104,14 @@ class TestSync(unittest.TestCase):
         self.assertIsNone(track['thumb'])
 
     def test_normalize_track_names_thumbnail_when_asked(self):
-        normalize.ART_URLS.clear()
         raw = {
             'id': 'i.one',
             'attributes': {'name': 'One', 'artwork': {'url': 'https://x/{w}x{h}bb.jpg'}},
         }
-        track = normalize.normalize_track(raw, index=0, cache_dir=self.tmp_dir)
+        art_urls = {}
+        track = normalize.normalize_track(raw, index=0, cache_dir=self.tmp_dir, art_urls=art_urls)
         self.assertTrue(track['thumb'].startswith(os.path.join(self.tmp_dir, 'thumb')))
-        self.assertEqual(normalize.ART_URLS[track['thumb']], 'https://x/256x256bb.jpg')
+        self.assertEqual(art_urls[track['thumb']], 'https://x/256x256bb.jpg')
         # The same cover's full-size file has the same name, one folder over.
         self.assertEqual(os.path.basename(track['thumb']),
                          os.path.basename(normalize.artwork_cache_path('https://x/512x512bb.jpg',
@@ -512,7 +512,6 @@ class TestSync(unittest.TestCase):
         self.assertEqual(artists[0]['groups'][0]['name'], 'Album One')
 
     def test_artist_takes_first_albums_thumbnail_with_its_cover(self):
-        normalize.ART_URLS.clear()
         song = {
             'id': 's1', 'type': 'library-songs',
             'attributes': {
@@ -589,12 +588,11 @@ class TestArtworkDownload(unittest.TestCase):
 
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
-        normalize.ART_URLS.clear()
+        self.art_urls = {}
         normalize.ART_SIZES.update(UPSTREAM_SIZES)
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
-        normalize.ART_URLS.clear()
         normalize.ART_SIZES.update(normalize.DEFAULT_ART_SIZES)
 
     def _album(self, art_url):
@@ -603,20 +601,39 @@ class TestArtworkDownload(unittest.TestCase):
             'attributes': {'name': 'One', 'artistName': 'A', 'artwork': {'url': art_url}},
         }
 
+    def album(self, art_url, **changes):
+        """An album normalised with this test's registry."""
+        return normalize.normalize_album(dict(self._album(art_url), **changes),
+                                         cache_dir=self.tmp_dir, art_urls=self.art_urls)
+
     def test_extract_registers_url_for_path(self):
-        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
-                                         cache_dir=self.tmp_dir)
+        item = self.album('https://x/{w}x{h}bb.jpg')
         self.assertTrue(item['art'].startswith(os.path.join(self.tmp_dir, 'art')))
-        self.assertEqual(normalize.ART_URLS[item['art']], 'https://x/512x512bb.jpg')
+        self.assertEqual(self.art_urls[item['art']], 'https://x/512x512bb.jpg')
         self.assertTrue(item['thumb'].startswith(os.path.join(self.tmp_dir, 'thumb')))
-        self.assertEqual(normalize.ART_URLS[item['thumb']], 'https://x/256x256bb.jpg')
+        self.assertEqual(self.art_urls[item['thumb']], 'https://x/256x256bb.jpg')
         self.assertEqual(os.path.basename(item['thumb']), os.path.basename(item['art']))
 
-    def test_download_art_fetches_only_missing(self):
-        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
-                                         cache_dir=self.tmp_dir)
-        other = normalize.normalize_album(dict(self._album('https://y/{w}x{h}bb.jpg'), id='l.two'),
+    def test_the_registry_is_the_callers(self):
+        self.assertFalse(hasattr(normalize, 'ART_URLS'))  # no state kept between calls
+        first, second = {}, {}
+        album = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
+                                          cache_dir=self.tmp_dir, art_urls=first)
+        normalize.normalize_album(self._album('https://y/{w}x{h}bb.jpg'),
+                                  cache_dir=self.tmp_dir, art_urls=second)
+        self.assertEqual(set(first), {album['art'], album['thumb']})
+        self.assertNotIn(album['art'], second)
+        # Without one, the paths are named all the same.
+        again = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
                                           cache_dir=self.tmp_dir)
+        self.assertEqual((again['art'], again['thumb']), (album['art'], album['thumb']))
+        library = {'sections': {'albums': [album]}, 'shelves': []}
+        self.assertEqual(normalize.collect_art_urls(library, first), first)
+        self.assertEqual(normalize.collect_art_urls(library, second), {})
+
+    def test_download_art_fetches_only_missing(self):
+        item = self.album('https://x/{w}x{h}bb.jpg')
+        other = self.album('https://y/{w}x{h}bb.jpg', id='l.two')
         os.makedirs(os.path.dirname(other['art']), exist_ok=True)
         with open(other['art'], 'wb') as f:
             f.write(b'already here')
@@ -640,7 +657,8 @@ class TestArtworkDownload(unittest.TestCase):
         real = normalize.cache_artwork, normalize.cache_thumbnail
         normalize.cache_artwork, normalize.cache_thumbnail = fake_cache, fake_thumb
         try:
-            counts = normalize.download_art(lib, self.tmp_dir)
+            counts = normalize.download_art(normalize.collect_art_urls(lib, self.art_urls),
+                                            self.tmp_dir)
         finally:
             normalize.cache_artwork, normalize.cache_thumbnail = real
         # The one missing cover, then the thumbnails of both, in that order.
@@ -652,9 +670,7 @@ class TestArtworkDownload(unittest.TestCase):
         self.assertTrue(os.path.exists(item['thumb']))
 
     def test_download_art_counts_failures(self):
-        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
-                                         cache_dir=self.tmp_dir)
-        lib = {'sections': {'albums': [item]}, 'shelves': []}
+        self.album('https://x/{w}x{h}bb.jpg')
         real = normalize.cache_artwork, normalize.cache_thumbnail
         normalize.cache_artwork = lambda url, cache_dir, **kwargs: None
 
@@ -663,7 +679,7 @@ class TestArtworkDownload(unittest.TestCase):
         normalize.cache_thumbnail = broken
         try:
             with self.assertLogs('applemusic.backend.normalize', 'WARNING') as logs:
-                counts = normalize.download_art(lib, self.tmp_dir)
+                counts = normalize.download_art(self.art_urls, self.tmp_dir)
         finally:
             normalize.cache_artwork, normalize.cache_thumbnail = real
         # The cover and its thumbnail; the one that raised is logged with its reason (the one
@@ -673,9 +689,8 @@ class TestArtworkDownload(unittest.TestCase):
         self.assertIn('no space left', logs.output[0])
 
     def test_a_cancelled_download_says_so(self):
-        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
-                                         cache_dir=self.tmp_dir)
-        urls = {path: normalize.ART_URLS[path] for path in (item['art'], item['thumb'])}
+        self.album('https://x/{w}x{h}bb.jpg')
+        urls = self.art_urls
         fetched = []
         real = normalize.cache_artwork, normalize.cache_thumbnail
         normalize.cache_artwork = lambda url, cache_dir, **kwargs: fetched.append(url)
@@ -692,7 +707,7 @@ class TestArtworkDownload(unittest.TestCase):
                 return len(asked) > 1
             with self.assertRaises(normalize.Cancelled):
                 normalize.download_art(urls, self.tmp_dir, cancelled=cancelled)
-            self.assertEqual(fetched, [urls[item['art']]])
+            self.assertEqual(fetched, ['https://x/512x512bb.jpg'])
         finally:
             normalize.cache_artwork, normalize.cache_thumbnail = real
 
@@ -700,8 +715,7 @@ class TestArtworkDownload(unittest.TestCase):
     def test_thumbnail_is_scaled_from_the_cached_cover(self):
         self.addCleanup(setattr, normalize, 'scale_image', normalize.scale_image)
         normalize.scale_image = pixbuf_scaler
-        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
-                                         cache_dir=self.tmp_dir)
+        item = self.album('https://x/{w}x{h}bb.jpg')
         os.makedirs(os.path.dirname(item['art']), exist_ok=True)
         cover = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 512, 512)
         cover.fill(0x336699ff)
@@ -710,7 +724,7 @@ class TestArtworkDownload(unittest.TestCase):
         real = normalize.cache_artwork
         normalize.cache_artwork = lambda *a, **k: self.fail('fetched a thumbnail it could scale')
         try:
-            counts = normalize.download_art({item['thumb']: normalize.ART_URLS[item['thumb']]},
+            counts = normalize.download_art({item['thumb']: self.art_urls[item['thumb']]},
                                             self.tmp_dir)
         finally:
             normalize.cache_artwork = real
@@ -724,8 +738,7 @@ class TestArtworkDownload(unittest.TestCase):
         # disk does not help, and the thumbnail is fetched at its own size.
         self.addCleanup(setattr, normalize, 'scale_image', normalize.scale_image)
         normalize.scale_image = None
-        item = normalize.normalize_album(self._album('https://x/{w}x{h}bb.jpg'),
-                                         cache_dir=self.tmp_dir)
+        item = self.album('https://x/{w}x{h}bb.jpg')
         os.makedirs(os.path.dirname(item['art']), exist_ok=True)
         with open(item['art'], 'wb') as f:
             f.write(b'a cover')
@@ -737,7 +750,7 @@ class TestArtworkDownload(unittest.TestCase):
             return dest_path
         normalize.cache_artwork = fake_cache_artwork
         try:
-            self.assertEqual(normalize.cache_thumbnail(normalize.ART_URLS[item['thumb']],
+            self.assertEqual(normalize.cache_thumbnail(self.art_urls[item['thumb']],
                                                        self.tmp_dir, item['thumb']), item['thumb'])
         finally:
             normalize.cache_artwork = real
@@ -750,18 +763,20 @@ class TestArtworkDownload(unittest.TestCase):
                    'attributes': {'name': 'A', 'artwork': {'url': 'https://a/{w}x{h}bb.jpg'}}},
                   {'id': 'i.2',
                    'attributes': {'name': 'B', 'artwork': {'url': 'https://b/{w}x{h}bb.jpg'}}}]
-        item = normalize.normalize_playlist(raw, cache_dir=self.tmp_dir, tracks=tracks)
+        item = normalize.normalize_playlist(raw, cache_dir=self.tmp_dir, tracks=tracks,
+                                            art_urls=self.art_urls)
         asked = []
         real = normalize.download_art
         normalize.download_art = lambda urls, cache_dir, **k: asked.append(sorted(urls.values()))
         try:
-            normalize.download_item_art(item, self.tmp_dir)
+            normalize.download_item_art(item, self.tmp_dir, self.art_urls)
+            normalize.download_item_art(item, self.tmp_dir, {})  # a registry without them
         finally:
             normalize.download_art = real
         self.assertEqual(asked, [[
             'https://a/256x256bb.jpg', 'https://b/256x256bb.jpg',
             'https://p/256x256bb.jpg', 'https://p/512x512bb.jpg',
-        ]])
+        ], []])
 
     def test_album_stub_without_attributes_takes_song_name(self):
         songs = [{
@@ -842,12 +857,10 @@ class TestArtSizes(unittest.TestCase):
 
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
-        normalize.ART_URLS.clear()
         normalize.ART_SIZES.update(normalize.DEFAULT_ART_SIZES)
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
-        normalize.ART_URLS.clear()
         normalize.ART_SIZES.update(normalize.DEFAULT_ART_SIZES)
 
     def test_defaults_without_a_marker(self):
@@ -870,11 +883,12 @@ class TestArtSizes(unittest.TestCase):
 
     def test_sizes_name_the_urls(self):
         normalize.apply_art_sizes(self.tmp_dir, 640, 192)
+        art_urls = {}
         item = normalize.normalize_album({'id': 'l.one', 'type': 'library-albums', 'attributes': {
             'name': 'One', 'artistName': 'A', 'artwork': {'url': 'https://x/{w}x{h}bb.jpg'}}},
-                                         cache_dir=self.tmp_dir)
-        self.assertEqual(normalize.ART_URLS[item['art']], 'https://x/640x640bb.jpg')
-        self.assertEqual(normalize.ART_URLS[item['thumb']], 'https://x/192x192bb.jpg')
+                                         cache_dir=self.tmp_dir, art_urls=art_urls)
+        self.assertEqual(art_urls[item['art']], 'https://x/640x640bb.jpg')
+        self.assertEqual(art_urls[item['thumb']], 'https://x/192x192bb.jpg')
         # A search hit without a cover on disk takes the thumbnail's size.
         hit = {'art': item['art'], 'thumb': item['thumb']}
         raw = {'attributes': {'artwork': {'url': 'https://x/{w}x{h}bb.jpg'}}}

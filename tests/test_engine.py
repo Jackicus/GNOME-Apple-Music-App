@@ -777,8 +777,8 @@ class LifecycleTest(EngineFixture):
         await self.engine.start()
         fetched = []
         with mock.patch.object(normalize, 'download_item_art',
-                               lambda item, cache_dir, generation: fetched.append(cache_dir)
-                               or item):
+                               lambda item, cache_dir, art_urls, generation:
+                               fetched.append(cache_dir) or item):
             item = await self.engine.item('album', '1724040700')
         self.assertEqual(self.page.api_calls,
                          ['/v1/catalog/us/albums/1724040700?include=tracks,artists'])
@@ -812,7 +812,7 @@ class LifecycleTest(EngineFixture):
         self.page.api_answers['/v1/catalog/us/albums/1724040700?include=tracks'] = album
         await self.engine.start()
         with mock.patch.object(normalize, 'download_item_art',
-                               lambda item, cache_dir, generation: item):
+                               lambda item, cache_dir, art_urls, generation: item):
             item = await self.engine.item('artist', '42')
         self.assertEqual(self.page.api_calls, [
             '/v1/catalog/us/artists/42?include=albums',

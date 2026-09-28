@@ -205,8 +205,9 @@ def album_endpoint(album_id, storefront):
 def _shape_item(raw, cache_dir, generation):
     """In a thread: the API's resource as an Item with groups, its artwork fetched (for the
     cache of `generation`: store.py)."""
-    item = normalize.normalize_item(raw, cache_dir, include_groups=True)
-    normalize.download_item_art(item, cache_dir, generation=generation)
+    art_urls = {}
+    item = normalize.normalize_item(raw, cache_dir, include_groups=True, art_urls=art_urls)
+    normalize.download_item_art(item, cache_dir, art_urls, generation=generation)
     return item
 
 
@@ -220,8 +221,9 @@ def _shape_artist(raw, item_id, stubs, answers, cache_dir, generation):
         answer = answers[position] if position < len(answers) else None
         data = answer.get('data') if isinstance(answer, dict) else None
         albums.append(data[0] if isinstance(data, list) and data else stub)
-    item = normalize.normalize_artist(artist, cache_dir, albums=albums)
-    normalize.download_item_art(item, cache_dir, generation=generation)
+    art_urls = {}
+    item = normalize.normalize_artist(artist, cache_dir, albums=albums, art_urls=art_urls)
+    normalize.download_item_art(item, cache_dir, art_urls, generation=generation)
     return item
 
 

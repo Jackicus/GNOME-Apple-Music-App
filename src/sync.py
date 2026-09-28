@@ -324,9 +324,11 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
                      art_progress, cancelled, generation=None):
     """In a thread: normalise, fetch the missing thumbnails, write library.json, prune."""
     counts = {}
-    albums, artists = normalize.group_songs_into_albums_and_artists(raw_songs, cache_dir)
+    art_urls = {}  # every artwork path named here, and its URL
+    albums, artists = normalize.group_songs_into_albums_and_artists(raw_songs, cache_dir,
+                                                                    art_urls)
     sections = {'albums': albums, 'artists': artists}
-    sections['songs'] = loose_songs(raw_songs, cache_dir)
+    sections['songs'] = loose_songs(raw_songs, cache_dir, art_urls)
 
     old_playlists = {entry.get('id'): entry for entry in old_sections.get('playlists') or []
                      if isinstance(entry, dict)}
@@ -340,7 +342,7 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
                 playlists.append(old)  # its tracks from last time, not an empty playlist
                 continue
             tracks = []
-        item = normalize.normalize_playlist(raw, cache_dir, tracks=tracks)
+        item = normalize.normalize_playlist(raw, cache_dir, tracks=tracks, art_urls=art_urls)
         flag_favourites(item, raw)
         playlists.append(item)
     sections['playlists'] = playlists
@@ -348,26 +350,30 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     if raw_videos is None:
         sections['videos'] = old_sections.get('videos') or []
     else:
-        sections['videos'] = [normalize.normalize_item(raw, cache_dir, include_groups=False)
+        sections['videos'] = [normalize.normalize_item(raw, cache_dir, include_groups=False,
+                                                       art_urls=art_urls)
                               for raw in raw_videos]
     if raw_stations is None:
         sections['radio'] = old_sections.get('radio') or []
     else:
-        sections['radio'] = [normalize.normalize_station(raw, cache_dir) for raw in raw_stations]
+        sections['radio'] = [normalize.normalize_station(raw, cache_dir, art_urls=art_urls)
+                             for raw in raw_stations]
 
     shelves = []
     if shelves_raw['recommendations'] is None:
         shelves.extend(shelf for shelf in old_shelves
                        if str(shelf.get('key', '')).startswith('rec-'))
     else:
-        shelves.extend(normalize.recommendation_shelves(shelves_raw['recommendations'], cache_dir))
+        shelves.extend(normalize.recommendation_shelves(shelves_raw['recommendations'],
+                                                        cache_dir, art_urls))
     for key, title, _endpoint, _page, _limit in SHELF_DEFS:
         raw_items = shelves_raw['fixed'].get(key)
         if raw_items is None:
             items = next((shelf.get('items') or [] for shelf in old_shelves
                           if shelf.get('key') == key), [])
         else:
-            items = [normalize.normalize_item(raw, cache_dir, include_groups=False)
+            items = [normalize.normalize_item(raw, cache_dir, include_groups=False,
+                                              art_urls=art_urls)
                      for raw in raw_items]
         shelves.append({'key': key, 'title': title, 'items': items})
 
@@ -379,7 +385,7 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
         'shelves': shelves,
         'folders': folders,
     }
-    add_art_urls(library_data)
+    add_art_urls(library_data, art_urls)
     for name in ('albums', 'artists', 'playlists', 'songs', 'videos', 'radio'):
         counts[name] = len(sections[name])
     counts['folders'] = max(0, len(folders) - 1)  # the root is not a folder of the user's
@@ -388,7 +394,8 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     # The thumbnails first, and the listing only once they are on disk, so tiles never show
     # placeholders for artwork that is about to arrive. A failure is logged, nothing more.
     try:
-        counts['art'] = normalize.download_art(thumb_urls(library_data, cache_dir), cache_dir,
+        counts['art'] = normalize.download_art(thumb_urls(library_data, cache_dir, art_urls),
+                                               cache_dir,
                                                progress=art_progress, cancelled=cancelled,
                                                generation=generation)
     except normalize.Cancelled:
@@ -406,7 +413,7 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     return counts
 
 
-def loose_songs(raw_songs, cache_dir):
+def loose_songs(raw_songs, cache_dir, art_urls=None):
     """The Track dicts of the library's loose songs (sections.songs): the songs that belong
     to no library album (their `albums` relationship is empty; the Albums section holds them
     under a stand-in album), in the library's order. The Songs store merges them by id after
@@ -417,7 +424,8 @@ def loose_songs(raw_songs, cache_dir):
             continue
         albums = ((raw.get('relationships') or {}).get('albums') or {}).get('data')
         if not albums:
-            loose.append(normalize.normalize_track(raw, index=0, cache_dir=cache_dir))
+            loose.append(normalize.normalize_track(raw, index=0, cache_dir=cache_dir,
+                                                   art_urls=art_urls))
     return loose
 
 
@@ -436,21 +444,21 @@ def flag_favourites(item, raw):
         item['attributes'] = flags
 
 
-def add_art_urls(library_data):
-    """Give every Item with artwork its cover's URL (`artUrl`), so the cover can be fetched
-    on demand by a later process, when the backend's ART_URLS is empty."""
+def add_art_urls(library_data, art_urls):
+    """Give every Item with artwork its cover's URL (`artUrl`, from the build's registry,
+    `art_urls`), so a page can fetch the cover when it first shows it."""
     for item in _every_item(library_data):
         art = item.get('art')
-        url = normalize.ART_URLS.get(art) if art else None
+        url = art_urls.get(art) if art else None
         if url:
             item['artUrl'] = url
 
 
-def thumb_urls(library_data, cache_dir):
+def thumb_urls(library_data, cache_dir, art_urls):
     """{thumbnail path: url} for every thumbnail the library names: what a sync fetches (the
     covers wait for the pages that show them)."""
     thumb_dir = os.path.join(cache_dir, 'thumb')
-    return {path: url for path, url in normalize.collect_art_urls(library_data).items()
+    return {path: url for path, url in normalize.collect_art_urls(library_data, art_urls).items()
             if os.path.dirname(path) == thumb_dir}
 
 

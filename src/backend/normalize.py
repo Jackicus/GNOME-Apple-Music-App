@@ -337,13 +337,14 @@ class _FetchError(Exception):
     """An answer that is not the image: its status."""
 
 
-# Every artwork path handed out by _extract_artwork, and the URL it came from:
-# the cover-sized one for a cover, the thumbnail-sized one for its thumbnail.
-# Normalisation only names the file; nothing is fetched until download_art()
-# runs over a finished library (or download_item_art() over a single
-# on-demand item), so a sync's hundreds of downloads happen together, in
+# The artwork registry, `art_urls`: every artwork path the normalisers hand out, and the URL
+# it is fetched from (the cover-sized one for a cover, the thumbnail-sized one for its
+# thumbnail). A job that fetches what it normalised (a sync, the engine's item()) makes one
+# dict and passes it to the normalisers, then to collect_art_urls() or download_item_art();
+# one that only names files passes nothing and a throwaway dict is used. Normalisation only
+# names the file; nothing is fetched until download_art() runs over a finished library (or
+# download_item_art() over one item), so a sync's hundreds of downloads happen together, in
 # threads, rather than one at a time in the middle of building each item.
-ART_URLS = {}
 
 
 def _is_thumb_path(path, cache_dir):
@@ -358,17 +359,16 @@ def _art_missing(path):
         return True
 
 
-def collect_art_urls(library_data):
-    """{path: url} for every artwork the library refers to that ART_URLS knows."""
-    return {p: ART_URLS[p] for p in collect_art_paths(library_data) if p in ART_URLS}
+def collect_art_urls(library_data, art_urls):
+    """{path: url} for every artwork the library refers to that `art_urls` knows."""
+    return {p: art_urls[p] for p in collect_art_paths(library_data) if p in art_urls}
 
 
-def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, cancelled=None,
-                 generation=None):
-    """Fetch every artwork the library refers to that is not in the cache yet.
+def download_art(urls, cache_dir, workers=8, progress=None, cancelled=None, generation=None):
+    """Fetch the artwork of a {path: url} map (collect_art_urls') that is not in
+    the cache yet.
 
-    Takes a library dict (paths resolved through ART_URLS) or a {path: url}
-    map. Returns {"wanted", "fetched", "failed"}. Failures are logged (by
+    Returns {"wanted", "fetched", "failed"}. Failures are logged (by
     cache_artwork, with the reason) and otherwise ignored: the UI treats a
     path that is not on disk as no artwork. `progress(done, total)` is called
     (on this thread) after each fetch, and `cancelled()` is asked before each
@@ -378,10 +378,6 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
     generation moves from `generation` (it was cleared: store.py), the same,
     with store.CacheGone (a Cancelled), and the running ones write nothing.
     """
-    if isinstance(library_data_or_urls, dict) and 'sections' not in library_data_or_urls:
-        urls = library_data_or_urls
-    else:
-        urls = collect_art_urls(library_data_or_urls)
     todo = {p: u for p, u in urls.items() if _art_missing(p)}
     counts = {'wanted': len(urls), 'fetched': 0, 'failed': 0}
     if not todo:
@@ -424,15 +420,16 @@ def download_art(library_data_or_urls, cache_dir, workers=8, progress=None, canc
     return counts
 
 
-def download_item_art(item, cache_dir, generation=None):
-    """Fetch what one item refers to and lacks: its cover, its thumbnail and
-    its rows' thumbnails (a playlist's), in threads, in place. Nothing more
-    once the cache's generation moves from `generation` (store.py)."""
+def download_item_art(item, cache_dir, art_urls, generation=None):
+    """Fetch what one item refers to and lacks (its cover, its thumbnail and
+    its rows' thumbnails, a playlist's), from the URLs `art_urls` holds for
+    them (the registry it was normalised with), in threads. Nothing more once
+    the cache's generation moves from `generation` (store.py)."""
     if not isinstance(item, dict):
         return item
     paths = _item_art_paths(item)
     try:
-        download_art({p: ART_URLS[p] for p in paths if p in ART_URLS}, cache_dir,
+        download_art({p: art_urls[p] for p in paths if p in art_urls}, cache_dir,
                      generation=generation)
     except store.CacheGone:
         log.debug('item %s: the cache was cleared, its artwork left', item.get('id'))
@@ -567,9 +564,9 @@ def _extract_genre(attrs, raw_item):
     return raw_item.get('genre') or None
 
 
-def _extract_artwork(attrs, raw_item, cache_dir):
+def _extract_artwork(attrs, raw_item, cache_dir, art_urls):
     """Extract the local cached cover path, its thumbnail's, and the hex
-    background color."""
+    background color; the files' URLs go into `art_urls`."""
     art = None
     thumb = None
     art_color = None
@@ -585,7 +582,7 @@ def _extract_artwork(attrs, raw_item, cache_dir):
     if isinstance(artwork, dict):
         url = artwork.get('url')
         if url and cache_dir:
-            art, thumb = _register_artwork(url, cache_dir)
+            art, thumb = _register_artwork(url, cache_dir, art_urls)
         bg = artwork.get('bgColor')
         if bg and not art_color:
             art_color = format_color(bg)
@@ -593,15 +590,15 @@ def _extract_artwork(attrs, raw_item, cache_dir):
     return art, thumb, art_color
 
 
-def _register_artwork(url_template, cache_dir):
+def _register_artwork(url_template, cache_dir, art_urls):
     """Name the cover and thumbnail files for an artwork URL template and
-    record what each is fetched from."""
+    record in `art_urls` what each is fetched from."""
     cover, small = ART_SIZES['cover'], ART_SIZES['thumb']
     full = template_artwork_url(url_template, cover, cover)
     art = artwork_cache_path(full, cache_dir)
     thumb = thumb_cache_path(full, cache_dir)
-    ART_URLS[art] = full
-    ART_URLS[thumb] = template_artwork_url(url_template, small, small)
+    art_urls[art] = full
+    art_urls[thumb] = template_artwork_url(url_template, small, small)
     return art, thumb
 
 
@@ -637,7 +634,7 @@ def _extract_catalog_id(attrs, raw_item, resource_type):
 # ---------------------------------------------------------------------------
 
 
-def normalize_track(raw_track, index=0, cache_dir=None):
+def normalize_track(raw_track, index=0, cache_dir=None, art_urls=None):
     """Turn an Apple Music API track into the Track shape.
 
     Track = {
@@ -648,14 +645,16 @@ def normalize_track(raw_track, index=0, cache_dir=None):
     }
 
     `thumb` is named only when `cache_dir` is given: a playlist's rows show
-    their own artwork, an album's tracks share the album's.
+    their own artwork, an album's tracks share the album's. `art_urls` is the
+    artwork registry (see collect_art_urls).
     """
     attrs = raw_track.get('attributes') or {}
     track_id = str(raw_track.get('id') or '')
     thumb = raw_track.get('thumb') or None
     artwork = attrs.get('artwork')
     if cache_dir and isinstance(artwork, dict) and artwork.get('url'):
-        _, thumb = _register_artwork(artwork['url'], cache_dir)
+        _, thumb = _register_artwork(artwork['url'], cache_dir,
+                                     {} if art_urls is None else art_urls)
 
     catalog_id = _extract_catalog_id(attrs, raw_track, 'songs')
 
@@ -713,7 +712,7 @@ def normalize_track(raw_track, index=0, cache_dir=None):
     }
 
 
-def normalize_album(raw_album, cache_dir=None, tracks=None):
+def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
     """Turn an Apple Music API album into the Item shape with kind='album'.
 
     `tracks` are the album's songs when the caller fetched them separately;
@@ -727,7 +726,8 @@ def normalize_album(raw_album, cache_dir=None, tracks=None):
     year = _extract_year(attrs, raw_album)
     genre = _extract_genre(attrs, raw_album)
     summary = _extract_summary(attrs, raw_album)
-    art, thumb, art_color = _extract_artwork(attrs, raw_album, cache_dir)
+    art, thumb, art_color = _extract_artwork(attrs, raw_album, cache_dir,
+                                             {} if art_urls is None else art_urls)
     catalog_id = _extract_catalog_id(attrs, raw_album, 'albums')
     url = attrs.get('url') or raw_album.get('url')
 
@@ -831,7 +831,7 @@ def normalize_album(raw_album, cache_dir=None, tracks=None):
     }
 
 
-def normalize_artist(raw_artist, cache_dir=None, albums=None):
+def normalize_artist(raw_artist, cache_dir=None, albums=None, art_urls=None):
     """Turn an Apple Music API artist into the Item shape with kind='artist'.
 
     `albums` are the artist's albums (raw, or already normalized) when the
@@ -845,7 +845,8 @@ def normalize_artist(raw_artist, cache_dir=None, albums=None):
     year = None
     genre = _extract_genre(attrs, raw_artist)
     summary = _extract_summary(attrs, raw_artist)
-    art, thumb, art_color = _extract_artwork(attrs, raw_artist, cache_dir)
+    art_urls = {} if art_urls is None else art_urls
+    art, thumb, art_color = _extract_artwork(attrs, raw_artist, cache_dir, art_urls)
     catalog_id = _extract_catalog_id(attrs, raw_artist, 'artists')
     url = attrs.get('url') or raw_artist.get('url')
 
@@ -872,7 +873,7 @@ def normalize_artist(raw_artist, cache_dir=None, albums=None):
             if alb.get('explicit'):
                 has_explicit = True
         else:
-            norm_alb = normalize_album(alb, cache_dir=cache_dir)
+            norm_alb = normalize_album(alb, cache_dir=cache_dir, art_urls=art_urls)
             all_entries = []
             for g in norm_alb.get('groups', []):
                 all_entries.extend(g.get('entries', []))
@@ -907,7 +908,7 @@ def normalize_artist(raw_artist, cache_dir=None, albums=None):
     }
 
 
-def normalize_playlist(raw_playlist, cache_dir=None, tracks=None):
+def normalize_playlist(raw_playlist, cache_dir=None, tracks=None, art_urls=None):
     """Turn an Apple Music API playlist into the Item shape with kind='playlist'.
 
     `tracks` are the playlist's songs when the caller fetched them; otherwise
@@ -926,7 +927,8 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None):
     year = _extract_year(attrs, raw_playlist)
     genre = _extract_genre(attrs, raw_playlist)
     summary = _extract_summary(attrs, raw_playlist)
-    art, thumb, art_color = _extract_artwork(attrs, raw_playlist, cache_dir)
+    art_urls = {} if art_urls is None else art_urls
+    art, thumb, art_color = _extract_artwork(attrs, raw_playlist, cache_dir, art_urls)
     catalog_id = _extract_catalog_id(attrs, raw_playlist, 'playlists')
     url = attrs.get('url') or raw_playlist.get('url')
 
@@ -939,7 +941,7 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None):
             raw_tracks = []
 
     normalized_tracks = [
-        normalize_track(t, index=idx, cache_dir=cache_dir)
+        normalize_track(t, index=idx, cache_dir=cache_dir, art_urls=art_urls)
         for idx, t in enumerate(raw_tracks)
     ]
 
@@ -992,7 +994,7 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None):
     }
 
 
-def normalize_station(raw_station, cache_dir=None):
+def normalize_station(raw_station, cache_dir=None, art_urls=None):
     """Turn an Apple Music API station into the Item shape with kind='station'.
 
     groups=[]
@@ -1010,7 +1012,8 @@ def normalize_station(raw_station, cache_dir=None):
     year = None
     genre = _extract_genre(attrs, raw_station)
     summary = _extract_summary(attrs, raw_station)
-    art, thumb, art_color = _extract_artwork(attrs, raw_station, cache_dir)
+    art, thumb, art_color = _extract_artwork(attrs, raw_station, cache_dir,
+                                             {} if art_urls is None else art_urls)
     catalog_id = _extract_catalog_id(attrs, raw_station, 'stations')
     url = attrs.get('url') or raw_station.get('url')
 
@@ -1041,13 +1044,14 @@ def normalize_station(raw_station, cache_dir=None):
     }
 
 
-def normalize_song_as_item(raw_song, cache_dir=None):
+def normalize_song_as_item(raw_song, cache_dir=None, art_urls=None):
     """Normalize an Apple Music song into the Item shape (e.g. for search results)."""
     attrs = raw_song.get('attributes') or {}
     item_id = str(raw_song.get('id') or '')
     catalog_id = _extract_catalog_id(attrs, raw_song, 'songs')
 
-    art, thumb, art_color = _extract_artwork(attrs, raw_song, cache_dir)
+    art, thumb, art_color = _extract_artwork(attrs, raw_song, cache_dir,
+                                             {} if art_urls is None else art_urls)
     duration_ms = attrs.get('durationInMillis')
     if duration_ms is None:
         duration_ms = raw_song.get('durationMs', 0)
@@ -1079,33 +1083,34 @@ def normalize_song_as_item(raw_song, cache_dir=None):
     }
 
 
-def normalize_item(raw_item, cache_dir=None, include_groups=True):
-    """Normalize any Apple Music resource into an Item."""
+def normalize_item(raw_item, cache_dir=None, include_groups=True, art_urls=None):
+    """Normalize any Apple Music resource into an Item (`art_urls`: the artwork
+    registry, see collect_art_urls)."""
     raw_type = str(raw_item.get('type', ''))
     raw_kind = str(raw_item.get('kind', ''))
 
     if raw_type in ('albums', 'library-albums') or raw_kind == 'album':
-        item = normalize_album(raw_item, cache_dir=cache_dir)
+        item = normalize_album(raw_item, cache_dir=cache_dir, art_urls=art_urls)
     elif raw_type in ('playlists', 'library-playlists') or raw_kind == 'playlist':
-        item = normalize_playlist(raw_item, cache_dir=cache_dir)
+        item = normalize_playlist(raw_item, cache_dir=cache_dir, art_urls=art_urls)
     elif raw_type in ('artists', 'library-artists') or raw_kind == 'artist':
-        item = normalize_artist(raw_item, cache_dir=cache_dir)
+        item = normalize_artist(raw_item, cache_dir=cache_dir, art_urls=art_urls)
     elif raw_type in ('stations', 'radio-stations', 'apple-curators') or raw_kind == 'station':
-        item = normalize_station(raw_item, cache_dir=cache_dir)
+        item = normalize_station(raw_item, cache_dir=cache_dir, art_urls=art_urls)
     elif raw_type in ('songs', 'library-songs') or raw_kind == 'song':
-        item = normalize_song_as_item(raw_item, cache_dir=cache_dir)
+        item = normalize_song_as_item(raw_item, cache_dir=cache_dir, art_urls=art_urls)
     elif raw_type in ('music-videos', 'library-music-videos') or raw_kind == 'video':
         # A music video is a song with a picture: the same fields, played
         # as MusicKit's own `musicVideo` queue kind.
-        item = normalize_song_as_item(raw_item, cache_dir=cache_dir)
+        item = normalize_song_as_item(raw_item, cache_dir=cache_dir, art_urls=art_urls)
         item['kind'] = 'video'
         item['play'] = {'kind': 'musicVideo', 'id': item['id']}
     else:
         attrs = raw_item.get('attributes') or {}
         if 'trackCount' in attrs or 'artistName' in attrs:
-            item = normalize_album(raw_item, cache_dir=cache_dir)
+            item = normalize_album(raw_item, cache_dir=cache_dir, art_urls=art_urls)
         else:
-            item = normalize_station(raw_item, cache_dir=cache_dir)
+            item = normalize_station(raw_item, cache_dir=cache_dir, art_urls=art_urls)
 
     if not include_groups:
         item['groups'] = []
@@ -1448,7 +1453,7 @@ def _settle_search_art(item, raw_item):
         item['art'] = template_artwork_url(url, small, small) if url else None
 
 
-def recommendation_shelves(raw_recs, cache_dir=None):
+def recommendation_shelves(raw_recs, cache_dir=None, art_urls=None):
     """Apple's home page as shelves: one per recommendation, in the order
     the API sends them, titled as Apple titles it ("New Releases for You",
     "Stations for You", "More from …", a genre, a decade). A group
@@ -1471,7 +1476,7 @@ def recommendation_shelves(raw_recs, cache_dir=None):
                 walk(member)
             return
         contents = (rel.get('contents') or {}).get('data') or []
-        items = [normalize_item(it, cache_dir, include_groups=False)
+        items = [normalize_item(it, cache_dir, include_groups=False, art_urls=art_urls)
                  for it in contents if isinstance(it, dict)]
         items = [it for it in items if it and it.get('title')]
         if not items:
@@ -1486,7 +1491,7 @@ def recommendation_shelves(raw_recs, cache_dir=None):
     return shelves
 
 
-def group_songs_into_albums_and_artists(songs, cache_dir=None):
+def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
     """Group songs from /v1/me/library/songs?include=albums into albums and artists."""
     albums_map = {}
     for s in songs:
@@ -1537,7 +1542,8 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None):
     albums_list = []
     artists_map = {}
     for entry in albums_map.values():
-        alb_norm = normalize_album(entry['album'], cache_dir=cache_dir, tracks=entry['songs'])
+        alb_norm = normalize_album(entry['album'], cache_dir=cache_dir, tracks=entry['songs'],
+                                   art_urls=art_urls)
         albums_list.append(alb_norm)
 
         art_name = alb_norm['subtitle'] or 'Unknown Artist'
@@ -1562,7 +1568,8 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None):
                                if art_albums and art_albums[0].get('genre') else []),
             },
         }
-        artist_norm = normalize_artist(art_obj, cache_dir=cache_dir, albums=art_albums)
+        artist_norm = normalize_artist(art_obj, cache_dir=cache_dir, albums=art_albums,
+                                       art_urls=art_urls)
         # A library artist carries no artwork of its own: it takes its first
         # album's — the thumbnail with the cover, or the tile would decode
         # the full cover for want of one.

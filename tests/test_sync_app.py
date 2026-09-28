@@ -180,7 +180,7 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         # thumbnail size, and the sizes marker says what the cache is built at.
         album = next(a for a in sections['albums'] if a['id'] == 'l.alb123')
         self.assertTrue(album['art'].startswith(os.path.join(self.cache, 'art')))
-        self.assertEqual(album['artUrl'], backend.ART_URLS[album['art']])
+        self.assertEqual(os.path.basename(album['art']), backend.artwork_filename(album['artUrl']))
         self.assertIn(f'{config.COVER_SIZE}x{config.COVER_SIZE}', album['artUrl'])
         self.assertTrue(os.path.exists(album['thumb']))
         self.assertFalse(os.path.exists(album['art']))
