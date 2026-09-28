@@ -1,20 +1,18 @@
-"""AppleMusicSignInDialog: the sign-in flow, shown while it runs.
+"""AppleMusicSignInDialog: the sign-in flow (account.sign_in()), shown while it runs.
 
-Presenting the dialog starts the flow as a task: the engine restarted with a visible Chrome
-window, the page asked to authorize (Apple's sign-in appears in that window), a wait for
-MusicKit to report the account authorized (the event, or a poll every two seconds, for up to
-ten minutes), then `signed-in` set, the account name read from the page if it can be, and the
-engine restarted headless when `engine-headless` is on. Cancel (or closing the dialog) cancels
-the task, which stops the engine. An error is toasted and stops the engine too.
+Presenting the dialog starts the flow as a task: Chrome restarted in a window, Apple's
+sign-in in that window, and a wait for MusicKit to report the account authorized. The
+dialog shows (and announces) each step. Once signed in, the flow is committed and the dialog
+closes; the rest (the account's name, Chrome going headless, the first sync) goes on without
+it. Until then Cancel, Escape or the close button cancel the flow, which stops the engine; a
+failure is toasted and closes the dialog too.
 """
 
-import asyncio
 import logging
-from gettext import gettext as _
 
 from gi.repository import Adw, Gtk
 
-from ..backend.errors import EngineError
+from .. import account
 from ..widgets.util import connect_weak
 
 log = logging.getLogger(__name__)
@@ -42,40 +40,20 @@ class SignInDialog(Adw.Dialog):
             self._task = self._app.spawn(self._run())
 
     async def _run(self):
-        app = self._app
-        engine = app.engine
-        settings = app.settings
         try:
-            self.status_page.set_description(_('Starting Chrome…'))
-            await app.library_sync.cancel()  # its engine is about to be restarted
-            await engine.restart(visible=True)
-            self.status_page.set_description(
-                _('Sign in with your Apple ID in the Chrome window'))
-            await engine.signin()
-            settings.set_boolean('signed-in', True)
-            self.status_page.set_description(_('Signed in'))
-            self.cancel_button.set_sensitive(False)
-            name = await engine.account_name(wait=15)
-            settings.set_string('account-name', name)
-            if name:
-                log.info('account name read from the page')
-            else:
-                log.info('no account name found on the page; the button says Signed In')
-            if settings.get_boolean('engine-headless'):
-                self.status_page.set_description(_('Restarting the engine in the background…'))
-                await engine.restart(visible=False)
+            await account.sign_in(self._app, self._set_status)
+        finally:
             self._finish()
-            app.toast(_('Signed in'))
-            app.start_sync()  # the library, now that there is an account to fetch it from
-        except asyncio.CancelledError:
-            log.info('sign-in cancelled')
-            app.spawn(engine.stop())
-            self._finish()
-            raise
-        except EngineError as error:
-            app.report(error)
-            app.spawn(engine.stop())
-            self._finish()
+
+    def _set_status(self, text):
+        """A step of the flow: under the title, and read out (through the window, which
+        GTK always lets announce)."""
+        if self._closed:
+            return
+        self.status_page.set_description(text)
+        root = self.get_root()
+        if root is not None:
+            root.announce(text, Gtk.AccessibleAnnouncementPriority.MEDIUM)
 
     def _finish(self):
         self._task = None

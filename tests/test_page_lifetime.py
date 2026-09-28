@@ -153,10 +153,17 @@ def _classes():
         async def cancel(self):
             pass
 
+        def hold(self):
+            pass
+
+        def release(self):
+            pass
+
     class App(Adw.Application):
         """Gio.Application.get_default() while the tests run: spawn(), the engine, the
         settings (memory backend), and a record of what the widgets asked."""
 
+        signing_in = GObject.Property(type=bool, default=False)
         signing_out = GObject.Property(type=bool, default=False)
 
         def __init__(self):
