@@ -15,7 +15,8 @@ from unittest import mock
 
 from tests import ROOT  # noqa: F401  (registers src/ as applemusic)
 
-from applemusic.library import Library
+from applemusic import library as library_module
+from applemusic.library import Item, Library
 
 
 def track(track_id, title=None, index=0, album='Test Album'):
@@ -180,10 +181,72 @@ class TestReloadTells(ReloadCase):
         stores = [self.library.albums, self.library.playlists, self.library.songs,
                   self.library.shelf('recently-added').items]
         splices = [self.splices(store) for store in stores]
+        raws = [item.raw for item in items]
         self.reload()
         self.assertEqual(seen, [[]] * len(items))
         self.assertEqual(changed, [[]] * len(items))
         self.assertEqual(splices, [[]] * len(stores))
+        # The dicts in hand are kept, not replaced by the new parse's equal copies.
+        self.assertTrue(all(item.raw is raw for item, raw in zip(items, raws, strict=True)))
+
+    def test_no_second_copy_of_the_dicts_is_kept(self):
+        """Kept Groups and Tracks hold the dicts their Item holds, whether or not the Item
+        changed, and a kept loose song's Track the dict the library holds."""
+        albums = [album(f'l.a{n}', track_ids=[f'i.{n}', f'i.{n}{n}']) for n in range(2)]
+        loose = [track('i.loose')]
+        self.write(albums, songs=loose)
+        self.load()
+        asyncio.run(self.library.build_songs())
+        first = self.library.by_id('album', 'l.a0')
+        tracks = list(self.library.songs)
+        albums[0]['genre'] = 'Jazz'  # changed, its groups not
+        self.write(albums, songs=loose)
+        self.reload()
+        self.assertEqual(first.genre, 'Jazz')
+        self.assertEqual(list(self.library.songs), tracks)  # the same Tracks
+        for item in self.library.albums:
+            with self.subTest(album=item.id):
+                self.assertIs(item.groups[0].raw, item.raw['groups'][0])
+                self.assertIs(item.groups[0].entries.get_item(0).raw,
+                              item.raw['groups'][0]['entries'][0])
+        self.assertIs(self.library.songs.get_item(0).raw,
+                      self.library.albums.get_item(0).raw['groups'][0]['entries'][0])
+        loose_track = self.library.songs.get_item(4)
+        self.assertEqual(loose_track.id, 'i.loose')
+        self.assertIs(loose_track.raw, self.library._loose[0])
+
+    def test_merge_reads_as_the_getters_do(self):
+        """merge() compares raw values with the getters' own normalising."""
+        raws = [{'title': None, 'subtitle': 7, 'genre': '', 'year': None, 'explicit': 1,
+                 'countLabel': None, 'art': 3.5, 'url': None},
+                {'title': 'T', 'subtitle': '', 'genre': None, 'year': 1999, 'explicit': None,
+                 'countLabel': '2 songs', 'art': None, 'url': 'https://example.com/x'},
+                {'year': True, 'catalogId': 12345}]
+        for raw in raws:
+            item = Item(dict(raw, id='l.x', kind='album'))
+            for name, key, read in Item._MERGED:
+                with self.subTest(raw=raw, name=name):
+                    self.assertEqual(read(item.raw.get(key)), item.get_property(name))
+
+    def test_the_keep_path_pauses_within_its_frame_budget(self):
+        albums = [album(f'l.a{n}') for n in range(20)]
+        self.write(albums)
+        self.load()
+        for raw in albums:
+            raw['genre'] = 'Jazz'
+        self.write(albums)
+        pauses = []
+        yield_to_frames = library_module.yield_to_frames
+
+        async def counting_yield():
+            pauses.append(True)
+            await yield_to_frames()
+
+        with mock.patch.object(library_module, 'FRAME_BUDGET', 0), \
+                mock.patch.object(library_module, 'yield_to_frames', counting_yield):
+            self.reload()
+        self.assertGreaterEqual(len(pauses), 20)  # a pause after each merge with no budget
+        self.assertEqual({item.genre for item in self.library.albums}, {'Jazz'})
 
     def test_a_renamed_item_is_spliced_in_each_store_holding_it(self):
         albums = [album(f'l.a{n}') for n in range(5)]
