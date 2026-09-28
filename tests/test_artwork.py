@@ -51,7 +51,7 @@ class TestRemoteArt(unittest.TestCase):
                 file.write(b'jpeg')
             return dest_path
 
-        patcher = mock.patch.object(artwork.backend, 'cache_artwork', fake_cache_artwork)
+        patcher = mock.patch.object(artwork.normalize, 'cache_artwork', fake_cache_artwork)
         patcher.start()
         self.addCleanup(patcher.stop)
 

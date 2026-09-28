@@ -13,7 +13,7 @@ inline-quotes = "single"
 [tool.ruff.lint.per-file-ignores]
 # Vendored from the GNOME Shell extension in upstream's style (double quotes, long lines,
 # annotations) until the backend package reformats them as this app's fork.
-"src/backend/sync.py" = ["Q", "E501", "UP", "B"]
-"tests/test_sync.py" = ["Q", "E501", "UP", "B"]
+"src/backend/normalize.py" = ["Q", "E501", "UP", "B"]
+"tests/test_normalize.py" = ["Q", "E501", "UP", "B"]
 "tests/test_demo_schema.py" = ["Q", "E501", "UP", "B"]
 "scripts/demo_library.py" = ["Q", "E501", "UP", "B"]

@@ -119,7 +119,7 @@ sudo meson install -C _build --skip-subprojects
   nothing.
 - **Chrome and MusicKit only through `app.engine`**: engine.py is the one module that imports
   `backend.chrome` and `backend.client`; the rest of the app may import the backend's pure parts
-  (`config`, `errors`, `sync`). Playback goes through `app.player`.
+  (`config`, `errors`, `normalize`). Playback goes through `app.player`.
 - **Errors**: engine failures are `EngineError(code)`, codes in `src/backend/errors.py`
   (`engine-down`, `no-browser`, `not-signed-in`, `api`, `timeout`, `usage`). The user sees a
   toast (`app.report(error)`), never a traceback.
@@ -148,7 +148,7 @@ sudo meson install -C _build --skip-subprojects
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`). Beyond ruff: 4-space indents, no
   type annotations, a docstring where a module or function is not obvious, and comments that
-  describe the code as it is (no phase numbers, review IDs or plans). `src/backend/sync.py`
+  describe the code as it is (no phase numbers, review IDs or plans). `src/backend/normalize.py`
   keeps the extension's style until it is reformatted.
 - **Tests**: stdlib `unittest` in `tests/test_<module>.py`. Keep logic in non-widget classes and
   pure functions, tested with stand-ins; widget tests go through `tests/gtk.py`. Backend, model

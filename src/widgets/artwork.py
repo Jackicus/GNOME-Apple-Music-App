@@ -50,7 +50,7 @@ gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib  # noqa: E402
 
 from ..backend import config  # noqa: E402
-from ..backend import sync as backend  # noqa: E402
+from ..backend import normalize  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def sized_url(url, size):
     any other URL is left as it is."""
     if not url:
         return None
-    url = backend.template_artwork_url(str(url), size, size)
+    url = normalize.template_artwork_url(str(url), size, size)
     return ART_SIZE_RE.sub(lambda match: f'/{size}x{size}{match.group(3)}{match.group(4)}', url)
 
 
@@ -79,7 +79,7 @@ def remote_art_path(url, size=config.COVER_SIZE):
     url = sized_url(url, size)
     if not url:
         return None
-    return os.path.join(str(config.cache_dir()), 'remote-art', backend.artwork_filename(url))
+    return os.path.join(str(config.cache_dir()), 'remote-art', normalize.artwork_filename(url))
 
 
 def is_url(value):
@@ -108,7 +108,7 @@ def remote_item(data):
 def thumb_missing(item):
     """Whether an Item (remote_item's) has a thumbnail to fetch that is not on disk yet."""
     raw = item.raw if isinstance(item.raw, dict) else {}
-    return bool(item.thumb and raw.get('thumbUrl') and backend._art_missing(item.thumb))
+    return bool(item.thumb and raw.get('thumbUrl') and normalize._art_missing(item.thumb))
 
 
 class Artwork:
@@ -153,14 +153,14 @@ class Artwork:
         path = remote_art_path(url, size)
         if not path:
             return None
-        if not backend._art_missing(path):
+        if not normalize._art_missing(path):
             return path
         task = self._fetches.get(path)
         if task is None:
             task = asyncio.get_event_loop().create_task(self._fetch(path, sized_url(url, size)))
             self._fetches[path] = task
             task.add_done_callback(lambda _task: self._fetches.pop(path, None))
-        return path if await asyncio.shield(task) or not backend._art_missing(path) else None
+        return path if await asyncio.shield(task) or not normalize._art_missing(path) else None
 
     async def fetch_thumb(self, item):
         """The Item's thumbnail on disk, for an item from a search or browse answer
@@ -170,15 +170,15 @@ class Artwork:
         url = raw.get('thumbUrl')
         if not item.thumb or not url:
             return False
-        if not backend._art_missing(item.thumb):
+        if not normalize._art_missing(item.thumb):
             return True
         return await self.fetch_remote(url, config.THUMB_SIZE) is not None
 
     async def _fetch(self, path, url):
         def fetch():
-            if not backend._art_missing(path):
+            if not normalize._art_missing(path):
                 return False
-            return backend.cache_artwork(url, str(config.cache_dir()), dest_path=path) is not None
+            return normalize.cache_artwork(url, str(config.cache_dir()), dest_path=path) is not None
         try:
             fetched = await asyncio.to_thread(fetch)
         except Exception:

@@ -5,7 +5,7 @@ paths:
   - "scripts/demo_library.py"
   - "tests/test_library.py"
   - "tests/test_reload.py"
-  - "tests/test_sync.py"
+  - "tests/test_normalize.py"
   - "tests/test_sync_app.py"
   - "tests/test_demo_schema.py"
   - "tests/fixtures/**"
@@ -81,7 +81,7 @@ them before changing either. What matters most:
   (from `do_startup`); `hold_reading()`/`resume_reading()` pause the parse while the main thread
   runs Python before the window is presented, since the two share the GIL.
 - The sync (`sync_library()`, run one at a time by `Application.start_sync()`) fetches through
-  the engine only, normalises in a thread with `backend.sync`'s pure functions, fetches missing
+  the engine only, normalises in a thread with `backend.normalize`'s pure functions, fetches missing
   thumbnails (covers are fetched on demand by the pages that show them), writes library.json
   atomically under the backend's lock, prunes, then `reload()`s. A failed optional section keeps
   last time's entry; a failed songs or playlists listing, or a lost engine, fails the sync.

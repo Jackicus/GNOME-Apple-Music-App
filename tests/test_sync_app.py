@@ -18,7 +18,7 @@ from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
 
 from applemusic import sync as app_sync
 from applemusic.backend import config
-from applemusic.backend import sync as backend
+from applemusic.backend import normalize as backend
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine
 from applemusic.library import EDITABLE, FAVOURITES, ROOT_FOLDER, Library

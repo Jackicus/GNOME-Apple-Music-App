@@ -61,7 +61,7 @@ WEB_PATHS = {'album': 'album', 'playlist': 'playlist', 'song': 'song', 'station'
 # them): a library playlist's and a library album's pages.
 LIBRARY_ROUTES = {'playlist': 'library/playlist', 'album': 'library/albums'}
 
-# Ids the library makes up for what Apple gave none (backend.sync groups songs into albums
+# Ids the library makes up for what Apple gave none (backend.normalize groups songs into albums
 # and artists): nothing of Apple's answers to them.
 SYNTHETIC_PREFIXES = ('l.alb_', 'l.art_')
 

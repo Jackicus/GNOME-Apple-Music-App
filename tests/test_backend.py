@@ -8,7 +8,7 @@ from unittest import mock
 
 from tests import ROOT, SRC
 
-from applemusic.backend import config, sync
+from applemusic.backend import config, normalize
 
 BACKEND = SRC / 'backend'
 TEXT_SUFFIXES = {'.py', '.js', '.json', '.md', '.sh', '.build', '.in', '.xml', '.blp', '.css'}
@@ -87,7 +87,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_sizes(self):
         self.assertEqual((config.THUMB_SIZE, config.COVER_SIZE), (320, 640))
-        self.assertEqual(sync.DEFAULT_ART_SIZES, {'cover': 640, 'thumb': 320})
+        self.assertEqual(normalize.DEFAULT_ART_SIZES, {'cover': 640, 'thumb': 320})
 
     def test_bridge_is_beside_the_module(self):
         self.assertEqual(config.BRIDGE_JS, BACKEND / 'bridge.js')
@@ -98,7 +98,7 @@ class PackageTest(unittest.TestCase):
     def test_importing_loads_neither_am_nor_gi(self):
         code = ('import sys, tests\n'
                 'import applemusic.backend, applemusic.backend.cdp, applemusic.backend.config\n'
-                'import applemusic.backend.sync\n'
+                'import applemusic.backend.normalize\n'
                 "print(sorted(m for m in sys.modules\n"
                 "             if m.endswith('.am') or m.split('.')[0] == 'gi'))\n")
         result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True,

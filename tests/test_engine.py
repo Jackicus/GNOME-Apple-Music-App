@@ -30,7 +30,7 @@ from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic pac
 from gi.events import GLibEventLoop
 
 from applemusic import engine as engine_module
-from applemusic.backend import chrome, sync
+from applemusic.backend import chrome, normalize
 from applemusic.backend import client as client_module
 from applemusic.backend.errors import EngineError
 from applemusic.engine import Engine, item_endpoint, resource_type
@@ -775,7 +775,7 @@ class LifecycleTest(EngineFixture):
                 json.load(f))
         await self.engine.start()
         fetched = []
-        with mock.patch.object(sync, 'download_item_art',
+        with mock.patch.object(normalize, 'download_item_art',
                                lambda item, cache_dir: fetched.append(cache_dir) or item):
             item = await self.engine.item('album', '1724040700')
         self.assertEqual(self.page.api_calls,
@@ -812,7 +812,7 @@ class LifecycleTest(EngineFixture):
                  'attributes': {'name': 'Unreachable'}}]}}}]}
         self.page.api_answers['/v1/catalog/us/albums/1724040700?include=tracks'] = album
         await self.engine.start()
-        with mock.patch.object(sync, 'download_item_art', lambda item, cache_dir: item):
+        with mock.patch.object(normalize, 'download_item_art', lambda item, cache_dir: item):
             item = await self.engine.item('artist', '42')
         self.assertEqual(self.page.api_calls, [
             '/v1/catalog/us/artists/42?include=albums',
@@ -1465,7 +1465,7 @@ class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         # A kept answer is not served either: a demo has none of Apple's.
-        sync.write_answer(sync.landing_cache_path(tmp.name), {'categories': []})
+        normalize.write_answer(normalize.landing_cache_path(tmp.name), {'categories': []})
         engine = Engine(profile_dir='/nowhere/chrome', demo=True)
         await engine.start()
         await engine.start(visible=True)

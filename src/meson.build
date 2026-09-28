@@ -149,7 +149,7 @@ install_data(
   'backend/client.py',
   'backend/config.py',
   'backend/errors.py',
-  'backend/sync.py',
+  'backend/normalize.py',
   install_dir: moduledir / 'backend',
 )
 
