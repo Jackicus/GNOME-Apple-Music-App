@@ -87,6 +87,7 @@ install_data(
   'background.py',
   'cache.py',
   'engine.py',
+  'errors.py',
   'i18n.py',
   'library.py',
   'lyrics.py',

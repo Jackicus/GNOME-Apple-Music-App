@@ -139,8 +139,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
             self.cache_row.set_subtitle(GLib.format_size(size) if size else _('Empty'))
 
     def _on_clear_clicked(self, _button):
-        if self._app.demo:
-            self.add_toast(Adw.Toast(title=_('Not available with the demo library')))
+        if self._app.refuse_in_demo():
             return
         if self._settings.get_boolean('signed-in'):
             body = _('The library, artwork and lyrics kept on this computer are removed, '
@@ -177,7 +176,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         if self._closed:
             return
         if cleared:
-            self.add_toast(Adw.Toast(title=_('Cache cleared')))
+            self._app.toast(_('Cache cleared'))
         await self._measure_cache()
 
     # -- the engine ------------------------------------------------------------------------

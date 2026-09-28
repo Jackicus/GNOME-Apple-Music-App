@@ -559,7 +559,7 @@ class LibrarySync(GObject.Object):
     relays the run's reports (section '' as it starts, total None until known). cancel()
     returns once nothing more of the run will be written, and hold() keeps any run from
     starting (signing out, clearing the cache) until release(). `app` gives the engine, the
-    library, the settings, `demo`, `spawn()`, `toast()` and `report()`."""
+    library, the settings, `spawn()`, `toast()`, `report()` and `refuse_in_demo()`."""
 
     __gtype_name__ = 'AppleMusicLibrarySync'
 
@@ -601,8 +601,7 @@ class LibrarySync(GObject.Object):
         """Sync the library through the engine, starting it if it is down, unless a sync is
         running already or held. Returns the task, or None."""
         app = self._app
-        if app.demo:
-            app.toast(_('Not available with the demo library'))
+        if app.refuse_in_demo():
             return None
         if self._holds:
             log.debug('no sync while the account or the cache changes')

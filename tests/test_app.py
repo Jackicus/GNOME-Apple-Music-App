@@ -1,6 +1,6 @@
 """The Application (src/main.py) built without being run: its settings on the memory backend,
 stand-ins for the engine, the player and the library, no window. What it decides on its own:
-where errors go, when a sync may start, how it quits.
+when a sync may start, how it quits (where errors go: tests/test_errors.py).
 """
 
 import asyncio
@@ -13,7 +13,6 @@ from gi.repository import GObject
 
 from applemusic import main
 from applemusic.backend import config
-from applemusic.backend.errors import EngineError
 from applemusic.sync import LibrarySync
 
 BASE_ID = 'io.github.jackicus.AppleMusic'
@@ -89,19 +88,6 @@ class AppTestCase(unittest.IsolatedAsyncioTestCase):
         self.app = make_app()
         for key in ('signed-in', 'account-name', 'last-sync', 'sync-interval'):
             self.addCleanup(self.app.settings.reset, key)
-
-
-class ReportTest(AppTestCase):
-    def test_each_code_is_a_toast(self):
-        app = self.app
-        with self.assertLogs('applemusic.main', 'WARNING'):
-            app.report(EngineError('engine-down', 'no Chrome'))
-            app.report(EngineError('timeout', 'slow'))
-            app.report(EngineError('not-signed-in', 'sign in'))
-        self.assertEqual([title for title, _button, _action in app.toasts],
-                         ['The engine is not running', 'Apple Music did not answer in time',
-                          'Sign in to Apple Music first'])
-        self.assertEqual(app.toasts[2][2], 'app.sign-in')
 
 
 class StartSyncTest(AppTestCase):
