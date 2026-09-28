@@ -115,7 +115,7 @@ scripts/check.sh        # byte-compile, lint (ruff, if installed), unit tests, b
                         # and validate the desktop, metainfo and schema files
 python3 -m unittest discover -s tests -v    # the unit tests alone
 scripts/screenshot.py build/shot.png --demo --page albums [--light] [--size WxH]
-scripts/am.py status    # drive the engine without the GUI (start, stop, eval, events…)
+scripts/am.py status    # drive the engine without the GUI (status, eval, now-playing, events)
 ```
 
 The development build installs beside a release build, with its own app ID,
