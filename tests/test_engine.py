@@ -278,6 +278,15 @@ class LifecycleTest(EngineFixture):
         self.assertTrue(argv[0].endswith('setpriv'))
         self.assertEqual(argv[4], str(self.binary))
 
+    async def test_the_exec_line_leaves_the_profile_s_path_out(self):
+        with self.assertLogs(engine_module.log, 'DEBUG') as logs:
+            await self.engine.start()
+        exec_lines = [line for line in logs.output if ':exec ' in line]
+        self.assertEqual(len(exec_lines), 1)
+        self.assertIn('--user-data-dir=<profile>', exec_lines[0])
+        self.assertIn('--remote-debugging-pipe', exec_lines[0])
+        self.assertNotIn(str(self.profile), '\n'.join(logs.output))
+
     async def test_the_debug_port_is_opt_in_and_warned_about(self):
         os.environ['APPLE_MUSIC_DEBUG_PORT'] = '9300'
         with self.assertLogs(engine_module.log, 'WARNING') as logs:
