@@ -1,0 +1,72 @@
+---
+paths:
+  - "src/pages/**"
+  - "src/widgets/**"
+  - "src/library.py"
+  - "src/main.py"
+  - "src/window.py"
+  - "scripts/bench.py"
+  - "scripts/scroll_test.py"
+---
+
+# Performance: lists, artwork, startup
+
+Targets, on a 3,000-album, 40,000-song invented library: content within about a second of
+launch, page switches under 100 ms, no dropped frames while scrolling Albums and Songs, and no
+memory kept by pages that were opened and closed. The numbers behind these rules are in
+docs/notes.md.
+
+## Measure
+
+- Before and after a change on the startup path, a page's first build or a list's bind:
+  `scripts/bench.py` (build/demo-big by default; medians of several runs; keep its window
+  visible, a hidden window gets no frames) and, for lists,
+  `APPLE_MUSIC_CACHE=build/demo-big scripts/scroll_test.py --page albums` (or `--page songs
+  --distance 40000`, or `--sidebar`). `python3 -X importtime` for imports. Put the numbers in
+  the commit message.
+- `Application.mark(name)` notes a startup moment (logged with `--debug`); the grid and Songs
+  pages call `pages.mark_bound(self)` at their first bind.
+
+## Recycled rows and tiles
+
+- A `Gtk.GridView`, `ListView` or `ColumnView` binds each item many times while it scrolls, so
+  bind must be cheap: text in `Gtk.Inscription` (a wrapping `Gtk.Label` is measured again at
+  every rebind; SongTitle's and QueueRow's single-line labels are deliberate), no `_()` in
+  bind (look strings up once; the model's `count-label` is made once), no costly children in
+  widgets made by the hundred (a tile makes an `Adw.Avatar` only for an artist), and fixed
+  column widths (`fixed-width` plus `expand`) in tables.
+- Nothing in a recycled row may change size when its artwork arrives or goes: a `Gtk.Picture`
+  whose paintable changes intrinsic size relayouts the whole list, and so does a child shown or
+  hidden. Show `artwork.empty(size)` for no texture and fade the placeholder icon instead.
+- Artwork goes through `widgets.artwork.get_default()`: `get(path, size)` answers from the
+  cache, `request(path, callback, size)` decodes in a thread, `cancel(token)` when the widget is
+  recycled or unmapped. `size` is the edge drawn in device pixels. Ask in an idle after the
+  frame, not in bind, and let go on unmap. Tile, SongTitle and Cover each carry a copy of that
+  logic, and CategoryTile and the artist portrait a looser one; the copies have diverged (only
+  Cover falls back to `get_any()`; the last two skip the idle, the size and `empty()`). A fix to
+  one belongs in all of them.
+- A model change that removes the items a `Gtk.ListView` or `ColumnView` shows destroys those
+  rows and builds new ones. To replace a list's contents, insert the new items first,
+  `scroll_to(0)`, then remove the old ones (`SongsPage._show()`): the rows are only rebound.
+- A `Gtk.GridView` keeps about 30 rows of `max-columns` tiles alive however few it shows: set
+  `max-columns` to what fits (`grid.columns_for()`; `COLUMN_WIDTH` is a tile plus Adwaita's
+  padding, so change them together).
+
+## Sorting and filtering
+
+- Sort with `Gtk.StringSorter`/`Gtk.NumericSorter` (in a `Gtk.MultiSorter`) over
+  `Gtk.PropertyExpression`s of the model's properties: they read each item once and sort in C.
+- A `Gtk.ColumnViewSorter` compares pairs and evaluates both items' expressions at every
+  comparison, which is seconds on 30,000 songs. For Songs, read the primary column from the view
+  sorter's `changed`, then sort and filter in Python and splice: `library.SongOrder` computes
+  each column's keys once, in frame-sized steps (`await prepare(column)`), and `tracks()` then
+  only sorts (library.md).
+
+## Startup and the main loop
+
+- Everything in `do_startup`, `do_activate` and a restored page's construction is on the
+  startup path: keep it small. Import modules at the top of main.py's import chain (before the
+  library's parse starts) or lazily; page modules only in their factories.
+- A page that builds many widgets builds what shows first and the rest a frame apart (Home's
+  `FIRST_SHELVES`). Chunked main-thread work yields with `await yield_to_frames()`.
+- Garbage collection around big loads: see `library.md` (`paused_gc`).
