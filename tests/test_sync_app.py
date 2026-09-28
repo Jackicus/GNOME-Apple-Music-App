@@ -146,7 +146,7 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([song['id'] for song in sections['songs']], ['i.def456'])
         self.assertEqual(set(sections['songs'][0]), {
             'id', 'catalogId', 'title', 'artist', 'album', 'trackNumber', 'discNumber',
-            'durationMs', 'durationLabel', 'explicit', 'index', 'thumb'})
+            'durationMs', 'durationLabel', 'explicit', 'index', 'thumb', 'type'})
         # Playlists, with Favourite Songs flagged as the demo flags it, from Apple's tag, and
         # as not editable (canEdit false); the editable ones carry no attributes.
         flagged = [p['id'] for p in sections['playlists'] if p.get('attributes')]

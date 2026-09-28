@@ -136,7 +136,10 @@ Item = {
 Track = {"id": "i.xyz", "catalogId": "…" /* or null */, "title": "…", "artist": "…", "album": "…",
          "trackNumber": 1, "discNumber": 1, "durationMs": 216000, "durationLabel": "3:36",
          "explicit": true, "index": 0,            // index = position in group.play's queue
-         "thumb": "<cache>/thumb/<sha1>.jpg" /* or null */}  // a playlist's rows only
+         "thumb": "<cache>/thumb/<sha1>.jpg" /* or null */,  // a playlist's rows only
+         "type": "library-songs"}                 // the API's: songs, music-videos (library- or
+                                                  // not), '' when unknown; the bridge's Tracks
+                                                  // (now playing, the queue) carry it too
 ```
 
 **This app's additions** (`src/sync.py` writes them; all optional, version

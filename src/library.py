@@ -1527,8 +1527,9 @@ def _drop_artist_tracks(sections, albums=None):
 
 
 # The keys of a track dict whose values repeat across a library's tracks: an album's
-# tracks all name the album and its artist, and "3:07" is the length of a great many songs.
-SHARED_KEYS = ('artist', 'album', 'durationLabel', 'thumb')
+# tracks all name the album and its artist, "3:07" is the length of a great many songs, and
+# nearly every track's API type is "library-songs".
+SHARED_KEYS = ('artist', 'album', 'durationLabel', 'thumb', 'type')
 
 
 def _share_strings(item, strings):

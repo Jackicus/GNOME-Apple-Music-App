@@ -197,7 +197,8 @@ class BridgeTest(unittest.TestCase):
             ('playbackVolumeDidChange', {'volume': 0.5}),
         ])
         self.assertEqual(track, {
-            'id': 'i.song1', 'catalogId': '1000000001', 'title': 'Harbour Lights',
+            'id': 'i.song1', 'type': 'library-songs', 'catalogId': '1000000001',
+            'title': 'Harbour Lights',
             'artist': 'The Invented Band', 'album': 'Tidewater', 'trackNumber': 3,
             'discNumber': 1, 'durationMs': 216000, 'durationLabel': '3:36', 'explicit': True,
             'artUrl': 'https://example.invalid/256x256bb.jpg', 'index': 1})
@@ -332,6 +333,18 @@ class BridgeTest(unittest.TestCase):
     """)
     def test_play_turns_shuffle_on_off_or_leaves_it(self, value):
         self.assertEqual(value, [1, 1, 1, 0, 0, 1])
+
+    @scenario("""
+        mk.nowPlayingItem = {id: 'i.video1', type: 'library-music-videos',
+                             attributes: {name: 'Harbour Lights (Live)'}};
+        const video = bridge.nowPlaying().track;
+        mk.nowPlayingItem = {id: 'ra.1', type: 'stations', attributes: {name: 'Harbour Radio'}};
+        const station = bridge.nowPlaying().track;
+        mk.nowPlayingItem = {id: '1', attributes: {name: 'No type'}};
+        return [video.type, station.type, bridge.nowPlaying().track.type];
+    """)
+    def test_a_track_carries_its_type(self, value):
+        self.assertEqual(value, ['library-music-videos', 'stations', ''])
 
     @scenario("""
         mk.playbackState = 2;

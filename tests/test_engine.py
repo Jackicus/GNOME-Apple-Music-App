@@ -1381,12 +1381,18 @@ class LibraryWriteTest(EngineFixture):
         await self.up()
         await self.engine.add_to_playlist('p.1', 'i.song1')
         await self.engine.add_to_playlist('p.1', '1000000001')
+        await self.engine.add_to_playlist('p.1', 'i.video1', kind='video')
+        await self.engine.add_to_playlist('p.1', '1000000009', kind='musicVideo')
         self.assertEqual(self.page.bridge_calls, [
             ('addToPlaylist', 'p.1', 'i.song1', 'library-songs'),
-            ('addToPlaylist', 'p.1', '1000000001', 'songs')])
-        for playlist_id, song_id in (('pl.u-1', '1'), ('', '1'), ('p.1', '')):
+            ('addToPlaylist', 'p.1', '1000000001', 'songs'),
+            ('addToPlaylist', 'p.1', 'i.video1', 'library-music-videos'),
+            ('addToPlaylist', 'p.1', '1000000009', 'music-videos')])
+        for playlist_id, song_id, kind in (('pl.u-1', '1', 'song'), ('', '1', 'song'),
+                                           ('p.1', '', 'song'), ('p.1', '1', 'album'),
+                                           ('p.1', '1', 'station'), ('p.1', '1', None)):
             with self.assertRaises(EngineError) as raised:
-                await self.engine.add_to_playlist(playlist_id, song_id)
+                await self.engine.add_to_playlist(playlist_id, song_id, kind)
             self.assertEqual(raised.exception.code, 'usage')
 
     async def test_a_refused_write_is_api(self):
