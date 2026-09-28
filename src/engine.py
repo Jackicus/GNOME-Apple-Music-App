@@ -33,7 +33,7 @@ UI awaits.
     await engine.rating('song', id)        # 1 loved, -1 disliked, 0 neither
     await engine.add_to_library('album', catalog_id)
     await engine.catalog_url('album', library_id)   # its music.apple.com page, or None
-    await engine.add_to_playlist(playlist_id, song_id)
+    await engine.add_to_playlist(playlist_id, song_id)   # kind='video' for a music video
     await engine.search(term, limit=20)    # {shelves}: a catalog search
     await engine.suggest(term, limit=10)   # {terms: [{term, display}], items}
     await engine.landing()       # {categories}: the search page's Browse Categories
@@ -1197,15 +1197,18 @@ class Engine(GObject.Object):
                 return url
         return None
 
-    async def add_to_playlist(self, playlist_id, song_id):
-        """Add a song to the end of a library playlist (POST /v1/me/library/playlists/<id>/
-        tracks): a library song ("i." id) as `library-songs`, a catalog one as `songs`."""
+    async def add_to_playlist(self, playlist_id, song_id, kind='song'):
+        """Add a song, or a music video (`kind` 'video'), to the end of a library playlist
+        (POST /v1/me/library/playlists/<id>/tracks): a library id ("i.") as `library-songs`
+        or `library-music-videos`, a catalog one as `songs` or `music-videos`."""
         playlist_id, song_id = str(playlist_id or ''), str(song_id or '')
-        if not is_library_id(playlist_id) or not song_id:
-            raise EngineError('usage', 'add to playlist needs a library playlist and a song')
-        song_type = 'library-songs' if is_library_id(song_id) else 'songs'
+        base = api.RESOURCE_TYPES.get(kind)
+        if not is_library_id(playlist_id) or not song_id or base not in ('song', 'music-video'):
+            raise EngineError('usage', 'add to playlist needs a library playlist and a song '
+                                       'or a music video')
+        track_type = f'{"library-" if is_library_id(song_id) else ""}{base}s'
         client = await self._require_signed_in('add to playlists')
-        await client.bridge('addToPlaylist', playlist_id, song_id, song_type)
+        await client.bridge('addToPlaylist', playlist_id, song_id, track_type)
 
     # -- search and browsing -------------------------------------------------------------
     # The Search page's search, suggestions, landing and categories, the New page (browse)

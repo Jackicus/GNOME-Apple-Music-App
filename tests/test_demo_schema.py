@@ -88,9 +88,10 @@ class TestDemoLibrarySchema(unittest.TestCase):
         for field in (
             'id', 'catalogId', 'title', 'artist', 'album',
             'trackNumber', 'discNumber', 'durationMs', 'durationLabel',
-            'explicit', 'index'
+            'explicit', 'index', 'type'
         ):
             self.assertIn(field, track, f'Track missing field: {field}')
+        self.assertEqual(track['type'], 'library-songs')  # the API's, as the sync keeps it
 
         self.assertTrue(isinstance(track['id'], str) and track['id'])
         self.assertTrue(isinstance(track['title'], str) and track['title'])

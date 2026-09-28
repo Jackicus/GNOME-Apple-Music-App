@@ -101,6 +101,20 @@ class TestSync(unittest.TestCase):
         self.assertTrue(track['explicit'])
         self.assertEqual(track['index'], 2)
         self.assertIsNone(track['thumb'])
+        self.assertEqual(track['type'], 'songs')
+
+    def test_a_track_keeps_its_api_type(self):
+        video = normalize.normalize_track({'id': 'i.video1', 'type': 'library-music-videos',
+                                           'attributes': {'name': 'Harbour Lights (Live)'}})
+        self.assertEqual(video['type'], 'library-music-videos')
+        self.assertEqual(normalize.normalize_track({'id': 'i.x', 'attributes': {}})['type'], '')
+        # In a playlist, each row keeps its own.
+        playlist = normalize.normalize_playlist(
+            {'id': 'p.1', 'attributes': {'name': 'Mixed'}},
+            tracks=[{'id': 'i.s', 'type': 'library-songs', 'attributes': {'name': 'S'}},
+                    {'id': 'i.v', 'type': 'library-music-videos', 'attributes': {'name': 'V'}}])
+        self.assertEqual([entry['type'] for entry in playlist['groups'][0]['entries']],
+                         ['library-songs', 'library-music-videos'])
 
     def test_normalize_track_names_thumbnail_when_asked(self):
         raw = {

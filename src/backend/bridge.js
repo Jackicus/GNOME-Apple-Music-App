@@ -112,6 +112,9 @@
 
         return {
             id: id,
+            // The API type ('songs', 'library-songs', 'music-videos',
+            // 'library-music-videos', 'stations'…): what the heart rates it as.
+            type: item.type || '',
             catalogId: catalogId,
             title: item.title || attrs.name || '',
             artist: item.artistName || attrs.artistName || '',

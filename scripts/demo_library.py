@@ -1698,6 +1698,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
                     'explicit': is_explicit,
                     'index': overall_index,
                     'thumb': None,
+                    'type': 'library-songs',
                 }
                 global_trk_counter += 1
                 overall_index += 1
@@ -1846,6 +1847,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
                 'explicit': raw_trk['explicit'],
                 'index': i,
                 'thumb': raw_thumb,
+                'type': 'library-songs',
             })
 
         total_ms = sum(t['durationMs'] for t in playlist_tracks)
@@ -1910,6 +1912,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             'explicit': raw_trk['explicit'],
             'index': i,
             'thumb': raw_thumb,
+            'type': 'library-songs',
         })
     favourites_play = {'kind': 'playlist', 'id': favourites_id}
     playlists.append({

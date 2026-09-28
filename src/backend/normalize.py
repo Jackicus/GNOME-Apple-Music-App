@@ -655,8 +655,11 @@ def normalize_track(raw_track, index=0, cache_dir=None, art_urls=None):
       "id": "...", "catalogId": "..." | null, "title": "...", "artist": "...",
       "album": "...", "trackNumber": int, "discNumber": int, "durationMs": int,
       "durationLabel": "3:36", "explicit": bool, "index": int,
-      "thumb": "<cache>/thumb/<x>.jpg" | null
+      "thumb": "<cache>/thumb/<x>.jpg" | null,
+      "type": "songs" | "library-songs" | "music-videos" | "library-music-videos" | ""
     }
+
+    `type` is the API's, so a music video in a playlist is rated and added as one.
 
     `thumb` is named only when `cache_dir` is given: a playlist's rows show
     their own artwork, an album's tracks share the album's. `art_urls` is the
@@ -723,6 +726,7 @@ def normalize_track(raw_track, index=0, cache_dir=None, art_urls=None):
         'explicit': is_explicit,
         'index': int(index),
         'thumb': thumb,
+        'type': str(raw_track.get('type') or ''),
     }
 
 

@@ -37,7 +37,7 @@ def track(track_id, title, index):
     return {'id': track_id, 'catalogId': None, 'title': title, 'artist': 'Test Artist',
             'album': 'Test Album', 'trackNumber': index + 1, 'discNumber': 1,
             'durationMs': 180000, 'durationLabel': '3:00', 'explicit': False, 'index': index,
-            'thumb': None}
+            'thumb': None, 'type': 'library-songs'}
 
 
 def build_songs(library):
@@ -676,7 +676,7 @@ class TestReadLibrary(unittest.TestCase):
                    sections['albums'][1]['groups'][0]['entries'][0],
                    sections['playlists'][0]['groups'][0]['entries'][0],
                    sections['songs'][0]]
-        for key in ('artist', 'album', 'durationLabel'):
+        for key in ('artist', 'album', 'durationLabel', 'type'):
             with self.subTest(key=key):
                 self.assertTrue(all(entry[key] is entries[0][key] for entry in entries))
 
