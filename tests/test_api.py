@@ -4,8 +4,8 @@ import unittest
 
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
 
-from applemusic.backend.api import (api_error, is_library_id, item_endpoint, page_data,
-                                    resource_type)
+from applemusic.backend.api import (api_error, http_status, is_final, is_library_id,
+                                    item_endpoint, page_data, resource_type)
 from applemusic.backend.errors import EngineError
 
 
@@ -76,10 +76,30 @@ class ApiErrorTest(unittest.TestCase):
             error = api_error(answer, 'item')
             self.assertIsInstance(error, EngineError, answer)
             self.assertEqual((error.code, error.message), ('api', message), answer)
+        self.assertEqual(api_error(cases[0][0], 'item').status, 404)
+        self.assertIsNone(api_error(cases[2][0], 'item').status)
+        self.assertEqual(api_error({'errors': [{'status': 503}]}, 'x').status, 503)
 
     def test_anything_else_is_no_error(self):
         for answer in ({'data': []}, {'errors': []}, {'errors': None}, {}, None, [], 'text'):
             self.assertIsNone(api_error(answer, 'item'), answer)
+
+
+class StatusTest(unittest.TestCase):
+    def test_http_status(self):
+        for value, status in (('404', 404), (' 429 ', 429), (503, 503), ('4o4', None),
+                              ('', None), (None, None), (True, None), (42, None), (4.0, None)):
+            self.assertEqual(http_status(value), status, value)
+
+    def test_what_is_final(self):
+        def error(code='api', status=None):
+            return EngineError(code, 'x', status=status)
+
+        for final in (error(status=400), error(status=403), error(status=404),
+                      error('timeout')):
+            self.assertTrue(is_final(final), (final.code, final.status))
+        for passing in (error(status=429), error(status=500), error(status=503), error()):
+            self.assertFalse(is_final(passing), (passing.code, passing.status))
 
 
 if __name__ == '__main__':

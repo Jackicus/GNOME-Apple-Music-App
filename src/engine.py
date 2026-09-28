@@ -88,8 +88,9 @@ CLOSE_WAIT = 2.0          # Chrome closing on Browser.close, before SIGTERM
 STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
-API_RETRIES = 3
+API_RETRIES = 3           # tries of an API read that may pass another time (api.is_final)
 API_RETRY_DELAY = 0.5     # before the first retry of a failed API read; doubles after
+READ_TIMEOUT = 15.0       # one read a person waits on: an item's page, a rating, a link
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
 LYRICS_TIMEOUT = 30.0     # one catalog read, parsed in the page
@@ -708,8 +709,11 @@ class Engine(GObject.Object):
         return status
 
     async def _api(self, client, path, params=None, timeout=None):
-        """One API read through the bridge, retried: MusicKit answers a failed request with a
-        200 and {"errors": [...]}, which is a failure here as much as a rejected promise."""
+        """One API read through the bridge. MusicKit answers a failed request with a 200 and
+        {"errors": [...]}, which is a failure here as much as a rejected promise. What may
+        pass another time (a 5xx, a 429, an error without a status, a promise the page
+        rejected) is tried again, API_RETRIES in all, after a growing pause; what would fail
+        the same way (a 4xx, a timeout: api.is_final) raises at once, its `status` Apple's."""
         where = path.partition('?')[0]  # its query stays out of messages and the log
         last = None
         for attempt in range(API_RETRIES):
@@ -720,18 +724,21 @@ class Engine(GObject.Object):
             except EngineError as e:
                 if e.code == 'engine-down':
                     raise
-                last = EngineError(e.code, f'{where}: {e.message}')
-                continue
-            last = api.api_error(answer, where)
-            if last is None:
-                return answer if isinstance(answer, dict) else {}
+                last = EngineError(e.code, f'{where}: {e.message}', status=e.status)
+            else:
+                last = api.api_error(answer, where)
+                if last is None:
+                    return answer if isinstance(answer, dict) else {}
+            if api.is_final(last):
+                break
         raise last
 
     async def api(self, path, params=None, timeout=None):
         """One Apple Music API read through the page's MusicKit (the bridge's api(), that is
-        mk.api.music(path, params)), retried a few times; the answer's body as a dict
-        ({data: [...], meta, next…}). EngineError('api') when Apple says no, 'engine-down'
-        when there is no engine."""
+        mk.api.music(path, params)), retried when it may pass another time (_api); the
+        answer's body as a dict ({data: [...], meta, next…}). EngineError('api') when Apple
+        says no (its `status` the HTTP status: a 404 is final), 'timeout' when the page did
+        not answer in time, 'engine-down' when there is no engine."""
         client = await self._ready()
         return await self._api(client, path, params, timeout)
 
@@ -796,7 +803,8 @@ class Engine(GObject.Object):
             raise EngineError('not-signed-in', 'sign in to load items')
         status = await self.status()
         storefront = str(status.get('storefront') or 'us')
-        answer = await self._api(client, api.item_endpoint(kind, item_id, storefront))
+        answer = await self._api(client, api.item_endpoint(kind, item_id, storefront),
+                                 timeout=READ_TIMEOUT)
         data = answer.get('data')
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise EngineError('api', f'item not found: {kind} {item_id}')
@@ -1057,7 +1065,8 @@ class Engine(GObject.Object):
         one, where the single-item path answers a 404)."""
         rated = resource_type(kind, item_id)
         client = await self._require_account('read ratings')
-        answer = await self._api(client, f'/v1/me/ratings/{rated}s', {'ids': str(item_id)})
+        answer = await self._api(client, f'/v1/me/ratings/{rated}s', {'ids': str(item_id)},
+                                 timeout=READ_TIMEOUT)
         value = 0
         for entry in api.page_data(answer):
             attributes = entry.get('attributes')
@@ -1088,7 +1097,7 @@ class Engine(GObject.Object):
         client = await self._require_account('look items up')
         try:
             answer = await self._api(client, f'/v1/me/library/{rated[len("library-"):]}s/'
-                                             f'{item_id}/catalog')
+                                             f'{item_id}/catalog', timeout=READ_TIMEOUT)
         except EngineError as e:
             if e.code == 'engine-down':
                 raise
