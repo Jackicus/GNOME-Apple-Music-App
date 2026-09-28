@@ -81,6 +81,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
             (settings, settings.connect('changed::signed-in', self._update_account)),
             (settings, settings.connect('changed::account-name', self._update_account)),
             (app, app.connect('notify::signing-out', self._update_account)),
+            (app.library_sync, app.library_sync.connect('notify::running',
+                                                         self._on_sync_running)),
             (engine, engine.connect('notify::state', self._update_engine)),
             (engine, engine.connect('notify::authorized', self._update_engine)),
             (engine, engine.connect('notify::headless', self._update_engine)),
@@ -97,10 +99,13 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._update_engine()
         self._update_account()
         self._measure()
+        # "Last refreshed 5 minutes ago" moves on while the dialog is open.
+        self._tick = GLib.timeout_add_seconds(60, self._on_tick)
 
     def _on_closed(self, _dialog):
-        """Let go of the settings and the engine, which outlive the dialog."""
+        """Let go of the settings, the engine and the sync, which outlive the dialog."""
         self._closed = True
+        GLib.source_remove(self._tick)
         for source, handler in self._handlers:
             source.disconnect(handler)
         self._handlers = []
@@ -114,7 +119,15 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._quiet = True
         self.interval_row.set_selected(interval_index(self._settings.get_int('sync-interval')))
         self._quiet = False
-        self.interval_row.set_subtitle(last_sync_text(self._settings.get_string('last-sync')))
+        if self._app.library_sync.props.running:
+            subtitle = _('Refreshing…')
+        else:
+            subtitle = last_sync_text(self._settings.get_string('last-sync'))
+        self.interval_row.set_subtitle(subtitle)
+
+    def _on_tick(self):
+        self._update_interval()
+        return GLib.SOURCE_CONTINUE
 
     def _on_interval_selected(self, row, _pspec):
         if self._quiet:
@@ -126,8 +139,11 @@ class PreferencesDialog(Adw.PreferencesDialog):
 
     def _on_last_sync(self, *_args):
         self._update_interval()
-        if not self._clearing:
-            self._measure()  # a sync has finished: the cache has grown
+
+    def _on_sync_running(self, library_sync, _pspec):
+        self._update_interval()
+        if not library_sync.props.running and not self._clearing:
+            self._measure()  # a sync has ended: the cache has grown
 
     def _measure(self):
         self._app.spawn(self._measure_cache())

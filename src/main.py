@@ -103,7 +103,8 @@ class Application(Adw.Application):
             self._add_action('sign-out', self._on_sign_out),
         ]
         self.connect('notify::signing-out', self._on_signing_out)
-        self._add_action('sync', lambda *_args: self.start_sync())
+        # Refresh Library: enabled while signed in, with no sync running (_update_sync_action).
+        self._sync_action = self._add_action('sync', lambda *_args: self.start_sync())
         self._add_action('now-playing', self._on_now_playing)
         self._add_action('start-engine', lambda *_args: self.start_engine())
         self._add_action('show-engine-preferences',
@@ -170,6 +171,7 @@ class Application(Adw.Application):
         self.player.connect('notify::track', self._on_track_changed)
         self.player.connect('error', self._on_playback_error)
         self.library_sync = LibrarySync(self)
+        self._follow_account()
         self.background = BackgroundPlayback(
             self.player, hold=self.hold, release=self.release,
             quit=lambda: self.activate_action('quit'))
@@ -366,9 +368,23 @@ class Application(Adw.Application):
         parent = self._preferences  # over Preferences, when it asks from there
         dialog.present(parent if parent is not None else self.get_active_window())
 
+    def _follow_account(self):
+        """The actions that depend on the account and the sync follow them (do_startup,
+        once the sync exists)."""
+        self.settings.connect('changed::signed-in', self._update_sync_action)
+        self.library_sync.connect('notify::running', self._update_sync_action)
+        self._update_sync_action()
+
+    def _update_sync_action(self, *_args):
+        self._sync_action.set_enabled(
+            not self.demo and not self.signing_out and not self.library_sync.props.running
+            and self.settings.get_boolean('signed-in'))
+
     def _on_signing_out(self, *_args):
         for action in self._account_actions:
             action.set_enabled(not self.signing_out)
+        if self.library_sync is not None:
+            self._update_sync_action()
 
     def _on_sign_out_response(self, _dialog, response):
         if response == 'sign-out':
