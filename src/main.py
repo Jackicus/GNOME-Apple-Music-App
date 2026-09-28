@@ -1,18 +1,30 @@
-"""The application: app actions, settings, the library and its sync, the engine's lifecycle,
-sign-in and sign-out, Preferences and the cache, background playback, demo mode, logging and
-the asyncio-on-GLib bootstrap."""
+"""The application: what the app is made of, its app.* actions and its lifecycle.
+
+    app = Application(version, app_id, base_id, profile, demo_dir)   # the launcher's main()
+    app.run(sys.argv)
+
+do_startup makes the parts (a picture of them is in CLAUDE.md): the Library, whose first
+load() starts reading library.json at once; the Engine (Chrome, stopped); the Player over it;
+Mpris; LibrarySync (sync.py), which runs the syncs. do_activate builds the Window (imported
+only then) and starts the engine when the settings ask. What happens elsewhere: the sync in
+sync.py, signing out and clearing the cache in account.py, background playback in
+background.py, the startup marks in timing.py, the Keyboard Shortcuts dialog in
+dialogs/shortcuts.py.
+
+Every coroutine the app starts goes through spawn(); every message for the user through
+toast(), and every EngineError through report(). Quitting (app.quit, or closing the window
+while nothing plays in the background) hides the window, stops the engine within
+QUIT_TIMEOUT, and only then quits. --demo shows an invented library without the engine
+(_use_demo).
+"""
 
 import asyncio
 import logging
 import os
-import shutil
 import signal
 import sys
-import time
 import warnings
-from datetime import UTC, datetime
 from gettext import gettext as _
-from gettext import ngettext
 
 import gi
 
@@ -23,15 +35,14 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
-from .cache import clear as clear_cache  # noqa: E402
+from .background import BackgroundPlayback  # noqa: E402
 from .engine import Engine  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
-from .shortcuts import ACCELS, accelerator, sections  # noqa: E402
-from .sync import install_scaler, sync_due, sync_library  # noqa: E402
-from .widgets import artwork  # noqa: E402
-from .window import Window  # noqa: E402
+from .shortcuts import ACCELS  # noqa: E402
+from .sync import LibrarySync, install_scaler  # noqa: E402
+from .timing import PROCESS_START, StartupMarks  # noqa: E402, F401  (bench.py reads it here)
 
 log = logging.getLogger(__name__)
 
@@ -40,28 +51,6 @@ RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
 # How long quitting waits for the engine to stop (its own SIGTERM grace is 5 s) before Chrome is
 # killed outright and the app quits anyway.
 QUIT_TIMEOUT = 6.0
-
-# With the window closed for background playback, how long playback may look stopped (MusicKit
-# passes through 'ended' and 'stopped' between items and queues) before the app quits.
-BACKGROUND_GRACE = 10
-
-
-def process_start():
-    """When this process started, in GLib.get_monotonic_time()'s microseconds: from
-    /proc/self/stat's start time on Linux (so the interpreter's own start counts), else
-    now. What the startup marks (Application.mark) are measured from."""
-    now = GLib.get_monotonic_time()
-    try:
-        with open('/proc/self/stat', encoding='ascii') as file:
-            fields = file.read().rpartition(')')[2].split()
-        ticks = int(fields[19])  # starttime, the 22nd field, in clock ticks since boot
-        age = time.clock_gettime(time.CLOCK_BOOTTIME) - ticks / os.sysconf('SC_CLK_TCK')
-    except (OSError, ValueError, IndexError, AttributeError):
-        return now
-    return now - int(age * 1e6)
-
-
-PROCESS_START = process_start()
 
 
 class Application(Adw.Application):
@@ -85,36 +74,38 @@ class Application(Adw.Application):
         self.engine = None  # created in do_startup
         self.player = None  # created in do_startup, after the engine
         self.mpris = None  # created in do_startup, after the player; released in do_shutdown
+        self.library_sync = None  # created in do_startup
+        self.background = None  # created in do_startup: the window closed, the music on
         self._tasks = set()  # strong references: asyncio only keeps weak ones
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
         self._preferences = None  # the Preferences dialog while it is open
-        self._sync_task = None  # the sync running, if one is
-        self._background = None  # the handlers while the window is closed and music plays on
-        self._background_timer = None  # the grace before quitting, once playback stopped
         self._first_load = None  # the library's first load(), reading since do_startup
-        # Startup timing: name -> GLib.get_monotonic_time() when it first happened (mark()).
-        self.marks = {}
+        # Startup timing (timing.py): name -> GLib.get_monotonic_time(), for scripts/bench.py.
+        self._timing = StartupMarks(self.get_active_window)
+        self.marks = self._timing.marks
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
 
         self._add_action('quit', self._on_quit)
         self._add_action('about', self._on_about)
         self._add_action('shortcuts', self._on_shortcuts)
-        self._add_action('preferences', self._on_preferences)
+        self._add_action('preferences', lambda *_args: self.show_preferences())
         self._add_action('sign-in', self._on_sign_in)
         self._add_action('sign-out', self._on_sign_out)
-        self._add_action('sync', self._on_sync)
+        self._add_action('sync', lambda *_args: self.start_sync())
         self._add_action('now-playing', self._on_now_playing)
         # Playback, enabled while something plays (the bar's buttons follow). Their keys
         # (Space, Ctrl+Right, Ctrl+Left) are the window's (shortcuts.PLAYBACK), not
         # accelerators, which GTK 4 would fire before a focused entry gets them.
         self._playback_actions = [
-            self._add_action('play-pause', self._on_play_pause),
-            self._add_action('next', self._on_next),
-            self._add_action('previous', self._on_previous),
-            self._add_action('shuffle', self._on_shuffle),
-            self._add_action('repeat', self._on_repeat),
+            self._add_action('play-pause', lambda *_: self.player_command(self.player.toggle())),
+            self._add_action('next', lambda *_: self.player_command(self.player.next())),
+            self._add_action('previous', lambda *_: self.player_command(self.player.previous())),
+            self._add_action('shuffle',
+                             lambda *_: self.player_command(self.player.toggle_shuffle())),
+            self._add_action('repeat',
+                             lambda *_: self.player_command(self.player.cycle_repeat())),
         ]
         for action in self._playback_actions:
             action.set_enabled(False)
@@ -164,6 +155,10 @@ class Application(Adw.Application):
         self.player = Player(self)
         self.player.connect('notify::track', self._on_track_changed)
         self.player.connect('error', self._on_playback_error)
+        self.library_sync = LibrarySync(self)
+        self.background = BackgroundPlayback(
+            self.player, hold=self.hold, release=self.release,
+            quit=lambda: self.activate_action('quit'))
         self.mpris = Mpris(self)  # the media controls and keys, as this app
         self.mpris.start()
         install_scaler()  # thumbnails scaled from covers on disk, by GdkPixbuf
@@ -207,6 +202,8 @@ class Application(Adw.Application):
     def do_activate(self):
         window = self.get_active_window()
         if window is None:
+            from .window import Window
+
             self.mark('activate')
             self.spawn(self._load_library())
             window = Window(application=self)
@@ -214,49 +211,21 @@ class Application(Adw.Application):
             if self.profile == 'development':
                 window.add_css_class('devel')
             window.connect('realize', lambda _window: self.mark('window-realized'))
-            window.connect('map', self._on_window_mapped)
+            window.connect('map', self._timing.on_window_mapped)
             self.spawn(self._log_event_loop())
             if self._autostart_wanted():
                 self.spawn(self._autostart())
-        elif self.engine.state == 'up' and self.engine.authorized and self.sync_due():
+        elif (self.engine.state == 'up' and self.engine.authorized
+              and self.library_sync.due()):
             self.start_sync()  # launched again: a sync when the last is old
         self.library.resume_reading()  # present() waits for the compositor
         window.present()
 
-    # -- startup timing ------------------------------------------------------------------
-
     def mark(self, name, painted=None):
-        """Note that `name` has just happened for the first time ('window-mapped',
-        'library-ready', 'albums-bound'…): its GLib.get_monotonic_time() goes in `marks`
-        and, with --debug, the log says how long after the process started it was.
-        `painted` names a mark for the end of the frame being drawn (a page's first tiles
-        are bound during a frame's layout and are on screen at its end). scripts/bench.py
-        reads the marks; anything marked again is ignored."""
-        if name in self.marks:
-            return
-        now = GLib.get_monotonic_time()
-        self.marks[name] = now
-        log.debug('startup: %s at +%.0f ms', name, (now - PROCESS_START) / 1000)
-        if painted:
-            self._mark_after_paint(painted)
-
-    def _mark_after_paint(self, name):
-        window = self.get_active_window()
-        clock = window.get_frame_clock() if window is not None else None
-        if clock is None:
-            return
-        handler = []
-
-        def on_after_paint(clock):
-            clock.disconnect(handler[0])
-            self.mark(name)
-
-        handler.append(clock.connect('after-paint', on_after_paint))
-
-    def _on_window_mapped(self, _window):
-        if 'first-frame' not in self.marks:
-            self.mark('window-mapped')
-            self._mark_after_paint('first-frame')
+        """A startup mark (timing.StartupMarks.mark): 'window-mapped', 'library-ready',
+        'albums-bound'…, with `painted` a mark for the end of the frame being drawn.
+        scripts/bench.py reads `marks`; --debug logs each."""
+        self._timing.mark(name, painted)
 
     async def _load_library(self):
         load, self._first_load = self._first_load, None
@@ -282,7 +251,7 @@ class Application(Adw.Application):
             log.warning('the engine is up but Apple Music is not signed in')
             self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
             return
-        if self.sync_due():
+        if self.library_sync.due():
             self.start_sync()
         if not self.settings.get_string('account-name'):
             # Sign-in may have missed the name (the page renders it late); try again now.
@@ -319,101 +288,76 @@ class Application(Adw.Application):
         if window is not None and hasattr(window, 'toggle_now_playing'):
             window.toggle_now_playing()
 
-    def _on_play_pause(self, *_args):
-        self.player_command(self.player.toggle())
-
-    def _on_next(self, *_args):
-        self.player_command(self.player.next())
-
-    def _on_previous(self, *_args):
-        self.player_command(self.player.previous())
-
-    def _on_shuffle(self, *_args):
-        self.player_command(self.player.toggle_shuffle())
-
-    def _on_repeat(self, *_args):
-        self.player_command(self.player.cycle_repeat())
-
-    # -- the sync ------------------------------------------------------------------------
-
-    def sync_due(self):
-        """Whether the library should be synced now: never yet, or the last sync is older
-        than the sync-interval setting (hours; 0 means only when asked)."""
-        return sync_due(self.settings.get_string('last-sync'),
-                        self.settings.get_int('sync-interval'))
-
-    def _on_sync(self, *_args):
-        self.start_sync()
+    # -- the library and the account --------------------------------------------------------
 
     def start_sync(self):
-        """Sync the library through the engine, starting it if it is down, unless a sync is
-        running already. Returns the task, or None."""
-        if self.demo:
-            self.toast(_('Not available with the demo library'))
-            return None
-        if self._sync_task is not None and not self._sync_task.done():
-            log.debug('a sync is running already')
-            return None
-        self._sync_task = self.spawn(self._sync())
-        return self._sync_task
-
-    async def _sync(self):
-        window = self.get_active_window()
-        started = time.monotonic()
-        try:
-            if self.engine.state == 'down':
-                await self.engine.start()
-            if window is not None:
-                window.show_sync_progress(None, 0, None)
-            counts = await sync_library(self.engine, self.library, self._on_sync_progress)
-        except EngineError as error:
-            log.warning('sync: %s', error)
-            if error.code == 'not-signed-in':
-                self.report(error)
-            else:
-                self.toast(_('Could not sync your library: {message}').format(
-                    message=error.message), _('Retry'), 'app.sync')
-            return
-        finally:
-            window = self.get_active_window()
-            if window is not None:
-                window.hide_sync_progress()
-        self.settings.set_string('last-sync', datetime.now(UTC).isoformat(
-            timespec='seconds'))
-        log.info('sync done in %.0f s', time.monotonic() - started)
-        albums, playlists = counts.get('albums', 0), counts.get('playlists', 0)
-        songs = self.library.song_count()
-        summary = ', '.join([
-            ngettext('{count} album', '{count} albums', albums).format(count=f'{albums:n}'),
-            ngettext('{count} playlist', '{count} playlists', playlists).format(
-                count=f'{playlists:n}'),
-            ngettext('{count} song', '{count} songs', songs).format(count=f'{songs:n}'),
-        ])
-        self.toast(_('Library synced: {summary}').format(summary=summary))
-
-    def _on_sync_progress(self, section, done, total):
-        window = self.get_active_window()
-        if window is not None:
-            window.show_sync_progress(section, done, total)
+        """Sync the library (LibrarySync.start()): the task, or None."""
+        return self.library_sync.start()
 
     async def clear_cache(self):
-        """Clear the cache (cache.CACHE_ENTRIES: library.json, the artwork, items, lyrics
-        and the day-long answers), after stopping a sync that is running; the library
-        empties and `last-sync` is forgotten, and the library is synced again when signed
-        in. Answers False (nothing done) in demo mode, whose library is the cache."""
+        """Clear the cache and sync again (account.clear_cache()); False in demo mode."""
+        from . import account
+
+        return await account.clear_cache(self)
+
+    def _on_sign_in(self, *_args):
         if self.demo:
-            return False
-        task = self._sync_task
-        if task is not None and not task.done():
-            task.cancel()  # it would write library.json and artwork into what is cleared
-            await asyncio.wait([task])
-        await asyncio.to_thread(clear_cache, config.cache_dir())
-        artwork.get_default().clear()
-        self.settings.set_string('last-sync', '')
-        await self.library.load()  # nothing left to read: the models empty
-        if self.settings.get_boolean('signed-in'):
-            self.start_sync()
-        return True
+            self.toast(_('Not available with the demo library'))
+            return
+        if self._signin is not None:
+            return  # the dialog is open already
+        from .dialogs.signin import SignInDialog
+
+        dialog = SignInDialog(self)
+        self._signin = dialog
+        dialog.connect('closed', self._on_signin_closed)
+        dialog.present(self.get_active_window())
+
+    def _on_signin_closed(self, _dialog):
+        self._signin = None
+
+    def _on_sign_out(self, *_args):
+        if self.demo:
+            return
+        dialog = Adw.AlertDialog(
+            heading=_('Sign Out of Apple Music?'),
+            body=_('The engine stops, and your library, artwork and sign-in cached on this '
+                   'computer are removed.'),
+        )
+        dialog.add_response('cancel', _('_Cancel'))
+        dialog.add_response('sign-out', _('Sign _Out'))
+        dialog.set_response_appearance('sign-out', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_sign_out_response)
+        parent = self._preferences  # over Preferences, when it asks from there
+        dialog.present(parent if parent is not None else self.get_active_window())
+
+    def _on_sign_out_response(self, _dialog, response):
+        if response == 'sign-out':
+            from . import account
+
+            self.spawn(account.sign_out(self))
+
+    def show_preferences(self, page=None):
+        """Present the Preferences dialog (app.preferences), on `page` ('general',
+        'engine') when given; the one open already if it is. Returns the dialog."""
+        dialog = self._preferences
+        if dialog is None:
+            from .dialogs.preferences import PreferencesDialog
+
+            dialog = PreferencesDialog(self)
+            self._preferences = dialog
+            dialog.connect('closed', self._on_preferences_closed)
+            dialog.present(self.get_active_window())
+        if page:
+            dialog.set_visible_page_name(page)
+        return dialog
+
+    def _on_preferences_closed(self, _dialog):
+        self._preferences = None
+
+    # -- messages ------------------------------------------------------------------------
 
     def toast(self, title, button_label=None, action_name=None):
         """A toast on the active window, or in Preferences while that is open over it, with
@@ -443,75 +387,24 @@ class Application(Adw.Application):
             self.toast(_('Apple Music could not do that: {message}').format(
                 message=getattr(error, 'message', error)))
 
-    # -- background playback -------------------------------------------------------------
+    # -- background playback and quitting ------------------------------------------------
 
     def close_window(self, window):
         """The window's close request (Window.do_close_request). With background playback
         on and something playing, the window hides and the app is held while the music
-        plays on: MPRIS Raise or launching the app again shows it, and the app quits once
-        playback has stopped for BACKGROUND_GRACE seconds. Otherwise the app quits, which
-        stops the engine."""
+        plays on (background.py): MPRIS Raise or launching the app again shows it.
+        Otherwise the app quits, which stops the engine."""
         if (self._quitting is None and self.settings.get_boolean('background-playback')
                 and self.player is not None and self.player.active):
             window.hide_for_background()
-            self._enter_background(window)
+            self.background.enter(window)
         else:
             self.activate_action('quit')
 
     @property
     def in_background(self):
         """Whether the window is closed while the music plays on (the app held)."""
-        return self._background is not None
-
-    def _enter_background(self, window):
-        if self._background is None:
-            self.hold()
-            self._background = [
-                (self.player, self.player.connect('notify::state', self._check_background)),
-                (self.player, self.player.connect('notify::track', self._check_background)),
-                (window, window.connect('notify::visible', self._on_window_visible)),
-            ]
-            log.info('the window is closed; playing on in the background')
-        self._check_background()
-
-    def _leave_background(self):
-        """The window is back (or the app is quitting): the hold released, nothing watched."""
-        if self._background is None:
-            return
-        for source, handler in self._background:
-            source.disconnect(handler)
-        self._background = None
-        if self._background_timer is not None:
-            GLib.source_remove(self._background_timer)
-            self._background_timer = None
-        self.release()
-
-    def _on_window_visible(self, window, _pspec):
-        if window.get_visible():
-            log.info('the window is shown again')
-            self._leave_background()
-
-    def _check_background(self, *_args):
-        """Playback stopped with the window closed: quit after the grace, unless something
-        plays (or is paused) again by then."""
-        if self._background is None:
-            return
-        if not self.player.stopped:
-            if self._background_timer is not None:
-                GLib.source_remove(self._background_timer)
-                self._background_timer = None
-        elif self._background_timer is None:
-            self._background_timer = GLib.timeout_add_seconds(
-                BACKGROUND_GRACE, self._on_background_stopped)
-
-    def _on_background_stopped(self):
-        self._background_timer = None
-        if self._background is not None and self.player.stopped:
-            log.info('playback stopped with the window closed: quitting')
-            self.activate_action('quit')
-        return GLib.SOURCE_REMOVE
-
-    # -- quitting ------------------------------------------------------------------------
+        return self.background is not None and self.background.active
 
     def _on_quit(self, *_args):
         """Stop the engine, then quit. Closing the last window comes here too (close_window,
@@ -523,12 +416,13 @@ class Application(Adw.Application):
             self._quitting = self.spawn(self._quit())
 
     async def _quit(self):
-        self._leave_background()
+        if self.background is not None:
+            self.background.leave()
         for window in self.get_windows():
             if hasattr(window, 'prepare_quit'):  # a dialog's toplevel has none
                 window.prepare_quit()  # remembers its state and hides at once
-        if self._sync_task is not None and not self._sync_task.done():
-            self._sync_task.cancel()  # its downloads give up at the next one
+        if self.library_sync is not None:
+            self.spawn(self.library_sync.cancel())  # its downloads give up at the next one
         try:
             await asyncio.wait_for(self.engine.stop(), QUIT_TIMEOUT)
         except TimeoutError:
@@ -540,80 +434,7 @@ class Application(Adw.Application):
         finally:
             Gio.Application.quit(self)
 
-    # -- sign-in and sign-out ----------------------------------------------------------------
-
-    def _on_sign_in(self, *_args):
-        if self.demo:
-            self.toast(_('Not available with the demo library'))
-            return
-        if self._signin is not None:
-            return  # the dialog is open already
-        from .dialogs.signin import SignInDialog
-
-        dialog = SignInDialog(self)
-        self._signin = dialog
-        dialog.connect('closed', self._on_signin_closed)
-        dialog.present(self.get_active_window())
-
-    def _on_signin_closed(self, _dialog):
-        self._signin = None
-
-    def _on_preferences(self, *_args):
-        self.show_preferences()
-
-    def show_preferences(self, page=None):
-        """Present the Preferences dialog (app.preferences), on `page` ('general',
-        'engine') when given; the one open already if it is. Returns the dialog."""
-        dialog = self._preferences
-        if dialog is None:
-            from .dialogs.preferences import PreferencesDialog
-
-            dialog = PreferencesDialog(self)
-            self._preferences = dialog
-            dialog.connect('closed', self._on_preferences_closed)
-            dialog.present(self.get_active_window())
-        if page:
-            dialog.set_visible_page_name(page)
-        return dialog
-
-    def _on_preferences_closed(self, _dialog):
-        self._preferences = None
-
-    def _on_sign_out(self, *_args):
-        if self.demo:
-            return
-        dialog = Adw.AlertDialog(
-            heading=_('Sign Out of Apple Music?'),
-            body=_('The engine stops, and your library, artwork and sign-in cached on this '
-                   'computer are removed.'),
-        )
-        dialog.add_response('cancel', _('_Cancel'))
-        dialog.add_response('sign-out', _('Sign _Out'))
-        dialog.set_response_appearance('sign-out', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('cancel')
-        dialog.set_close_response('cancel')
-        dialog.connect('response', self._on_sign_out_response)
-        parent = self._preferences  # over Preferences, when it asks from there
-        dialog.present(parent if parent is not None else self.get_active_window())
-
-    def _on_sign_out_response(self, _dialog, response):
-        if response == 'sign-out':
-            self.spawn(self._sign_out())
-
-    async def _sign_out(self):
-        """Stop the engine, forget the account, wipe the Chrome profile and the cache, and
-        empty the library."""
-        if self.demo:
-            return
-        try:
-            await self.engine.stop()
-        except EngineError as error:
-            log.warning('stopping the engine before signing out: %s', error)
-        self.settings.set_boolean('signed-in', False)
-        self.settings.set_string('account-name', '')
-        await asyncio.to_thread(remove_trees, self.engine.profile_dir, config.cache_dir())
-        await self.library.load()  # nothing left to read: the models empty
-        self.toast(_('Signed out'))
+    # -- tasks, actions, dialogs ---------------------------------------------------------
 
     def spawn(self, coro):
         """Run a coroutine as a task on the GLib-backed asyncio loop.
@@ -656,62 +477,9 @@ class Application(Adw.Application):
         about.present(self.get_active_window())
 
     def _on_shortcuts(self, *_args):
-        """The Keyboard Shortcuts dialog: every accelerator and key of shortcuts.py, grouped.
+        from .dialogs import shortcuts
 
-        libadwaita 1.9 leaves the dialog's rows without accessible names (a screen reader
-        finds only their parts), so each is named "title: keys" once it is built."""
-        dialog = Adw.ShortcutsDialog()
-        names = {}
-        for title, items in sections():
-            section = Adw.ShortcutsSection(title=title)
-            for item_title, key in items:
-                section.add(Adw.ShortcutsItem.new(item_title, accelerator(key)))
-                keys = [_key_label(accel) for accel in accelerator(key).split()]
-                if len(keys) > 1:
-                    keys = [_('{keys} or {key}').format(keys=', '.join(keys[:-1]),
-                                                        key=keys[-1])]
-                names[item_title] = _('{title}: {keys}').format(title=item_title, keys=keys[0])
-            dialog.add(section)
-        dialog.present(self.get_active_window())
-        _name_rows(dialog, names)
-
-
-def _key_label(accel):
-    """How a key reads: "Ctrl+Q" for <primary>q."""
-    ok, key, mods = Gtk.accelerator_parse(accel)
-    return Gtk.accelerator_get_label(key, mods) if ok else accel
-
-
-def _name_rows(widget, names):
-    """Give the rows under widget whose title is a key of names that name (the shortcuts
-    dialog's AdwShortcutRows: see _on_shortcuts)."""
-    title = getattr(widget, 'get_title', None)
-    if (title is not None and isinstance(widget, Gtk.ListBoxRow)
-            and title() in names):
-        widget.update_property([Gtk.AccessibleProperty.LABEL], [names[title()]])
-    child = widget.get_first_child()
-    while child is not None:
-        _name_rows(child, names)
-        child = child.get_next_sibling()
-
-
-def remove_trees(*paths, attempts=4, pause=0.5):
-    """Delete directories (in a thread), leaving anything that cannot be deleted. Chrome's
-    helper processes write to the profile for a moment after the browser process has exited
-    (its network service re-created `Default/Network Persistent State` in one run), so a
-    directory that comes back is removed again, a few times, `pause` seconds apart."""
-    for path in paths:
-        if not path:
-            continue
-        for attempt in range(attempts):
-            if not os.path.isdir(path):
-                break
-            if attempt:
-                time.sleep(pause)
-            log.info('removing %s', path)
-            shutil.rmtree(path, ignore_errors=True)
-        if os.path.isdir(path):
-            log.warning('%s could not be removed entirely', path)
+        shortcuts.present(self.get_active_window())
 
 
 def use_glib_event_loop():

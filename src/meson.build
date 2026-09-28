@@ -82,7 +82,9 @@ configure_file(
 
 install_data(
   '__init__.py',
+  'account.py',
   'actions.py',
+  'background.py',
   'cache.py',
   'engine.py',
   'i18n.py',
@@ -96,6 +98,7 @@ install_data(
   'shortcuts.py',
   'sidebar.py',
   'sync.py',
+  'timing.py',
   'window.py',
   install_dir: moduledir,
 )
@@ -118,6 +121,7 @@ install_data(
 install_data(
   'dialogs/__init__.py',
   'dialogs/preferences.py',
+  'dialogs/shortcuts.py',
   'dialogs/signin.py',
   install_dir: moduledir / 'dialogs',
 )

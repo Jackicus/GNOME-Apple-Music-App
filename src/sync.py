@@ -1,6 +1,9 @@
 """Syncing the library: Apple's answers, through the engine, into library.json and the models.
 
-    counts = await sync_library(app.engine, app.library, progress)
+    app.library_sync = LibrarySync(app)      # the app's one: start(), cancel(), `running`
+    task = app.library_sync.start()          # a sync as a task, unless one runs
+    await app.library_sync.cancel()          # stopped, and nothing more of it written
+    counts = await sync_library(app.engine, app.library, progress)   # the sync itself
 
 fetches, in this order, the library's songs (with their albums, which is what the Albums and
 Artists sections are built from), the playlists and each one's tracks, the playlist folders,
@@ -32,6 +35,10 @@ What the web player asks for, found by watching its requests (2026-09-28):
 The Item dicts written here carry one key beyond the README's shape: `artUrl`, the cover's
 URL at config.COVER_SIZE, which fetch_cover() downloads to the item's `art` path.
 
+LibrarySync runs sync_library() for the app, one at a time: it says whether one is `running`
+and relays its `progress(section, done, total)` (progress_text() words it for the window's
+banner), and toasts how it ended.
+
 When to sync: sync_due(last_sync, hours) (the last-sync and sync-interval settings), and the
 choices Preferences offers for the interval (INTERVALS; interval_index()), with
 last_sync_text() saying how long ago the last one was.
@@ -41,6 +48,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import UTC, datetime
 from gettext import gettext as _
 from gettext import ngettext
@@ -49,7 +57,7 @@ import gi
 
 gi.require_version('GdkPixbuf', '2.0')
 
-from gi.repository import GdkPixbuf  # noqa: E402
+from gi.repository import GdkPixbuf, GObject  # noqa: E402
 
 from .backend import config  # noqa: E402
 from .backend import normalize, store  # noqa: E402
@@ -483,3 +491,119 @@ def _previous_library(cache_dir):
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+# -- the app's sync ----------------------------------------------------------------------
+
+
+def section_names():
+    """What the sync banner calls each progress section (PROGRESS_SECTIONS), translated on
+    call, after gettext is set up."""
+    return {
+        'songs': _('songs'),
+        'playlists': _('playlists'),
+        'folders': _('folders'),
+        'videos': _('music videos'),
+        'radio': _('radio'),
+        'shelves': _('shelves'),
+        'artwork': _('artwork'),
+    }
+
+
+def progress_text(section, done, total):
+    """The banner's sentence for a progress report: "Syncing your library: songs 300 of
+    2,000". `section` is one of PROGRESS_SECTIONS, or '' before the first."""
+    name = section_names().get(section)
+    if name is None:
+        return _('Syncing your library…')
+    if total:
+        return _('Syncing your library: {section} {done} of {total}').format(
+            section=name, done=f'{done:n}', total=f'{total:n}')
+    if done:
+        return _('Syncing your library: {section} {done}').format(section=name, done=f'{done:n}')
+    return _('Syncing your library: {section}…').format(section=name)
+
+
+class LibrarySync(GObject.Object):
+    """The app's sync: sync_library() through `app.engine` into `app.library`, one at a time.
+
+    `running` is true from start() until the run has ended; `progress(section, done, total)`
+    relays the run's reports (section '' as it starts, total None until known). `app` gives
+    the engine, the library, the settings, `demo`, `spawn()`, `toast()` and `report()`."""
+
+    __gtype_name__ = 'AppleMusicLibrarySync'
+
+    __gsignals__ = {
+        'progress': (GObject.SignalFlags.RUN_FIRST, None, (str, int, object)),
+    }
+
+    running = GObject.Property(type=bool, default=False)
+
+    def __init__(self, app):
+        super().__init__()
+        self._app = app
+        self._task = None
+
+    def due(self):
+        """Whether the library should be synced now: never yet, or the last sync is older
+        than the sync-interval setting (hours; 0 means only when asked)."""
+        settings = self._app.settings
+        return sync_due(settings.get_string('last-sync'), settings.get_int('sync-interval'))
+
+    def start(self):
+        """Sync the library through the engine, starting it if it is down, unless a sync is
+        running already. Returns the task, or None."""
+        app = self._app
+        if app.demo:
+            app.toast(_('Not available with the demo library'))
+            return None
+        if self._task is not None and not self._task.done():
+            log.debug('a sync is running already')
+            return None
+        self.running = True
+        task = self._task = app.spawn(self._run())
+        task.add_done_callback(self._on_done)
+        return task
+
+    def _on_done(self, task):
+        if task is self._task:
+            self.running = False  # however it ended, cancelled before it began included
+
+    async def cancel(self):
+        """Stop the sync running, if one is, and wait for it to end."""
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait([task])
+
+    async def _run(self):
+        app = self._app
+        engine = app.engine
+        started = time.monotonic()
+        try:
+            if engine.state == 'down':
+                await engine.start()
+            self.emit('progress', '', 0, None)
+            counts = await sync_library(engine, app.library, self._on_progress)
+        except EngineError as error:
+            log.warning('sync: %s', error)
+            if error.code == 'not-signed-in':
+                app.report(error)
+            else:
+                app.toast(_('Could not sync your library: {message}').format(
+                    message=error.message), _('Retry'), 'app.sync')
+            return
+        app.settings.set_string('last-sync', datetime.now(UTC).isoformat(timespec='seconds'))
+        log.info('sync done in %.0f s', time.monotonic() - started)
+        albums, playlists = counts.get('albums', 0), counts.get('playlists', 0)
+        songs = app.library.song_count()
+        summary = ', '.join([
+            ngettext('{count} album', '{count} albums', albums).format(count=f'{albums:n}'),
+            ngettext('{count} playlist', '{count} playlists', playlists).format(
+                count=f'{playlists:n}'),
+            ngettext('{count} song', '{count} songs', songs).format(count=f'{songs:n}'),
+        ])
+        app.toast(_('Library synced: {summary}').format(summary=summary))
+
+    def _on_progress(self, section, done, total):
+        self.emit('progress', section, done, total)

@@ -25,9 +25,10 @@ widgets.
 
 ## The parts
 
-- **Application** (`main.py`): owns the settings, the library, the engine, the player and the
-  MPRIS service; the `app.*` actions and accelerators; sign-in and sign-out; the sync as one task
-  at a time; Preferences and the cache; background playback; quitting; demo mode.
+- **Application** (`main.py`): owns the settings, the library, the engine, the player, the
+  MPRIS service and the sync (`LibrarySync`, one run at a time); the `app.*` actions and
+  accelerators; the dialogs; quitting; demo mode. Signing out and clearing the cache are
+  `account.py`'s, background playback `background.py`'s, the startup marks `timing.py`'s.
 - **Window** (`window.py`): an `AdwBottomSheet` whose content is the split view (the
   `AdwSidebar` and an `AdwNavigationView`) and whose bottom bar and sheet are the player bar and
   Now Playing. Choosing a sidebar item replaces the navigation stack with that destination's
