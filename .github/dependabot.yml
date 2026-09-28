@@ -1,0 +1,11 @@
+# Keeps the pinned major versions of the GitHub Actions in .github/workflows current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - ci
+    commit-message:
+      prefix: CI
