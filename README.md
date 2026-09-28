@@ -93,8 +93,8 @@ with the window closed, turn on background playback in Preferences.
 | Which Chrome process belongs to the app | `$XDG_RUNTIME_DIR/apple-music/engine.json` |
 | Settings | GSettings schema `io.github.jackicus.AppleMusic` |
 
-The development build uses `~/.local/share/apple-music/chrome-devel/`
-instead.
+The development build uses `~/.local/share/apple-music/chrome-devel/` and
+`~/.cache/apple-music-devel/` instead.
 
 - **Sign Out** (in the account menu at the bottom of the sidebar) stops Chrome
   and deletes both the Chrome profile and the cache.

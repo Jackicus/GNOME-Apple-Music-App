@@ -77,6 +77,8 @@ config.py
   APPLE_MUSIC_PROFILE and APPLE_MUSIC_PORT overrides, THUMB_SIZE, COVER_SIZE, BRIDGE_JS.
 - (2026-09-28) port() and its environment override gave way to debug_port()
   (APPLE_MUSIC_DEBUG_PORT, unset by default): the engine speaks CDP over a pipe.
+- (2026-09-28) set_build_profile(profile): the development build's own cache
+  (apple-music-devel) and Chrome profile (chrome-devel), which the Engine used to derive.
 - (Phase 9) state_file(profile=None) is keyed by profile: the default profile's engine.json is
   in $XDG_RUNTIME_DIR/apple-music, any other profile's (an override, the .Devel build's
   chrome-devel) inside that profile; default_profile_dir().

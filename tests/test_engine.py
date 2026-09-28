@@ -29,7 +29,7 @@ from gi.events import GLibEventLoop
 from applemusic import engine as engine_module
 from applemusic.backend import chrome, sync
 from applemusic.backend.errors import EngineError
-from applemusic.engine import Engine, engine_paths, item_endpoint, resource_type
+from applemusic.engine import Engine, item_endpoint, resource_type
 from tests.test_client import FakeBrowser, FakePage, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
@@ -1132,27 +1132,6 @@ class CacheTest(unittest.TestCase):
         self.assertEqual(engine_module.cache_size(self.cache), 5)
         self.assertEqual(engine_module.clear_cache(self.cache), 0)  # nothing left to clear
         self.assertEqual(engine_module.clear_cache(self.root / 'missing'), 0)
-
-
-class PathsTest(unittest.TestCase):
-    def env(self, **values):
-        patcher = mock.patch.dict(os.environ)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        for name in ('APPLE_MUSIC_PROFILE', 'XDG_DATA_HOME'):
-            os.environ.pop(name, None)
-        os.environ.update(values)
-
-    def test_release_and_development(self):
-        self.env(XDG_DATA_HOME='/x/data')
-        self.assertEqual(engine_paths('default'), pathlib.Path('/x/data/apple-music/chrome'))
-        self.assertEqual(engine_paths('development'),
-                         pathlib.Path('/x/data/apple-music/chrome-devel'))
-
-    def test_environment_wins(self):
-        self.env(XDG_DATA_HOME='/x/data', APPLE_MUSIC_PROFILE='/o/profile')
-        self.assertEqual(engine_paths('development'), pathlib.Path('/o/profile'))
-        self.assertEqual(engine_paths('default'), pathlib.Path('/o/profile'))
 
 
 class EndpointTest(unittest.TestCase):

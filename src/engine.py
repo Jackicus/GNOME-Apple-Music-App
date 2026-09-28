@@ -164,17 +164,6 @@ ACCOUNT_NAME_JS = r"""(() => {
 })()"""
 
 
-def engine_paths(profile):
-    """The Chrome profile directory for a build profile: the development build uses
-    `chrome-devel` beside the release build's `chrome`, so both can run at once; the
-    APPLE_MUSIC_PROFILE environment override wins over both."""
-    if os.environ.get('APPLE_MUSIC_PROFILE'):
-        return config.profile_dir()
-    if profile == 'development':
-        return config.default_profile_dir().with_name('chrome-devel')
-    return config.default_profile_dir()
-
-
 def cache_size(path):
     """In a thread: the bytes the files under `path` hold (their sizes; symlinks are not
     followed), 0 when it is not there."""
