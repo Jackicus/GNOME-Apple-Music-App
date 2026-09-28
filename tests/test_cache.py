@@ -1,8 +1,10 @@
 """src/cache.py: the cache directory's size, clearing it, and the JSON kept in it."""
 
 import json
+import os
 import pathlib
 import tempfile
+import time
 import unittest
 
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
@@ -54,28 +56,15 @@ class CacheTest(unittest.TestCase):
         self.assertEqual(cache.clear(self.root / 'missing'), 0)
 
 
-class JsonTest(unittest.TestCase):
+class KeptTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.cache = pathlib.Path(tmp.name)
 
-    def test_write_and_read(self):
-        path = self.cache / 'lyrics' / '1.json'
-        self.assertIsNone(cache.read_json(path))
-        cache.write_json(path, {'text': 'Ünïcode'}, self.cache)
-        self.assertEqual(cache.read_json(path), {'text': 'Ünïcode'})
-        self.assertIn('Ünïcode', path.read_text(encoding='utf-8'))  # not escaped
-        path.write_text('{not json')
-        self.assertIsNone(cache.read_json(path))
-
-    def test_a_write_outside_the_cache_is_logged_not_made(self):
-        with self.assertLogs('applemusic.cache', 'WARNING'):
-            cache.write_json(self.cache.parent / 'elsewhere.json', {}, self.cache)
-        self.assertFalse((self.cache.parent / 'elsewhere.json').exists())
-
     def test_read_kept_ages_out(self):
         path = self.cache / 'landing.json'
+        self.assertIsNone(cache.read_kept(path))
         normalize.write_answer(str(path), {'categories': []}, str(self.cache))
         self.assertEqual(cache.read_kept(path)['categories'], [])
         kept = json.loads(path.read_text())
@@ -83,6 +72,17 @@ class JsonTest(unittest.TestCase):
         path.write_text(json.dumps(kept))
         self.assertIsNone(cache.read_kept(path))
         self.assertEqual(cache.read_kept(path, max_age=10 ** 10)['categories'], [])
+        path.write_text('{not json')
+        self.assertIsNone(cache.read_kept(path))
+
+    def test_a_touched_hit_is_the_newest(self):
+        path = self.cache / 'lyrics' / '1.json'
+        normalize.write_answer(str(path), {'lines': [{'text': 'x'}]}, str(self.cache))
+        os.utime(path, (1000, 1000))
+        cache.read_kept(path)
+        self.assertEqual(path.stat().st_mtime, 1000)  # a plain read leaves it
+        cache.read_kept(path, touch=True)
+        self.assertGreater(path.stat().st_mtime, time.time() - 60)
 
 
 if __name__ == '__main__':

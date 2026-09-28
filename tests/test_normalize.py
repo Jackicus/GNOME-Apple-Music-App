@@ -912,6 +912,91 @@ class TestArtSizes(unittest.TestCase):
         self.assertEqual(os.listdir(thumb_dir), [])
 
 
+class TestPruneCaches(unittest.TestCase):
+    """prune_caches over an invented cache."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_dir)
+        self.now = 10 ** 9
+
+    def put(self, name, age=0, size=10):
+        path = os.path.join(self.tmp_dir, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(b'x' * size)
+        os.utime(path, (self.now - age, self.now - age))
+        return path
+
+    def names(self, folder=''):
+        return sorted(os.listdir(os.path.join(self.tmp_dir, folder)))
+
+    def test_what_only_grows_is_trimmed(self):
+        day = normalize.ANSWER_MAX_AGE
+        for number in range(5):  # played 0 to 4 hours ago
+            self.put(f'lyrics/{number}.json', age=number * 3600)
+        self.put('categories/old.json', age=day + 60)
+        self.put('categories/fresh.json', age=60)
+        self.put('landing.json', age=day + 60)
+        self.put('browse.json', age=60)
+        self.put('.x.json.tmp', age=2 * 3600)  # a crash's leftover
+        self.put('lyrics/.y.tmp', age=2 * 3600)
+        self.put('.z.tmp', age=60)  # a write in progress
+        self.put('items/album-1.json')
+        self.put('items/artist-2.json')
+        for number in range(3):
+            self.put(f'remote-art/{number}.jpg', age=number, size=100)
+        self.put('library.json', age=10 * day)  # the library's, never these
+        self.put('art/a.jpg', age=10 * day)
+        gone = normalize.prune_caches(self.tmp_dir, now=self.now, remote_bytes=250,
+                                      lyrics_keep=2)
+        self.assertEqual(gone, {'remote-art': 1, 'lyrics': 3, 'answers': 2, 'items': 2,
+                                'temps': 2})
+        self.assertEqual(self.names('lyrics'), ['0.json', '1.json'])
+        self.assertEqual(self.names('categories'), ['fresh.json'])
+        self.assertEqual(self.names('remote-art'), ['0.jpg', '1.jpg'])
+        self.assertEqual(self.names(), ['.z.tmp', 'art', 'browse.json', 'categories',
+                                        'library.json', 'lyrics', 'remote-art'])
+        # Again: nothing more to do.
+        self.assertFalse(any(normalize.prune_caches(self.tmp_dir, now=self.now,
+                                                    remote_bytes=250, lyrics_keep=2).values()))
+
+    def test_an_empty_cache(self):
+        self.assertFalse(any(normalize.prune_caches(os.path.join(self.tmp_dir, 'none')).values()))
+
+
+class TestRemoteArtItems(unittest.TestCase):
+    """An item fetched on demand keeps its artwork in remote-art/."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp_dir)
+
+    def test_place_in_remote_art(self):
+        raw = {'id': 'pl.one', 'type': 'playlists',
+               'attributes': {'name': 'Mix', 'artwork': {'url': 'https://p/{w}x{h}bb.jpg'}}}
+        tracks = [{'id': '1', 'attributes': {'name': 'A',
+                                             'artwork': {'url': 'https://a/{w}x{h}bb.jpg'}}}]
+        art_urls = {}
+        item = normalize.normalize_playlist(raw, self.tmp_dir, tracks=tracks, art_urls=art_urls)
+        # The library has the row's thumbnail already: that one stays where it is.
+        row_thumb = item['groups'][0]['entries'][0]['thumb']
+        os.makedirs(os.path.dirname(row_thumb))
+        with open(row_thumb, 'wb') as f:
+            f.write(b'img')
+        placed = normalize.place_in_remote_art(item, art_urls, self.tmp_dir)
+        remote = os.path.join(self.tmp_dir, 'remote-art')
+        cover = normalize.template_artwork_url('https://p/{w}x{h}bb.jpg')
+        self.assertEqual(item['art'], os.path.join(remote, normalize.artwork_filename(cover)))
+        size = normalize.ART_SIZES['thumb']
+        thumb_url = normalize.template_artwork_url('https://p/{w}x{h}bb.jpg', size, size)
+        self.assertEqual(item['thumb'],
+                         os.path.join(remote, normalize.artwork_filename(thumb_url)))
+        self.assertEqual(item['groups'][0]['entries'][0]['thumb'], row_thumb)
+        self.assertEqual(placed, {item['art']: cover, item['thumb']: thumb_url,
+                                  row_thumb: art_urls[row_thumb]})
+
+
 class TestOtherCaches(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
