@@ -31,7 +31,7 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject  # noqa: E402
 
 from .backend import config, normalize  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
@@ -102,7 +102,7 @@ class Application(Adw.Application):
         # Startup timing (timing.py): name -> GLib.get_monotonic_time(), for scripts/bench.py.
         self._timing = StartupMarks(self.get_active_window)
         self.marks = self._timing.marks
-        # One schema for every profile, so a Devel build shares the release's settings.
+        # One schema for every profile; the sign-in's keys are each build's (account_key()).
         self.settings = Gio.Settings.new(base_id)
 
         self._add_action('quit', self._on_quit)
@@ -599,18 +599,9 @@ class Application(Adw.Application):
         return action
 
     def _on_about(self, *_args):
-        about = Adw.AboutDialog(
-            application_name=_('Apple Music'),
-            application_icon=self.get_application_id(),
-            developer_name='Jack Tully',
-            version=self.version,
-            website='https://github.com/Jackicus/GNOME-Apple-Music-App',
-            issue_url='https://github.com/Jackicus/GNOME-Apple-Music-App/issues',
-            license_type=Gtk.License.GPL_2_0,
-            copyright='© 2026 Jack Tully',
-            comments=_('Not affiliated with Apple. Apple Music is a trademark of Apple Inc.'),
-        )
-        about.present(self.get_active_window())
+        from .dialogs import about
+
+        about.present(self, self.get_active_window())
 
     def _on_shortcuts(self, *_args):
         from .dialogs import shortcuts

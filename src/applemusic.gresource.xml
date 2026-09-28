@@ -22,6 +22,7 @@
     <file preprocess="xml-stripblanks">shelves.ui</file>
     <file preprocess="xml-stripblanks">category_tile.ui</file>
     <file>style.css</file>
+    <file preprocess="xml-stripblanks">metainfo.xml</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/music-note-symbolic.svg">icons/music-note-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/playlist-symbolic.svg">icons/playlist-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/broadcast-symbolic.svg">icons/broadcast-symbolic.svg</file>
