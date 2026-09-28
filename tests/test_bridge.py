@@ -341,10 +341,23 @@ class BridgeTest(unittest.TestCase):
         mk.currentPlaybackTime = 12;
         mk.currentPlaybackDuration = 216;
         const playing = bridge.nowPlaying();
+        mk.isPlaying = false;   // as while an item loads
+        mk.playbackState = 1;
+        const loading = bridge.nowPlaying().state;
+        mk.playbackState = 5;
+        const ended = bridge.nowPlaying().state;
+        delete mk.playbackState;   // an instance without one: the coarse guess
+        const coarse = [bridge.nowPlaying().state];
+        mk.nowPlayingItem = null;
+        coarse.push(bridge.nowPlaying().state);
+        mk.isPlaying = true;
+        coarse.push(bridge.nowPlaying().state);
         delete window.MusicKit;
-        return {playing, none: bridge.nowPlaying()};
+        return {playing, loading, ended, coarse, none: bridge.nowPlaying()};
     """)
     def test_now_playing(self, value):
+        self.assertEqual((value['loading'], value['ended']), ('loading', 'ended'))
+        self.assertEqual(value['coarse'], ['paused', 'stopped', 'playing'])
         playing = value['playing']
         self.assertEqual((playing['state'], playing['track']['id'], playing['position'],
                           playing['duration'], playing['shuffle'], playing['repeat']),

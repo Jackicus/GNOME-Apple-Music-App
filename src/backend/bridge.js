@@ -567,11 +567,16 @@
             }
             const item = mk.nowPlayingItem;
             const track = item ? formatTrack(item, mk.nowPlayingItemIndex ?? 0) : null;
-            let state = 'stopped';
-            if (mk.isPlaying) {
+            // MusicKit's own state, named as playbackStateDidChange names it ('loading'
+            // while an item loads, when isPlaying is false); a coarse guess only for an
+            // instance without one.
+            let state;
+            if (typeof mk.playbackState !== 'undefined') {
+                state = playbackStateName(mk.playbackState);
+            } else if (mk.isPlaying) {
                 state = 'playing';
-            } else if (track) {
-                state = 'paused';
+            } else {
+                state = track ? 'paused' : 'stopped';
             }
             return {
                 state: state,

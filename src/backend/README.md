@@ -87,7 +87,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 | `control play\|pause\|toggle\|next\|previous\|stop`, `seek <sec>` | `{ok: true}` |
 | `volume <0..1>` | `{volume}` — the level as MusicKit has it after the set. It is the engine's own, not the system's; Apple's page keeps it across restarts, and a nought is a mute |
 | `shuffle on\|off\|toggle`, `repeat none\|one\|all\|cycle` | `{shuffle, repeat}` |
-| `now-playing` | `{state, track, position, duration, shuffle, repeat, volume}` |
+| `now-playing` | `{state, track, position, duration, shuffle, repeat, volume}` — state is the `MusicKit.PlaybackStates` name, as `playbackStateDidChange` carries it |
 | `queue` | `{index, items: [Track…]}` |
 | (bridge only) `queueJump(index)` | `{ok: true}` — plays the queue's entry at `index` (`mk.changeToMediaAtIndex`); the app's Up Next list, phase 14 |
 | `love\|unlove <kind> <id>`, `add-to-library <kind> <id>` | `{ok: true}` |
