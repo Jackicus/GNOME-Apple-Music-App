@@ -161,7 +161,9 @@ keeping their names whatever the size; a changed cover size is a new URL
 and so new names, the old pruned), and the app reads it once at startup so
 the URLs it names agree with the files. A path that is not on disk counts as
 no artwork. A sync fetches the artwork *before* writing library.json, so a
-listing never lands ahead of its covers. A track row plays `group.play`
+listing never lands ahead of its covers. Every file here is written through
+`store.py`: a dot-named temporary file beside it, renamed over it (library.json
+and the kept answers fsync'd first), so a reader never sees half a file. A track row plays `group.play`
 with `--start-with entry.index`.
 
 Beside these, `<cache>/remote-art/` holds what the shell fetches for itself

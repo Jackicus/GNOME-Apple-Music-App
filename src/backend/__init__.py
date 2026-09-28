@@ -20,6 +20,8 @@ importing the package imports none of its modules.
                   through config.BRIDGE_JS
     normalize.py  Apple Music API answers as the library's Item, Track and shelf shapes; the
                   artwork cache (naming, fetching, pruning), library.json, the kept answers
+    store.py      writing the cache: one atomic write (a temporary file, fsync'd, renamed
+                  over the target) for every file
     config.py     paths, the developer's DevTools port and the artwork sizes
     README.md     the bridge's calls, the error codes, the events, and the library.json, Item
                   and Track shapes

@@ -150,6 +150,7 @@ install_data(
   'backend/config.py',
   'backend/errors.py',
   'backend/normalize.py',
+  'backend/store.py',
   install_dir: moduledir / 'backend',
 )
 

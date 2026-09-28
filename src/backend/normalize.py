@@ -16,7 +16,7 @@ import os
 import re
 from datetime import UTC, datetime
 
-from . import config
+from . import config, store
 
 log = logging.getLogger(__name__)
 
@@ -226,13 +226,9 @@ def apply_art_sizes(cache_dir, cover, thumb):
                     log.debug('stale thumbnail: %s', error)
         except OSError as error:
             log.debug('stale thumbnails: %s', error)
-    marker = _art_sizes_marker(cache_dir)
     try:
-        os.makedirs(os.path.dirname(marker), exist_ok=True)
-        tmp = marker + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(wanted, f)
-        os.replace(tmp, marker)
+        store.atomic_write(_art_sizes_marker(cache_dir), lambda f: json.dump(wanted, f),
+                           text=True)
     except OSError as error:
         log.warning('could not write the art sizes marker: %s', error)
     ART_SIZES.update(wanted)
@@ -249,27 +245,13 @@ def make_thumbnail(src_path, dest_path, size=None):
     without a scale_image installed, or when the source is not an image."""
     if scale_image is None:
         return False
-    import tempfile
     size = size or ART_SIZES['thumb']
-    temp_path = None
     try:
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=os.path.dirname(dest_path), delete=False,
-                                         suffix='.tmp') as f:
-            temp_path = f.name
-        scale_image(src_path, temp_path, size)
-        os.replace(temp_path, dest_path)
-        temp_path = None
+        store.atomic_create(dest_path, lambda temp: scale_image(src_path, temp, size))
         return True
     except Exception as error:  # the scaler's own errors (GLib.Error) as well as OSError
         log.debug('could not scale %s: %s', src_path, error)
         return False
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
 
 
 def cache_thumbnail(url, cache_dir, dest_path):
@@ -290,9 +272,10 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
     (or to `dest_path`, for a thumbnail).
 
     Accepts either an artwork URL string or an Apple Music artwork dictionary.
-    Writes to a temporary file in the art directory, flushes, fsyncs, and replaces atomically.
-    Returns the absolute local file path on success, or None when it failed (logged, with the
-    reason).
+    Written through a temporary file renamed over the target (store.atomic_write), without an
+    fsync: a copy of what is on Apple's servers, which counts as missing if a crash left it
+    empty. Returns the absolute local file path on success, or None when it failed (logged,
+    with the reason).
     """
     if not url_or_obj or not cache_dir:
         return None
@@ -306,18 +289,11 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
         return None
 
     dest_path = os.path.abspath(dest_path or artwork_cache_path(url, cache_dir))
-    art_dir = os.path.dirname(dest_path)
 
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         return dest_path
 
-    try:
-        os.makedirs(art_dir, exist_ok=True)
-    except OSError as error:
-        log.warning('artwork: could not fetch %s: %s', url, error)
-        return None
-
-    import tempfile
+    import shutil
     import urllib.error
     import urllib.request
 
@@ -326,37 +302,25 @@ def cache_artwork(url_or_obj, cache_dir, timeout=10.0, dest_path=None):
         headers={'User-Agent': 'AppleMusicGNOME/1.0'}
     )
 
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=art_dir, delete=False, suffix='.tmp') as f:
-            temp_path = f.name
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                status = getattr(resp, 'status', 200)
-                if status != 200:
-                    log.warning('artwork: could not fetch %s: HTTP %s', url, status)
-                    return None
-                while True:
-                    chunk = resp.read(64 * 1024)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            f.flush()
-            os.fsync(f.fileno())
+    def fetch(file):
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, 'status', 200)
+            if status != 200:
+                raise _FetchError(f'HTTP {status}')
+            shutil.copyfileobj(resp, file, 64 * 1024)
 
-        os.replace(temp_path, dest_path)
-        temp_path = None
+    try:
+        store.atomic_write(dest_path, fetch, fsync=False)
         return dest_path
     except Exception as error:  # urllib's HTTPError, URLError and timeouts, OSError
         if isinstance(error, urllib.error.HTTPError):
             error.close()  # it holds the answer's connection
         log.warning('artwork: could not fetch %s: %s', url, error)
         return None
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+
+
+class _FetchError(Exception):
+    """An answer that is not the image: its status."""
 
 
 # Every artwork path handed out by _extract_artwork, and the URL it came from:
@@ -491,10 +455,13 @@ def prune_art(library_data, cache_dir):
             continue
         try:
             for entry in os.listdir(art_dir):
-                # The sizes marker lives here too, and is nobody's artwork.
-                if entry.startswith('.'):
-                    continue
                 file_path = os.path.join(art_dir, entry)
+                # The sizes marker lives here too, and is nobody's artwork; a temporary file
+                # is a download in progress, or a crash's leftover once it is old.
+                if entry.startswith('.'):
+                    if store.is_stale_temp(file_path) and _remove(file_path):
+                        pruned += 1
+                    continue
                 abs_path = os.path.abspath(file_path)
                 if abs_path not in norm_refs and entry not in norm_refs:
                     try:
@@ -1581,15 +1548,12 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None):
 
 
 def save_library(library_data, cache_dir, indent=2):
-    """Write library.json atomically: a temporary file, then a rename over the old one, so a
-    reader sees the old file or the new one, never half of one. `indent` is json.dump's: None
-    writes the compact form."""
-    os.makedirs(cache_dir, exist_ok=True)
+    """Write library.json atomically and durably (store.atomic_write: a temporary file,
+    fsync'd, renamed over the old one), so a reader sees the old file or the new one, never
+    half of one, even after a crash. `indent` is json.dump's: None writes the compact form. A
+    failure raises, and leaves the old file and no temporary one."""
     lib_path = os.path.join(cache_dir, 'library.json')
-    tmp_path = lib_path + '.tmp'
-    with open(tmp_path, 'w', encoding='utf-8') as f:
-        json.dump(library_data, f, indent=indent)
-    os.replace(tmp_path, lib_path)
+    store.atomic_write(lib_path, lambda f: json.dump(library_data, f, indent=indent), text=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1603,10 +1567,15 @@ def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
     keeping the newest by mtime. Nothing else ever removes them. Returns
     how many went."""
     folder = os.path.join(cache_dir, 'remote-art')
+    pruned = 0
+    entries = []
     try:
-        entries = []
         for name in os.listdir(folder):
             path = os.path.join(folder, name)
+            if name.startswith('.'):  # a download in progress, or a crash's leftover
+                if store.is_stale_temp(path) and _remove(path):
+                    pruned += 1
+                continue
             try:
                 st = os.stat(path)
             except OSError:
@@ -1617,10 +1586,9 @@ def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
         return 0
     except OSError as error:
         log.debug('remote art: %s', error)
-        return 0
+        return pruned
     entries.sort(reverse=True)
     kept = 0
-    pruned = 0
     for _mtime, size, path in entries:
         if kept + size <= max_bytes:
             kept += size
@@ -1631,6 +1599,18 @@ def prune_remote_art(cache_dir, max_bytes=32 * 1024 * 1024):
         except OSError as error:
             log.debug('remote art: %s', error)
     return pruned
+
+
+def _remove(path):
+    """Delete a file the cache no longer wants; one already gone is fine. True if deleted."""
+    try:
+        os.remove(path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        log.debug('prune: %s', error)
+        return False
 
 
 def _safe_id(value):
@@ -1661,12 +1641,8 @@ def write_answer(path, answer):
     answer = dict(answer)
     answer['cached'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(answer, f)
-        os.replace(tmp, path)
-    except OSError as error:
+        store.atomic_write(path, lambda f: json.dump(answer, f), text=True)
+    except (OSError, ValueError) as error:
         log.warning('could not keep %s: %s', path, error)
     return answer
 

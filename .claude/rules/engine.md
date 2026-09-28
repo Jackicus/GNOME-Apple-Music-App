@@ -74,6 +74,11 @@ paths:
   .Devel build `chrome-devel` and `apple-music-devel`. `APPLE_MUSIC_PROFILE` and
   `APPLE_MUSIC_CACHE` override them, read on every call. The builds share every setting,
   `signed-in`, `account-name` and `last-sync` included.
+- Cache writes: every file in the cache goes through `backend/store.py` (`atomic_write`, or
+  `atomic_create` for a writer that wants a path, such as the thumbnail scaler): a dot-named
+  temporary file beside the target, fsync'd (not artwork, a copy that counts as missing when
+  empty), renamed over it; a failure removes the temporary file and raises. Never
+  `open(path, 'w')` a cache file. The pruners leave a dot temp alone until it is an hour old.
 - Chrome's argv (`chrome.chrome_args()`): `--disable-features=HardwareMediaKeyHandling` keeps
   Chrome's own MPRIS player off the bus (the app owns MPRIS); `--headless=new`; the visible
   window is an `--app=` window. In a Flatpak sandbox `find_chrome()` asks the host (blocking:

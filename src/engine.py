@@ -72,7 +72,7 @@ from pathlib import Path
 
 from gi.repository import Gio, GLib, GObject
 
-from .backend import chrome, config, normalize
+from .backend import chrome, config, normalize, store
 from .backend.client import EVENT_PREFIX, CDPClient, PipeTransport
 from .backend.errors import EngineError
 
@@ -348,14 +348,12 @@ def _read_json(path):
 
 
 def _write_json(path, data):
-    """In a thread: `data` as JSON at path, the directory made first; a failure is logged."""
+    """In a thread: `data` as JSON at path, atomically, the directory made first; a failure
+    is logged."""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + '.tmp')
-        with open(tmp, 'w', encoding='utf-8') as file:
-            json.dump(data, file, ensure_ascii=False)
-        os.replace(tmp, path)
-    except OSError as error:
+        store.atomic_write(path, lambda file: json.dump(data, file, ensure_ascii=False),
+                           text=True)
+    except (OSError, ValueError) as error:
         log.warning('could not keep %s: %s', path, error)
 
 
