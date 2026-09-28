@@ -301,6 +301,8 @@ class Item(GObject.Object):
             self.notify(name)
         if data.get('play'):
             self.play = data['play']
+        if self.kind == 'album' and 'thumb' in changed:
+            groups_changed = True  # its Tracks hold the album's thumbnail: new ones hold the new
         if groups_changed:
             self._groups = None
             self.emit('groups-changed')

@@ -150,6 +150,22 @@ class TestReloadTells(ReloadCase):
         self.reload()
         self.assertEqual(changed, [True])
 
+    def test_an_albums_new_thumbnail_reaches_its_tracks(self):
+        albums = [album('l.a0', track_ids=['i.1', 'i.2'], thumb='/cache/thumb/old.jpg')]
+        self.write(albums)
+        self.load()
+        asyncio.run(self.library.build_songs())
+        item = self.library.by_id('album', 'l.a0')
+        self.assertEqual(self.library.songs.get_item(0).thumb, '/cache/thumb/old.jpg')
+        changed = self.groups_changed(item)
+        albums[0]['thumb'] = '/cache/thumb/new.jpg'  # the tracks' own dicts are the same
+        self.write(albums)
+        self.reload()
+        self.assertEqual(changed, [True])
+        self.assertEqual(item.groups[0].entries.get_item(0).thumb, '/cache/thumb/new.jpg')
+        self.assertEqual([t.thumb for t in self.library.songs], ['/cache/thumb/new.jpg'] * 2)
+        self.assertIs(self.library.songs.get_item(0), item.groups[0].entries.get_item(0))
+
     def test_an_identical_reload_tells_nothing(self):
         albums = [album(f'l.a{n}', track_ids=[f'i.{n}']) for n in range(3)]
         playlists = [playlist('p.1', ['i.0'])]
