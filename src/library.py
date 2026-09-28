@@ -1297,26 +1297,38 @@ class SongOrder:
         self._tracks = list(tracks)
         self._keys = {}  # key name -> array: one rank or number per track
         self._ties = {}  # column -> array: positions in the order of its tie-breakers
+        self._searched = False  # every track's search_key made (prepare())
 
     async def prepare(self, column):
-        """Compute the keys tracks(column) needs, with a pause for a frame (yield_to_frames)
-        every FRAME_BUDGET, so that a page can build a big table's first order without a
-        freeze: collating 40,000 titles takes about 100 ms in one go. tracks() afterwards
-        only sorts."""
+        """Compute the keys tracks(column) needs, and make every track's search_key, with a
+        pause for a frame (yield_to_frames) every FRAME_BUDGET, so that a page can build a big
+        table's first order without a freeze (collating 40,000 titles takes about 100 ms in
+        one go) and the first letter typed into its filter does not fold every song's words
+        at once (60 ms). tracks() afterwards only sorts."""
         paused = time.monotonic()
-        for name in (*reversed(self.TIES[column]), column):
-            if name in self._keys:
-                continue
-            steps = self._computing(name)
+        work = [(name, self._computing(name)) for name in (*reversed(self.TIES[column]), column)
+                if name not in self._keys]
+        if not self._searched:
+            work.append((None, self._searching()))
+        for name, steps in work:
             while True:
                 try:
                     next(steps)
                 except StopIteration as done:
-                    self._keys[name] = done.value
+                    if name is not None:
+                        self._keys[name] = done.value
                     break
                 if time.monotonic() - paused > FRAME_BUDGET:
                     await yield_to_frames()
                     paused = time.monotonic()
+
+    def _searching(self):
+        """Make every track's search_key (the Track keeps it), yielding after each STEP."""
+        for start in range(0, len(self._tracks), self.STEP):
+            for track in self._tracks[start:start + self.STEP]:
+                track.search_key  # noqa: B018  (made and kept)
+            yield
+        self._searched = True
 
     def tracks(self, column, descending=False):
         """The tracks in column's order: 'title', 'artist', 'album' or 'time'."""
