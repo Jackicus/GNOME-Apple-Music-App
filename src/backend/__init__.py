@@ -55,6 +55,13 @@ sync.py
 - (Phase 11) download_art(progress=None, cancelled=None): progress(done, total) after each
   fetch, cancelled() asked before each result (True gives up the rest); save_library(indent=2)
   takes json.dump's indent (the app writes the compact form). Behaviour otherwise unchanged.
+- (Phase 15) category_page's element walk is _grouping_shelves(grouping, cache_dir, prefix,
+  featured=None), shared with the new editorial_shelves(raw, cache_dir) (the New page: the
+  editorial groupings' elements as shelves, the untitled banner element as one "Featured"
+  shelf) and made_for_you_shelves(raw_recs, cache_dir) (the recommendations made only of
+  personal mixes and stations); items come through _shelf_item, which turns an Apple curator
+  into a category tile (normalize_category) and keeps only SHELF_RESOURCE_TYPES.
+  browse_cache_path() and made_for_you_cache_path() beside the landing's and categories'.
 README.md
 - A header note on what still applies; the paths, variables, port, sizes, the thumbnail scaler
   and the settings paragraph describe this app.

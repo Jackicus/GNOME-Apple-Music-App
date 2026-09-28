@@ -21,6 +21,12 @@ in a thread, from the `artUrl` the sync kept in the Item, and answers True when 
 comes through `await fetch_remote(url, size)`: the URL re-sized to `size` px square, fetched
 into <cache>/remote-art/ (named by the sized URL's hash; the sync trims that directory to a
 budget) and answered as its path. Nothing here needs the engine.
+
+The engine's search, suggest, category, browse and made-for-you answers name a small catalog
+URL as an item's `art` when the sync has not fetched its cover (and no `thumb`): `remote_item(
+data)` gives such a dict the paths fetch_remote() would use (`thumb` at THUMB_SIZE, `art` at
+COVER_SIZE, with `thumbUrl` and `artUrl` to fetch them by), so a tile shows the thumbnail once
+`await fetch_thumb(item)` has brought it and a detail page's fetch_cover() the cover.
 """
 
 import asyncio
@@ -64,6 +70,35 @@ def remote_art_path(url, size=config.COVER_SIZE):
     if not url:
         return None
     return os.path.join(str(config.cache_dir()), 'remote-art', backend.artwork_filename(url))
+
+
+def is_url(value):
+    return isinstance(value, str) and value.startswith(('https://', 'http://'))
+
+
+def remote_item(data):
+    """An Item dict from the engine's search, category, browse or made-for-you answers with
+    its artwork where this app fetches it: when `art` is a catalog URL (the sync has not
+    fetched the cover), a copy naming fetch_remote()'s files instead (`thumb` at THUMB_SIZE
+    unless one is on disk, `art` at COVER_SIZE) and the URLs to fetch them by (`thumbUrl`,
+    `artUrl`, for fetch_thumb() and fetch_cover()). A dict whose artwork is on disk, or that
+    has none, is returned as it is."""
+    url = data.get('art') if isinstance(data, dict) else None
+    if not is_url(url):
+        return data
+    item = dict(data)
+    item['thumbUrl'] = sized_url(url, config.THUMB_SIZE)
+    item['artUrl'] = sized_url(url, config.COVER_SIZE)
+    if not item.get('thumb'):
+        item['thumb'] = remote_art_path(url, config.THUMB_SIZE)
+    item['art'] = remote_art_path(url, config.COVER_SIZE)
+    return item
+
+
+def thumb_missing(item):
+    """Whether an Item (remote_item's) has a thumbnail to fetch that is not on disk yet."""
+    raw = item.raw if isinstance(item.raw, dict) else {}
+    return bool(item.thumb and raw.get('thumbUrl') and backend._art_missing(item.thumb))
 
 
 class Artwork:
@@ -110,6 +145,18 @@ class Artwork:
             self._fetches[path] = task
             task.add_done_callback(lambda _task: self._fetches.pop(path, None))
         return path if await asyncio.shield(task) or not backend._art_missing(path) else None
+
+    async def fetch_thumb(self, item):
+        """The Item's thumbnail on disk, for an item from a search or browse answer
+        (remote_item()): True once it is there (fetched in a thread when it was not), False
+        when the item names none or the fetch failed."""
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        url = raw.get('thumbUrl')
+        if not item.thumb or not url:
+            return False
+        if not backend._art_missing(item.thumb):
+            return True
+        return await self.fetch_remote(url, config.THUMB_SIZE) is not None
 
     async def _fetch(self, path, url):
         def fetch():

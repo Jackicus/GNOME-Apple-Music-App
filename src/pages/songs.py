@@ -205,6 +205,10 @@ class SongsPage(Adw.NavigationPage):
             label = ngettext('{total} song', '{total} songs', total)
         self.count_label.set_label(label.format(shown=f'{shown:n}', total=f'{total:n}'))
 
+    def set_filter(self, text):
+        """Filter the table by `text`, as typing it in the header's entry would."""
+        self.filter_entry.set_text(text)
+
     @Gtk.Template.Callback()
     def on_filter_changed(self, entry):
         search = fold(entry.get_text())

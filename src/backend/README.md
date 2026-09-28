@@ -168,7 +168,10 @@ Beside these, `<cache>/remote-art/` holds what the shell fetches for itself
 (a search hit's cover, the player's, a category's picture; `lib/playerUtil.js`),
 trimmed to 32 MB by mtime at the end of each sync; `<cache>/items/`,
 `<cache>/landing.json` and `<cache>/categories/` hold the answers above,
-each stamped `cached`; `<cache>/lyrics/` the lyrics fetched.
+each stamped `cached` (the app adds `browse.json`, the New page's editorial
+groupings as shelves, and `made-for-you.json`, the recommendations made of
+personal mixes and stations, kept the same way); `<cache>/lyrics/` the
+lyrics fetched.
 
 Every `am.py` command is a process of its own, so what is imported at load
 is paid on every one: PyGObject, urllib and the thread pool are imported

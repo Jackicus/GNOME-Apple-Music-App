@@ -23,6 +23,14 @@ UI awaits.
     await engine.queue_jump(3)   # play the queue's entry at index 3 (mk.changeToMediaAtIndex)
     await engine.lyrics(catalog_song_id)   # {synced, lines: [{startMs, endMs, text}]},
                                            # from <cache>/lyrics/ when fetched before
+    await engine.search(term, library=False, limit=20, suggest=0)   # {shelves, items[, terms]}
+    await engine.suggest(term, limit=10)   # {terms: [{term, display}], items}
+    await engine.landing()       # {categories}: the search page's Browse Categories
+    await engine.category(id)    # {id, title, shelves}: a category's page
+    await engine.browse()        # {shelves}: the New page (the editorial groupings)
+    await engine.made_for_you()  # {shelves}: the personal mixes and stations
+    # The last four are kept under the cache for a day (landing.json, categories/, browse.json,
+    # made-for-you.json) and answered from there without the engine; refresh=True asks again.
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
@@ -61,6 +69,19 @@ API_RETRIES = 3
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
 LYRICS_TIMEOUT = 30.0     # one catalog read, parsed in the page
+SEARCH_TIMEOUT = 30.0     # a catalog search, its suggestions, the landing or a category
+BROWSE_TIMEOUT = 60.0     # the editorial groupings: a big answer
+SEARCH_LIMIT = 20         # hits per kind
+SUGGEST_LIMIT = 10        # completions and top hits while typing
+ANSWER_MAX_AGE = 24 * 60 * 60   # a kept landing, category, browse or made-for-you answer
+
+# The New page: the editorial groupings behind music.apple.com's own (the request it makes,
+# less its field selections and `format[resources]=map`, which flattens the answer).
+BROWSE_ENDPOINT = '/v1/editorial/{storefront}/groupings'
+BROWSE_PARAMS = {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork'}
+# Made for You: the recommendations, of which the mixes and stations are kept.
+RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
+RECOMMENDATIONS_PARAMS = {'limit': 25}
 
 # A catalog song id as it appears in a lyrics cache file name: digits, mostly; never a path.
 CATALOG_ID_RE = re.compile(r'[A-Za-z0-9._-]{1,64}')
@@ -204,6 +225,45 @@ def lyrics_answer(answer):
             'text': text.strip(),
         })
     return {'synced': bool(answer.get('synced')) and bool(lines), 'lines': lines}
+
+
+def _raise_api_errors(answer, what):
+    """MusicKit answers a failed request with a 200 and {"errors": [...]}: an EngineError."""
+    if isinstance(answer, dict) and answer.get('errors'):
+        errors = answer['errors']
+        first = errors[0] if isinstance(errors, list) and errors else {}
+        if not isinstance(first, dict):
+            first = {}
+        raise EngineError('api', f"{what}: {first.get('status', '?')} "
+                                 f"{first.get('title', 'error')}: "
+                                 f"{first.get('detail', '')}".strip())
+
+
+def _shape_search(raw, suggestions, suggest, cache_dir):
+    """In a thread: a search answer as {shelves, items}, plus `terms` when suggestions were
+    asked for in the same round trip."""
+    sync.load_art_sizes(cache_dir)
+    answer = sync.search_results(raw, cache_dir)
+    if suggest:
+        answer['terms'] = sync.search_suggestions(suggestions, cache_dir)['terms'][:suggest]
+    return answer
+
+
+def _shape_suggestions(raw, cache_dir):
+    sync.load_art_sizes(cache_dir)
+    return sync.search_suggestions(raw, cache_dir)
+
+
+def _shape_and_keep(shaper, raw, path, cache_dir):
+    """In a thread: `shaper(raw, cache_dir)`'s answer, kept at `path` (stamped `cached`)."""
+    sync.load_art_sizes(cache_dir)
+    return sync.write_answer(path, shaper(raw, cache_dir))
+
+
+def _read_kept(path):
+    """In a thread: the answer kept at path when it is younger than ANSWER_MAX_AGE."""
+    answer = sync.read_answer(path, ANSWER_MAX_AGE)
+    return answer if isinstance(answer, dict) else None
 
 
 def _read_json(path):
@@ -813,3 +873,120 @@ class Engine(GObject.Object):
         if answer['lines']:
             await asyncio.to_thread(_write_json, path, answer)
         return answer
+
+    # -- search and browsing -------------------------------------------------------------
+    # As am.py's search, suggest, landing and category commands were, plus browse (the New
+    # page) and made_for_you. Every one needs a signed-in engine, but a kept answer (the
+    # landing, a category, browse and made-for-you are kept for ANSWER_MAX_AGE) is answered
+    # without one. The shaping (backend.sync) runs in a thread: it stats the artwork cache.
+
+    async def search(self, term, library=False, limit=SEARCH_LIMIT, suggest=0):
+        """A search of the catalog (or, with `library`, of the library): {shelves: [{key,
+        title, items: [Item without groups]}], items: [the same, flat]}, the shelves in
+        Apple's order (Top Results first); with `suggest` > 0, `terms` too: that many of
+        suggest()'s completions, asked in the same round trip. `limit` is per kind. A hit's
+        `art` is its cached cover or a thumbnail-sized catalog URL (widgets.artwork.remote_item
+        gives it a place under <cache>/remote-art/); `thumb` is on disk or None."""
+        term = ' '.join(str(term or '').split())
+        if not term:
+            raise EngineError('usage', 'search needs a term')
+        client = self._require_signed_in()
+        suggest = max(0, int(suggest or 0))
+        if suggest:
+            answer = await client.bridge('searchAndSuggest', term, bool(library), int(limit),
+                                         suggest, timeout=SEARCH_TIMEOUT)
+            answer = answer if isinstance(answer, dict) else {}
+            raw, suggestions = answer.get('search'), answer.get('suggestions')
+        else:
+            raw = await client.bridge('search', term, bool(library), int(limit),
+                                      timeout=SEARCH_TIMEOUT)
+            suggestions = None
+        _raise_api_errors(raw, 'search')
+        return await asyncio.to_thread(_shape_search, raw, suggestions, suggest,
+                                       str(self.cache_dir))
+
+    async def suggest(self, term, limit=SUGGEST_LIMIT):
+        """Apple's completions of a term half typed: {terms: [{term, display}], items: [Item
+        without groups]}, the items its best few hits for the term as it stands."""
+        term = ' '.join(str(term or '').split())
+        if not term:
+            raise EngineError('usage', 'suggest needs a term')
+        client = self._require_signed_in()
+        raw = await client.bridge('suggest', term, int(limit), timeout=SEARCH_TIMEOUT)
+        _raise_api_errors(raw, 'suggestions')
+        return await asyncio.to_thread(_shape_suggestions, raw, str(self.cache_dir))
+
+    def _kept_path(self, path):
+        """The path of a kept answer to read, or None in demo mode, where every command is
+        engine-down (a demo has no Apple answers to keep)."""
+        if self.demo:
+            raise EngineError('engine-down', 'the engine is not running')
+        return path
+
+    async def landing(self, refresh=False):
+        """The search page's Browse Categories: {categories: [{id, kind: 'category', title,
+        subtitle, art, artColor, url}]} in Apple's order, `art` a small catalog URL. From
+        <cache>/landing.json for a day (no engine needed then), else the bridge's
+        searchLanding (the search-landing recommendation set) shaped by sync.search_landing
+        and kept there. `refresh` asks Apple again."""
+        path = self._kept_path(sync.landing_cache_path(str(self.cache_dir)))
+        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        if kept is not None:
+            return kept
+        client = self._require_signed_in()
+        raw = await client.bridge('searchLanding', timeout=SEARCH_TIMEOUT)
+        _raise_api_errors(raw, 'search landing')
+        return await asyncio.to_thread(_shape_and_keep, sync.search_landing, raw, path,
+                                       str(self.cache_dir))
+
+    async def category(self, category_id, refresh=False):
+        """A category's page: {id, title, shelves: [{key, title, items}]}, the curator's
+        grouping as shelves (Best New Songs, New Releases, Playlists, Stations…). From
+        <cache>/categories/<id>.json for a day, else the bridge's category() and kept."""
+        category_id = str(category_id or '')
+        if not category_id:
+            raise EngineError('usage', 'category needs an id')
+        path = self._kept_path(sync.category_cache_path(str(self.cache_dir), category_id))
+        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        if kept is not None:
+            return kept
+        client = self._require_signed_in()
+        raw = await client.bridge('category', category_id, timeout=SEARCH_TIMEOUT)
+        _raise_api_errors(raw, f'category {category_id}')
+        return await asyncio.to_thread(_shape_and_keep, sync.category_page, raw, path,
+                                       str(self.cache_dir))
+
+    async def browse(self, refresh=False):
+        """The New page: {shelves: [{key, title, items}]}, the editorial groupings behind
+        music.apple.com's own New page (BROWSE_ENDPOINT, name=music, platform=web) as
+        shelves in Apple's order, the featured banners first ("Featured"), then Best New
+        Songs, New Releases, playlists, stations, videos; items as search() has them. From
+        <cache>/browse.json for a day, else fetched and kept."""
+        path = self._kept_path(sync.browse_cache_path(str(self.cache_dir)))
+        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        if kept is not None:
+            return kept
+        client = self._require_signed_in()
+        storefront = str((await self.status()).get('storefront') or 'us')
+        raw = await self._api(client, BROWSE_ENDPOINT.format(storefront=storefront),
+                              BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
+        return await asyncio.to_thread(_shape_and_keep, sync.editorial_shelves, raw, path,
+                                       str(self.cache_dir))
+
+    async def made_for_you(self, refresh=False):
+        """Made for You: {shelves: [{key, title, items}]}, the recommendations
+        (RECOMMENDATIONS_ENDPOINT) made only of the personal mixes and stations, each a
+        shelf titled as Apple titles it. From <cache>/made-for-you.json for a day, else
+        fetched and kept."""
+        path = self._kept_path(sync.made_for_you_cache_path(str(self.cache_dir)))
+        kept = None if refresh else await asyncio.to_thread(_read_kept, path)
+        if kept is not None:
+            return kept
+        client = self._require_signed_in()
+        raw = await self._api(client, RECOMMENDATIONS_ENDPOINT, RECOMMENDATIONS_PARAMS,
+                              timeout=BROWSE_TIMEOUT)
+        return await asyncio.to_thread(
+            _shape_and_keep,
+            lambda answer, cache_dir: {
+                'shelves': sync.made_for_you_shelves(answer.get('data'), cache_dir)},
+            raw, path, str(self.cache_dir))

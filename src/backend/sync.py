@@ -1259,29 +1259,162 @@ def category_page(raw: dict | None, cache_dir: str) -> dict:
     shelves = []
     groupings = ((curator.get("relationships") or {}).get("grouping") or {}).get("data") or []
     for grouping in groupings:
-        if not isinstance(grouping, dict):
-            continue
-        tabs = ((grouping.get("relationships") or {}).get("tabs") or {}).get("data") or []
-        for tab in tabs:
-            if not isinstance(tab, dict):
-                continue
-            children = ((tab.get("relationships") or {}).get("children") or {}).get("data") or []
-            for index, element in enumerate(children):
-                if not isinstance(element, dict):
-                    continue
-                element_attrs = element.get("attributes") or {}
-                shelf_title = str(element_attrs.get("title") or element_attrs.get("name") or "").strip()
-                contents = ((element.get("relationships") or {}).get("contents") or {}).get("data") or []
-                items = []
-                for raw_item in contents:
-                    if not isinstance(raw_item, dict) or not (raw_item.get("attributes") or {}).get("name"):
-                        continue
-                    item = normalize_item(raw_item, cache_dir, include_groups=False)
-                    _settle_search_art(item, raw_item)
-                    items.append(item)
-                if shelf_title and items:
-                    shelves.append({"key": f"cat-{element.get('id') or index}", "title": shelf_title, "items": items})
+        if isinstance(grouping, dict):
+            shelves.extend(_grouping_shelves(grouping, cache_dir, "cat"))
     return {"id": str(curator.get("id") or ""), "title": title, "shelves": shelves}
+
+
+# The resource types an editorial shelf may hold, and the app can show; what
+# else Apple puts on a page (uploaded videos, marketing items) is left out.
+SHELF_RESOURCE_TYPES = {
+    "albums", "playlists", "artists", "stations", "songs", "music-videos",
+    "library-albums", "library-playlists", "library-artists", "library-songs", "library-music-videos",
+}
+
+
+def _shelf_item(raw_item, cache_dir: str) -> dict | None:
+    """An editorial element's content as a shelf item: an Apple curator as
+    a category tile (its page is its grouping, as on the search page), a
+    known resource with a name as a search hit is (no groups, art as it
+    stands); anything else None."""
+    if not isinstance(raw_item, dict):
+        return None
+    if raw_item.get("type") == "apple-curators":
+        return normalize_category(raw_item)
+    if raw_item.get("type") not in SHELF_RESOURCE_TYPES:
+        return None
+    if not (raw_item.get("attributes") or {}).get("name"):
+        return None
+    item = normalize_item(raw_item, cache_dir, include_groups=False)
+    _settle_search_art(item, raw_item)
+    return item
+
+
+def _element_contents(element: dict) -> list:
+    """What an editorial element holds: its contents, or, for one made of
+    other elements (the banners at the top of the New page, each with one
+    item), the contents of each of those in turn."""
+    rel = element.get("relationships") or {}
+    contents = (rel.get("contents") or {}).get("data") or []
+    if contents:
+        return [c for c in contents if isinstance(c, dict)]
+    out = []
+    for child in (rel.get("children") or {}).get("data") or []:
+        if isinstance(child, dict):
+            child_contents = ((child.get("relationships") or {}).get("contents") or {}).get("data") or []
+            out.extend(c for c in child_contents if isinstance(c, dict))
+    return out
+
+
+def _grouping_shelves(grouping: dict, cache_dir: str, prefix: str, featured: str | None = None) -> list[dict]:
+    """The shelves of a grouping (a curator's, or the editorial one behind
+    the New page): each editorial element of its tabs that has a title and
+    something in it, as `{key, title, items}` in Apple's order, keyed
+    `<prefix>-<element id>`. An untitled element made of other elements —
+    the featured banners at the top of the New page — becomes the one shelf
+    titled `featured` when that is given; untitled elements are otherwise
+    left out, as are link rows and empty ones."""
+    shelves = []
+    tabs = ((grouping.get("relationships") or {}).get("tabs") or {}).get("data") or []
+    for tab in tabs:
+        if not isinstance(tab, dict):
+            continue
+        children = ((tab.get("relationships") or {}).get("children") or {}).get("data") or []
+        for index, element in enumerate(children):
+            if not isinstance(element, dict):
+                continue
+            element_attrs = element.get("attributes") or {}
+            shelf_title = str(element_attrs.get("title") or element_attrs.get("name") or "").strip()
+            own = ((element.get("relationships") or {}).get("contents") or {}).get("data") or []
+            if not shelf_title:
+                if own or not featured:
+                    continue
+                shelf_title = featured
+            items = []
+            seen = set()
+            for raw_item in _element_contents(element):
+                item = _shelf_item(raw_item, cache_dir)
+                if item is None or (item["kind"], item["id"]) in seen:
+                    continue
+                seen.add((item["kind"], item["id"]))
+                items.append(item)
+            if items:
+                shelves.append({"key": f"{prefix}-{element.get('id') or index}", "title": shelf_title, "items": items})
+                if shelf_title == featured:
+                    featured = None  # one Featured shelf
+    return shelves
+
+
+# What the New page's featured banners are called: the element has no title.
+FEATURED_TITLE = "Featured"
+
+
+def editorial_shelves(raw: dict | None, cache_dir: str) -> dict:
+    """`browse`'s answer from the editorial groupings behind Apple Music's
+    own New page (`/v1/editorial/<storefront>/groupings` with `name=music`,
+    `platform=web`): `shelves`, the grouping's editorial elements in
+    Apple's order — the featured banners first as one "Featured" shelf,
+    then Best New Songs, New Releases, playlists, stations, videos… — each
+    `{key, title, items}` with items as `search` has them (no groups, art
+    as it stands; a curator among them a category tile)."""
+    shelves = []
+    for grouping in (raw or {}).get("data") or []:
+        if isinstance(grouping, dict):
+            shelves.extend(_grouping_shelves(grouping, cache_dir, "new", featured=FEATURED_TITLE))
+    return {"shelves": shelves}
+
+
+def _is_made_for_you(raw_item: dict) -> bool:
+    """A personal mix (Favourites Mix, Chill Mix, New Music Mix…, playlists
+    of `playlistType` personal-mix) or a station: what Made for You holds."""
+    if not isinstance(raw_item, dict):
+        return False
+    if raw_item.get("type") == "stations":
+        return True
+    attrs = raw_item.get("attributes") or {}
+    return raw_item.get("type") == "playlists" and attrs.get("playlistType") == "personal-mix"
+
+
+def made_for_you_shelves(raw_recs: list | None, cache_dir: str | None = None) -> list[dict]:
+    """The Made for You page from `/v1/me/recommendations`: the
+    recommendations (a group's members each on their own, as
+    recommendation_shelves has them) made up entirely of the personal mixes
+    and stations, each a shelf titled as Apple titles it, in Apple's order;
+    the rest of the recommendations (albums for you, recently played) are
+    Home's, not this page's. Items as a shelf's, without their track lists.
+
+    Shelf = {"key": "rec-<id>", "title": "…", "items": [Item]}
+    """
+    shelves = []
+
+    def walk(rec):
+        if not isinstance(rec, dict):
+            return
+        attrs = rec.get("attributes") or {}
+        rel = rec.get("relationships") or {}
+        members = (rel.get("recommendations") or {}).get("data") or []
+        if members:
+            for member in members:
+                walk(member)
+            return
+        contents = [c for c in (rel.get("contents") or {}).get("data") or [] if isinstance(c, dict)]
+        if not contents or not all(_is_made_for_you(c) for c in contents):
+            return
+        items = []
+        for raw_item in contents:
+            item = normalize_item(raw_item, cache_dir, include_groups=False)
+            if item and item.get("title"):
+                _settle_search_art(item, raw_item)
+                items.append(item)
+        if not items:
+            return
+        title = attrs.get("title") or {}
+        title = (title.get("stringForDisplay") if isinstance(title, dict) else str(title)) or "Made for You"
+        shelves.append({"key": f"rec-{rec.get('id')}", "title": title, "items": items})
+
+    for rec in raw_recs or []:
+        walk(rec)
+    return shelves
 
 
 def _settle_search_art(item: dict, raw_item: dict) -> None:
@@ -1506,6 +1639,16 @@ def landing_cache_path(cache_dir: str) -> str:
 
 def category_cache_path(cache_dir: str, category_id: str) -> str:
     return os.path.join(cache_dir, "categories", f"{_safe_id(category_id)}.json")
+
+
+def browse_cache_path(cache_dir: str) -> str:
+    """Where the New page's shelves (editorial_shelves) are kept for a day."""
+    return os.path.join(cache_dir, "browse.json")
+
+
+def made_for_you_cache_path(cache_dir: str) -> str:
+    """Where the Made for You shelves (made_for_you_shelves) are kept for a day."""
+    return os.path.join(cache_dir, "made-for-you.json")
 
 
 def write_answer(path: str, answer: dict) -> dict:

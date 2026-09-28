@@ -103,8 +103,14 @@ src/engine.py                  Engine (GObject: state down/starting/up/signing-i
                                volume(level), shuffle(mode), repeat(mode), now_playing(),
                                queue(), queue_jump(index), lyrics(catalog_song_id) (kept
                                under <cache>/lyrics/ when Apple had any; lyrics_answer()
-                               shapes the answer)); engine_paths(profile, port) (chrome-devel
-                               and port+1 for the .Devel build), item_endpoint()
+                               shapes the answer); search(term, library, limit, suggest),
+                               suggest(term, limit), and, kept for a day under the cache and
+                               answered from there without the engine unless refresh=True:
+                               landing() (landing.json), category(id) (categories/),
+                               browse() (browse.json: the New page's editorial groupings),
+                               made_for_you() (made-for-you.json: the recommendations made of
+                               personal mixes and stations)); engine_paths(profile, port)
+                               (chrome-devel and port+1 for the .Devel build), item_endpoint()
 src/player.py                  Player (GObject, no GTK): state (MusicKit PlaybackStates name),
                                track (NowPlaying: id, catalog_id, title, artist, album,
                                duration_ms, artwork_url, index, explicit; or None), position,
@@ -213,6 +219,29 @@ src/pages/grid.py + .blp       $AppleMusicGridPage: title over a Gtk.GridView of
                                the page's `title`
 src/pages/home.py + .blp       $AppleMusicHomePage: title over a Gtk.Box of AppleMusicShelf, one per
                                non-empty library.shelves, the first as hero cards, all with See All
+src/pages/shelves.py + .blp    $AppleMusicShelvesPage(title, fetch, root, icon_name, hero, empty
+                               texts): shelves the engine answers with (fetch(refresh) → {shelves}),
+                               wrapped by remote_shelves() (Items with artwork under remote-art)
+                               and their thumbnails fetched by fetch_shelf_art() (each tile rebound
+                               as its file arrives); spinner, Start Engine / Sign In / Try Again
+                               status page (waits while the engine is starting; loads itself once
+                               it is up or signed in), a refresh button (past the day-long cache);
+                               category_page(item) for a search category, pushed
+src/pages/new.py               create(destination): a ShelvesPage over engine.browse()
+src/pages/made_for_you.py      create(destination): a ShelvesPage over engine.made_for_you()
+src/pages/search.py + .blp     $AppleMusicSearchPage: title, a Gtk.SearchEntry and an
+                               Adw.ToggleGroup (Apple Music / Your Library) in a 600 px clamp,
+                               then a Gtk.Stack: landing (a Gtk.FlowBox of AppleMusicCategoryTile
+                               over engine.landing(); a tile opens category_page),
+                               suggestions (an Adw.ActionRow list: terms and top hits, after a
+                               250 ms debounce, engine.suggest()), results (shelves in Apple's
+                               order from engine.search(), Top Results as hero cards, See All →
+                               open_shelf), library (Gtk.FilterListModels over the albums,
+                               artists, playlists as three shelves, and a StringFilter over the
+                               songs' search_key as a list of at most SONG_LIMIT TrackRows; See
+                               All → window.open_songs(text)), and one status page; requests
+                               are numbered so a late answer is dropped; set_mode(),
+                               focus_entry() (win.search), `text`
 src/pages/radio.py + .blp      $AppleMusicRadioPage: the first HERO_COUNT (4) of library.radio as a
                                hero shelf ("Recently Played"), the rest in a Gtk.FlowBox of tiles
 src/pages/songs.py + .blp      $AppleMusicSongsPage: title and count over a Gtk.ColumnView (Title,
@@ -229,13 +258,18 @@ src/pages/artist.py + .blp     $AppleMusicArtistPage: round portrait, name, bio,
                                the groups as the detail page does
 src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel;
                                async fetch_cover(item) → <cache>/art/, fetch_remote(url, size)
-                               → <cache>/remote-art/ by the sized URL's hash; sized_url(),
-                               remote_art_path()); art_colour(item.art_color) → Gdk.RGBA,
-                               is_dark(rgba)
+                               → <cache>/remote-art/ by the sized URL's hash, fetch_thumb(item);
+                               sized_url(), remote_art_path(), remote_item(dict) (an engine
+                               search/browse item's URL artwork → remote-art paths plus thumbUrl
+                               and artUrl), thumb_missing(item)); art_colour(item.art_color)
+                               → Gdk.RGBA, is_dark(rgba)
 src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist(); a folder's
                                big folder icon) and one Gtk.Inscription
 src/widgets/hero_tile.py + .blp  $AppleMusicHeroTile: a 260 px AppleMusicCover over a two-line
                                caption band in the item's art colour (drawn in do_snapshot)
+src/widgets/category_tile.py + .blp  $AppleMusicCategoryTile: a search category as a landscape
+                               tile, its name over its art colour (do_snapshot) and its picture
+                               at the right, fetched through fetch_thumb() while mapped; bind(item)
 src/widgets/shelf.py + .blp    $AppleMusicShelf: title row (title-2, subtitle, See All) over a
                                horizontal Gtk.ListView of tiles in its own scrolled window;
                                bind_shelf(shelf), `hero`, `see-all`
@@ -254,7 +288,8 @@ src/applemusic.gresource.xml   compiled .ui files (every .blp's, flat in build/s
                                source directory: window.ui, player_bar.ui, grid.ui, songs.ui,
                                detail.ui, artist.ui, home.ui, radio.ui, signin.ui, tile.ui,
                                song_title.ui, cover.ui, track_row.ui, shelf.ui, hero_tile.ui,
-                               now_playing.ui), style.css, icons
+                               now_playing.ui, search.ui, shelves.ui, category_tile.ui),
+                               style.css, icons
 src/meson.build                blueprint list (one custom_target per .blp), gresource, install_data
                                lists (app .py; pages/, widgets/, dialogs/, backend/ each their own)
 src/backend/                   the engine layer: vendored from the extension plus this app's async
@@ -281,7 +316,10 @@ src/backend/                   the engine layer: vendored from the extension plu
                                the window.__amEvent binding as {name, data}; queueJump(index)
   sync.py                      API answers → Item/Track, artwork cache (.sizes, scale_image hook,
                                download_art with progress/cancelled), library.json writing
-                               (save_library under flock, atomic)
+                               (save_library under flock, atomic); search_results(),
+                               search_suggestions(), search_landing(), category_page(),
+                               editorial_shelves() (the New page), made_for_you_shelves(),
+                               write_answer()/read_answer() and the *_cache_path()s
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
 scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py
@@ -317,6 +355,7 @@ scripts/demo.sh [args]    run.sh --demo: the app on the invented library in buil
                           first when missing); no Chrome, no account. Use it for all UI work
 scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--open KIND:ID]
                       [--expand ID[,ID…]] [--signed-in [NAME]] [--now-playing [lyrics|queue]]
+                      [--search TERM]
                           renders the real window to a PNG; needs a display and a prior run.sh/install;
                           dark by default; GSettings go to a memory backend; animations off;
                           --demo as demo.sh (without it the real cache is read); waits for the
@@ -331,6 +370,9 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
                           tests/fixtures/lyrics.json as synced lyrics, the cover copied to
                           where fetch_remote would put it) and opens the sheet on Lyrics or
                           Up Next.
+                          --search TERM shows the Search page in Your Library mode with
+                          TERM typed (the offline filter's results; --page search alone shows
+                          the landing's engine-down state under --demo).
                           The sidebar is not scrolled: --size 1100x1000 shows all the demo's
                           playlists. --signed-in [NAME] shows the account button signed in
                           (memory-backend settings only; no engine)
@@ -435,7 +477,8 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   app.engine.item(kind, id)`, `api(path, params)`, `api_pages(path, params, page=100)`,
   `api_all(paths)`, `play(kind, id, start_with, shuffle)`, `control(action)`, `seek()`,
   `volume()`, `shuffle()`, `repeat()`, `now_playing()`, `queue()`, `queue_jump()`,
-  `lyrics()`), spawned from signal handlers with `app.spawn(coro)`; playback goes through
+  `lyrics()`, `search()`, `suggest()`, `landing()`, `category()`, `browse()`,
+  `made_for_you()`), spawned from signal handlers with `app.spawn(coro)`; playback goes through
   `app.player` (`src/player.py`), whose
   commands are thin coroutines over those (`app.player_command(coro)` spawns one and toasts
   its EngineError) and whose properties change only from the engine's `event` signal (the
@@ -508,8 +551,20 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   Breakpoints need an `Adw.BreakpointBin` inside the page (a navigation page takes none).
   A pushed `GridPage` (`root=False`, See All) shows its title in the header bar as well as in
   the content, as a detail page's hero repeats its header's.
-- Shelves: a page of shelves (Home, Radio; phase 15's Search, New, Made for You) is a vertical
-  `Gtk.Box` of `AppleMusicShelf` in a `Gtk.ScrolledWindow` with the `view` style class (the
+- Engine-driven shelves (New, Made for You, a search category, search results): the engine's
+  answers are `{shelves: [{key, title, items: [Item dicts without groups]}]}` whose items
+  name a small catalog URL as `art` when the sync has no cover for them (and no `thumb`).
+  `widgets.artwork.remote_item(dict)` turns that into paths under `<cache>/remote-art/`
+  (`thumb` at 320, `art` at 640, with `thumbUrl`/`artUrl`), `pages.shelves.remote_shelves()`
+  wraps them as `library.Shelf`s of `Item`s, and `fetch_shelf_art(shelves)` fetches the missing
+  thumbnails a few at a time, splicing each item over itself so its tile rebinds
+  (`HeroTile.bind` refreshes its cover when the paths are unchanged for that reason). Opening
+  such an item works as for a Home shelf's: `DetailPage` fetches its groups through
+  `engine.item()` and merges the sync-style paths in. `ShelvesPage` is the page for any of
+  these answers; the landing's categories are Items of kind `category` (opened by
+  `window.open_item` → `category_page`), songs Items of kind `song` (they play).
+- Shelves: a page of shelves (Home, Radio, New, Made for You, a category, search results) is a
+  vertical `Gtk.Box` of `AppleMusicShelf` in a `Gtk.ScrolledWindow` with the `view` style class (the
   lists' background): a handful of shelves, each a horizontal `Gtk.ListView` that recycles its
   tiles in its own scrolled window. Keep the shelf widgets and `bind_shelf()` new Shelf objects
   into them on a reload (`HomePage._show()`). A grid under a shelf in the same scrolled window
@@ -523,11 +578,13 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   style.css). Keep such Python snapshots off the grid tiles: the hero card is its own class.
 - The seams to the rest of the app, on the window (`self.get_root()` from a page):
   `open_item(item)` pushes the item's page (album/playlist → `DetailPage`, artist →
-  `ArtistPage`, folder → its `GridPage` (`pages.folder(root=False)`); a station has no page and
-  goes to `play_request(item.play)`; videos toast for now; the same item twice in a row is pushed
+  `ArtistPage`, folder → its `GridPage` (`pages.folder(root=False)`), category → a
+  `ShelvesPage` of the curator's grouping); a station or a song has no page and goes to
+  `play_request(item.play)`; videos toast for now; the same item twice in a row is pushed
   once); `open_shelf(shelf)` pushes a `GridPage` of
   the shelf's items (See All; a library shelf is followed by key across loads, any other shown
-  as it is);
+  as it is; round portraits when every item is an artist); `open_songs(text)` shows the Songs
+  page filtered by `text` (the library search's See All on its songs);
   `play_request(play, start_with=None, shuffle=False)` is every "play this": a track row passes
   `track.play, start_with=track.index` (its group's target and its place in that queue), Play and
   Shuffle `item.play` (with `shuffle=True`). It toasts until phase 12 hands it to the engine;
@@ -550,6 +607,7 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   handled by a capture-phase `Gtk.EventControllerKey` on the window that skips editables and
   disabled actions, and listed in the shortcuts dialog by hand. `app.now-playing`
   (`<primary>n`) toggles the Now Playing sheet; Escape closes it (the sheet's own).
+  `win.search` (`<primary>f`) selects Search in the sidebar and focuses its entry.
 - Style: 4-space Python, single quotes, no type-annotation ceremony, a docstring where a module or
   function is not obvious. New `.py` files go in `src/meson.build`'s `install_data` list.
 
@@ -703,6 +761,17 @@ outside the repo; `build/` is git-ignored. Screenshots for the metainfo come fro
   GtkBuilder never runs a Python widget's `__init__`, so a template's custom children that
   build themselves in Python (the sheet's LyricsView and QueueView) are made in the
   template class's `__init__` and added there.
+- A `Gtk.Overlay` allocates an overlay child its *natural* size (clamped to the overlay), and
+  a `Gtk.Picture`'s natural size is its image's, so a picture laid over a wide tile fills it:
+  give it an overlay of its own whose main child is a sized placeholder box (the cover widget
+  and the category tile do). A callback connected by GtkBuilder (a template's
+  `clicked => $on_x()`) is not found by `handler_block_by_func`: use a flag while the page
+  itself sets an entry's text. A `Gtk.StringFilter` over a `Gtk.ClosureExpression.new(str,
+  lambda item: item.search_key, None)` filters 30,000 songs in one pass with one Python call
+  each (fold the search text first, `ignore-case: false`); `Gtk.AnyFilter` of two
+  `StringFilter`s over `PropertyExpression`s serves the small stores. An `Adw.ToggleGroup`'s
+  `active-name` is the toggle's `name`; a `Gtk.SearchEntry.grab_focus()` lands on its inner
+  `Gtk.Text` (`window.get_focus()` is the text, whose ancestor is the entry).
 - `screenshot.py --signed-in` also turns `engine-autostart` off in its memory settings: with
   it on, the shot's app started a real headless Chrome on the *release* profile and port
   (`profile` is `default` there), which is never wanted from a screenshot.

@@ -1,0 +1,80 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicShelvesPage: Adw.NavigationPage {
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar header_bar {
+      show-title: false;
+
+      [end]
+      Button refresh_button {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Refresh");
+        clicked => $on_refresh_clicked();
+      }
+    }
+
+    content: Stack stack {
+      StackPage {
+        name: "loading";
+
+        child: Adw.Spinner {
+          width-request: 32;
+          height-request: 32;
+          halign: center;
+          valign: center;
+        };
+      }
+
+      StackPage {
+        name: "status";
+
+        child: Adw.StatusPage status_page {
+          child: Button status_button {
+            halign: center;
+            visible: false;
+            clicked => $on_status_clicked();
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      }
+
+      StackPage {
+        name: "items";
+
+        // A box of shelves, as Home: a page has a handful, and each recycles its own tiles
+        // in its own scrolled window. On the view background, as the grids and lists are.
+        child: ScrolledWindow {
+          hscrollbar-policy: never;
+
+          styles [
+            "view",
+          ]
+
+          child: Box shelves_box {
+            orientation: vertical;
+            spacing: 18;
+            margin-bottom: 18;
+
+            Label title_label {
+              xalign: 0;
+              ellipsize: end;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+
+              styles [
+                "title-1",
+              ]
+            }
+          };
+        };
+      }
+    };
+  };
+}

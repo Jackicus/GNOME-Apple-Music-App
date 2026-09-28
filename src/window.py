@@ -9,6 +9,7 @@ from .backend.errors import EngineError
 from .pages.artist import ArtistPage
 from .pages.detail import DetailPage
 from .pages.grid import GridPage
+from .pages.shelves import category_page
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
 from .sidebar import SidebarEntry, SidebarItem, is_shown, parse_key, playlist_entries
@@ -98,6 +99,10 @@ class Window(Adw.ApplicationWindow):
         self._back = Gio.SimpleAction.new('back', None)
         self._back.connect('activate', self._on_back)
         self.add_action(self._back)
+        # Ctrl+F (main.py): the Search page, with the cursor in its entry.
+        search = Gio.SimpleAction.new('search', None)
+        search.connect('activate', self._on_search)
+        self.add_action(search)
         self.navigation_view.connect('notify::visible-page', self._update_back)
         self.split_view.connect('notify::collapsed', self._update_back)
         self.split_view.connect('notify::show-content', self._update_back)
@@ -138,6 +143,22 @@ class Window(Adw.ApplicationWindow):
         """Open the Now Playing sheet, or close it (app.now-playing)."""
         self.bottom_sheet.set_open(not self.bottom_sheet.get_open())
 
+    def _on_search(self, *_args):
+        """win.search: select Search in the sidebar and put the cursor in its entry."""
+        self._select('search')
+        self.split_view.set_show_content(True)
+        page = self._roots.get('search')
+        if page is not None and hasattr(page, 'focus_entry'):
+            page.focus_entry()
+
+    def open_songs(self, search=''):
+        """Show the Songs page filtered by `search` (Your Library results' See All)."""
+        self._select('songs')
+        self.split_view.set_show_content(True)
+        page = self._roots.get('songs')
+        if page is not None and hasattr(page, 'set_filter'):
+            page.set_filter(search)
+
     # The account.
 
     def _update_account(self, *_args):
@@ -176,12 +197,13 @@ class Window(Adw.ApplicationWindow):
         self.sync_banner.set_revealed(False)
 
     def open_item(self, item):
-        """Show an album, artist, playlist, folder, station or video: what activating a tile
-        does.
+        """Show an album, artist, playlist, folder, category, station, song or video: what
+        activating a tile does.
 
         Albums and playlists push a DetailPage, artists an ArtistPage, playlist folders their
-        grid of folders and playlists, over the page shown. A station has no page: it plays, as
-        on music.apple.com. A video toasts its title, until phase 12 decides what it does.
+        grid of folders and playlists, search categories their page of shelves, over the page
+        shown. A station or a song (a search hit, a Best New Songs tile) has no page: it plays,
+        as on music.apple.com. A video toasts its title, until phase 12 decides what it does.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'item', None) is item:
@@ -193,7 +215,9 @@ class Window(Adw.ApplicationWindow):
         elif item.kind == 'folder':  # a folder's tile in a folder's page
             page = pages.folder(self._library, item.id, item.title, root=False)
             page.item = item
-        elif item.kind == 'station':
+        elif item.kind == 'category':
+            page = category_page(item)
+        elif item.kind in ('station', 'song'):
             self.play_request(item.play)
             return
         else:
@@ -218,7 +242,10 @@ class Window(Adw.ApplicationWindow):
                 return found.items if found else None
         else:
             model = shelf.items
-        page = GridPage(self._library, shelf.title, model, root=False,
+        # A shelf of artists (a search's, a category's) gets the round portraits.
+        artist = (shelf.items.get_n_items() > 0
+                  and all(item.kind == 'artist' for item in shelf.items))
+        page = GridPage(self._library, shelf.title, model, root=False, artist=artist,
                         icon_name='view-grid-symbolic', empty_title=_('Nothing Here'),
                         empty_description=_('This shelf is empty now'))
         page.shelf = shelf

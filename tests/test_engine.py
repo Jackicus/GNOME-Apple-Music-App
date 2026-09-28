@@ -29,7 +29,8 @@ from tests.test_client import FakeChrome, FakePage, until, value
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 PLAYBACK_METHODS = ('play', 'playNext', 'playLater', 'control', 'seek', 'volume', 'shuffle',
-                    'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics')
+                    'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
+                    'search', 'suggest', 'searchAndSuggest', 'searchLanding', 'category')
 SLEEPER = 'import time; time.sleep(60)'
 STUBBORN = 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'
 
@@ -700,20 +701,231 @@ class PlaybackTest(EngineTest):
                      self.engine.shuffle('on'), self.engine.repeat('all'),
                      self.engine.now_playing(), self.engine.queue(),
                      self.engine.play_next('song', 'i.1'), self.engine.queue_jump(0),
-                     self.engine.lyrics('1000000001')):
+                     self.engine.lyrics('1000000001'), self.engine.search('x'),
+                     self.engine.suggest('x'), self.engine.landing(), self.engine.category('1'),
+                     self.engine.browse(), self.engine.made_for_you()):
             with self.assertRaises(EngineError) as raised:
                 await coro
             self.assertEqual(raised.exception.code, 'engine-down')
 
 
+def curator(curator_id, name, short=None):
+    return {'id': curator_id, 'type': 'apple-curators', 'attributes': {
+        'name': name, 'shortName': short or name,
+        'url': f'https://music.apple.com/gb/curator/x/{curator_id}',
+        'artwork': {'url': 'https://x/{w}x{h}{c}.{f}', 'bgColor': 'dd6848'}}}
+
+
+class SearchTest(EngineTest):
+    """search, suggest, landing, category, browse and made_for_you: the bridge calls as the
+    extension's am.py made them, the shaping, and the day-long caches."""
+
+    async def up(self, authorized=True):
+        self.page.authorized = authorized
+        await self.engine.start()
+
+    def fixture(self, name):
+        with open(FIXTURES / name, encoding='utf-8') as file:
+            return json.load(file)
+
+    async def test_search_needs_a_signed_in_engine(self):
+        await self.up(authorized=False)
+        for coro in (self.engine.search('paper'), self.engine.suggest('pa'),
+                     self.engine.landing(), self.engine.category('1'), self.engine.browse(),
+                     self.engine.made_for_you()):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'not-signed-in')
+        self.assertEqual(self.page.bridge_calls, [])
+
+    async def test_search_is_shaped_into_shelves(self):
+        await self.up()
+        self.page.bridge_answers['search'] = self.fixture('search_results.json')
+        answer = await self.engine.search('  paper   parachutes ')
+        self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper parachutes', False, 20))
+        self.assertEqual([shelf['key'] for shelf in answer['shelves']],
+                         ['artists', 'songs', 'albums', 'playlists'])
+        self.assertEqual(answer['shelves'][2]['title'], 'Albums')
+        self.assertEqual([item['kind'] for item in answer['items']],
+                         ['artist', 'song', 'album', 'playlist'])
+        self.assertNotIn('terms', answer)
+        album = answer['shelves'][2]['items'][0]
+        self.assertEqual(album['groups'], [])
+        self.assertTrue(album['art'].startswith('https://'))  # not on disk: a catalog URL
+        self.assertIsNone(album['thumb'])
+        # The library's search, with a limit.
+        await self.engine.search('paper', library=True, limit=5)
+        self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper', True, 5))
+
+    async def test_search_with_suggestions_in_one_round_trip(self):
+        await self.up()
+        self.page.bridge_answers['searchAndSuggest'] = {
+            'search': self.fixture('search_results.json'),
+            'suggestions': {'results': {'suggestions': [
+                {'kind': 'terms', 'searchTerm': 'paper', 'displayTerm': 'paper'},
+                {'kind': 'terms', 'searchTerm': 'paper parachutes',
+                 'displayTerm': 'paper parachutes'},
+                {'kind': 'terms', 'searchTerm': 'paper planes', 'displayTerm': 'paper planes'},
+            ]}}}
+        answer = await self.engine.search('paper', suggest=2)
+        self.assertEqual(self.page.bridge_calls[-1], ('searchAndSuggest', 'paper', False, 20, 2))
+        self.assertEqual([term['term'] for term in answer['terms']], ['paper', 'paper parachutes'])
+        self.assertEqual(len(answer['shelves']), 4)
+        # No suggestions (the page's promise failed): a search all the same.
+        self.page.bridge_answers['searchAndSuggest'] = {
+            'search': self.fixture('search_results.json'), 'suggestions': None}
+        answer = await self.engine.search('paper', suggest=3)
+        self.assertEqual((len(answer['shelves']), answer['terms']), (4, []))
+
+    async def test_search_errors(self):
+        await self.up()
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.search('   ')
+        self.assertEqual(raised.exception.code, 'usage')
+        self.page.bridge_answers['search'] = {'errors': [{'status': '400', 'title': 'Bad'}]}
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.search('x')
+        self.assertEqual(raised.exception.code, 'api')
+        self.assertIn('400 Bad', raised.exception.message)
+        # An answer that is not one: nothing found.
+        self.page.bridge_answers['search'] = None
+        self.assertEqual(await self.engine.search('x'), {'shelves': [], 'items': []})
+
+    async def test_suggest(self):
+        await self.up()
+        self.page.bridge_answers['suggest'] = {'results': {'suggestions': [
+            {'kind': 'terms', 'searchTerm': 'glow', 'displayTerm': 'glow'},
+            {'kind': 'topResults', 'content': {
+                'id': '900000701', 'type': 'artists',
+                'attributes': {'name': 'Glowline', 'genreNames': ['Pop']}}},
+        ]}}
+        answer = await self.engine.suggest('gl', limit=4)
+        self.assertEqual(self.page.bridge_calls[-1], ('suggest', 'gl', 4))
+        self.assertEqual(answer['terms'], [{'term': 'glow', 'display': 'glow'}])
+        self.assertEqual([(item['kind'], item['title']) for item in answer['items']],
+                         [('artist', 'Glowline')])
+
+    async def test_landing_is_kept_for_a_day(self):
+        await self.up()
+        self.page.bridge_answers['searchLanding'] = {'data': [
+            {'id': 'r1', 'type': 'personal-recommendation',
+             'relationships': {'contents': {'data': [
+                 curator('900000801', 'Apple Music Folk', 'Folk'),
+                 curator('900000802', 'Apple Music Live')]}}}]}
+        answer = await self.engine.landing()
+        self.assertEqual(self.page.bridge_calls, [('searchLanding',)])
+        self.assertEqual([(c['id'], c['kind'], c['title']) for c in answer['categories']],
+                         [('900000801', 'category', 'Folk'),
+                          ('900000802', 'category', 'Apple Music Live')])
+        self.assertIn('cached', answer)
+        path = self.cache / 'landing.json'
+        self.assertTrue(path.is_file())
+        # Kept: answered from the file, even with the engine down.
+        await self.engine.stop()
+        again = await self.engine.landing()
+        self.assertEqual(again['categories'], answer['categories'])
+        self.assertEqual(len(self.page.bridge_calls), 1)
+        # A refresh, or an old stamp, asks Apple again.
+        await self.up()
+        await self.engine.landing(refresh=True)
+        self.assertEqual(len(self.page.bridge_calls), 2)
+        kept = json.loads(path.read_text())
+        kept['cached'] = '2020-01-01T00:00:00Z'
+        path.write_text(json.dumps(kept))
+        await self.engine.landing()
+        self.assertEqual(len(self.page.bridge_calls), 3)
+
+    async def test_category_is_kept_by_id(self):
+        await self.up()
+        self.page.bridge_answers['category'] = {'data': [{
+            'id': '900000801', 'type': 'apple-curators',
+            'attributes': {'name': 'Apple Music Folk', 'shortName': 'Folk'},
+            'relationships': {'grouping': {'data': [
+                self.fixture('editorial_groupings.json')['data'][0]]}}}]}
+        answer = await self.engine.category('900000801')
+        self.assertEqual(self.page.bridge_calls, [('category', '900000801')])
+        self.assertEqual(answer['title'], 'Folk')
+        self.assertEqual([s['key'] for s in answer['shelves']],
+                         ['cat-best-new-songs', 'cat-new-releases', 'cat-stations'])
+        self.assertTrue((self.cache / 'categories' / '900000801.json').is_file())
+        await self.engine.stop()
+        self.assertEqual((await self.engine.category('900000801'))['title'], 'Folk')
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.category('900000802')  # not kept: needs the engine
+        self.assertEqual(raised.exception.code, 'engine-down')
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.category('')
+        self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_browse_is_the_editorial_groupings_kept_for_a_day(self):
+        self.page.storefront = 'gb'
+        await self.up()
+        path = '/v1/editorial/gb/groupings'
+        self.page.api_answers[path] = self.fixture('editorial_groupings.json')
+        answer = await self.engine.browse()
+        self.assertEqual(self.page.api_calls, [path])
+        self.assertEqual(self.page.api_params[-1],
+                         {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork'})
+        self.assertEqual([s['title'] for s in answer['shelves']],
+                         ['Featured', 'Best New Songs', 'New Releases', 'Stations'])
+        self.assertTrue((self.cache / 'browse.json').is_file())
+        await self.engine.stop()
+        self.assertEqual(len((await self.engine.browse())['shelves']), 4)
+        await self.up()
+        await self.engine.browse(refresh=True)
+        self.assertEqual(self.page.api_calls, [path, path])
+
+    async def test_browse_failure_is_api(self):
+        await self.up()
+        with mock.patch.object(engine_module, 'API_RETRIES', 1):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.browse()
+        self.assertEqual(raised.exception.code, 'api')
+        self.assertFalse((self.cache / 'browse.json').exists())
+
+    async def test_made_for_you_keeps_the_mixes_and_stations(self):
+        await self.up()
+        mixes = [{'id': f'pl.pm-{n}', 'type': 'playlists', 'attributes': {
+            'name': f'Mix {n}', 'playlistType': 'personal-mix',
+            'artwork': {'url': 'https://x/mix/{w}x{h}{c}.{f}', 'bgColor': '223344'},
+            'playParams': {'id': f'pl.pm-{n}', 'kind': 'playlist'}}} for n in (1, 2)]
+        albums = [{'id': '900000201', 'type': 'albums',
+                   'attributes': {'name': 'Lantern Season', 'artistName': 'P', 'trackCount': 3}}]
+        self.page.api_answers['/v1/me/recommendations'] = {'data': [
+            {'id': 'r-mixes', 'type': 'personal-recommendation',
+             'attributes': {'title': {'stringForDisplay': 'Made for You'}},
+             'relationships': {'contents': {'data': mixes}}},
+            {'id': 'r-albums', 'type': 'personal-recommendation',
+             'attributes': {'title': {'stringForDisplay': 'New Releases for You'}},
+             'relationships': {'contents': {'data': albums}}},
+        ]}
+        answer = await self.engine.made_for_you()
+        self.assertEqual(self.page.api_calls, ['/v1/me/recommendations'])
+        self.assertEqual(self.page.api_params[-1], {'limit': 25})
+        self.assertEqual([(s['key'], s['title'], len(s['items'])) for s in answer['shelves']],
+                         [('rec-r-mixes', 'Made for You', 2)])
+        self.assertTrue((self.cache / 'made-for-you.json').is_file())
+        await self.engine.stop()
+        self.assertEqual(len((await self.engine.made_for_you())['shelves']), 1)
+
+
 class DemoEngineTest(unittest.IsolatedAsyncioTestCase):
     async def test_demo_does_nothing_and_every_command_is_engine_down(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # A kept answer is not served either: a demo has none of Apple's.
+        sync.write_answer(sync.landing_cache_path(tmp.name), {'categories': []})
         engine = Engine(profile_dir='/nowhere/chrome', port=9999, demo=True)
         await engine.start()
         await engine.start(visible=True)
         self.assertEqual(engine.state, 'down')
         for command in (engine.status(), engine.item('album', '1'), engine.signin(),
-                        engine.account_name()):
+                        engine.account_name(), engine.search('x'), engine.suggest('x'),
+                        engine.landing(), engine.category('1'), engine.browse(),
+                        engine.made_for_you()):
             with self.assertRaises(EngineError) as ctx:
                 await command
             self.assertEqual(ctx.exception.code, 'engine-down')

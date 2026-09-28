@@ -96,6 +96,50 @@ class TestRemoteArt(unittest.TestCase):
             self.assertIsNone(await loader.fetch_remote('https://x.invalid/missing/1x1.jpg', 640))
         run(go())
 
+    def test_remote_item_names_the_remote_art_files(self):
+        hit = {'id': '1', 'kind': 'album', 'title': 'A', 'thumb': None,
+               'art': 'https://x.invalid/a/320x320bb.jpg'}
+        item = artwork.remote_item(hit)
+        self.assertIsNot(item, hit)
+        self.assertEqual(item['thumbUrl'], 'https://x.invalid/a/320x320bb.jpg')
+        self.assertEqual(item['artUrl'], 'https://x.invalid/a/640x640bb.jpg')
+        self.assertEqual(item['thumb'], artwork.remote_art_path(hit['art'], 320))
+        self.assertEqual(item['art'], artwork.remote_art_path(hit['art'], 640))
+        self.assertEqual(os.path.dirname(item['thumb']),
+                         os.path.join(self.temp_dir.name, 'remote-art'))
+        self.assertNotEqual(item['thumb'], item['art'])
+        # A thumbnail the sync has on disk is kept; the cover still comes from the URL.
+        kept = artwork.remote_item(dict(hit, thumb='/on/disk.jpg'))
+        self.assertEqual(kept['thumb'], '/on/disk.jpg')
+        self.assertEqual(kept['art'], item['art'])
+        # Artwork on disk, or none: the dict as it is.
+        for data in ({'art': '/cache/art/x.jpg', 'thumb': '/cache/thumb/x.jpg'},
+                     {'art': None, 'thumb': None}, {}, None):
+            self.assertIs(artwork.remote_item(data), data)
+
+    def test_fetch_thumb(self):
+        from applemusic.library import Item
+
+        loader = artwork.Artwork()
+        item = Item(artwork.remote_item({'id': '1', 'kind': 'album', 'title': 'A',
+                                         'art': 'https://x.invalid/a/320x320bb.jpg'}))
+        bare = Item({'id': '2', 'kind': 'album', 'title': 'B'})
+        failing = Item(artwork.remote_item({'id': '3', 'kind': 'album', 'title': 'C',
+                                            'art': 'https://x.invalid/missing/320x320bb.jpg'}))
+
+        async def go():
+            self.assertTrue(artwork.thumb_missing(item))
+            self.assertTrue(await loader.fetch_thumb(item))
+            self.assertTrue(os.path.exists(item.thumb))
+            self.assertFalse(artwork.thumb_missing(item))
+            self.assertEqual(self.fetched, ['https://x.invalid/a/320x320bb.jpg'])
+            self.assertTrue(await loader.fetch_thumb(item))  # on disk: no fetch
+            self.assertEqual(len(self.fetched), 1)
+            self.assertFalse(artwork.thumb_missing(bare))
+            self.assertFalse(await loader.fetch_thumb(bare))
+            self.assertFalse(await loader.fetch_thumb(failing))
+        run(go())
+
 
 class TestArtwork(unittest.TestCase):
     def setUp(self):

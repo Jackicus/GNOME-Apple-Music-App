@@ -28,7 +28,10 @@ class HeroTile(Gtk.Box):
     _colour = None
 
     def bind(self, item):
-        self.cover.set_paths(item.art, item.thumb)  # 260 px at a scale of 2 wants the 640 px art
+        # 260 px at a scale of 2 wants the 640 px art. The same paths again (an item rebound
+        # because its artwork has arrived, as a search's shelves do) are looked for again.
+        if not self.cover.set_paths(item.art, item.thumb):
+            self.cover.refresh()
         self.title_label.set_text(item.title)
         self.subtitle_label.set_text(item.subtitle)
         self._set_colour(artwork.art_colour(item.art_color))

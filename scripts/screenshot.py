@@ -3,7 +3,7 @@
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
-                          [--now-playing [lyrics|queue]]
+                          [--now-playing [lyrics|queue]] [--search TERM]
 
 Builds nothing itself: run scripts/run.sh (or meson install -C build) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -28,6 +28,8 @@ never started here.
 library's first album, playing, its queue the album, the synced lyrics of
 tests/fixtures/lyrics.json, the album's cover as its artwork) and opens the Now
 Playing sheet on its Lyrics tab, or on Up Next with "queue". With --demo only.
+--search TERM shows the Search page in Your Library mode with TERM typed (the
+results of the offline filter; the engine is never started here).
 """
 
 import argparse
@@ -57,7 +59,11 @@ parser.add_argument('--signed-in', metavar='NAME', nargs='?', const='',
 parser.add_argument('--now-playing', metavar='TAB', nargs='?', const='lyrics',
                     choices=['lyrics', 'queue'],
                     help='an invented item playing, the Now Playing sheet open on TAB')
+parser.add_argument('--search', metavar='TERM',
+                    help='the Search page in Your Library mode with TERM typed')
 args = parser.parse_args()
+if args.search:
+    args.page = 'search'
 if args.now_playing and not args.demo:
     parser.error('--now-playing needs --demo')
 width, height = (int(n) for n in args.size.split('x'))
@@ -130,6 +136,7 @@ SECTIONS = {'album': 'albums', 'artist': 'artists', 'playlist': 'playlists', 'st
             'video': 'videos'}
 opened = False
 sheet_opened = False
+searched = False
 
 # --now-playing: the invented item's artwork URL. Its cover is copied to where
 # Artwork.fetch_remote would put this URL's 640 px image, so nothing is fetched.
@@ -174,6 +181,13 @@ def open_now_playing(window):
     window.bottom_sheet.set_open(True)
 
 
+def search_library(window):
+    """--search: Your Library mode with the term typed into the entry."""
+    page = window.navigation_view.get_visible_page()
+    page.set_mode('library')
+    page.search_entry.set_text(args.search)
+
+
 def open_item(window):
     """--open: the item it names, opened as its tile would be."""
     kind, _sep, item_id = args.open.partition(':')
@@ -187,7 +201,7 @@ def open_item(window):
 
 
 def shoot():
-    global opened, sheet_opened
+    global opened, sheet_opened, searched
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -207,6 +221,11 @@ def shoot():
         sheet_opened = True
         open_now_playing(window)
         GLib.timeout_add(1500, shoot)  # the sheet open, the artwork decoded
+        return GLib.SOURCE_REMOVE
+    if args.search and not searched:
+        searched = True
+        search_library(window)
+        GLib.timeout_add(1500, shoot)  # after the debounce, the songs built, artwork decoded
         return GLib.SOURCE_REMOVE
     paintable = Gtk.WidgetPaintable(widget=window)
     snapshot = Gtk.Snapshot()

@@ -1,0 +1,298 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicSearchPage: Adw.NavigationPage {
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Narrow: the mode toggle goes under the entry.
+    Adw.Breakpoint {
+      condition ("max-width: 520sp")
+
+      setters {
+        search_row.orientation: vertical;
+        mode_toggle.halign: center;
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {
+        show-title: false;
+      }
+
+      content: Box {
+        orientation: vertical;
+
+        styles [
+          "view",
+        ]
+
+        Label title_label {
+          xalign: 0;
+          ellipsize: end;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 24;
+
+          styles [
+            "title-1",
+          ]
+        }
+
+        // The entry and the mode, centred and no wider than 600 px, as on the web player.
+        Adw.Clamp {
+          maximum-size: 600;
+          tightening-threshold: 480;
+          margin-start: 24;
+          margin-end: 24;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          child: Box search_row {
+            spacing: 12;
+
+            SearchEntry search_entry {
+              hexpand: true;
+              placeholder-text: _("Search Apple Music");
+              changed => $on_entry_changed();
+              activate => $on_entry_activated();
+              stop-search => $on_stop_search();
+
+              accessibility {
+                label: _("Search");
+              }
+            }
+
+            Adw.ToggleGroup mode_toggle {
+              valign: center;
+              notify::active-name => $on_mode_changed();
+
+              Adw.Toggle {
+                name: "music";
+                label: _("Apple Music");
+              }
+
+              Adw.Toggle {
+                name: "library";
+                label: _("Your Library");
+              }
+            }
+          };
+        }
+
+        Stack stack {
+          vexpand: true;
+
+          StackPage {
+            name: "loading";
+
+            child: Adw.Spinner {
+              width-request: 32;
+              height-request: 32;
+              halign: center;
+              valign: center;
+            };
+          }
+
+          // Engine down, signed out, a failed search, no results, or Your Library before
+          // anything is typed: one status page, worded by search.py.
+          StackPage {
+            name: "status";
+
+            child: Adw.StatusPage status_page {
+              child: Button status_button {
+                halign: center;
+                visible: false;
+                clicked => $on_status_clicked();
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              };
+            };
+          }
+
+          // Before anything is typed: Apple's browse categories, a flow box of tiles (a few
+          // tens, made once each; a Gtk.GridView could not sit under the heading in one
+          // scrolled window).
+          StackPage {
+            name: "landing";
+
+            child: ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Box {
+                orientation: vertical;
+                spacing: 12;
+                margin-bottom: 18;
+
+                Label {
+                  label: _("Browse Categories");
+                  xalign: 0;
+                  ellipsize: end;
+                  margin-start: 24;
+                  margin-end: 24;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                FlowBox categories_box {
+                  homogeneous: true;
+                  selection-mode: none;
+                  activate-on-single-click: true;
+                  min-children-per-line: 2;
+                  max-children-per-line: 6;
+                  column-spacing: 12;
+                  row-spacing: 12;
+                  valign: start;
+                  margin-start: 24;
+                  margin-end: 24;
+                  child-activated => $on_category_activated();
+                }
+              };
+            };
+          }
+
+          // While typing: Apple's completions of the term and its top hits for it.
+          StackPage {
+            name: "suggestions";
+
+            child: ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Adw.Clamp {
+                maximum-size: 600;
+                tightening-threshold: 480;
+                margin-start: 24;
+                margin-end: 24;
+                margin-top: 6;
+                margin-bottom: 18;
+
+                child: ListBox suggestions_list {
+                  selection-mode: none;
+                  valign: start;
+                  row-activated => $on_suggestion_activated();
+
+                  styles [
+                    "boxed-list",
+                  ]
+                };
+              };
+            };
+          }
+
+          // After Enter: one shelf per kind, in Apple's order, Top Results as cards.
+          StackPage {
+            name: "results";
+
+            child: ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Box results_box {
+                orientation: vertical;
+                spacing: 18;
+                margin-top: 6;
+                margin-bottom: 18;
+              };
+            };
+          }
+
+          // Your Library: the cached models filtered as you type, three shelves and a list
+          // of songs (the first SONG_LIMIT; See All opens the Songs page with the filter).
+          StackPage {
+            name: "library";
+
+            child: ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Box library_box {
+                orientation: vertical;
+                spacing: 18;
+                margin-top: 6;
+                margin-bottom: 18;
+
+                $AppleMusicShelf albums_shelf {
+                  see-all: true;
+                }
+
+                $AppleMusicShelf artists_shelf {
+                  see-all: true;
+                }
+
+                $AppleMusicShelf playlists_shelf {
+                  see-all: true;
+                }
+
+                Box songs_box {
+                  orientation: vertical;
+
+                  Box {
+                    spacing: 12;
+                    margin-start: 24;
+                    margin-end: 14;
+
+                    styles [
+                      "shelf-header",
+                    ]
+
+                    Box {
+                      orientation: vertical;
+                      valign: center;
+                      hexpand: true;
+
+                      Label {
+                        label: _("Songs");
+                        xalign: 0;
+                        ellipsize: end;
+
+                        styles [
+                          "title-2",
+                        ]
+                      }
+
+                      Label songs_count_label {
+                        xalign: 0;
+                        ellipsize: end;
+
+                        styles [
+                          "dim-label",
+                        ]
+                      }
+                    }
+
+                    Button songs_see_all_button {
+                      label: _("See All");
+                      valign: center;
+                      clicked => $on_songs_see_all_clicked();
+
+                      styles [
+                        "flat",
+                      ]
+                    }
+                  }
+
+                  // A short list in the page's own scrolled window: at most SONG_LIMIT rows,
+                  // so the list need not recycle (it cannot, inside a box).
+                  ListView songs_list {
+                    single-click-activate: false;
+                    tab-behavior: item;
+                    activate => $on_song_activated();
+
+                    styles [
+                      "track-list",
+                    ]
+                  }
+                }
+              };
+            };
+          }
+        }
+      };
+    };
+  };
+}

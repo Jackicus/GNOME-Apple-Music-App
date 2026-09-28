@@ -209,3 +209,27 @@ listview.queue-list > row {
 listview.queue-list > row .current .queue-title {
   font-weight: bold;
 }
+
+/* Category tiles (widgets/category_tile.blp): the name over the category's own colour
+   (drawn by category_tile.py) in white or black, the picture at the right with the same
+   corners as a cover. Without a colour, a tint that shows on the page in both themes. */
+.category-tile {
+  border-radius: 8px;
+  background-color: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.category-tile.dark-art {
+  color: white;
+}
+
+.category-tile.light-art {
+  color: rgb(0 0 6 / 80%);
+}
+
+.category-tile .category-title {
+  font-size: 1.1em;
+}
+
+.category-tile .category-art {
+  border-radius: 6px;
+}

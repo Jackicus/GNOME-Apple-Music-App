@@ -1,0 +1,67 @@
+using Gtk 4.0;
+
+// A search category (Rock, Chill, the decades…): its name at the left over its own colour,
+// which category_tile.py draws under the children, and its picture at the right. The
+// rounded corners clip both (overflow); the text colours are in style.css.
+template $AppleMusicCategoryTile: Overlay {
+  overflow: hidden;
+  hexpand: true;
+
+  styles [
+    "category-tile",
+  ]
+
+  child: Box {
+    height-request: 96;
+
+    Label title_label {
+      xalign: 0;
+      yalign: 0;
+      hexpand: true;
+      valign: start;
+      wrap: true;
+      wrap-mode: word_char;
+      lines: 2;
+      ellipsize: end;
+      margin-start: 12;
+      margin-end: 6;
+      margin-top: 10;
+
+      styles [
+        "heading",
+        "category-title",
+      ]
+    }
+
+    // Room for the picture, which is laid over it at the end.
+    Box {
+      width-request: 96;
+    }
+  };
+
+  // An overlay child is allocated its natural size, which for a picture is its image's, so
+  // the picture sits in an overlay of its own whose size is its placeholder's, as the
+  // cover widget does.
+  [overlay]
+  Overlay {
+    halign: end;
+    valign: center;
+    margin-end: 6;
+
+    child: Box {
+      width-request: 84;
+      height-request: 84;
+    };
+
+    [overlay]
+    Picture picture {
+      content-fit: cover;
+      overflow: hidden;
+      accessible-role: presentation;
+
+      styles [
+        "category-art",
+      ]
+    }
+  }
+}

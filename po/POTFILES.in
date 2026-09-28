@@ -21,6 +21,12 @@ src/pages/grid.blp
 src/pages/home.blp
 src/pages/radio.py
 src/pages/radio.blp
+src/pages/search.py
+src/pages/search.blp
+src/pages/shelves.py
+src/pages/shelves.blp
+src/pages/new.py
+src/pages/made_for_you.py
 src/pages/songs.py
 src/pages/songs.blp
 src/widgets/shelf.py

@@ -84,6 +84,7 @@ class Application(Adw.Application):
             action.set_enabled(False)
         self.set_accels_for_action('window.close', ['<primary>w'])
         self.set_accels_for_action('win.back', ['<alt>Left'])
+        self.set_accels_for_action('win.search', ['<primary>f'])
 
         self.add_main_option('debug', 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
                              _('Log debug messages'), None)
@@ -452,6 +453,7 @@ class Application(Adw.Application):
     def _on_shortcuts(self, *_args):
         section = Adw.ShortcutsSection(title=_('General'))
         section.add(Adw.ShortcutsItem.new(_('Keyboard Shortcuts'), '<primary>question'))
+        section.add(Adw.ShortcutsItem.new(_('Search'), '<primary>f'))
         section.add(Adw.ShortcutsItem.new(_('Refresh Library'), '<primary>r'))
         section.add(Adw.ShortcutsItem.new(_('Go Back'), '<alt>Left'))
         section.add(Adw.ShortcutsItem.new(_('Close Window'), '<primary>w'))

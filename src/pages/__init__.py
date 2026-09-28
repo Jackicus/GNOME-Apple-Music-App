@@ -11,15 +11,29 @@ from gettext import gettext as _
 from ..library import ROOT_FOLDER
 from ..sidebar import FOLDER_ICON, PLAYLIST_ICON
 
+from . import made_for_you, new
 from .detail import DetailPage
 from .grid import GridPage
 from .home import HomePage
 from .radio import RadioPage
+from .search import SearchPage
 from .songs import SongsPage
+
+
+def _search(destination, library):
+    return SearchPage(library, destination.title, icon_name=destination.icon_name)
 
 
 def _home(destination, library):
     return HomePage(library, destination.title, icon_name=destination.icon_name)
+
+
+def _new(destination, library):
+    return new.create(destination)
+
+
+def _made_for_you(destination, library):
+    return made_for_you.create(destination)
 
 
 def _radio(destination, library):
@@ -97,8 +111,11 @@ def folder(library, folder_id, title, root=True):
 
 
 PAGES = {
+    'search': _search,
     'home': _home,
+    'new': _new,
     'radio': _radio,
+    'made-for-you': _made_for_you,
     'albums': _albums,
     'artists': _artists,
     'recently-added': _recently_added,

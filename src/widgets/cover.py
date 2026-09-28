@@ -41,13 +41,16 @@ class Cover(Gtk.Overlay):
                             nick='Size', blurb='The width and height, in pixels')
 
     def set_paths(self, *paths):
-        """Show the first of these files that decodes (None and missing files are skipped)."""
+        """Show the first of these files that decodes (None and missing files are skipped).
+        False when they are the paths shown already (nothing is asked for again: refresh()
+        does that)."""
         paths = tuple(path for path in paths if path)
         if paths == self._paths:
-            return
+            return False
         self._paths = paths
         if self.get_mapped():
             self._show_art()
+        return True
 
     def refresh(self):
         """Look for the paths again (a better one has arrived on disk since)."""

@@ -22,7 +22,7 @@ running and better than before.
 - [x] 12. Playback: Player state and the player bar (2026-09-28)
 - [x] 13. MPRIS (2026-09-28)
 - [x] 14. Now Playing sheet, queue, lyrics (2026-09-28)
-- [ ] 15. Search
+- [x] 15. Search, New and Made for You (2026-09-28)
 - [ ] 16. Context menus and actions (play next, love, add, drag to playlist)
 - [ ] 17. Preferences
 - [ ] 18. Keyboard navigation and accessibility
@@ -1769,6 +1769,105 @@ and confirm it still searches; New and Made for You render. Screenshots with --d
 landing (empty state, engine-down) and Your Library results. Update CLAUDE.md. Tick phase 15 and
 commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- Endpoints, confirmed by watching the signed-in web player's own requests over CDP
+  (`Network.requestWillBeSent` while `location.assign`ing `/new` and
+  `/{storefront}/library/made-for-you`, then back to `/`; the bridge re-injected itself):
+  - The New page is `GET /v1/editorial/{storefront}/groupings` with `name=music`,
+    `platform=web`, `tabs=nonsubscriber`, `extend=artistUrl,editorialArtwork,plainEditorialNotes`,
+    `format[resources]=map`, `include[albums]=artists`, `include[songs]=artists`,
+    `include[stations]=events,radio-show`, `relate[songs]=albums`, `fields[albums]=…`,
+    `fields[artists]=…`, `omit[resource:artists]=autos`, `art[url]=c,f`, `l=en-US`. The app
+    asks for `name=music&platform=web&extend=editorialArtwork` (no `format[resources]=map`,
+    which flattens the answer): `data[0]` is a `groupings` whose `tabs[0]` (an
+    `editorial-elements` of kind 382) has 21 children here: kind 316 (untitled; its children
+    of kinds 317/320 each hold one item: an album, a music video, a curator) → the
+    "Featured" shelf; 327 (20 songs) and 326 (20 albums, playlists, stations or music
+    videos; `attributes.name` the title, `displayStyle` compact/expanded) → shelves; 385 (a
+    titled group of kind-394 links with `link` and no contents), 391 and 322 (`links`) →
+    left out; `uploaded-videos` among music videos → left out (`SHELF_RESOURCE_TYPES`).
+    19 shelves for this storefront (gb). `sync.editorial_shelves()` parses it; a category
+    page's grouping (kind 326/327 children of `relationships.grouping.data[*].tabs`) goes
+    through the same `_grouping_shelves`.
+  - The web player's Made for You page asks `GET /v1/me/library/playlists` with
+    `filter[featured]=made-for-you`, `sort=type`, `include[library-playlists]=catalog`,
+    `fields[library-playlists]=artwork,dateAdded,name,playParams`,
+    `fields[playlists]=lastModifiedDate`: the mixes *added to the library*, which answered
+    `{data: []}` for this account (its page would be empty). So `made_for_you()` reads
+    `/v1/me/recommendations?limit=25` as the plan said and keeps the recommendations made
+    only of personal mixes (`playlists` with `playlistType: "personal-mix"`, `pl.pm-…` ids;
+    Apple's `display.kind` is `MusicNotesHeroShelf`) or stations (`ra.u-…` the user's own,
+    `ra.q-…`, catalog `ra.9…`): two shelves here, 5 mixes and 12 stations. A later phase
+    could add the library filter above as a third shelf ("In Your Library") when it answers.
+  - The search landing (the bridge's `searchLanding`, `/v1/recommendations/{sf}?name=
+    search-landing&types=activities,apple-curators,editorial-items&extend=editorialArtwork
+    &platform=web`) gave 50 categories: `apple-curators` with a square 1080 px `artwork`
+    (a photo on `bgColor`) and `editorialArtwork` keys `brandLogo` (1080²),
+    `subscriptionCover` and `subscriptionHero` (4320×1080), sometimes `superHeroTall`/`Wide`.
+    The tile draws the square artwork at 84 px at the right over `bgColor` with the name at
+    the left, which reads like Apple's tiles; the wide editorial images were not used.
+- Caches: `<cache>/landing.json`, `categories/<id>.json`, `browse.json` and
+  `made-for-you.json`, each stamped `cached` and good for `engine.ANSWER_MAX_AGE` (a day),
+  answered without the engine (the demo engine refuses even those, so `--demo` shows the
+  engine-down state); `refresh=True` (the pages' header-bar refresh button) asks Apple again
+  and rewrites the file. Search and suggest answers are not kept. Remote artwork goes under
+  `<cache>/remote-art/` (trimmed to 32 MB at the end of each sync): a search with 83 hits
+  fetched its 83 thumbnails in about five seconds, six at a time, tiles rebinding as they
+  landed; a category page and New each about a hundred more.
+- The search page's structure (for phase 16's menus and 18's keyboard work): one
+  `Gtk.Stack` with pages `loading`, `status` (an `Adw.StatusPage` with a pill button, worded
+  per state: Engine Not Running / Start Engine, Sign In to Search Apple Music / Sign In,
+  Search Failed / Try Again, No Results Found, No Suggestions, Search Your Library),
+  `landing` ("Browse Categories" over a `Gtk.FlowBox` of `AppleMusicCategoryTile`s bound to
+  a store of `category` Items), `suggestions` (a boxed `Gtk.ListBox` of `Adw.ActionRow`s in a
+  600 px clamp: terms with a search icon, top hits with a 40 px `AppleMusicCover`, the title
+  and "Kind · subtitle"), `results` (a box of `AppleMusicShelf`s kept and rebound, `top` as
+  hero cards, See All → `open_shelf`), `library` (three shelves bound once to
+  `Gtk.FilterListModel`s over the albums, artists and playlists — `LibraryShelf` objects with
+  `key`, `title`, `items` — and "Songs" with a count over a non-scrolling `Gtk.ListView` of
+  `TrackRow`s on a `Gtk.SliceListModel` of the first 25 matches; See All →
+  `window.open_songs(text)`, the Songs page with its filter set). The entry's `changed` starts
+  a 250 ms `GLib.timeout_add`; Enter searches (Apple Music) or re-filters (Your Library);
+  Escape (`stop-search`) clears; a suggested term is put in the entry under a flag and
+  searched. Every engine request carries a serial and an older answer is dropped. The page
+  watches `engine.notify::state/authorized` while mapped and redoes the pending action once
+  the engine is up or signed in; while the engine is `starting` the spinner shows instead of
+  Engine Not Running. On a remap it refreshes only what is stale (a failure, nothing shown,
+  a library filter), so coming back from an item keeps the results.
+- Verified live, 32 of 32 checks in an in-process driver (the real Application with the
+  Devel id, memory-backend settings, the dev engine reclaimed from `scripts/am.py start`'s
+  Chrome, the real cache): `win.search` selected Search and focused the entry (the inner
+  `Gtk.Text`); the landing showed 50 categories; typing three letters showed nothing before
+  the debounce and then 12 suggestion rows (3 terms, 9 hits); the whole term likewise; Enter
+  showed the spinner then six shelves (top, playlists, albums, songs, stations, artists) with
+  every thumbnail fetched; the first album of the albums shelf opened as a DetailPage whose
+  50 tracks were fetched on demand; clearing the entry brought the landing back; a category
+  opened as a ShelvesPage of 10 shelves; New showed 19 shelves (Featured first) and wrote
+  browse.json; Made for You showed 2 shelves and its refresh button re-fetched (the file's
+  mtime moved); with `engine.stop()` Your Library found 514 albums, 380 artists, 34
+  playlists and 712 songs for "a" and showed the empty prompt for nothing, Apple Music mode
+  still showed the landing from the cache and then Engine Not Running with Start Engine,
+  which restarted the engine and answered the pending suggestions; activating a suggested
+  term searched; See All on the artists shelf pushed a grid of round portraits. No audio was
+  played. Screenshots with `--demo`: the landing's engine-down state (dark and light), Your
+  Library results for "the" at 1100×760 and 1100×1000 (the songs list), "mid" at 400×700
+  (the toggle under the entry), New's engine-down state. Real-data shots stayed in `build/`.
+- Deviations and things not done: the DevTools Network panel was replaced by CDP
+  `Network.requestWillBeSent` logging from a scratch script (not in the repo). The songs'
+  filter is one `Gtk.StringFilter` over a `Gtk.ClosureExpression` of `Track.search_key`
+  (folded: accents ignored, one pass over 30,000 songs), not three property filters; the
+  albums/artists/playlists filters are GTK's (title or subtitle, case only). Search, suggest,
+  the landing, categories, browse and made-for-you all require a signed-in engine, as the
+  plan's states imply, though the catalog would answer signed out. A music video in a
+  shelf still toasts (phase 12); a song tile plays through `play_request`. The library-side
+  search of Apple's `/v1/me/library/search` (`engine.search(term, library=True)`) exists but
+  the page's Your Library mode is the offline filter, as planned. The Featured shelf's
+  curator card (a category) opens its page rather than playing. Tests: `tests/test_browse.py`
+  (the two shapers over an invented `editorial_groupings.json` and inline recommendations),
+  search/suggest/landing/category/browse/made-for-you in `test_engine.py`, `remote_item` and
+  `fetch_thumb` in `test_artwork.py`; 395 tests.
 
 ## Phase 16: Context menus and actions
 
