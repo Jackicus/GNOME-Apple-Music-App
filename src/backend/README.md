@@ -5,7 +5,7 @@
 > extension's process-per-command `am.py` (and the shell code around it),
 > which this app kept as a reference until its sync and commands were
 > ported (`src/engine.py`, `src/sync.py`; the file is gone). What carries
-> over as is: `cdp.py`, `bridge.js`, `sync.py`, the command table (as the
+> over: `cdp.py` (its WebSocket codec only), `bridge.js`, `sync.py`, the command table (as the
 > list of what the bridge can do), the error codes, and the `library.json`,
 > `Item` and `Track` shapes (with this app's additions, noted there). Here,
 > paths and the artwork sizes come from `config.py`, and nothing

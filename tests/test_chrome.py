@@ -2,6 +2,7 @@
 holds a profile, picking the page target, and a DevTools port's /json (against a local HTTP
 server)."""
 
+import asyncio
 import http.server
 import json
 import os
@@ -376,6 +377,28 @@ class DevToolsHttpTest(unittest.IsolatedAsyncioTestCase):
         version = await chrome.get_json(self.port, '/json/version', timeout=2)
         self.assertEqual(version['Browser'], 'Chrome/154.0')
         self.assertEqual(self.requests, ['/json/version'])
+
+    async def serve(self, answer):
+        """A local server that reads a request and writes `answer`, then hangs up."""
+        async def handle(reader, writer):
+            await reader.readuntil(b'\r\n\r\n')
+            writer.write(answer)
+            await writer.drain()
+            writer.close()
+        server = await asyncio.start_server(handle, '127.0.0.1', 0)
+        self.addAsyncCleanup(server.wait_closed)
+        self.addCleanup(server.close)
+        return server.sockets[0].getsockname()[1]
+
+    async def test_something_that_is_not_devtools_is_engine_down(self):
+        for answer in (b'SSH-2.0-x\r\n',
+                       b'HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{"a"',
+                       b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nnot'):
+            with self.subTest(answer=answer):
+                port = await self.serve(answer)
+                with self.assertRaises(EngineError) as ctx:
+                    await chrome.get_json(port, '/json/version', timeout=2)
+                self.assertEqual(ctx.exception.code, 'engine-down')
 
     async def test_get_json_on_a_closed_port_is_engine_down(self):
         with self.assertRaises(EngineError) as ctx:
