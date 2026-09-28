@@ -795,7 +795,7 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
     async def test_ensure_bridge_times_out_without_musickit(self):
         page = await self.open_with_page(ready=False)
         with self.assertRaises(EngineError) as ctx:
-            await self.client.ensure_bridge(timeout=0.5)
+            await self.client.ensure_bridge(timeout=0.3)
         self.assertEqual(ctx.exception.code, 'timeout')
         self.assertIn('MusicKit not loaded', ctx.exception.message)
         self.assertGreaterEqual(page.injections, 2)  # it kept trying
@@ -848,7 +848,7 @@ class PipeClientTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_page_that_never_comes_back_loses_the_connection(self):
         page = await self.open_with_page()
         await self.client.subscribe()
-        self.client.reinject_timeout = 0.1
+        self.client.reinject_timeout = 0.05
         navigated = []
         self.chrome.responders['Page.navigate'] = lambda m: navigated.append(m) or {}
         page.bridge = None

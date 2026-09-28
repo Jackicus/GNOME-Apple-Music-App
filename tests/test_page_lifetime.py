@@ -126,7 +126,6 @@ def _classes():
         state = GObject.Property(type=str, default='down')
         authorized = GObject.Property(type=bool, default=False)
         headless = GObject.Property(type=bool, default=True)
-        port = 9229
 
         def __init__(self):
             super().__init__()

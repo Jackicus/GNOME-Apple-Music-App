@@ -339,38 +339,44 @@ class LifecycleTest(EngineFixture):
 
     async def test_stop_kills_a_chrome_that_ignores_sigterm(self):
         self.chrome_mode('stubborn')
+        self.engine.close_wait = 0.05
+        self.engine.stop_grace = 0.2
         await self.engine.start()
         process, _ = self.engine.spawned[0]
         pid = self.engine.pid
         started = time.monotonic()
-        await self.engine.stop()
+        with self.assertLogs(engine_module.log, 'WARNING'):  # ignored SIGTERM; killed
+            await self.engine.stop()
         self.assertIn(('term', pid), self.chrome_log())
         self.assertTrue(exited(process))
         self.assertTrue(process.get_if_signaled())
         self.assertEqual(process.get_term_sig(), signal.SIGKILL)
-        self.assertGreaterEqual(time.monotonic() - started, 0.5)
+        self.assertGreaterEqual(time.monotonic() - started, 0.2)
         self.assertEqual(self.engine.state, 'down')
 
     async def test_a_stop_with_a_shorter_grace(self):
         self.chrome_mode('stubborn')
         self.chrome.close_on_browser_close = False
+        self.engine.close_wait = 0.05
         self.engine.stop_grace = 5
         await self.engine.start()
         process, _ = self.engine.spawned[0]
         started = time.monotonic()
-        await self.engine.stop(grace=0.2)
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            await self.engine.stop(grace=0.1)
         self.assertLess(time.monotonic() - started, 2)
         self.assertEqual(process.get_term_sig(), signal.SIGKILL)
 
     async def test_kill_after_a_cancelled_stop_still_kills_chrome(self):
         self.chrome_mode('stubborn')
         self.chrome.close_on_browser_close = False
+        self.engine.close_wait = 0.05
         self.engine.stop_grace = 1
         await self.engine.start()
         process, _ = self.engine.spawned[0]
         pid = self.engine.pid
         with self.assertRaises(TimeoutError):
-            await asyncio.wait_for(self.engine.stop(), 0.5)  # cancelled inside SIGTERM's grace
+            await asyncio.wait_for(self.engine.stop(), 0.25)  # cancelled inside SIGTERM's grace
         self.assertEqual(self.engine.pid, pid)  # not forgotten
         with self.assertLogs(engine_module.log, 'WARNING'):
             self.engine.kill()
@@ -418,7 +424,7 @@ class LifecycleTest(EngineFixture):
 
     async def test_a_failing_start_fails_every_waiter_with_its_code(self):
         self.page.ready = False
-        with mock.patch.object(engine_module, 'BRIDGE_WAIT', 0.3):
+        with mock.patch.object(engine_module, 'BRIDGE_WAIT', 0.15):
             results = await asyncio.gather(
                 self.engine.start(), self.engine.start(), self.engine.control('pause'),
                 return_exceptions=True)
@@ -471,7 +477,7 @@ class LifecycleTest(EngineFixture):
 
     async def test_a_failed_start_cleans_up(self):
         self.page.ready = False
-        with mock.patch.object(engine_module, 'BRIDGE_WAIT', 0.3):
+        with mock.patch.object(engine_module, 'BRIDGE_WAIT', 0.15):
             with self.assertRaises(EngineError) as ctx:
                 await self.engine.start()
         self.assertEqual(ctx.exception.code, 'timeout')
@@ -603,7 +609,7 @@ class LifecycleTest(EngineFixture):
         self.page.authorized = True
         await self.engine.start()
         self.assertTrue(self.engine.authorized)
-        self.engine._client.reinject_timeout = 0.2
+        self.engine._client.reinject_timeout = 0.1
         seen = []
         self.engine.connect('event', lambda e, name, data: seen.append(name))
         subscriptions = self.page.subscriptions
@@ -612,7 +618,7 @@ class LifecycleTest(EngineFixture):
         self.page.authorized = False   # and the account signed out meanwhile
         with self.assertLogs(client_module.log, 'WARNING'):
             await self.chrome.send_event(*context_created(9))
-            await asyncio.sleep(0.3)   # a try gives up
+            await asyncio.sleep(0.15)  # a try gives up
             self.page.ready = True     # MusicKit arrives
             await until(lambda: 'bridgeReset' in seen, timeout=3)
         self.assertEqual(self.page.subscriptions, subscriptions + 1)  # events flow again
@@ -621,7 +627,7 @@ class LifecycleTest(EngineFixture):
 
     async def test_a_page_that_never_comes_back_takes_the_engine_down(self):
         await self.engine.start()
-        self.engine._client.reinject_timeout = 0.1
+        self.engine._client.reinject_timeout = 0.05
         self.page.bridge = None
         self.page.ready = False
         with self.assertLogs(level='WARNING'):  # the client's tries, then the engine's end
@@ -636,8 +642,8 @@ class LifecycleTest(EngineFixture):
         def evaluate(message):
             return None if hangs(message['params']['expression']) else page(message)
         self.chrome.responders['Runtime.evaluate'] = evaluate
-        self.engine._client.timeout = 0.2
-        self.engine.probe_timeout = 0.2
+        self.engine._client.timeout = 0.1
+        self.engine.probe_timeout = 0.1
 
     async def test_a_wedged_page_takes_the_engine_down(self):
         lost = []
