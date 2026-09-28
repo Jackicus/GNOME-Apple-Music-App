@@ -481,10 +481,12 @@ class TestLoading(unittest.TestCase):
         path.write_text(json.dumps({'sections': {}}), encoding='utf-8')
         load(self.cache, library)
         self.assertEqual((library.file_state, library.version, library.state), ('ok', 0, 'ready'))
-        # Nested past the decoder's recursion limit: unreadable like any damaged file.
-        path.write_text('{"sections": {"albums": [' + '[' * 100_000 + ']' * 100_000 + ']}}',
-                        encoding='utf-8')
-        with self.assertLogs('applemusic.library', 'WARNING'):
+        # Nested past the decoder's recursion limit: unreadable like any damaged file. Where
+        # that limit falls depends on the C stack size (Python 3.14 guards recursion by stack
+        # depth, and containers often have a larger stack), so force the error rather than
+        # rely on a deeply nested file failing on every machine.
+        with mock.patch.object(library_module, 'parse', side_effect=RecursionError('too deep')), \
+                self.assertLogs('applemusic.library', 'WARNING'):
             load(self.cache, library)
         self.assertEqual((library.file_state, library.version, library.state),
                          ('unreadable', 0, 'empty'))
