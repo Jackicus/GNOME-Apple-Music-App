@@ -155,9 +155,9 @@ class TestArtwork(unittest.TestCase):
         self.decoded = []
         load = artwork._load
 
-        def counting_load(path):
+        def counting_load(path, size=None):
             self.decoded.append(path)
-            return load(path)
+            return load(path, size)
 
         patcher = mock.patch.object(artwork, '_load', counting_load)
         patcher.start()
@@ -279,6 +279,65 @@ class TestArtwork(unittest.TestCase):
 
         run(go())
         self.assertEqual(len(results), 1)
+
+    def test_decoded_at_the_size_asked_for(self):
+        # paths[2] is 6 px square: asked at 3, the texture is 3 px and kept apart from the
+        # file's own size; asked at more than the file has, it is decoded as it is.
+        loader = artwork.Artwork()
+        small, native, big = [], [], []
+
+        async def go():
+            loader.request(self.paths[2], small.append, size=3)
+            loader.request(self.paths[2], native.append)
+            loader.request(self.paths[2], big.append, size=12)
+            self.assertEqual(loader.pending(), 3)
+            await settle()
+
+        run(go())
+        self.assertEqual(small[0].get_width(), 3)
+        self.assertEqual(native[0].get_width(), 6)
+        self.assertEqual(big[0].get_width(), 6)
+        self.assertIs(loader.get(self.paths[2], 3), small[0])
+        self.assertIs(loader.get(self.paths[2]), native[0])
+        self.assertIsNone(loader.get(self.paths[2], 4))
+        self.assertEqual(loader.cached(), (3, (9 + 36 + 36) * 4))
+
+    def test_get_any_is_the_biggest_size_cached(self):
+        # A stand-in while another size decodes: the biggest there is, the file's own size
+        # counting as the biggest; eviction and clear() forget the sizes.
+        loader = artwork.Artwork(budget=150)
+        small = []
+
+        async def go():
+            self.assertIsNone(loader.get_any(self.paths[2]))
+            loader.request(self.paths[2], small.append, size=3)
+            await settle()
+            self.assertIs(loader.get_any(self.paths[2]), small[0])
+            await self._load(loader, self.paths[2])  # its own 6 px: 144 bytes, 36 evicted
+            self.assertEqual(loader.get_any(self.paths[2]).get_width(), 6)
+            self.assertIsNone(loader.get(self.paths[2], 3))
+            loader.clear()
+            self.assertIsNone(loader.get_any(self.paths[2]))
+
+        run(go())
+
+    def test_budget_evicts_the_least_recently_used(self):
+        # 4, 5 and 6 px squares weigh 64, 100 and 144 bytes: a budget of 250 holds two.
+        loader = artwork.Artwork(budget=250)
+
+        async def go():
+            await self._load(loader, self.paths[0])
+            await self._load(loader, self.paths[1])
+            loader.get(self.paths[0])  # now paths[1] is the least recently used
+            await self._load(loader, self.paths[2])
+
+        run(go())
+        self.assertIsNotNone(loader.get(self.paths[0]))
+        self.assertIsNone(loader.get(self.paths[1]))
+        self.assertIsNotNone(loader.get(self.paths[2]))
+        self.assertEqual(loader.cached(), (2, 64 + 144))
+        loader.clear()
+        self.assertEqual(loader.cached(), (0, 0))
 
     async def _load(self, loader, path):
         loader.request(path, lambda _texture: None)

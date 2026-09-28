@@ -9,11 +9,12 @@ whose cost grows with every comparison rather than every item.
 
 from gettext import gettext as _
 
-from gi.repository import Adw, Gio, GObject, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from ..library import Item
 from ..widgets import context_menu
 from ..widgets.tile import Tile
+from . import mark_bound
 
 
 def _string(name):
@@ -31,6 +32,40 @@ def _chain(*sorters):
     for sorter in sorters:
         multi.append(sorter)
     return multi
+
+
+# The width of a grid column: a tile (tile.blp, 160 px) and the padding Adwaita gives a grid
+# view's child (3 px a side). Gtk.GridView divides its width, less its own CSS padding, by it.
+COLUMN_WIDTH = 166
+
+
+def columns_for(width):
+    """The columns a grid of tiles `width` px wide shows, or one more when its padding (left
+    out here) tips it: never fewer, so a grid told this many as max-columns lays out as it
+    would with no limit."""
+    return max(2, width // COLUMN_WIDTH)
+
+
+def estimate_columns():
+    """How many columns the content pane fits (columns_for): from its width, or before the
+    window has one (the page restored at startup) from the window's default size less the
+    sidebar's, or None without a window.
+
+    Gtk.GridView keeps tiles for max-columns columns by about 30 rows (its anchor), however
+    few columns it shows: 385 tiles with the default 12, which made opening Artists or All
+    Playlists take 200 ms. Told the columns that fit, it makes 30 rows of those: 129 tiles
+    at 1100×760, and those pages open in 70 ms."""
+    window = Gio.Application.get_default().get_active_window()
+    view = getattr(window, 'navigation_view', None)
+    if view is None:
+        return None
+    width = view.get_width()
+    if width <= 0:
+        width = window.get_default_size()[0]
+        split_view = getattr(window, 'split_view', None)
+        if split_view is not None and not split_view.get_collapsed():
+            width -= split_view.get_max_sidebar_width()
+    return columns_for(width) if width > 0 else None
 
 
 # The sort orders a page can offer: key -> (label, sorter factory). Labels are looked up when a
@@ -76,6 +111,7 @@ class GridPage(Adw.NavigationPage):
         self._artist = artist
         self._library_handlers = []
         self._title_offset = 0
+        self._bound = False  # a tile has been bound (the startup timing's mark)
         self._nothing = Gio.ListStore(item_type=Item)  # shown while `model` returns None
         # Looked up once: gettext searches the disk on every call, and binding is hot.
         self._accessible_format = _('{title}, {subtitle}')
@@ -97,6 +133,10 @@ class GridPage(Adw.NavigationPage):
         factory.connect('bind', self._on_bind)
         factory.connect('unbind', self._on_unbind)
         self.grid_view.set_factory(factory)
+        # Before the model: the grid makes tiles for max-columns columns until it has a
+        # width of its own (estimate_columns); on_title_position keeps it fitting after.
+        self._columns_idle = None
+        self._set_columns(estimate_columns())
         self.grid_view.set_model(Gtk.NoSelection(model=self._sorted))
         context_menu.attach(self.grid_view)
         # After the grid has its model: setting the drop-down's selects its first choice,
@@ -110,6 +150,12 @@ class GridPage(Adw.NavigationPage):
     def _model(self):
         model = self._get_model()
         return self._nothing if model is None else model
+
+    def _set_columns(self, columns):
+        self._columns_idle = None
+        if columns is not None and columns != self.grid_view.get_max_columns():
+            self.grid_view.set_max_columns(columns)
+        return GLib.SOURCE_REMOVE
 
     # The library outlives the window, so the page listens to it only while it is shown.
 
@@ -154,6 +200,9 @@ class GridPage(Adw.NavigationPage):
         else:
             label = self._accessible_format.format(title=item.title, subtitle=item.subtitle)
         list_item.set_accessible_label(label)
+        if not self._bound:
+            self._bound = True
+            mark_bound(self)
 
     def _on_unbind(self, _factory, list_item):
         list_item.get_child().unbind()
@@ -186,11 +235,19 @@ class GridPage(Adw.NavigationPage):
 
     @Gtk.Template.Callback()
     def on_title_position(self, overlay, widget, allocation):
-        """Place the title at the top of the overlay, as far up as the grid has scrolled."""
+        """Place the title at the top of the overlay, as far up as the grid has scrolled.
+
+        Called at each layout of the overlay, so also where the page learns its width: the
+        grid's max-columns follows it (after the layout, in an idle), so the grid makes
+        tiles for the columns that fit rather than for twelve."""
         allocation.x = 0
         allocation.y = -round(self._title_offset)
         allocation.width = overlay.get_width()
         allocation.height = self._title_height()
+        columns = columns_for(overlay.get_width())
+        if columns != self.grid_view.get_max_columns() and self._columns_idle is None:
+            self._columns_idle = GLib.idle_add(self._set_columns, columns,
+                                               priority=GLib.PRIORITY_HIGH_IDLE)
         return True
 
 

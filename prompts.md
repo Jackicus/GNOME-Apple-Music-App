@@ -26,7 +26,7 @@ running and better than before.
 - [x] 16. Context menus and actions (play next, love, add, drag to playlist) (2026-09-28)
 - [x] 17. Preferences (2026-09-28)
 - [x] 18. Keyboard navigation and accessibility (2026-09-28)
-- [ ] 19. Performance pass
+- [x] 19. Performance pass (2026-09-28)
 - [ ] 20. Packaging and release
 
 ## Settled questions (Jack agreed to all four recommendations, 2026-09-27)
@@ -83,9 +83,10 @@ running and better than before.
 - **Cache and data flow.** `$XDG_CACHE_HOME/apple-music/library.json` is the single library
   snapshot (the extension's format, plus `folders`, `sections.songs`, `sections.videos`). Thumbnails
   are 320 px (tiles are ≤ 160 logical px at 2× scale) and fetched for every library item at sync;
-  covers are 640 px and fetched on demand for detail pages. Decoded textures live in an LRU of ~200
-  entries (~80 MB at 320 px). The library is parsed off the main thread; GObjects are wrapped lazily
-  per section and spliced into `Gio.ListStore`s in batches. Pages show a placeholder state
+  covers are 640 px and fetched on demand for detail pages. Decoded textures, each at the size it is
+  drawn, live in an LRU of 32 MB of pixels (phase 19). The library is parsed off the main thread,
+  from the start of the process; GObjects are wrapped lazily per section and spliced into
+  `Gio.ListStore`s, one splice per section. Pages show a placeholder state
   (`AdwSpinner` or empty `AdwStatusPage`) and fill when models arrive; tiles show a placeholder icon
   until their texture is decoded. Targets: content visible within 1 s of launch for 2,000 albums,
   page switch under 100 ms, no dropped frames while scrolling grids.
@@ -2295,6 +2296,137 @@ src/widgets/artwork.py, src/pages/grid.py and songs.py.
 Verify: scripts/check.sh; scripts/bench.py output meets the targets; the demo and real libraries
 still work. Update CLAUDE.md with any new rule. Tick phase 19 and commit.
 ```
+
+**Done 2026-09-28. Notes for later phases.**
+
+- How it was measured. `scripts/demo_library.py --cache build/demo-big --albums 3000 --playlists
+  300 --tracks 40000` (the new options; without them the output is byte-identical to before):
+  3,000 albums, 868 artists, 300 playlists, 40,000 songs, a 48 MB indented library.json, 273 MB
+  with its artwork, the same every time. `scripts/bench.py` (new) runs the installed build, each
+  run a process of its own (`--runs`, default 3), on `--demo` with memory-backend settings and
+  the Albums page restored, and a bare `Adw.ApplicationWindow` the same way for comparison. The
+  startup times are `Application.mark()`s from the process start (`/proc/self/stat`, 10 ms
+  ticks), logged with `--debug` as `startup: <mark> at +N ms`: `startup` (do_startup),
+  `gtk-started`, `activate`, `window-built`, `window-mapped`, `first-frame`, `library-ready`, and
+  `<page>-bound`/`<page>-painted` at a root page's first tile or row (`pages.mark_bound`). Page
+  switches are timed from `window._select(key)` to the end of the next paint, every root page
+  plus the first folder and playlist, twice. RSS and its anonymous part come from
+  /proc/self/status. "Before" is HEAD 9da3979 with only those marks added, built in a worktree
+  of its own, measured with the same bench right before "after"; medians of 5 runs, 1100×760,
+  scale 1, this machine loaded as usual (Unity, Discord, the extension's Chrome).
+
+  | build/demo-big | before | after | target |
+  |---|---|---|---|
+  | content (Albums' first tiles painted) | 1,567 ms | 973 ms | < 1 s |
+  | first frame | 1,024 ms | 972 ms (the content is in it) | |
+  | library ready (sidebar included) | 2,191 ms | 1,071 ms | |
+  | longest page switch | 264 ms (Artists; Search 254, All Playlists 198) | 72 ms (Artists) | < 100 ms |
+  | Songs built and painted, after its switch | 861 ms | 606 ms | |
+  | RSS after every page, twice | 624 MB (anon 464) | 336 MB (anon 211) | < 250 MB |
+  | peak RSS | 627 MB | 336 MB | |
+  | garbage collections while browsing | 130, longest 93 ms | 67, longest 5 ms | |
+  | importing `applemusic.main` | 93 ms | 77 ms | |
+
+  The bare window: first frame at 758 ms, RSS 158 MB (anon 54), which no app change removes:
+  GTK's start loads the Papirus icon theme (200 ms), `present()` waits 330 ms for the
+  compositor's first configure, and the NVIDIA driver maps ~50 MB. Scrolling
+  (`scripts/scroll_test.py`, main-thread work per frame: mean / 90th percentile / longest; frames
+  over 16.7 ms), before → after: Albums, the whole grid at 4,000 px/s: 3.5 / 8.4 / 15.1, 0, with
+  81 gaps between frames over 16.7 ms → 3.4 / 5.2 / 8.3, 0, 2 or 3 gaps; at 20,000 px/s:
+  8.4 / 13.3 / 17.3, 2 over (84 frames a second) → 5.2 / 6.8 / 11.8, 0 (117). Songs, the first
+  40,000 px at 4,000 px/s: 3.4 / 5.2 / 7.8 → 2.4 / 3.6 / 6.0; 200,000 px at 20,000 px/s:
+  11.5 / 14.2 / 32.8, 15 over (65 a second) → 3.7 / 4.8 / 10.3, 0 (139). The one to three gaps of
+  35 to 50 ms a run are there before and after with no frame's work near 16 ms: the compositor.
+  The real library (a copy of ~/.cache/apple-music in a temporary directory, `--demo` so no
+  engine; 628 albums, 21 shelves): content at 925 to 1,050 ms (the bare window 770 to 1,030),
+  Home's first switch 206 → 29 ms, RSS after every page 274 MB.
+- What changed, each measured on the way:
+  1. The library is read from `Application.do_startup`, before GTK starts: `Library.load()`
+     submits the read to the library's own thread when called and returns the coroutine, which
+     `do_activate` awaits. The parse runs while GTK starts and while `present()` waits for the
+     compositor, both C. From the end of GTK's start to `present()` the parse is held between
+     list elements (`Library.hold_reading()`/`resume_reading()`, `HOLD_LIMIT` 1 s): beside it the
+     main thread's own start and the window's building, all Python, took 120 ms instead of 40
+     (the GIL). The Albums tiles are now in the first frame; content 1,398 → 1,138 (early read)
+     → 1,042 ms (held) → 973 (the Item and tile changes below).
+  2. `library.parse()` decodes each list element with one `raw_decode`, so no call holds the GIL
+     for long. `json.loads` in one call was tried for the first load: activation 80 ms later and
+     18 MB more RSS. It costs 360 ms against `json.loads`' 280 for this file: under the 1 s that
+     would have called for SQLite, so there is no SQLite plan.
+  3. The parsed library takes 54 MB instead of 91: artists' groups lose their tracks at parse
+     time when their album is in the library (the artist page resolves albums by their play
+     target; a group whose album is missing keeps its tracks), repeated track strings are one
+     object, and `Track` and `Item` read their properties from `raw` (`raw_property`; an Item's
+     are writable into `raw`, and `merge()` compares before and after and notifies): an Item
+     wraps in 3 µs, 3,000 albums in 9 ms instead of 22.
+  4. `paused_gc`: collections paused while a load or the Songs build makes objects, and
+     everything frozen after `load()` and `build_songs()`, not after `reload()` (CLAUDE.md says
+     why). A full collection over the library cost 53 ms (80 before 3).
+  5. Grids: `max-columns` follows the width (`grid.columns_for`: `COLUMN_WIDTH` 166, a tile and
+     Adwaita's 3 px of padding around a grid child, over the grid's width with its own padding
+     left in, so never fewer than GTK would show; checked at 700 to 1,920 px and after a resize).
+     A `Gtk.GridView` keeps about 32 rows of `max-columns` tiles alive whatever it shows: 385 →
+     129 tiles at 1100 px, Artists 264 → 72 ms, All Playlists 198 → 64.
+  6. Artwork is decoded at the size drawn (tile 160 px, Songs row 32, cover `size`, times the
+     scale factor; GdkPixbuf's scaled loader for bigger files) into a cache keyed by path and size
+     with a 32 MB pixel budget (`CACHE_BYTES`; a screen and a page ahead of tiles in a maximized
+     1920×1080 window at 2×) instead of 200 entries; `get_any(path)` answers another size as a
+     stand-in (a detail page shows the tile's thumbnail while its cover decodes). Tiles, rows and
+     covers ask in an idle after the frame, and still cancel on unmap. Songs rows decoding 32 px
+     is most of the Songs fling's gain.
+  7. A `Gtk.Picture`'s paintable is never None: `artwork.empty(size)` stands in, and the
+     placeholder icon is faded by opacity rather than hidden, so a texture arriving or leaving
+     redraws the tile without laying out the grid (`gtk_picture_set_paintable` queues a resize
+     whenever the paintable's intrinsic size changes). Songs at 4,000 px/s: mean 3.4 → 2.4 ms.
+  8. A tile makes its `Adw.Avatar` only for an artist: an avatar is 18 KB and a third of making a
+     tile; a cover tile is 24 KB instead of 39, 129 of them 21 ms instead of 30.
+  9. Home binds its first three shelves and then one a frame (`FIRST_SHELVES`): the real
+     library's 21 shelves made 317 tiles at once.
+  10. Search: the library filters have no model without a text (the hidden rows were still built:
+      254 → 22 ms), and a library shelf's row shows its first 50 (See All shows them all).
+  11. Imports: page modules when `pages.create()` or `window.open_item()` first needs them, urllib
+      when the engine first starts. Deferring the engine and sync modules too would not help:
+      after `do_startup` begins, any Python shares the GIL with the parse.
+  12. GSettings: `last-page` is written when the window closes or hides, `expanded-folders` a
+      second after the last toggle and at close.
+  13. Left as they were, measured: the one `Gio.ListStore.find` (a remote shelf of at most 25
+      items, in C); the grids' sorters were `Gtk.PropertyExpression`s already, and Songs sorts in
+      Python by phase 5's measurements; one splice per section (`BATCH_SIZE`): six splices of 500
+      albums took 157 ms against one of 68, and the first frames showed albums the next batches
+      pushed away; `FRAME_BUDGET` stays 8 ms (12 gave the same 600 ms Songs build).
+- Not met: RSS after every page is 336 MB against 250. The bare window is 158 of it (105 MB
+  file-backed). The rest, roughly: the parsed library and Items 54 MB; the sidebar's 300 playlist
+  rows 12 MB; the Songs visit 45 MB (40,000 `Track`s at 455 bytes each, where a bare GObject
+  subclass instance is 331; 3,000 album groups and their stores; three 40,000-item
+  `Gio.ListStore`s: the groups', `library.songs` and the page's rows; the sort keys; 150 rows of
+  cells at 28 KB for the title cell alone); the other pages about 30 MB (a tile 24 KB, a track row
+  about 60 KB); textures 8 MB decoded plus the driver's copies. Getting to 250 takes the model
+  and the rows changed, not tuning. **Memory plan, for a later pass:** (1) the Songs page over a
+  Python `Gio.ListModel` of the raw track dicts that wraps a `Track` only for the rows GTK asks
+  for (cached weakly), instead of 40,000 Tracks and three stores, with search's song filter,
+  `play_request` and the queue taking dicts or wrapping on demand, and album groups the same:
+  about 25 MB; (2) track dicts compacted at parse time (a tuple per track, `raw` a small
+  read-only mapping over it), or SQLite as the store: about 20 MB; (3) lighter rows (a track row
+  is 60 KB of widgets, the Songs title cell 28: fewer widgets, labels for inscriptions where the
+  text never changes). Separately, the sync could write artists' groups without the tracks of
+  albums the library has (the load drops them anyway): that halves library.json, its parse and a
+  sync's peak, but not the RSS after loading. With the bare window at 158 MB, 250 may be better
+  restated as the app's own share (anonymous memory, 211 MB now, 54 of it GTK's).
+- For phase 20: bytecode. The app's modules are installed with `install_data`, so nothing
+  compiles them; in `/usr` Python cannot write `__pycache__` and compiles every module at every
+  start: importing `applemusic.main` took 144 ms without bytecode against 77 with (and each page
+  module again at its first visit). Byte-compile at install (`python.install_sources`, which
+  compiles, or a `compileall` in the install script / PKGBUILD). `scripts/bench.py` and
+  `build/demo-big` are developer tools, not packaged; bench's startup marks work on any build
+  with `--debug`.
+- For the review pass: the startup marks (`Application.mark`, `pages.mark_bound`) are cheap and
+  stay; look at `paused_gc`'s freeze (what is alive then is never scanned again), the coupling of
+  `hold_reading()` in `do_startup` with `resume_reading()` before `present()` (a new `present()`
+  path must resume), `Item.merge()` over `raw_property`, `COLUMN_WIDTH` (tied to Adwaita's grid
+  child padding: a theme that changes it makes the grid show one column fewer than it could, or
+  build 30 tiles too many), and Home's progressive shelves on a reload. Every bench run needs its
+  window visible: the compositor sends no frames to a hidden one, and bench then reports "no
+  frame came" after 3 s instead of hanging.
 
 ## Phase 20: Packaging and release
 

@@ -56,14 +56,22 @@ class Suggestion(GObject.Object):
         self.item = item
 
 
+# How many of a library shelf's matches its row shows: See All opens them all. A row of a
+# Gtk.ListView creates up to 200 tiles whatever it shows, 70 ms of widgets a shelf on a broad
+# term ("a" matches most of 3,000 albums).
+ROW_LIMIT = 50
+
+
 class LibraryShelf:
     """What a shelf widget binds in Your Library mode: a title over a filtered library store
-    (bind_shelf() and open_shelf() only need `key`, `title` and `items`)."""
+    (bind_shelf() and open_shelf() only need `key`, `title` and `items`; the row shows
+    `row_items`, the first ROW_LIMIT of them)."""
 
     def __init__(self, key, title, items):
         self.key = key
         self.title = title
         self.items = items
+        self.row_items = Gtk.SliceListModel(model=items, offset=0, size=ROW_LIMIT)
 
 
 def _item_filter():
@@ -133,19 +141,25 @@ class SearchPage(Adw.NavigationPage):
         self.suggestions_list.bind_model(self._suggestions, self._create_suggestion_row)
 
         # Your Library: the filtered models, bound once; the search text is set on the filters.
+        # Each is over its store only while there is a text: with none, a filter matches
+        # everything, and the stack measures the hidden results even so, so the rows would
+        # build 200 tiles each for nothing (the search page cost 250 ms to open).
         self._item_filters = []
+        self._library_models = []  # (Gtk.FilterListModel, the store it filters)
         for widget, key, title, store in (
                 (self.albums_shelf, 'albums', _('Albums'), library.albums),
                 (self.artists_shelf, 'artists', _('Artists'), library.artists),
                 (self.playlists_shelf, 'playlists', _('Playlists'), library.playlists)):
             any_filter, filters = _item_filter()
             self._item_filters.extend(filters)
-            model = Gtk.FilterListModel(model=store, filter=any_filter)
+            model = Gtk.FilterListModel(model=None, filter=any_filter)
             model.connect('items-changed', self._on_library_results_changed)
+            self._library_models.append((model, store))
             widget.bind_shelf(LibraryShelf(key, title, model))
         self._song_filter = _song_filter()
-        self._songs = Gtk.FilterListModel(model=library.songs, filter=self._song_filter)
+        self._songs = Gtk.FilterListModel(model=None, filter=self._song_filter)
         self._songs.connect('items-changed', self._on_library_results_changed)
+        self._library_models.append((self._songs, library.songs))
         self._songs_shown = Gtk.SliceListModel(model=self._songs, offset=0, size=SONG_LIMIT)
         factory = Gtk.SignalListItemFactory()
         factory.connect('setup', self._on_song_setup)
@@ -378,6 +392,10 @@ class SearchPage(Adw.NavigationPage):
         for string_filter in self._item_filters:
             string_filter.set_search(text)
         self._song_filter.set_search(fold(text))
+        for model, store in self._library_models:
+            wanted = store if text else None
+            if model.get_model() is not wanted:
+                model.set_model(wanted)
         self._update_library_state()
 
     def _on_library_results_changed(self, *_args):

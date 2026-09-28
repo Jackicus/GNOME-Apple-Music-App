@@ -36,6 +36,7 @@ from gi.repository import Adw, Gio, Gtk
 from ..library import SongOrder, Track, fold
 from ..widgets import context_menu
 from ..widgets.song_title import SongTitle
+from . import mark_bound
 
 
 def _string_sorter(name):
@@ -71,6 +72,7 @@ class SongsPage(Adw.NavigationPage):
         self._search = ''  # the filter's text, folded
         self._matches = []  # the ordered songs that match it
         self._shown = []  # what the table's rows hold (the last matches that were any)
+        self._bound = False  # a row has been bound (the startup timing's mark)
 
         self.title_label.set_label(title)
         self.empty_page.set_icon_name(icon_name)
@@ -162,10 +164,20 @@ class SongsPage(Adw.NavigationPage):
             self._ordered = list(self._library.songs)
         else:
             if self._order is None:
+                # A new order over new songs: its keys are made a few thousand tracks at a
+                # time with frames between (SongOrder.prepare), then this runs again. Sorting
+                # by a column whose keys exist (a header click) is immediate.
                 self._order = SongOrder(self._library.songs)
+                Gio.Application.get_default().spawn(self._prepare(self._order, key))
+                return
             descending = sorter.get_primary_sort_order() == Gtk.SortType.DESCENDING
             self._ordered = self._order.tracks(key, descending)
         self._filter()
+
+    async def _prepare(self, order, key):
+        await order.prepare(key)
+        if self._order is order:  # the songs have not changed meanwhile
+            self._sort()
 
     def _filter(self):
         search = self._search
@@ -275,6 +287,9 @@ class SongsPage(Adw.NavigationPage):
 
     def _bind_title(self, _factory, cell):
         cell.get_child().bind(cell.get_item())
+        if not self._bound:
+            self._bound = True
+            mark_bound(self)
 
     def _unbind_title(self, _factory, cell):
         cell.get_child().unbind()

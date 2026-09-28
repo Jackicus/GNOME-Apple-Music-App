@@ -77,10 +77,10 @@ decoded = 0
 _load = artwork._load
 
 
-def counting_load(path):
+def counting_load(path, size=None):
     global decoded
     decoded += 1  # in a worker thread; a lost increment would only undercount
-    return _load(path)
+    return _load(path, size)
 
 
 artwork._load = counting_load
@@ -190,7 +190,9 @@ def report(times, work, interval, distance):
           flush=True)
     rate = len(gaps) / ((times[-1] - times[0]) / 1e6)
     print(f'  frames drawn: {len(gaps)}, {rate:.0f} a second; '
-          f'longest gap {max(gaps) / 1000:.1f} ms', flush=True)
+          f'longest gap {max(gaps) / 1000:.1f} ms; gaps over 16.7 ms: '
+          f'{sum(gap > 16700 for gap in gaps)}, over 33.3 ms: {sum(gap > 33300 for gap in gaps)}',
+          flush=True)
     GLib.timeout_add(200, app.quit)
 
 

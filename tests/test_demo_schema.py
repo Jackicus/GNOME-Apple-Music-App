@@ -305,6 +305,34 @@ class TestGeneratedAlbums(unittest.TestCase):
         self.assertEqual({album["artist_idx"] for album in albums}, set(range(len(artists))))
         self.assertEqual(self.demo.generated_albums(300), (artists, albums))
 
+    def test_tracks_option_sizes_the_generated_albums(self):
+        # --tracks N: the library holds N songs in all, the hand-written albums untouched.
+        artists, albums = self.demo.generated_albums(300, tracks=4000)
+        self.assertEqual(sum(len(disc) for album in albums for disc in album["discs"]), 4000)
+        self.assertEqual(albums[:40], self.demo.ALBUMS_DATA)
+        self.assertEqual(len(albums), 300)
+        generated = [len(album["discs"][0]) for album in albums[40:]]
+        self.assertTrue(all(count >= 1 for count in generated))
+        self.assertLessEqual(max(generated) - min(generated), 10)
+        with self.assertRaises(ValueError):
+            self.demo.generated_albums(300, tracks=100)
+
+    def test_generated_playlists(self):
+        # --playlists N: the hand-written playlists, then invented ones, N with Favourite
+        # Songs counted; the same N gives the same playlists.
+        playlists = self.demo.generated_playlists(50)
+        self.assertEqual(len(playlists), 49)
+        self.assertEqual(playlists[:12], self.demo.PLAYLISTS_DATA)
+        self.assertEqual(len({playlist["title"] for playlist in playlists}), 49)
+        genres = {artist["genre"] for artist in self.demo.ARTISTS_DATA}
+        for playlist in playlists[12:]:
+            self.assertEqual(set(playlist), {"title", "subtitle", "genre", "summary", "filter_genres"})
+            self.assertIn(playlist["genre"], genres)
+            self.assertTrue(set(playlist["filter_genres"]) <= genres)
+            self.assertIn(playlist["genre"], playlist["filter_genres"])
+        self.assertEqual(self.demo.generated_playlists(50), playlists)
+        self.assertEqual(self.demo.generated_playlists(13), self.demo.PLAYLISTS_DATA)
+
 
 if __name__ == "__main__":
     unittest.main()

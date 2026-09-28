@@ -184,11 +184,12 @@ class ArtistPage(Adw.NavigationPage):
         loader.cancel(self._token)
         self._token = None
         path = self.item.art or self.item.thumb
-        texture = loader.get(path) if path else None
+        size = self.avatar.get_size() * self.get_scale_factor()
+        texture = loader.get(path, size) if path else None
         if texture is not None:
             self.avatar.set_custom_image(texture)
         elif path:
-            self._token = loader.request(path, self._on_texture)
+            self._token = loader.request(path, self._on_texture, size)
 
     def do_unmap(self):
         artwork.get_default().cancel(self._token)

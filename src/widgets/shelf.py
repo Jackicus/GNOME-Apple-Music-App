@@ -82,7 +82,8 @@ class Shelf(Gtk.Box):
         self.subtitle_label.set_label(subtitle or '')
         self.subtitle_label.set_visible(bool(subtitle))
         self.list_view.update_property([Gtk.AccessibleProperty.LABEL], [shelf.title])
-        self.list_view.set_model(Gtk.NoSelection(model=shelf.items))
+        # A shelf may give its row a shorter model than its items (a search's library shelf).
+        self.list_view.set_model(Gtk.NoSelection(model=getattr(shelf, 'row_items', shelf.items)))
         self.scrolled_window.get_hadjustment().set_value(0)  # a new shelf starts at its start
 
     @Gtk.Template.Callback()

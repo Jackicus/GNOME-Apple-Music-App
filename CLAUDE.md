@@ -57,10 +57,11 @@ GTK main thread = GLib main loop = asyncio loop (gi.events.GLibEventLoopPolicy)
 │            (widgets/lyrics.py: the current line by position, click seeks) and    │
 │            Up Next (widgets/queue.py: player.queue, activation jumps) tabs      │
 │ app.library: Item/Track GObjects in Gio.ListStores, loaded from library.json     │
-│   (parsed in a thread, wrapped in batches; the Songs store on request);          │
-│   --demo reads build/demo instead                                                │
-│ Artwork (widgets/artwork.py): thumbnails decoded in threads into a 200-texture   │
-│   LRU, asked for by tiles, rows and covers while they are on screen              │
+│   (read and parsed in a thread from do_startup, held while the main thread runs  │
+│   Python before present(); wrapped a section at a time; the Songs store on       │
+│   request); --demo reads build/demo instead                                      │
+│ Artwork (widgets/artwork.py): thumbnails decoded in threads at the size drawn    │
+│   into a 32 MB LRU, asked for by tiles, rows and covers while they are on screen │
 │ app.engine (engine.py): Chrome (Gio.Subprocess, headless after sign-in) + the    │
 │   async CDPClient ─► bridge.js ─► MusicKit; start/stop/restart, status(),        │
 │   item() (a shelf item's groups, on demand), signin(), account_name();           │
@@ -98,8 +99,9 @@ src/main.py                    Application: app.* actions (quit, about, shortcut
                                engine follows browser-command, engine-port and engine-headless:
                                _make_engine), logging and --debug, --demo
                                (app.demo), app.library, app.engine, app.player and app.mpris
-                               (made in do_startup; the library loaded and the engine
-                               autostarted in do_activate; MPRIS released in do_shutdown),
+                               (made in do_startup; the library read from there and awaited
+                               in do_activate, the engine autostarted in do_activate; MPRIS
+                               released in do_shutdown), mark(name) (startup timing, `marks`),
                                spawn(coro), toast(), report(error),
                                player_command(coro), start_sync()/sync_due() (the sync as a
                                task, one at a time, with the banner and the toasts),
@@ -202,8 +204,10 @@ src/dialogs/preferences.py + .blp  $AppleMusicPreferencesDialog (Adw.Preferences
 src/library.py                 the model: Library (state empty/loading/ready, 'changed', stores
                                albums artists playlists radio videos, shelves, by_id, shelf,
                                favourite_songs(), track_at(play, index), playlist_tree(),
-                               folder_items(id), async load (new objects) and reload (in place,
-                               by id); songs filled by async build_songs(), songs-ready), Item
+                               folder_items(id), load() (new objects) and reload() (in place,
+                               by id): coroutines whose file is read, in the library's thread,
+                               from the call; hold_reading()/resume_reading(); songs filled by
+                               async build_songs(), songs-ready), Item
                                (favourites; editable (a library playlist songs can be added
                                to: not Favourite Songs, not canEdit false); merge(data,
                                replace); kind 'folder' for a playlist folder), Group, Track
@@ -211,6 +215,9 @@ src/library.py                 the model: Library (state empty/loading/ready, 'c
                                AppleMusicShelfModel: the widget is AppleMusicShelf),
                                PlaylistTree/TreeNode (the folders); SongOrder (the Songs table's
                                orders), fold(), collation_key(), apply_diff(store, items);
+                               parse() (json.loads' result a list element at a time),
+                               raw_property() (Track's and Item's properties read from `raw`),
+                               paused_gc (collections paused, the heap frozen after);
                                GObject/Gio only
 src/window.py + window.blp     Window: split view, sidebar (the Playlists section bound to the
                                library's tree; folder expansion in `expanded-folders`), the
@@ -305,15 +312,18 @@ src/widgets/transport.py       the transport pieces the bar and the sheet share:
                                unloves the catalog song); each `attach(player, app)`
 src/pages/__init__.py          PAGES: destination key → factory; create(destination, library);
                                playlist(library, id, title) and folder(library, id, title, root)
-                               for the sidebar's playlists and folders
+                               for the sidebar's playlists and folders; each page module is
+                               imported by its factory; mark_bound(page) (startup timing)
 src/pages/grid.py + .blp       $AppleMusicGridPage: title over a Gtk.GridView of tiles, sort drop-down,
                                loading/empty states (albums, artists, recently-added,
                                all-playlists (the root folder), music-videos, folders; pushed
                                with root=False for See All and folder tiles); `model` a
                                Gio.ListModel or a function returning one; the title follows
-                               the page's `title`
+                               the page's `title`; max-columns follows the width
+                               (columns_for(), COLUMN_WIDTH)
 src/pages/home.py + .blp       $AppleMusicHomePage: title over a Gtk.Box of AppleMusicShelf, one per
-                               non-empty library.shelves, the first as hero cards, all with See All
+                               non-empty library.shelves, the first as hero cards, all with See All;
+                               FIRST_SHELVES bound at once, the rest a frame apart
 src/pages/shelves.py + .blp    $AppleMusicShelvesPage(title, fetch, root, icon_name, hero, empty
                                texts): shelves the engine answers with (fetch(refresh) → {shelves}),
                                wrapped by remote_shelves() (Items with artwork under remote-art)
@@ -351,7 +361,9 @@ src/pages/detail.py + .blp     $AppleMusicDetailPage: an album or playlist, one 
 src/pages/artist.py + .blp     $AppleMusicArtistPage: round portrait, name, bio, a Gtk.FlowBox of
                                album tiles (the artist's groups, resolved through by_id); fetches
                                the groups as the detail page does
-src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get, request, cancel;
+src/widgets/artwork.py         the process-wide Artwork loader (get_default(): get(path, size),
+                               get_any(path), request(path, callback, size), cancel; decodes at
+                               `size` px, a CACHE_BYTES pixel budget; empty(size) for pictures;
                                async fetch_cover(item) → <cache>/art/, fetch_remote(url, size)
                                → <cache>/remote-art/ by the sized URL's hash, fetch_thumb(item);
                                sized_url(), remote_art_path(), remote_item(dict) (an engine
@@ -374,8 +386,9 @@ src/widgets/context_menu.py    attach(view, drag=False): context menus for a vie
                                Gtk.PopoverMenu from window.item_actions.menu_for(obj),
                                parented to the widget, no arrow, at the pointer (halign start)
                                or beside the widget; unparented at an idle after it closes
-src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist(); a folder's
-                               big folder icon) and one Gtk.Inscription
+src/widgets/tile.py + .blp     $AppleMusicTile: cover (or round portrait, set_artist(), its
+                               Adw.Avatar made then; a folder's big folder icon) and one
+                               Gtk.Inscription
 src/widgets/hero_tile.py + .blp  $AppleMusicHeroTile: a 260 px AppleMusicCover over a two-line
                                caption band in the item's art colour (drawn in do_snapshot)
 src/widgets/category_tile.py + .blp  $AppleMusicCategoryTile: a search category as a landscape
@@ -436,11 +449,12 @@ src/backend/                   the engine layer: vendored from the extension plu
                                write_answer()/read_answer() and the *_cache_path()s
 data/                          desktop, metainfo, gschema, app icons; Meson tests validate them
 po/                            gettext; POTFILES.in must list every file with translatable strings
-scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py a11y_check.py
+scripts/run.sh check.sh screenshot.py demo.sh scroll_test.py a11y_check.py bench.py
 scripts/am.py                  the engine's debug CLI (no GUI): status, start [--visible], stop,
                                eval <js>, now-playing, events; the app's port and profile
 scripts/demo_library.py        invented library.json + drawn artwork (config sizes) into --cache DIR;
-                               --albums N adds generated albums and artists; the last playlist is
+                               --albums N adds generated albums and artists, --tracks N sizes
+                               them to N songs, --playlists N adds playlists; the last playlist is
                                Favourite Songs (attributes.isFavourites); `folders`: three
                                playlist folders (l.fd002 inside l.fd001) and loose playlists
 tests/                         stdlib unittest; __init__.py registers src/ as `applemusic`;
@@ -501,10 +515,11 @@ scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo] [--
 scripts/scroll_test.py [--page KEY] [--speed PX_PER_S] [--distance PX] [--size WxH] [--sidebar]
                           scrolls a page (or, with --sidebar, the sidebar) of the demo library top
                           to bottom (or PX pixels) and reports the app's work per frame (mean, 90th
-                          percentile, frames over the refresh interval and over 16.7 ms); run it
-                          on a big library:
-                          APPLE_MUSIC_CACHE=build/demo-2000 scripts/scroll_test.py --page albums
-                          (Songs of 30,000: --page songs --distance 40000, the whole is 1.5M px)
+                          percentile, frames over the refresh interval and over 16.7 ms) and the
+                          gaps between frames over 16.7 and 33.3 ms; run it on a big library:
+                          APPLE_MUSIC_CACHE=build/demo-big scripts/scroll_test.py --page albums
+                          (Songs of 40,000: --page songs --distance 40000, the whole is 2M px;
+                          a fling: --speed 20000)
 scripts/a11y_check.py [--size WxH] [--light] [--names]
                           walks the keyboard checklist (prompts.md, phase 18) on the demo
                           library, each key dispatched through GTK's own controllers (no input
@@ -521,11 +536,21 @@ scripts/am.py [--debug] status | start [--visible] [--browser CMD] | stop | eval
                           {"error": code, "message"} and exit 1. `start` leaves Chrome running
                           (headless unless --visible) and reuses one already up; `events`
                           prints bridge events one per line until Ctrl+C. Never signs in.
-scripts/demo_library.py [--cache DIR] [--albums N]
+scripts/demo_library.py [--cache DIR] [--albums N] [--playlists N] [--tracks N]
                           writes an invented library (library.json, art/, thumb/, art/.sizes) into
                           DIR, default build/demo; no Chrome. --albums 2000 (about 24,000 songs,
                           10 s: covers drawn in parallel) into build/demo-2000 for measuring;
-                          --albums 2500 gives 30,116 songs (build/demo-2500, the Songs page's)
+                          --albums 2500 gives 30,116 songs (build/demo-2500, the Songs page's);
+                          phase 19's: --cache build/demo-big --albums 3000 --playlists 300
+                          --tracks 40000 (48 MB of library.json, 273 MB with the artwork).
+                          Without the new options the output is as it always was
+scripts/bench.py [--cache DIR] [--runs N] [--settle MS] [--size WxH] [--profile KEY]
+                          startup, page switches and RSS on build/demo-big (or DIR), each run a
+                          process of its own (default 3) with medians, beside a bare Adw window
+                          (the platform's floor): the Application.mark()s from the process
+                          start, every root page shown twice, RSS and anon RSS; --profile KEY
+                          prints a cProfile of that page's first switch. Keep its window
+                          visible (no frames otherwise: reported after 3 s)
 meson setup build --prefix=/usr && meson install -C build      system install, release profile
 ```
 
@@ -564,12 +589,15 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   `name`, `play`, `entries` store of Track) is wrapped on first access. `library.songs` stays
   empty until `await library.build_songs()` (the Songs page asks when first shown; batched with
   `yield_to_frames()`, one splice at the end), and every load after that refills it;
-  `songs-ready` says it is filled, `library.song_count()` counts without building. Model GObjects declare properties with
-  `library.model_property` (kept in `_<name>` attributes, assigned directly when wrapping):
-  passing properties to `GObject.Object.__init__` costs about 4 µs each, 5-10x slower wrapping.
+  `songs-ready` says it is filled, `library.song_count()` counts without building. Track's and
+  Item's properties are `library.raw_property`s, read from the object's `raw` dict at each access
+  (an Item's are writable into it; `merge()` notifies what changed): nothing is copied, so a
+  Track is 455 bytes and 3,000 Items wrap in 9 ms. Group and Shelf use `library.model_property`
+  (kept in `_<name>` attributes, assigned directly when wrapping). Never pass properties to
+  `GObject.Object.__init__` when wrapping: about 4 µs each, 5-10x slower.
 - Sorting: `Gtk.StringSorter`/`Gtk.NumericSorter` (combined with `Gtk.MultiSorter`) over
-  `Gtk.PropertyExpression`s of the model properties. `model_property` makes real GObject
-  properties whose getter reads the plain attribute, so expressions work as they are; key-based
+  `Gtk.PropertyExpression`s of the model properties. `model_property` and `raw_property` make
+  real GObject properties with Python getters, so expressions work as they are; key-based
   sorters read each item once and sort in C. Measured on 2,000 albums: 10 ms (title), 25 ms
   (artist, year, title); a Python `Gtk.CustomSorter` 23 ms, and on 24,000 songs 115 ms against
   570 ms. A `Gtk.ClosureExpression` over the attribute halves the read cost if it ever matters.
@@ -592,13 +620,44 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
   remove the old ones (`SongsPage._show()`): the view then only rebinds (about 800 cell binds,
   20 ms). Give a table's columns fixed widths (`fixed-width` plus `expand`) so they never
   measure their cells.
-- Artwork: widgets draw covers through `widgets.artwork.get_default()`: `get(path)` (cache hit,
-  sync) or `request(path, callback)` (decoded in a thread, called back on the main loop; shared
-  per path) and `cancel(token)` when recycled or unmapped. None means no artwork, including a
-  path not on disk; tiles draw `thumb` (320 px), falling back to `art`; a detail page's hero
-  draws `art` (640 px), falling back to `thumb` (shown at once when its tile left it cached).
-  `widgets.cover.Cover` does this for any square artwork; the tiles and Songs cells keep their
-  own copies of the same logic.
+- Artwork: widgets draw covers through `widgets.artwork.get_default()`: `get(path, size)` (cache
+  hit, sync) or `request(path, callback, size)` (decoded in a thread, called back on the main
+  loop; shared per path and size) and `cancel(token)` when recycled or unmapped. `size` is the
+  edge drawn in pixels (logical size × scale factor): a bigger file is decoded down to it (a
+  tile's texture is a quarter of the thumbnail's, a Songs row's a hundredth), and the cache is a
+  32 MB pixel budget (`CACHE_BYTES`); `get_any(path)` is any size cached, a stand-in while the
+  right one decodes. None means no artwork, including a path not on disk; tiles draw `thumb`
+  (320 px), falling back to `art`; a detail page's hero draws `art` (640 px), falling back to
+  `thumb` (the tile's texture shown meanwhile). Ask in an idle after the frame (a list maps a few
+  hundred rows to show a dozen), not in bind. `widgets.cover.Cover` does this for any square
+  artwork; the tiles and Songs cells keep their own copies of the same logic.
+- Nothing in a recycled row or tile may change size when its artwork comes or goes: a
+  `Gtk.Picture` queues a resize, laying out the whole list, whenever its paintable's intrinsic
+  size changes (None to a texture and back), and so does a widget shown or hidden. Show
+  `artwork.empty(size)` for no texture and fade the placeholder icon (`set_opacity`); Songs
+  scrolled with a third less work per frame for it. Keep costly children out of widgets made by
+  the hundred: an `Adw.Avatar` is 18 KB and a third of a tile's making, so a tile makes one only
+  when it is an artist's.
+- Startup is measured (`scripts/bench.py`) and budgeted: a bare Adw window paints its first frame
+  at about 760 ms on this machine, and the target is content at 1 s. The library is read from
+  `do_startup` on (`Library.load()` starts the thread when called; `do_activate` awaits the
+  coroutine), and between the end of GTK's start and `window.present()` its parse is held
+  (`hold_reading()`/`resume_reading()`): Python there shares the GIL with it, at a third of its
+  speed. Anything added to `do_startup`, `do_activate` or a restored page's construction is on
+  that path: keep it small, and import modules at the top of `main.py`'s import chain (before
+  the parse starts) or not at all at startup (page modules are imported by their factory in
+  `pages/__init__.py`, and must stay out of `window.py`'s and `main.py`'s top-level imports).
+  `Application.mark(name)` notes a startup moment (logged with `--debug`); root pages call
+  `pages.mark_bound(self)` at their first bind. A page that builds many widgets builds what
+  shows first and the rest a frame apart (Home's `FIRST_SHELVES`).
+- Garbage collection: `library.paused_gc()` pauses it around bursts of long-lived objects (a
+  load, the Songs build) and freezes the heap after (`gc.freeze()`), so full collections never
+  scan the library again (53 ms each over 3,000 albums and 40,000 songs). What is alive at a
+  freeze is never collected if it later dies in a reference cycle, so freeze only after
+  `load()` and `build_songs()`, not after `reload()` (every sync) or at arbitrary moments.
+- Grid pages set `max-columns` to what fits (`grid.columns_for`): `Gtk.GridView` keeps about 32
+  rows of `max-columns` tiles alive whatever it shows (385 tiles for 12 columns at 1100 px, 129
+  for 4). `COLUMN_WIDTH` is a tile plus Adwaita's grid child padding; change them together.
 - Main-thread work in chunks yields with `library.yield_to_frames()`, not a bare
   `await asyncio.sleep(0)`: asyncio runs at `G_PRIORITY_DEFAULT`, above GTK's redraw, so sleep(0)
   alone paints nothing until the task ends (measured: 0 frames against 5 in the same load).
@@ -737,7 +796,9 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 - Lint: `pyproject.toml` configures ruff; imports after `gi.require_version()` need `# noqa: E402`.
 - Settings: one schema `io.github.jackicus.AppleMusic` for both profiles; new keys go in
   `data/…gschema.xml` with a summary, and are read through `app.settings`. Keys: window-width/
-  height/maximized, last-page, expanded-folders, browser-command, engine-port, engine-headless,
+  height/maximized, last-page and expanded-folders (written as the window closes or hides, and
+  expanded-folders also a second after the last toggle: not at every click), browser-command,
+  engine-port, engine-headless,
   engine-autostart, signed-in, account-name, last-sync (ISO 8601, '' before the first),
   sync-interval (hours, 6; 0 = manual only), background-playback (b, false). Preferences
   (`dialogs/preferences.py`) shows background-playback, sync-interval (with last-sync),
@@ -794,6 +855,8 @@ meson setup build --prefix=/usr && meson install -C build      system install, r
 4. Keyboard or accessibility changes (or a new page): `scripts/a11y_check.py`, with
    `--size 360x640` and `--names`.
 5. The real engine is only exercised when the phase needs it, and never leaves data in the repo.
+6. Anything on the startup path, a page's first build or a list's bind: `scripts/bench.py` on
+   build/demo-big (phase 19's numbers are in prompts.md), and `scripts/scroll_test.py` for lists.
 
 ## Privacy
 
@@ -803,6 +866,14 @@ Live data lives only under `$XDG_CACHE_HOME/apple-music` and `$XDG_DATA_HOME/app
 outside the repo; `build/` is git-ignored. Screenshots for the metainfo come from the demo library.
 
 ## Things worth knowing
+
+- This machine's floor, which no change to the app removes (phase 19): a bare
+  `Adw.ApplicationWindow` paints its first frame about 760 ms after its process starts (GTK's
+  start loads the Papirus icon theme, 200 ms; `present()` waits 330 ms for the compositor's
+  first configure) and has an RSS of 158 MB (105 MB file-backed; the NVIDIA driver maps about
+  50 MB). Timings vary by 100 ms or more from run to run (Unity, Discord and the extension's
+  Chrome are usually running): take medians (`bench.py --runs 5`). The compositor sends no frames
+  to a window it does not show, so a hidden bench or scroll-test window stalls.
 
 - `AdwSidebar` (libadwaita 1.9): `AdwSidebarSection`s (optional title) hold `AdwSidebarItem`s,
   which are GObjects, not widgets: no children or expanders, but `suffix` (a widget), `subtitle`,

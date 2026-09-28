@@ -45,6 +45,24 @@ QUIT_TIMEOUT = 6.0
 BACKGROUND_GRACE = 10
 
 
+def process_start():
+    """When this process started, in GLib.get_monotonic_time()'s microseconds: from
+    /proc/self/stat's start time on Linux (so the interpreter's own start counts), else
+    now. What the startup marks (Application.mark) are measured from."""
+    now = GLib.get_monotonic_time()
+    try:
+        with open('/proc/self/stat', encoding='ascii') as file:
+            fields = file.read().rpartition(')')[2].split()
+        ticks = int(fields[19])  # starttime, the 22nd field, in clock ticks since boot
+        age = time.clock_gettime(time.CLOCK_BOOTTIME) - ticks / os.sysconf('SC_CLK_TCK')
+    except (OSError, ValueError, IndexError, AttributeError):
+        return now
+    return now - int(age * 1e6)
+
+
+PROCESS_START = process_start()
+
+
 class Application(Adw.Application):
     """The app. `demo_dir` is where --demo finds its invented library (the launcher passes the
     source tree's build/demo, where scripts/demo_library.py writes it)."""
@@ -70,6 +88,9 @@ class Application(Adw.Application):
         self._sync_task = None  # the sync running, if one is
         self._background = None  # the handlers while the window is closed and music plays on
         self._background_timer = None  # the grace before quitting, once playback stopped
+        self._first_load = None  # the library's first load(), reading since do_startup
+        # Startup timing: name -> GLib.get_monotonic_time() when it first happened (mark()).
+        self.marks = {}
         # One schema for every profile, so a Devel build shares the release's settings.
         self.settings = Gio.Settings.new(base_id)
 
@@ -124,8 +145,16 @@ class Application(Adw.Application):
         log.info('Demo mode: the library in %s', config.cache_dir())
 
     def do_startup(self):
-        Adw.Application.do_startup(self)
+        self.mark('startup')
+        # The library is read and parsed from now on, in a thread, while GTK starts and the
+        # window is mapped (C, mostly: the parse gets the GIL); do_activate awaits it.
         self.library = Library()
+        self._first_load = self.library.load()
+        Adw.Application.do_startup(self)
+        self.mark('gtk-started')
+        # What follows, to the window's present(), is Python, which would share the GIL
+        # with the parse: it waits meanwhile (Library.hold_reading()).
+        self.library.hold_reading()
         self.engine = self._make_engine()
         self.player = Player(self)
         self.player.connect('notify::track', self._on_track_changed)
@@ -139,6 +168,10 @@ class Application(Adw.Application):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signum, self._on_signal, signum)
 
     def do_shutdown(self):
+        if self._first_load is not None:  # never activated: the read is dropped
+            self.library.resume_reading()
+            self._first_load.close()
+            self._first_load = None
         if self.mpris is not None:
             self.mpris.stop()  # the name released before the bus connection goes
         Adw.Application.do_shutdown(self)
@@ -174,16 +207,62 @@ class Application(Adw.Application):
     def do_activate(self):
         window = self.get_active_window()
         if window is None:
-            self.spawn(self.library.load())
+            self.mark('activate')
+            self.spawn(self._load_library())
             window = Window(application=self)
+            self.mark('window-built')
             if self.profile == 'development':
                 window.add_css_class('devel')
+            window.connect('realize', lambda _window: self.mark('window-realized'))
+            window.connect('map', self._on_window_mapped)
             self.spawn(self._log_event_loop())
             if self._autostart_wanted():
                 self.spawn(self._autostart())
         elif self.engine.state == 'up' and self.engine.authorized and self.sync_due():
             self.start_sync()  # launched again: a sync when the last is old
+        self.library.resume_reading()  # present() waits for the compositor
         window.present()
+
+    # -- startup timing ------------------------------------------------------------------
+
+    def mark(self, name, painted=None):
+        """Note that `name` has just happened for the first time ('window-mapped',
+        'library-ready', 'albums-bound'…): its GLib.get_monotonic_time() goes in `marks`
+        and, with --debug, the log says how long after the process started it was.
+        `painted` names a mark for the end of the frame being drawn (a page's first tiles
+        are bound during a frame's layout and are on screen at its end). scripts/bench.py
+        reads the marks; anything marked again is ignored."""
+        if name in self.marks:
+            return
+        now = GLib.get_monotonic_time()
+        self.marks[name] = now
+        log.debug('startup: %s at +%.0f ms', name, (now - PROCESS_START) / 1000)
+        if painted:
+            self._mark_after_paint(painted)
+
+    def _mark_after_paint(self, name):
+        window = self.get_active_window()
+        clock = window.get_frame_clock() if window is not None else None
+        if clock is None:
+            return
+        handler = []
+
+        def on_after_paint(clock):
+            clock.disconnect(handler[0])
+            self.mark(name)
+
+        handler.append(clock.connect('after-paint', on_after_paint))
+
+    def _on_window_mapped(self, _window):
+        if 'first-frame' not in self.marks:
+            self.mark('window-mapped')
+            self._mark_after_paint('first-frame')
+
+    async def _load_library(self):
+        load, self._first_load = self._first_load, None
+        await (load or self.library.load())
+        if self.library.state == 'ready':
+            self.mark('library-ready')
 
     # -- the engine ----------------------------------------------------------------------
 

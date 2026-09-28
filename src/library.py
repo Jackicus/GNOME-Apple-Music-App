@@ -17,13 +17,29 @@ kind 'video'.
 load() makes new objects for everything; reload() (after a sync) reads the file again and brings
 the models up to date in place: an Item or Track still in the library keeps its object, so open
 pages and scroll positions survive.
+
+Reading the file starts the moment load() is called, in a thread of its own, so the app calls
+it before GTK has even started (Application.do_startup) and the parse runs while GTK starts and
+the compositor maps the window, both C with the GIL let go. The parse decodes the file's big
+lists an element at a time (parse()): json's C decoder holds the GIL for its whole call, and one
+call for a 50 MB file would keep the main thread's Python (every signal handler and vfunc)
+waiting 300 ms. The artists' groups repeat their albums' tracks; those lists are dropped at
+parse time when the album is in the library (the artist page shows the album's own), and the
+tracks' repeated names share one string each: together they cut what 40,000 tracks cost after
+the parse by 40%. Garbage collection is paused while a load wraps objects, and the heap is
+frozen after a load() and a Songs build (paused_gc), so the library is never scanned again: a
+full collection over it cost 50 ms, a dropped frame each time one came round.
 """
 
 import asyncio
+import concurrent.futures
 import difflib
+import gc
 import json
 import locale
 import logging
+import re
+import threading
 import time
 import unicodedata
 
@@ -36,7 +52,12 @@ log = logging.getLogger(__name__)
 # The sections of library.json and the stores they fill.
 SECTIONS = ('albums', 'artists', 'playlists', 'radio', 'videos')
 
-BATCH_SIZE = 500
+# How many Items a section is spliced into its store in one go. One splice for any section
+# of the sizes seen so far: wrapping 3,000 albums takes 9 ms, and each splice into a sorted
+# grid costs more than that (GTK re-sorts and rebinds the tiles it has made): one splice of
+# 3,000 albums took 68 ms at startup, six of 500 took 157, and the first frames showed
+# albums that the next batches then pushed away.
+BATCH_SIZE = 5000
 
 # How long wrapping the Songs store runs before it lets GTK paint a frame, in seconds.
 FRAME_BUDGET = 0.008
@@ -83,8 +104,39 @@ def model_property(name, type, default=None):
     return GObject.Property(type=type, default=default, getter=getter, setter=setter)
 
 
+def raw_property(key, type, default=None, writable=False):
+    """A GObject property read from the object's `raw` dict at each access, as _text() or
+    _number() normalise it (JSON null is the default, or 0 for a number); `writable`, set
+    into the dict (and notified, as any property set is).
+
+    An object keeps no copy of its fields: read from the dict it is wrapped around, 40,000
+    Tracks cost 300 bytes each instead of 750 and wrap in 3 µs instead of 7 (the Songs page
+    builds them all), and 3,000 Items wrap in 8 ms instead of 20, before the first frame.
+    Reads from GTK (a Gtk.PropertyExpression) and from the pages go through the getter; the
+    hot loops in SongOrder read the dicts directly.
+    """
+    if type is bool:
+        def getter(self):
+            return bool(self.raw.get(key))
+    elif type is int:
+        def getter(self):
+            return _number(self.raw.get(key))
+    else:
+        def getter(self):
+            return _text(self.raw.get(key)) or default
+
+    if not writable:
+        return GObject.Property(type=type, default=default, getter=getter,
+                                flags=GObject.ParamFlags.READABLE)
+
+    def setter(self, value):
+        self.raw[key] = value
+
+    return GObject.Property(type=type, default=default, getter=getter, setter=setter)
+
+
 class Track(GObject.Object):
-    """One entry of a group: the Track shape.
+    """One entry of a group: the Track shape, read from `raw`, the source dict.
 
     `thumb` is the track's own thumbnail (a playlist's rows) or else its album's, and `play` is
     its group's play target, the queue `index` counts in: a row plays play with start-with index.
@@ -92,34 +144,24 @@ class Track(GObject.Object):
 
     __gtype_name__ = 'AppleMusicTrack'
 
-    id = model_property('id', str)
-    catalog_id = model_property('catalog_id', str)
-    title = model_property('title', str, '')
-    artist = model_property('artist', str, '')
-    album = model_property('album', str, '')
-    track_number = model_property('track_number', int, 0)
-    disc_number = model_property('disc_number', int, 0)
-    duration_ms = model_property('duration_ms', int, 0)
-    duration_label = model_property('duration_label', str, '')
-    explicit = model_property('explicit', bool, False)
-    index = model_property('index', int, 0)
-    thumb = model_property('thumb', str)
+    id = raw_property('id', str)
+    catalog_id = raw_property('catalogId', str)
+    title = raw_property('title', str, '')
+    artist = raw_property('artist', str, '')
+    album = raw_property('album', str, '')
+    track_number = raw_property('trackNumber', int, 0)
+    disc_number = raw_property('discNumber', int, 0)
+    duration_ms = raw_property('durationMs', int, 0)
+    duration_label = raw_property('durationLabel', str, '')
+    explicit = raw_property('explicit', bool, False)
+    index = raw_property('index', int, 0)
+    thumb = GObject.Property(type=str, getter=lambda self: self._thumb,
+                             flags=GObject.ParamFlags.READABLE)
 
     def __init__(self, data, play=None, thumb=None):
         super().__init__()
-        self._id = _text(data.get('id'))
-        self._catalog_id = _text(data.get('catalogId'))
-        self._title = _text(data.get('title')) or ''
-        self._artist = _text(data.get('artist')) or ''
-        self._album = _text(data.get('album')) or ''
-        self._track_number = _number(data.get('trackNumber'))
-        self._disc_number = _number(data.get('discNumber'))
-        self._duration_ms = _number(data.get('durationMs'))
-        self._duration_label = _text(data.get('durationLabel')) or ''
-        self._explicit = bool(data.get('explicit'))
-        self._index = _number(data.get('index'))
-        self._thumb = _text(data.get('thumb')) or thumb
         self.raw = data
+        self._thumb = _text(data.get('thumb')) or thumb
         self.play = play or {}
         self._search_key = None
 
@@ -129,7 +171,10 @@ class Track(GObject.Object):
         looks for a folded search in. A search cannot hold a line break, so no match spans two
         of them. Made on first use and kept."""
         if self._search_key is None:
-            self._search_key = fold(f'{self._title}\n{self._artist}\n{self._album}')
+            raw = self.raw
+            self._search_key = fold(f"{_text(raw.get('title')) or ''}\n"
+                                    f"{_text(raw.get('artist')) or ''}\n"
+                                    f"{_text(raw.get('album')) or ''}")
         return self._search_key
 
 
@@ -164,37 +209,23 @@ class Item(GObject.Object):
 
     __gtype_name__ = 'AppleMusicItem'
 
-    id = model_property('id', str)
-    kind = model_property('kind', str)
-    title = model_property('title', str, '')
-    subtitle = model_property('subtitle', str, '')
-    year = model_property('year', int, 0)
-    genre = model_property('genre', str)
-    summary = model_property('summary', str)
-    art = model_property('art', str)
-    thumb = model_property('thumb', str)
-    art_color = model_property('art_color', str)
-    count_label = model_property('count_label', str, '')
-    explicit = model_property('explicit', bool, False)
-    catalog_id = model_property('catalog_id', str)
-    url = model_property('url', str)
+    id = raw_property('id', str, writable=True)
+    kind = raw_property('kind', str, writable=True)
+    title = raw_property('title', str, '', writable=True)
+    subtitle = raw_property('subtitle', str, '', writable=True)
+    year = raw_property('year', int, 0, writable=True)
+    genre = raw_property('genre', str, writable=True)
+    summary = raw_property('summary', str, writable=True)
+    art = raw_property('art', str, writable=True)
+    thumb = raw_property('thumb', str, writable=True)
+    art_color = raw_property('artColor', str, writable=True)
+    count_label = raw_property('countLabel', str, '', writable=True)
+    explicit = raw_property('explicit', bool, False, writable=True)
+    catalog_id = raw_property('catalogId', str, writable=True)
+    url = raw_property('url', str, writable=True)
 
     def __init__(self, data):
         super().__init__()
-        self._id = _text(data.get('id'))
-        self._kind = _text(data.get('kind'))
-        self._title = _text(data.get('title')) or ''
-        self._subtitle = _text(data.get('subtitle')) or ''
-        self._year = _number(data.get('year'))
-        self._genre = _text(data.get('genre'))
-        self._summary = _text(data.get('summary'))
-        self._art = _text(data.get('art'))
-        self._thumb = _text(data.get('thumb'))
-        self._art_color = _text(data.get('artColor'))
-        self._count_label = _text(data.get('countLabel')) or ''
-        self._explicit = bool(data.get('explicit'))
-        self._catalog_id = _text(data.get('catalogId'))
-        self._url = _text(data.get('url'))
         self.raw = data
         self.play = data.get('play') or {}
         self._groups = None
@@ -210,7 +241,7 @@ class Item(GObject.Object):
         """Whether songs can be added to this: a library playlist (Apple's "p." id, or the
         demo's "l.") that is not Favourite Songs and whose attributes do not say canEdit
         false. A catalog playlist is not."""
-        if self._kind != 'playlist' or not str(self._id or '').startswith(('p.', 'l.')):
+        if self.kind != 'playlist' or not str(self.id or '').startswith(('p.', 'l.')):
             return False
         attributes = self.raw.get('attributes')
         if not isinstance(attributes, dict):
@@ -222,24 +253,27 @@ class Item(GObject.Object):
         if self._groups is None:
             # An album's tracks draw the album's cover; an artist's groups are albums, whose
             # covers the artist Item does not have.
-            thumb = self._thumb if self._kind == 'album' else None
+            thumb = self.thumb if self.kind == 'album' else None
             self._groups = [Group(group, thumb) for group in _dicts(self.raw.get('groups'))]
         return self._groups
 
     # The properties an `item` answer refreshes, with the raw key each reads.
     _MERGED = (('title', 'title'), ('subtitle', 'subtitle'), ('genre', 'genre'),
                ('summary', 'summary'), ('art', 'art'), ('thumb', 'thumb'),
-               ('art_color', 'artColor'), ('count_label', 'countLabel'),
-               ('catalog_id', 'catalogId'), ('url', 'url'))
+               ('art-color', 'artColor'), ('count-label', 'countLabel'),
+               ('catalog-id', 'catalogId'), ('url', 'url'), ('year', 'year'),
+               ('explicit', 'explicit'))
 
     def merge(self, data, replace=False):
         """Take a fresh Item dict for this item into this object: the raw dict updated (or
-        replaced by `data`, for a reload's complete dict), the properties that changed set (so
-        bound widgets follow), and the groups wrapped again on the next access when they
-        differ from the ones in hand (the same groups keep their Group and Track objects).
-        An engine item() answer (the same shape, with `groups`) merges; a sync's dict replaces.
-        True when a property changed."""
+        replaced by `data`, for a reload's complete dict), the properties that changed
+        notified (so bound widgets follow), and the groups wrapped again on the next access
+        when they differ from the ones in hand (the same groups keep their Group and Track
+        objects). An engine item() answer (the same shape, with `groups`) merges; a sync's
+        dict replaces. True when a property changed."""
         groups_changed = 'groups' in data and data.get('groups') != self.raw.get('groups')
+        names = [name for name, key in self._MERGED if replace or key in data]
+        before = [self.get_property(name) for name in names]
         if replace:
             self.raw = data
         else:
@@ -247,26 +281,14 @@ class Item(GObject.Object):
                 if key in ('id', 'kind'):
                     continue
                 self.raw[key] = value
-        changed = False
-        for name, key in self._MERGED:
-            if replace or key in data:
-                value = _text(data.get(key))
-                if name in ('title', 'subtitle', 'count_label'):
-                    value = value or ''
-                if value != getattr(self, '_' + name):
-                    setattr(self, name, value)  # the property's setter: it notifies
-                    changed = True
-        if (replace or 'year' in data) and _number(data.get('year')) != self._year:
-            self.year = _number(data.get('year'))
-            changed = True
-        if (replace or 'explicit' in data) and bool(data.get('explicit')) != self._explicit:
-            self.explicit = bool(data.get('explicit'))
-            changed = True
+        changed = [name for name, old in zip(names, before) if self.get_property(name) != old]
+        for name in changed:
+            self.notify(name)
         if data.get('play'):
             self.play = data['play']
         if groups_changed:
             self._groups = None
-        return changed
+        return bool(changed)
 
 
 class Shelf(GObject.Object):
@@ -482,10 +504,15 @@ class Library(GObject.Object):
         self._songs_wanted = False  # build_songs() was called: every load() refills the store
         self._song_count = 0
         self._index = {}  # (kind, id) -> Item
+        self._favourites = None  # the Favourite Songs playlist, found by each load
         self._loose = []  # sections.songs: the loose songs' Track dicts
         self._loose_tracks = {}  # id -> Track, for the loose songs wrapped so far
         self._tree = PlaylistTree()
         self._generation = 0
+        self._reader = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix='library')  # its own: never behind a decode
+        self._reading = threading.Event()  # clear: the parse waits (hold_reading())
+        self._reading.set()
 
     @property
     def songs(self):
@@ -514,10 +541,11 @@ class Library(GObject.Object):
         self._songs_wanted = True
         if self.state == 'loading':
             return
-        try:
-            await self._fill_songs(self._generation)
-        except _Superseded:
-            pass
+        with paused_gc():
+            try:
+                await self._fill_songs(self._generation)
+            except _Superseded:
+                pass
 
     def by_id(self, kind, item_id):
         """The Item of that kind and id, from a section, a shelf or the playlist folders
@@ -545,7 +573,7 @@ class Library(GObject.Object):
 
     def favourite_songs(self):
         """The Favourite Songs playlist (Item.favourites), or None when the library has none."""
-        return next((item for item in self.playlists if item.favourites), None)
+        return self._favourites
 
     def track_at(self, play, index):
         """The Track at queue position index of what play ({kind, id}) names, or None.
@@ -564,17 +592,19 @@ class Library(GObject.Object):
                         return track
         return None
 
-    async def load(self):
-        """Read library.json from the cache directory and fill the models from it.
+    def load(self):
+        """Read library.json from the cache directory and fill the models from it: a
+        coroutine to await, whose file is being read (in a thread) from the moment this is
+        called.
 
-        The file is read and parsed in a thread; wrapping happens here, a batch at a time, with
-        a pause for GTK to paint between batches. The stores keep their identity and are
-        refilled in place, with new Item objects. A missing or unreadable file leaves the
-        library empty. A load that another load() overtakes gives up at its next pause.
+        Wrapping happens on the caller's thread, a batch at a time, with a pause for GTK to
+        paint between batches. The stores keep their identity and are refilled in place, with
+        new Item objects. A missing or unreadable file leaves the library empty. A load that
+        another load() overtakes gives up at its next pause.
         """
-        await self._load(keep=False)
+        return self._load(keep=False, reading=self._read())
 
-    async def reload(self):
+    def reload(self):
         """Read library.json again (after a sync) and bring the models up to date in place.
 
         Everything is matched by kind and id: an Item still in the library keeps its object
@@ -583,24 +613,48 @@ class Library(GObject.Object):
         shelves and folders keep theirs too. A page showing an Item, a grid's scroll position
         and the sidebar's selection all survive. As load() otherwise.
         """
-        await self._load(keep=True)
+        return self._load(keep=True, reading=self._read())
 
-    async def _load(self, keep):
+    def _read(self):
+        """Start reading library.json in the library's thread, now: the Future of
+        (data, song count)."""
+        return self._reader.submit(_read_library, config.cache_dir() / 'library.json',
+                                   self._reading)
+
+    def hold_reading(self):
+        """Make a parse in progress wait at its next list element, until resume_reading()
+        (or HOLD_LIMIT seconds in all): for main-thread Python that should not share the GIL
+        with it.
+
+        The parse holds the GIL but for the moments between elements, and a thread that
+        wants it back waits up to the interpreter's switch interval (5 ms) each time, so
+        Python on the main thread runs at half speed or worse beside it: the app's own start
+        and building the window took 120 ms instead of 40 with the parse running, and the
+        window was mapped that much later. Held meanwhile, the parse loses those 40 ms and
+        catches up while GTK and the compositor map the window, which is C."""
+        self._reading.clear()
+
+    def resume_reading(self):
+        """Let a parse held by hold_reading() go on."""
+        self._reading.set()
+
+    async def _load(self, keep, reading):
         self._generation += 1
         generation = self._generation
         started = time.monotonic()
         self._set_state('loading')
-        try:
-            data, song_count = await asyncio.to_thread(
-                _read_library, config.cache_dir() / 'library.json')
-            self._check(generation)
-            await self._fill(data or {}, generation, keep)
-        except _Superseded:
-            return
-        except Exception:
-            self._set_state('empty')  # a page waiting on 'loading' would wait forever
-            self.emit('changed')
-            raise
+        with paused_gc(freeze=not keep):
+            try:
+                data, song_count = await asyncio.wrap_future(reading)
+                self._check(generation)
+                log.debug('Library parsed in %.0f ms', (time.monotonic() - started) * 1000)
+                await self._fill(data or {}, generation, keep)
+            except _Superseded:
+                return
+            except Exception:
+                self._set_state('empty')  # a page waiting on 'loading' would wait forever
+                self.emit('changed')
+                raise
         self._song_count = song_count
         self._set_state('ready' if data is not None else 'empty')
         log.debug('Library %s in %.0f ms: %s, %d shelves, %d songs%s', self.state,
@@ -658,6 +712,7 @@ class Library(GObject.Object):
         self.shelves = shelves
         self._tree = tree
         self._index = index
+        self._favourites = next((item for item in self.playlists if item.favourites), None)
         if self._songs_wanted:
             await self._fill_songs(generation)
 
@@ -692,10 +747,15 @@ class Library(GObject.Object):
             return
         position = 0
         for start in range(0, len(dicts), self.batch_size):
+            started = time.monotonic()
             batch = [wrap(raw) for raw in dicts[start:start + self.batch_size]]
+            wrapped = time.monotonic()
             stale = min(len(batch), store.get_n_items() - position)
             store.splice(position, stale, batch)
             position += len(batch)
+            log.debug('Library: %d items wrapped in %.0f ms, spliced in %.0f ms (the views\' '
+                      'work)', len(batch), (wrapped - started) * 1000,
+                      (time.monotonic() - wrapped) * 1000)
             await yield_to_frames()
             self._check(generation)
         store.splice(position, store.get_n_items() - position, [])
@@ -707,8 +767,9 @@ class Library(GObject.Object):
         for item in list(self.albums):
             for group in item.groups:
                 for track in group.entries:
-                    if track.id not in seen:
-                        seen.add(track.id)
+                    track_id = track.raw.get('id')  # not the property: 40,000 reads
+                    if track_id not in seen:
+                        seen.add(track_id)
                         tracks.append(track)
             if time.monotonic() - paused > FRAME_BUDGET:
                 await yield_to_frames()
@@ -729,12 +790,14 @@ class Library(GObject.Object):
             tracks.append(track)
         self._loose_tracks = loose_tracks
         current = [self._songs.get_item(position) for position in range(self._songs.get_n_items())]
+        wrapped = time.monotonic()
         if len(current) != len(tracks) or any(a is not b for a, b in zip(current, tracks)):
             self._songs.splice(0, self._songs.get_n_items(), tracks)
         if not self.songs_ready:
             self.songs_ready = True
-        log.debug('Songs built in %.0f ms: %d songs', (time.monotonic() - started) * 1000,
-                  len(tracks))
+        log.debug('Songs built in %.0f ms: %d songs (wrapped in %.0f ms, spliced in %.0f ms: '
+                  'the views\' sort and rows)', (time.monotonic() - started) * 1000,
+                  len(tracks), (wrapped - started) * 1000, (time.monotonic() - wrapped) * 1000)
 
     def _check(self, generation):
         if generation != self._generation:
@@ -767,10 +830,29 @@ class SongOrder:
         'time': ('title', 'artist'),
     }
 
+    # How many tracks' keys are computed between two pauses of prepare().
+    STEP = 5000
+
     def __init__(self, tracks):
         self._tracks = list(tracks)
         self._keys = {}  # key name -> one key per track
         self._ties = {}  # column -> positions in the order of its tie-breakers
+        self._collated = {}  # text -> its collation key, for every column's text
+
+    async def prepare(self, column):
+        """Compute the keys tracks(column) needs, STEP tracks at a time with a pause for a
+        frame between (yield_to_frames), so that a page can build a big table's first order
+        without a freeze: collating 40,000 titles takes about 100 ms in one go. tracks()
+        afterwards only sorts."""
+        for name in (*reversed(self.TIES[column]), column):
+            if name in self._keys:
+                continue
+            keys = []
+            for start in range(0, len(self._tracks), self.STEP):
+                keys.extend(self._compute(name, self._tracks[start:start + self.STEP]))
+                if start + self.STEP < len(self._tracks):
+                    await yield_to_frames()
+            self._keys[name] = keys
 
     def tracks(self, column, descending=False):
         """The tracks in column's order: 'title', 'artist', 'album' or 'time'."""
@@ -786,21 +868,25 @@ class SongOrder:
     def _key(self, name):
         keys = self._keys.get(name)
         if keys is None:
-            if name == 'time':
-                keys = [track._duration_ms for track in self._tracks]
-            elif name == 'track':
-                keys = [(track._disc_number, track._track_number) for track in self._tracks]
-            else:
-                attribute = '_' + name
-                collated = {}
-                keys = []
-                for track in self._tracks:
-                    text = getattr(track, attribute)
-                    key = collated.get(text)
-                    if key is None:
-                        key = collated[text] = collation_key(text)
-                    keys.append(key)
-            self._keys[name] = keys
+            keys = self._keys[name] = self._compute(name, self._tracks)
+        return keys
+
+    def _compute(self, name, tracks):
+        """The keys called name for these tracks, in their order. The raw dicts, not the
+        properties: a property read costs a microsecond, and this reads every track."""
+        if name == 'time':
+            return [_number(track.raw.get('durationMs')) for track in tracks]
+        if name == 'track':
+            return [(_number(track.raw.get('discNumber')), _number(track.raw.get('trackNumber')))
+                    for track in tracks]
+        collated = self._collated
+        keys = []
+        for track in tracks:
+            text = _text(track.raw.get(name)) or ''
+            key = collated.get(text)
+            if key is None:
+                key = collated[text] = collation_key(text)
+            keys.append(key)
         return keys
 
 
@@ -826,11 +912,47 @@ def _dicts(value):
     return [raw for raw in value if isinstance(raw, dict)] if isinstance(value, list) else []
 
 
-def _read_library(path):
-    """Parse library.json (in a thread). Returns (data or None, the Songs page's count)."""
+# The longest a parse waits for resume_reading() in all, in seconds: a hold never released
+# (an app started for an action, with no window) only delays it.
+HOLD_LIMIT = 1.0
+
+
+def _read_library(path, reading=None):
+    """Parse library.json (in a thread). Returns (data or None, the Songs page's count).
+    `reading`, a threading.Event, holds the parse between list elements while it is clear, for
+    HOLD_LIMIT seconds at most in all."""
+    albums = set()
+    strings = {}
+    held = [0.0]  # seconds waited for `reading` so far
+
+    def element(key, value):
+        if reading is not None and not reading.is_set() and held[0] < HOLD_LIMIT:
+            waited = time.monotonic()
+            reading.wait(HOLD_LIMIT - held[0])
+            held[0] += time.monotonic() - waited
+        # The artists' duplicate track lists go as each artist is decoded (see
+        # _drop_artist_tracks), so they never add to the parse's peak: library.json lists the
+        # albums first. Anything left (artists before albums) goes after the parse. Each
+        # album's, playlist's and loose song's tracks share one string object for the
+        # names and labels they repeat (_share_strings).
+        if key == 'albums' and isinstance(value, dict):
+            albums.add(value.get('id'))
+        elif key == 'artists' and isinstance(value, dict) and albums:
+            _drop_artist_tracks({'albums': (), 'artists': [value]}, albums)
+        if key in ('albums', 'playlists', 'songs') and isinstance(value, dict):
+            _share_strings(value, strings)
+        return value
+
+    started = time.monotonic()
+    log.debug('Library: reading %s', path)
     try:
         with open(path, 'rb') as file:
-            data = json.load(file)
+            raw = file.read()
+        text = raw.decode(json.detect_encoding(raw), 'surrogatepass')  # as json.loads does
+        del raw
+        data = parse(text, element)
+        log.debug('Library: parsed %d characters in %.0f ms', len(text),
+                  (time.monotonic() - started) * 1000)
     except FileNotFoundError:
         log.info('No library at %s', path)
         return None, 0
@@ -846,7 +968,169 @@ def _read_library(path):
              for group in _dicts(album.get('groups'))
              for entry in _dicts(group.get('entries'))}
     songs |= {entry.get('id') for entry in _dicts(sections.get('songs')) if entry.get('id')}
+    _drop_artist_tracks(sections)
     return data, len(songs)
+
+
+def _drop_artist_tracks(sections, albums=None):
+    """Empty the track lists of the artists' groups whose album is in the albums section
+    (or in `albums`, a set of ids): they repeat the album's, which the artist page shows
+    (pages/artist.py finds the album by the group's play target). A group whose album the
+    library lacks keeps its tracks, for the page that is made up from it. Halves what a
+    parsed library keeps: 40,000 tracks of 3,000 albums are 45 MB of dicts."""
+    if albums is None:
+        albums = {album.get('id') for album in _dicts(sections.get('albums'))}
+    for artist in _dicts(sections.get('artists')):
+        for group in _dicts(artist.get('groups')):
+            play = group.get('play')
+            if (isinstance(play, dict) and play.get('kind') == 'album'
+                    and play.get('id') in albums and group.get('entries')):
+                group['entries'] = []
+
+
+# The keys of a track dict whose values repeat across a library's tracks: an album's
+# tracks all name the album and its artist, and "3:07" is the length of a great many songs.
+SHARED_KEYS = ('artist', 'album', 'durationLabel', 'thumb')
+
+
+def _share_strings(item, strings):
+    """Make the tracks of an Item dict (or a loose song's dict) share one string object per
+    distinct value of SHARED_KEYS, through `strings` (value -> the object kept): the JSON
+    decoder makes a new string for every occurrence, and 40,000 tracks' repeated names cost
+    5 MB that way."""
+    entries = [item] if 'entries' not in item and 'groups' not in item else [
+        entry for group in _dicts(item.get('groups')) for entry in _dicts(group.get('entries'))]
+    for entry in entries:
+        for key in SHARED_KEYS:
+            value = entry.get(key)
+            if isinstance(value, str):
+                entry[key] = strings.setdefault(value, value)
+
+
+_SPACE = re.compile(r'[ \t\n\r]*')
+
+
+def parse(text, element=None):
+    """json.loads(text), for library.json: the same result, decoded in pieces.
+
+    The top-level object's values, the `sections` object's values and every list met on the
+    way (the sections, the shelves, the folders) are decoded an element at a time with
+    json.JSONDecoder.raw_decode, one album (or artist, shelf…) a call, about 40 µs each. json's
+    C decoder holds the GIL for a whole call, so decoding a 50 MB file in one call from a
+    thread freezes the main thread's Python (every signal handler, every vfunc, so every
+    frame that needs one) for its 300 ms; between calls the interpreter switches threads as
+    usual, within 5 ms. Costs about 10% more than one call. Anything not shaped like that
+    (a list at the top level, a scalar) is decoded in one call, as json.loads would.
+    `element(key, value)`, when given, is called with each list element as it is decoded
+    and the key of the list it is in, and its return value is kept instead."""
+    decoder = json.JSONDecoder()
+    position = _SPACE.match(text, 0).end()
+    if position >= len(text) or text[position] != '{':
+        return decoder.decode(text)
+    value, end = _parse_object(text, position, decoder, 1, element, None)
+    end = _SPACE.match(text, end).end()
+    if end != len(text):
+        raise ValueError(f'Extra data at position {end}')
+    return value
+
+
+def _parse_object(text, position, decoder, depth, element, key):
+    """A JSON object starting at text[position] (a brace): (dict, the position after it).
+    Its values that are objects are parsed this way too while depth > 0, its lists element
+    by element, and anything else by the decoder."""
+    result = {}
+    position = _SPACE.match(text, position + 1).end()
+    if text[position:position + 1] == '}':
+        return result, position + 1
+    while True:
+        if text[position:position + 1] != '"':
+            raise ValueError(f'Expecting a property name at position {position}')
+        key, position = decoder.raw_decode(text, position)
+        position = _SPACE.match(text, position).end()
+        if text[position:position + 1] != ':':
+            raise ValueError(f"Expecting ':' at position {position}")
+        position = _SPACE.match(text, position + 1).end()
+        result[key], position = _parse_value(text, position, decoder, depth, element, key)
+        position = _SPACE.match(text, position).end()
+        char = text[position:position + 1]
+        if char == '}':
+            return result, position + 1
+        if char != ',':
+            raise ValueError(f"Expecting ',' at position {position}")
+        position = _SPACE.match(text, position + 1).end()
+
+
+def _parse_array(text, position, decoder, element, key):
+    """A JSON list starting at text[position] (a bracket), each element decoded by the
+    decoder (and given to `element` with `key`): (list, the position after it)."""
+    result = []
+    position = _SPACE.match(text, position + 1).end()
+    if text[position:position + 1] == ']':
+        return result, position + 1
+    while True:
+        value, position = decoder.raw_decode(text, position)
+        result.append(element(key, value) if element is not None else value)
+        position = _SPACE.match(text, position).end()
+        char = text[position:position + 1]
+        if char == ']':
+            return result, position + 1
+        if char != ',':
+            raise ValueError(f"Expecting ',' at position {position}")
+        position = _SPACE.match(text, position + 1).end()
+
+
+def _parse_value(text, position, decoder, depth, element, key):
+    char = text[position:position + 1]
+    if char == '{' and depth > 0:
+        return _parse_object(text, position, decoder, depth - 1, element, key)
+    if char == '[':
+        return _parse_array(text, position, decoder, element, key)
+    if not char:
+        raise ValueError(f'Expecting a value at position {position}')
+    return decoder.raw_decode(text, position)
+
+
+class paused_gc:
+    """A context in which the garbage collector does not run, and after which, when `freeze`
+    (the default), every object alive is frozen: moved where collections never scan it
+    (gc.freeze()). For a load() or a Songs build, which make hundreds of thousands of objects
+    that live as long as the library: unfrozen, each full collection scanned them all again,
+    about 50 ms on 3,000 albums and 40,000 songs (a dropped frame whenever one came round),
+    and pausing also spares the parse the young collections its allocations would trigger.
+
+    The price of freezing: an object alive at that moment that later becomes garbage in a
+    reference cycle (a page popped just before) is never collected. Hence no freeze for a
+    reload(), which comes after every sync while pages come and go, and keeps its objects
+    anyway. Nested uses pause once and resume, freezing if any of them asked to, at the
+    outermost end; the collector is left as it was found (enabled or not).
+    """
+
+    _depth = 0
+    _freeze = False
+    _was_enabled = True
+
+    def __init__(self, freeze=True):
+        self.freeze = freeze
+
+    def __enter__(self):
+        cls = paused_gc
+        if not cls._depth:
+            cls._was_enabled = gc.isenabled()
+            cls._freeze = False
+            gc.disable()
+        cls._depth += 1
+        cls._freeze = cls._freeze or self.freeze
+        return self
+
+    def __exit__(self, *_exception):
+        cls = paused_gc
+        cls._depth -= 1
+        if not cls._depth:
+            if cls._freeze:
+                gc.freeze()
+            if cls._was_enabled:
+                gc.enable()
+        return False
 
 
 async def yield_to_frames():

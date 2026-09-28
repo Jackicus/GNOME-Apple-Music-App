@@ -12,8 +12,6 @@ import logging
 import os
 import shutil
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from .errors import EngineError
@@ -152,7 +150,10 @@ class EngineState:
 
 def _get_json(url, timeout):
     """GET `url` and parse the body as JSON; in a thread, so it may block. No proxy: urllib
-    would send even 127.0.0.1 through $http_proxy."""
+    would send even 127.0.0.1 through $http_proxy. urllib is imported here, when the engine
+    first starts: it (and http.client) cost 10 ms of the app's startup otherwise."""
+    import urllib.request
+
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     request = urllib.request.Request(url, headers={'User-Agent': 'AppleMusicGNOME/1.0'})
     with opener.open(request, timeout=timeout) as response:
@@ -170,7 +171,7 @@ async def get_json(port, path, timeout=5.0):
         return await asyncio.to_thread(_get_json, devtools_url(port, path), timeout)
     except TimeoutError as e:
         raise EngineError('timeout', f'DevTools on port {port} did not answer') from e
-    except (urllib.error.URLError, OSError, ValueError) as e:
+    except (OSError, ValueError) as e:  # urllib.error.URLError is an OSError
         reason = getattr(e, 'reason', e)
         if isinstance(reason, TimeoutError):
             raise EngineError('timeout', f'DevTools on port {port} did not answer') from e

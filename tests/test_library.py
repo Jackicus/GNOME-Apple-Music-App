@@ -4,12 +4,14 @@ No display needed: the model is GObject and Gio only, and load() runs under asyn
 """
 
 import asyncio
+import gc
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -18,7 +20,7 @@ from tests import ROOT
 
 from applemusic import library as library_module
 from applemusic.library import (ROOT_FOLDER, SECTIONS, Group, Item, Library, PlaylistTree,
-                                SongOrder, Track, fold)
+                                SongOrder, Track, fold, parse, paused_gc)
 
 
 def load(cache_dir, library=None):
@@ -97,6 +99,18 @@ class TestDemoLibrary(unittest.TestCase):
 
     def store_ids(self, store):
         return [item.id for item in store]
+
+    def test_parse_matches_json_loads(self):
+        with open(os.path.join(self.cache, 'library.json'), encoding='utf-8') as file:
+            self.assertEqual(parse(file.read()), self.data)
+
+    def test_artist_groups_of_library_albums_lose_their_tracks(self):
+        # The artist page shows the album's own tracks; the artist's copies are dropped.
+        for artist in self.library.artists:
+            for group in artist.groups:
+                with self.subTest(artist=artist.id, group=group.name):
+                    self.assertIsNotNone(self.library.by_id('album', group.play['id']))
+                    self.assertEqual(group.entries.get_n_items(), 0)
 
     def test_state_and_metadata(self):
         self.assertEqual(self.library.state, 'ready')
@@ -405,10 +419,10 @@ class TestLoading(unittest.TestCase):
         second_started = threading.Event()
         read = library_module._read_library
 
-        def read_after_second_starts(path):
+        def read_after_second_starts(path, *args):
             if Path(path).parent == Path(self.cache):
                 second_started.wait(5)
-            return read(path)
+            return read(path, *args)
 
         async def two_loads():
             with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.cache}):
@@ -425,6 +439,179 @@ class TestLoading(unittest.TestCase):
         self.assertEqual([item.id for item in library.albums], ['l.new'])
         self.assertEqual(library.state, 'ready')
         self.assertEqual(len(changed), 1)  # the overtaken load gave up without a word
+
+
+class TestParse(unittest.TestCase):
+    """parse(): json.loads' result, decoded a list element at a time."""
+
+    DOCUMENTS = [
+        '{}',
+        '[]',
+        '"text"',
+        '12.5',
+        'null',
+        ' \n{ "a" : [ ] , "b" : { } }\n ',
+        '{"sections": {"albums": [{"id": "l.1", "groups": [{"entries": [{"id": "i.1"}]}]}, '
+        '{"id": "l.2"}], "empty": [], "n": 3}, "shelves": [[1, 2], {"k": [3]}], "x": "y"}',
+        '{"a": 1, "a": 2}',
+        '{"text": "caf\\u00e9 \\"quoted\\" [not a list] {nor this}", "list": ["]", "}"]}',
+        '{"n": [1, -2.5e3, true, false, null, NaN, Infinity], "deep": {"deeper": {"x": [[]]}}}',
+        '{\n  "sections": {\n    "albums": [\n      {\n        "id": "l.1"\n      }\n    ]\n  }\n}',
+    ]
+
+    def test_same_as_json_loads(self):
+        for text in self.DOCUMENTS:
+            with self.subTest(text=text):
+                self.assertEqual(parse(text), json.loads(text))
+
+    def test_bad_documents_raise_value_error(self):
+        for text in ['', '{', '{"a" 1}', '{"a": 1,}', '{a: 1}', '{"a": [1 2]}', '{"a": 1} x',
+                     '{"a": [1, 2}', '{"a": {"b": }}', '[1, 2', '{"a": "unterminated}']:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse(text)
+
+    def test_element_sees_each_list_element_with_its_key(self):
+        seen = []
+
+        def element(key, value):
+            seen.append((key, value))
+            return {'wrapped': value}
+
+        data = parse('{"sections": {"albums": [1, {"id": 2}], "radio": []}, "shelves": [3]}',
+                     element)
+        self.assertEqual(seen, [('albums', 1), ('albums', {'id': 2}), ('shelves', 3)])
+        self.assertEqual(data, {'sections': {'albums': [{'wrapped': 1}, {'wrapped': {'id': 2}}],
+                                             'radio': []},
+                                'shelves': [{'wrapped': 3}]})
+
+
+class TestReadLibrary(unittest.TestCase):
+    """What the load makes of the file beyond parsing it."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.path = Path(self.temp_dir.name, 'library.json')
+
+    def artist(self, artist_id, album_ids):
+        return {'id': artist_id, 'kind': 'artist', 'title': artist_id,
+                'groups': [{'name': album_id, 'play': {'kind': 'album', 'id': album_id},
+                            'entries': [track(f'i.{album_id}', 'Song', 0)]}
+                           for album_id in album_ids]}
+
+    def read(self, sections):
+        self.path.write_text(json.dumps({'version': 1, 'sections': sections}), encoding='utf-8')
+        return library_module._read_library(self.path)
+
+    def test_artist_tracks_dropped_only_for_albums_in_the_library(self):
+        albums = [album('l.a1', 'A1', ['i.1', 'i.2'])]
+        artists = [self.artist('l.r1', ['l.a1', 'l.gone'])]
+        for order in (('albums', 'artists'), ('artists', 'albums')):  # either order in the file
+            with self.subTest(order=order):
+                sections = {'albums': albums, 'artists': artists}
+                data, count = self.read({key: sections[key] for key in order})
+                groups = data['sections']['artists'][0]['groups']
+                self.assertEqual(groups[0]['entries'], [])
+                self.assertEqual([entry['id'] for entry in groups[1]['entries']], ['i.l.gone'])
+                self.assertEqual(len(data['sections']['albums'][0]['groups'][0]['entries']), 2)
+                self.assertEqual(count, 2)
+
+    def test_repeated_track_strings_are_one_object(self):
+        data, _count = self.read({'albums': [album('l.a1', 'A1', ['i.1']),
+                                             album('l.a2', 'A2', ['i.2'])],
+                                  'playlists': [dict(album('p.1', 'P', ['i.3']), kind='playlist')],
+                                  'songs': [track('i.4', 'Loose', 0)]})
+        sections = data['sections']
+        entries = [sections['albums'][0]['groups'][0]['entries'][0],
+                   sections['albums'][1]['groups'][0]['entries'][0],
+                   sections['playlists'][0]['groups'][0]['entries'][0],
+                   sections['songs'][0]]
+        for key in ('artist', 'album', 'durationLabel'):
+            with self.subTest(key=key):
+                self.assertTrue(all(entry[key] is entries[0][key] for entry in entries))
+
+    def test_a_byte_order_mark_is_read_as_json_load_reads_it(self):
+        self.path.write_bytes(b'\xef\xbb\xbf' + json.dumps({'version': 1}).encode())
+        self.assertEqual(library_module._read_library(self.path), ({'version': 1}, 0))
+
+    def test_load_starts_reading_before_it_is_awaited(self):
+        write_library(self.temp_dir.name, [album('l.a1', 'A1', ['i.1'])])
+        started = threading.Event()
+        read = library_module._read_library
+
+        def noting_read(path, *args):
+            started.set()
+            return read(path, *args)
+
+        library = Library()
+        with mock.patch.object(library_module, '_read_library', noting_read), \
+                mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.temp_dir.name}):
+            loading = library.load()
+            self.assertTrue(started.wait(5))  # in the library's thread, nothing awaited yet
+            asyncio.run(loading)
+        self.assertEqual([item.id for item in library.albums], ['l.a1'])
+
+    def test_a_held_parse_waits_for_resume_or_the_limit(self):
+        write_library(self.temp_dir.name, [album(f'l.a{n}', 'A', []) for n in range(3)])
+        library = Library()
+        with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.temp_dir.name}), \
+                mock.patch.object(library_module, 'HOLD_LIMIT', 5):
+            library.hold_reading()
+            reading = library._read()
+            self.assertRaises(TimeoutError, reading.result, 0.2)  # held at the first album
+            library.resume_reading()
+            data, _count = reading.result(5)
+        self.assertEqual(len(data['sections']['albums']), 3)
+        with mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.temp_dir.name}), \
+                mock.patch.object(library_module, 'HOLD_LIMIT', 0.3):
+            library.hold_reading()  # never resumed: HOLD_LIMIT in all, not an element
+            started = time.monotonic()
+            data, _count = library._read().result(5)
+        self.assertLess(time.monotonic() - started, 0.6)
+        self.assertEqual(len(data['sections']['albums']), 3)
+
+
+class TestTrack(unittest.TestCase):
+    def test_properties_read_the_raw_dict(self):
+        raw = dict(track('i.1', 'Song', 4), catalogId=123, explicit=True, discNumber=None)
+        entry = Track(raw, {'kind': 'album', 'id': 'l.a'}, thumb='/album.jpg')
+        self.assertEqual((entry.id, entry.title, entry.artist, entry.album), (
+            'i.1', 'Song', 'Test Artist', 'Test Album'))
+        self.assertEqual(entry.catalog_id, '123')  # a number in a string property
+        self.assertEqual((entry.index, entry.track_number, entry.disc_number), (4, 5, 0))
+        self.assertTrue(entry.explicit)
+        self.assertEqual(entry.get_property('duration-ms'), 180000)
+        self.assertEqual(entry.thumb, '/album.jpg')  # its own is null: the album's
+        self.assertEqual(Track({}).title, '')
+        self.assertIsNone(Track({}).id)
+        with self.assertRaises(TypeError):
+            entry.set_property('title', 'Other')  # read-only: the dict is the truth
+
+
+class TestPausedGc(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(gc.enable)
+        self.addCleanup(gc.unfreeze)
+
+    def test_paused_then_frozen_and_resumed(self):
+        gc.enable()
+        frozen = gc.get_freeze_count()
+        with paused_gc():
+            self.assertFalse(gc.isenabled())
+            with paused_gc(freeze=False):
+                self.assertFalse(gc.isenabled())
+            self.assertFalse(gc.isenabled())  # the outer one still holds
+            kept = [object() for _ in range(10)]  # noqa: F841
+        self.assertTrue(gc.isenabled())
+        self.assertGreater(gc.get_freeze_count(), frozen)
+
+    def test_no_freeze_when_not_asked_and_disabled_stays_disabled(self):
+        gc.unfreeze()
+        gc.disable()
+        with paused_gc(freeze=False):
+            self.assertFalse(gc.isenabled())
+        self.assertFalse(gc.isenabled())
+        self.assertEqual(gc.get_freeze_count(), 0)
 
 
 class TestPlaylistTree(unittest.TestCase):
@@ -641,6 +828,22 @@ class TestSongOrder(unittest.TestCase):
         self.assertEqual(fold('Plain ASCII'), 'plain ascii')
         track = Track({'title': 'Café', 'artist': 'Zoë', 'album': 'Über'})
         self.assertEqual(track.search_key, 'cafe\nzoe\nuber')
+
+    def test_prepare_computes_the_keys_a_few_at_a_time(self):
+        pauses = []
+        yield_to_frames = library_module.yield_to_frames
+
+        async def counting_yield():
+            pauses.append(True)
+            await yield_to_frames()
+
+        order = SongOrder(self.tracks)
+        with mock.patch.object(SongOrder, 'STEP', 2), \
+                mock.patch.object(library_module, 'yield_to_frames', counting_yield):
+            asyncio.run(order.prepare('title'))
+        self.assertEqual(set(order._keys), {'title', 'artist', 'album', 'track'})
+        self.assertEqual(len(pauses), 4 * 2)  # 5 tracks in steps of 2: 2 pauses a key
+        self.assertEqual([t.id for t in order.tracks('title')], self.ids('title'))
 
     def test_same_objects_and_repeatable(self):
         first = self.order.tracks('artist')

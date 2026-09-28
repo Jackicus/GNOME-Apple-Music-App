@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A made-up Apple Music library for demo and screenshots:
-`demo_library.py [--cache DIR] [--albums N]`.
+`demo_library.py [--cache DIR] [--albums N] [--playlists N] [--tracks N]`.
 
 Writes library.json in the shape src/backend/README.md describes, the covers
 and thumbnails it names (drawn here, at config's COVER_SIZE and THUMB_SIZE)
@@ -10,7 +10,11 @@ mimic Apple's own ("Apple Music Chill", "Apple Music Radio"). Vendored from the
 GNOME Shell extension with the backend (see src/backend/__init__.py).
 `--albums N` (N > 40) adds generated albums, by generated artists, to the 40
 hand-written ones, for measuring big libraries: about 12 songs an album, so
-2,500 albums make 30,000 songs. The covers are drawn in parallel.
+2,500 albums make 30,000 songs, or `--tracks N` songs in all when given (the
+generated albums are sized to reach it). `--playlists N` (N > 13) adds
+generated playlists, each of 22 songs, at the top level of the folders. The
+covers are drawn in parallel. The 40 hand-written albums and 13 playlists stay
+as they are whatever the options: build/demo is byte-identical.
 The last playlist is Favourite Songs, flagged by attributes.isFavourites.
 Three playlist folders, one inside another, hold some of the playlists; the
 rest are at the top level (`folders`, whose "root" entry lists the top level).
@@ -22,6 +26,7 @@ Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
 import argparse
 import concurrent.futures
 import hashlib
+import heapq
 import importlib.util
 import json
 import math
@@ -1341,16 +1346,41 @@ GEN_LAST = ["Aldane", "Brisk", "Corran", "Dunmore", "Elsworth", "Falkner", "Grea
             "Quill", "Rowan", "Sable", "Thorne"]
 
 
-def generated_albums(count):
+def song_counts(album_count, track_count):
+    """How many songs each of `album_count` generated albums gets so that, with the
+    hand-written albums', the library holds `track_count` songs in all: 8 to 16 an album
+    around the mean, the last few adjusted to land exactly. Seeded on its own."""
+    if album_count <= 0:
+        return []
+    written = sum(len(disc) for album in ALBUMS_DATA for disc in album["discs"])
+    wanted = track_count - written
+    if wanted < album_count:
+        raise ValueError(f"--tracks must be at least {written + album_count} for "
+                         f"{album_count} generated albums")
+    mean = round(wanted / album_count)
+    rnd = random.Random(11)
+    counts = [rnd.randint(max(1, mean - 4), mean + 4) for _ in range(album_count)]
+    step = 1 if sum(counts) < wanted else -1
+    position = 0
+    while sum(counts) != wanted:
+        if counts[position] + step >= 1:
+            counts[position] += step
+        position = (position + 1) % album_count
+    return counts
+
+
+def generated_albums(count, tracks=None):
     """(artists, albums) in ARTISTS_DATA's and ALBUMS_DATA's shapes: the hand-written
     ones, then enough invented ones to make `count` albums, by invented artists of one
-    to six albums each. Seeded, so a count always gives the same library."""
+    to six albums each, of 8 to 16 songs, or sized so the library holds `tracks` songs in
+    all when that is given. Seeded, so a count always gives the same library."""
     artists = list(ARTISTS_DATA)
     albums = list(ALBUMS_DATA)
     rnd = random.Random(7)  # not the builder's: the hand-written part stays as it was
     genres = sorted({artist["genre"] for artist in ARTISTS_DATA})
     seen_artists = {artist["name"] for artist in artists}
     seen_titles = {album["title"] for album in albums}
+    counts = song_counts(count - len(albums), tracks) if tracks is not None else None
     remaining = 0
 
     def unique(make, seen):
@@ -1381,7 +1411,8 @@ def generated_albums(count):
             f"{rnd.choice(GEN_NOUNS)} of {rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
             f"The {rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}",
         ]), seen_titles)
-        songs = [f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}" for _ in range(rnd.randint(8, 16))]
+        song_count = counts[len(albums) - len(ALBUMS_DATA)] if counts else rnd.randint(8, 16)
+        songs = [f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)}" for _ in range(song_count)]
         albums.append({
             "artist_idx": len(artists) - 1,
             "title": title,
@@ -1391,6 +1422,39 @@ def generated_albums(count):
             "discs": [songs],
         })
     return artists, albums
+
+
+def generated_playlists(count):
+    """PLAYLISTS_DATA's entries, then enough invented ones to make `count` playlists with
+    Favourite Songs (which the builder adds last) counted in: curated by invented people or
+    "Apple Music <genre>", each drawing on one to three genres. Seeded."""
+    playlists = list(PLAYLISTS_DATA)
+    rnd = random.Random(13)  # its own: the hand-written playlists' songs stay as they were
+    genres = sorted({artist["genre"] for artist in ARTISTS_DATA})
+    seen = {playlist["title"] for playlist in playlists}
+    while len(playlists) + 1 < count:
+        for _ in range(20):
+            title = rnd.choice([
+                f"{rnd.choice(GEN_WORDS)} {rnd.choice(GEN_NOUNS)} Mix",
+                f"{rnd.choice(GEN_NOUNS)} for {rnd.choice(GEN_WORDS)} Days",
+                f"{rnd.choice(GEN_FIRST)}'s {rnd.choice(GEN_NOUNS)}",
+            ])
+            if title not in seen:
+                break
+        else:
+            title = f"{title} {len(seen) + 1}"
+        seen.add(title)
+        genre = rnd.choice(genres)
+        curator = rnd.choice([f"Curated by {rnd.choice(GEN_FIRST)} {rnd.choice(GEN_LAST)}",
+                              f"Apple Music {genre}"])
+        playlists.append({
+            "title": title,
+            "subtitle": curator,
+            "genre": genre,
+            "summary": f"A generated {genre.lower()} playlist for big demo libraries.",
+            "filter_genres": sorted(set([genre] + rnd.sample(genres, rnd.randint(0, 2)))),
+        })
+    return playlists
 
 
 def _draw_one(job):
@@ -1422,12 +1486,15 @@ def draw_covers(covers, thumb_dir, thumb_size):
 # ---------------------------------------------------------------------------
 
 def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.THUMB_SIZE,
-                       album_count=None):
+                       album_count=None, playlist_count=None, track_count=None):
     """Generate library.json, cover_size artwork and the thumb_size thumbnails the
     tiles draw, and record both sizes in art/.sizes as a sync does. An album_count
-    above the hand-written albums' adds generated ones (generated_albums)."""
+    above the hand-written albums' adds generated ones (generated_albums), sized to
+    hold track_count songs in all when given; a playlist_count above the hand-written
+    playlists' (Favourite Songs counted) adds generated ones (generated_playlists)."""
     rnd = random.Random(42)
-    artists_data, albums_data = generated_albums(album_count or len(ALBUMS_DATA))
+    artists_data, albums_data = generated_albums(album_count or len(ALBUMS_DATA), track_count)
+    playlists_data = generated_playlists(playlist_count or len(PLAYLISTS_DATA) + 1)
 
     art_dir = os.path.join(out_dir, "art")
     thumb_dir = os.path.join(out_dir, "thumb")
@@ -1606,8 +1673,14 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         artists.append(artist_item)
 
     # 3. Build Playlists
+    # The catalog by genre, each list in catalog order with its position, so a playlist's
+    # matching tracks are merged back into catalog order (as one pass over the catalog
+    # would list them) without a pass over 40,000 tracks per playlist.
+    by_genre = {}
+    for position, (genre, trk, thumb) in enumerate(all_tracks_catalog):
+        by_genre.setdefault(genre, []).append((position, (trk, thumb)))
     playlists = []
-    for pl_idx, pl_data in enumerate(PLAYLISTS_DATA, 1):
+    for pl_idx, pl_data in enumerate(playlists_data, 1):
         playlist_id = f"l.pl{pl_idx:03d}"
         playlist_cat_id = str(catalog_id_base + 2000 + pl_idx)
         playlist_url = f"https://music.apple.com/us/playlist/{slug(pl_data['title'])}/{playlist_cat_id}"
@@ -1628,7 +1701,8 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         )
 
         # Pick candidate tracks matching playlist genre or collection
-        matching_tracks = [(t, thumb) for genre, t, thumb in all_tracks_catalog if genre in pl_data["filter_genres"]]
+        matching_tracks = [pair for _position, pair in heapq.merge(
+            *(by_genre.get(genre, []) for genre in dict.fromkeys(pl_data["filter_genres"])))]
         if len(matching_tracks) < 18:
             matching_tracks = [(t, thumb) for _, t, thumb in all_tracks_catalog]
 
@@ -1886,13 +1960,36 @@ def parse_args():
         help=f"How many albums (default and minimum {len(ALBUMS_DATA)}); more are generated, "
              "by generated artists, for measuring big libraries",
     )
+    parser.add_argument(
+        "--playlists",
+        type=int,
+        default=len(PLAYLISTS_DATA) + 1,
+        help=f"How many playlists, Favourite Songs counted (default and minimum "
+             f"{len(PLAYLISTS_DATA) + 1}); more are generated, at the top level",
+    )
+    parser.add_argument(
+        "--tracks",
+        type=int,
+        help="How many songs in all (default: 8 to 16 an album); the generated albums are "
+             "sized to reach it",
+    )
     args = parser.parse_args()
-    return os.path.abspath(args.cache), args.albums
+    if args.albums < len(ALBUMS_DATA):
+        parser.error(f"--albums must be at least {len(ALBUMS_DATA)}")
+    if args.playlists < len(PLAYLISTS_DATA) + 1:
+        parser.error(f"--playlists must be at least {len(PLAYLISTS_DATA) + 1}")
+    if args.tracks is not None and args.albums == len(ALBUMS_DATA):
+        parser.error("--tracks needs --albums above the hand-written ones")
+    return os.path.abspath(args.cache), args.albums, args.playlists, args.tracks
 
 
 def main():
-    out_dir, album_count = parse_args()
-    build_demo_library(out_dir, album_count=album_count)
+    out_dir, album_count, playlist_count, track_count = parse_args()
+    try:
+        build_demo_library(out_dir, album_count=album_count, playlist_count=playlist_count,
+                           track_count=track_count)
+    except ValueError as error:
+        sys.exit(f"demo_library: {error}")
 
 
 if __name__ == "__main__":

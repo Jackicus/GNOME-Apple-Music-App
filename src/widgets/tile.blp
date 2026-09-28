@@ -1,5 +1,4 @@
 using Gtk 4.0;
-using Adw 1;
 
 template $AppleMusicTile: Box {
   orientation: vertical;
@@ -43,14 +42,6 @@ template $AppleMusicTile: Box {
         "tile-art",
       ]
     }
-  }
-
-  // The artist variant's round portrait, a silhouette until the picture arrives. Not
-  // initials: they are a label that would be laid out again at every rebind.
-  Adw.Avatar avatar {
-    size: 160;
-    visible: false;
-    accessible-role: presentation;
   }
 
   // Title and subtitle in one Gtk.Inscription (bind() writes markup): unlike a Gtk.Label, its

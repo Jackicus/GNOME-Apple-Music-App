@@ -7,10 +7,6 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from . import pages, sections, shortcuts
 from .actions import ItemActions, TrackRef
 from .backend.errors import EngineError
-from .pages.artist import ArtistPage
-from .pages.detail import DetailPage
-from .pages.grid import GridPage
-from .pages.shelves import category_page
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
 from .sidebar import SidebarEntry, SidebarItem, is_shown, parse_key, playlist_entries
@@ -93,6 +89,7 @@ class Window(Adw.ApplicationWindow):
         self._shown = None  # the key whose root page is at the bottom of the navigation stack
         self._quiet = False  # the selection changes, but not by the user: show nothing
         self._quitting = False
+        self._expanded_save = None  # the timeout that will write expanded-folders
 
         # The win.item-* actions the context menus run (actions.py), before the sidebar,
         # whose playlists' menu is theirs.
@@ -272,13 +269,19 @@ class Window(Adw.ApplicationWindow):
         if getattr(visible, 'item', None) is item:
             return  # a double activation
         if item.kind in ('album', 'playlist'):
+            from .pages.detail import DetailPage
+
             page = DetailPage(self._library, item)
         elif item.kind == 'artist':
+            from .pages.artist import ArtistPage
+
             page = ArtistPage(self._library, item)
         elif item.kind == 'folder':  # a folder's tile in a folder's page
             page = pages.folder(self._library, item.id, item.title, root=False)
             page.item = item
         elif item.kind == 'category':
+            from .pages.shelves import category_page
+
             page = category_page(item)
         elif item.kind in ('station', 'song'):
             self.play_request(item.play)
@@ -305,6 +308,8 @@ class Window(Adw.ApplicationWindow):
                 return found.items if found else None
         else:
             model = shelf.items
+        from .pages.grid import GridPage
+
         # A shelf of artists (a search's, a category's) gets the round portraits.
         artist = (shelf.items.get_n_items() > 0
                   and all(item.kind == 'artist' for item in shelf.items))
@@ -592,8 +597,7 @@ class Window(Adw.ApplicationWindow):
         if not stack.get_n_items() or stack.get_item(0) is not root:
             self.navigation_view.replace([root])
         self.content_page.set_title(root.get_title())
-        self._shown = key
-        self._settings.set_string('last-page', key)
+        self._shown = key  # written to last-page when the window closes (_save_window_state)
 
     def _on_activated(self, sidebar, index):
         """A click (or Enter) on an item, selected already or not: show its page (selecting it
@@ -613,12 +617,14 @@ class Window(Adw.ApplicationWindow):
             self._save_expanded()
 
     def _save_expanded(self):
-        """Store the expanded folders and show or hide the items they hold.
+        """Show or hide the items the expanded folders hold, and store the folders, a second
+        after the last toggle (and when the window closes), rather than at every click.
 
         Ids of folders the library no longer has are kept: a demo run shares the settings with
         the real library, whose folders it lacks.
         """
-        self._settings.set_strv('expanded-folders', sorted(self._expanded))
+        if self._expanded_save is None:
+            self._expanded_save = GLib.timeout_add_seconds(1, self._on_expanded_timeout)
         for position in range(self._fixed_count, self._playlist_store.get_n_items()):
             entry = self._playlist_store.get_item(position)
             item = self._playlist_section.get_item(position)
@@ -738,11 +744,28 @@ class Window(Adw.ApplicationWindow):
         if self._settings.get_boolean('window-maximized'):
             self.maximize()
 
+    def _on_expanded_timeout(self):
+        self._expanded_save = None
+        self._write_expanded()
+        return GLib.SOURCE_REMOVE
+
+    def _write_expanded(self):
+        if self._expanded_save is not None:
+            GLib.source_remove(self._expanded_save)
+            self._expanded_save = None
+        self._settings.set_strv('expanded-folders', sorted(self._expanded))
+
     def _save_window_state(self):
+        """The settings the window keeps, written as it closes or hides: its size, the page
+        shown (last-page) and the expanded folders. Written then rather than as they change
+        (a click, a toggle): each write is a dconf round trip, and only the last matters."""
         width, height = self.get_default_size()
         self._settings.set_int('window-width', width)
         self._settings.set_int('window-height', height)
         self._settings.set_boolean('window-maximized', self.is_maximized())
+        if self._shown is not None:
+            self._settings.set_string('last-page', self._shown)
+        self._write_expanded()
 
     def prepare_quit(self):
         """The app is quitting (app.quit, or this window closing): remember the window's
