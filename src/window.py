@@ -23,6 +23,9 @@ FAVOURITE_SONGS = 'favourite-songs'
 # recently shown is dropped (and freed), and built again if it is shown again. The fixed
 # destinations' pages are kept for good.
 ROOT_LIMIT = 8
+# The fixed destinations whose pages show the engine's answers for the account signed in,
+# forgotten at sign-out (forget_account_pages).
+ACCOUNT_PAGES = ('new', 'made-for-you', 'search')
 
 
 def _parse_keys(table):
@@ -555,6 +558,25 @@ class Window(Adw.ApplicationWindow):
         page = self._roots.pop(key)
         self._recent_roots.pop(key, None)
         self.navigation_view.remove(page)
+
+    def forget_account_pages(self):
+        """After a sign-out: forget the pages that show what the account had, to be built
+        again on the next visit (from the empty library, or the next account's): the pages
+        pushed over the one shown, the pages of the engine's answers (ACCOUNT_PAGES) and
+        every playlist's and folder's root page. Home is shown when the page shown was one
+        of them. The folders shown open are forgotten too."""
+        stack = self.navigation_view.get_navigation_stack()
+        if stack.get_n_items() > 1:
+            self.navigation_view.pop_to_page(stack.get_item(0))
+        forget = [key for key in self._roots
+                  if key in ACCOUNT_PAGES or parse_key(key) is not None]
+        if self._shown in forget:
+            self._select('home')
+        for key in forget:
+            self._drop_root(key)
+        if self._expanded:
+            self._expanded.clear()
+            self._save_expanded()
 
     def _placeholder_page(self, destination):
         status = Adw.StatusPage(

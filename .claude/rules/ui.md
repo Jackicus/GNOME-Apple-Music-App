@@ -46,7 +46,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `pages.PAGES`. Its module is imported by its factory, never at the top of window.py or main.py
   (startup time). Pushed pages (album, playlist, artist, See All) show their title in the header
   bar too. Playlist and folder root pages are kept only for the last few shown
-  (`window.ROOT_LIMIT`).
+  (`window.ROOT_LIMIT`). Sign-out forgets the pages that show the account's things
+  (`Window.forget_account_pages()`: the pushed pages, New, Made for You, Search and every
+  playlist and folder root), to be built again on the next visit.
 - Pages listen to `app.library` while mapped (`do_map`/`do_unmap`): the library outlives them.
   A page that must follow while hidden says why in a comment (SongsPage does).
 - New, Made for You and a search category are `ShelvesPage`s over the engine's answers: a
