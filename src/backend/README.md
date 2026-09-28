@@ -88,7 +88,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 | `love\|unlove <kind> <id>`, `add-to-library <kind> <id>` | `{ok: true}` |
 | `playlists`, `add-to-playlist <playlistId> <songId>` | `{items: [{id, title}]}`, `{ok: true}` |
 | `lyrics <catalogSongId>` | `{synced, lines: [{startMs, endMs, text}]}`, cached under `<cache>/lyrics/` |
-| `search <term> [--library] [--limit N] [--suggest N]` | `{shelves: [{key, title, items: [Item without groups]}]}` — the shelves in Apple's own order (`meta.results.order`: Top Results, then Artists, Songs, Albums, Playlists, Stations; `--limit` is per kind). A music video is an Item of kind `video`, played as MusicKit's `musicVideo`. A hit's `art` is its cached cover or, unfetched, a thumbnail-sized catalog URL; its `thumb` is null unless on disk. `--suggest N` adds `terms`, the first N of what `suggest` would answer, asked in the same round trip — one process for the shell's search rather than two |
+| `search <term> [--library] [--limit N] [--suggest N]` | `{shelves: [{key, title: "", items: [Item without groups]}]}` (key `top`, `artists`, `albums`, `songs`, `playlists`, `music-videos` or `stations`: the Search page names them) — the shelves in Apple's own order (`meta.results.order`: Top Results, then Artists, Songs, Albums, Playlists, Stations; `--limit` is per kind). A music video is an Item of kind `video`, played as MusicKit's `musicVideo`. A hit's `art` is its cached cover or, unfetched, a thumbnail-sized catalog URL; its `thumb` is null unless on disk. `--suggest N` adds `terms`, the first N of what `suggest` would answer, asked in the same round trip — one process for the shell's search rather than two |
 | `suggest <term> [--limit N]` | `{terms: [{term, display}], items: [Item without groups]}` — Apple's own autocomplete for a term half typed (`search/suggestions`): the few searches it would complete it to, and its best few hits for it as it stands, art as `search` has it |
 | `landing` | `{categories: [{id, kind: "category", title, subtitle, art, artColor, url}]}` — the "Browse Categories" of Apple Music's own search page before anything is typed (the `search-landing` recommendation set): Apple's curators, Rock to Wellbeing, in Apple's order; `art` a 320px catalog URL the shell fetches itself, `artColor` the tile's colour. Kept at `<cache>/landing.json` and answered from there for a day without touching the engine |
 | `category <id>` | `{id, title, shelves: [{key, title, items: [Item without groups]}]}` — a category's page: the curator's grouping as shelves (Best New Songs, New Releases, Playlists, Stations…), items as `search` has them. Kept at `<cache>/categories/<id>.json` for a day, as `landing` is |
@@ -115,13 +115,19 @@ Item = {
   "art": "<cache>/art/<sha1>.jpg" /* or null */,  // 640x640, the hero
   "thumb": "<cache>/thumb/<sha1>.jpg" /* or null */,  // 320x320, the tiles; same name as its art
   "artColor": "#1a1a1a" /* or null */,
-  "countLabel": "12 songs, 43 min", "explicit": false,
+  "trackCount": 12, "durationMs": 2580000 /* or null */,  // albums and playlists (the total
+                                                  // time only with the tracks in hand)
+  "albumCount": 3,                                // artists
+  "explicit": false,
   "catalogId": "…" /* or null */, "url": "https://music.apple.com/…" /* or null */,
   "play": {"kind": "album", "id": "l.abc123"},   // what `am.py play` gets
   "groups": [{"name": "Disc 1", "play": {"kind": "album", "id": "l.abc123"}, "entries": [Track]}]
                                                   // artists: one group per album; stations and
                                                   // shelf items: [] until `am.py item` fills them
 }
+// The data has no words: the app writes the captions ("12 songs, 43 min") from the counts,
+// and names what has no name ("Unknown Album") and the shelves it titles by key. A library.json
+// from before the counts has an English "countLabel" instead, which the app shows as it is.
 Track = {"id": "i.xyz", "catalogId": "…" /* or null */, "title": "…", "artist": "…", "album": "…",
          "trackNumber": 1, "discNumber": 1, "durationMs": 216000, "durationLabel": "3:36",
          "explicit": true, "index": 0,            // index = position in group.play's queue
@@ -136,7 +142,8 @@ stays 1; the demo library has the first two):
   "sections": {…, "songs": [Track],            // the loose songs: in no library album (each
                                                // is also under a stand-in album); the Songs
                                                // page merges them by id after the albums'
-               "videos": [Item]},              // kind "video", play {"kind": "musicVideo"}
+               "videos": [Item]},              // kind "video", play {"kind": "musicVideo"},
+                                               // "durationMs" its length
   "folders": [{"id": "root", "title": "", "parent": null,      // Apple's p.playlistsroot
                "children": [{"kind": "playlist", "id": "p.pl123"}, {"kind": "folder", "id": "p.fld1"}]},
               {"id": "p.fld1", "title": "Workouts", "parent": "root", "children": […]}]

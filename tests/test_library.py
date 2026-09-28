@@ -173,21 +173,31 @@ class TestDemoLibrary(unittest.TestCase):
         for prop, key in [('id', 'id'), ('kind', 'kind'), ('title', 'title'),
                           ('subtitle', 'subtitle'), ('year', 'year'), ('genre', 'genre'),
                           ('summary', 'summary'), ('art', 'art'), ('thumb', 'thumb'),
-                          ('art-color', 'artColor'), ('count-label', 'countLabel'),
-                          ('explicit', 'explicit'), ('catalog-id', 'catalogId'), ('url', 'url')]:
+                          ('art-color', 'artColor'), ('explicit', 'explicit'),
+                          ('catalog-id', 'catalogId'), ('url', 'url')]:
             with self.subTest(prop=prop):
                 self.assertEqual(item.get_property(prop), raw[key])
+        self.assertEqual(item.count_label,
+                         library_module.songs_text(raw['trackCount'], raw['durationMs']))
         station = self.library.radio.get_item(0)
         self.assertIsNone(self.data['sections']['radio'][0]['year'])
         self.assertEqual(station.year, 0)  # JSON null in an int property
 
-    def test_captions_are_the_ones_the_file_has(self):
-        """The demo writes English counts (as library.json did before the sync wrote numbers):
-        they are shown as they are, and fixed shelf titles are the app's same words."""
+    def test_captions_are_made_from_the_counts(self):
+        """The demo writes numbers, as the sync does: the captions are the model's words, and
+        fixed shelf titles are the app's same words."""
         for name in SECTIONS:
             for item in getattr(self.library, name):
+                raw = item.raw
+                if item.kind in ('album', 'playlist'):
+                    expected = library_module.songs_text(raw['trackCount'], raw['durationMs'])
+                elif item.kind == 'artist':
+                    expected = library_module.albums_text(raw['albumCount'])
+                else:
+                    expected = ''  # stations and videos have no count
                 with self.subTest(item=item.id):
-                    self.assertEqual(item.count_label, item.raw.get('countLabel') or '')
+                    self.assertNotIn('countLabel', raw)
+                    self.assertEqual(item.count_label, expected)
         self.assertEqual([shelf.title for shelf in self.library.shelves],
                          [shelf['title'] for shelf in self.data['shelves']])
 

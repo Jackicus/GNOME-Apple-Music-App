@@ -55,9 +55,10 @@ them before changing either. What matters most:
   backend writes: an album or artist without a title is "Unknown Album" or "Unknown Artist"
   (`unknown_title()`); Home's fixed shelves are titled by key (`shelf_title()`); `count-label`
   ("12 songs, 43 min", "3 albums") is made by `count_text()` from an Item's `trackCount`,
-  `durationMs` or `albumCount` (the sync does not write them yet, so today it falls back to
-  the sync's English `countLabel`, then to the groups), once, and kept so bind never calls
-  gettext.
+  `durationMs` or `albumCount`, which the sync writes (a library.json from before them has an
+  English `countLabel`, shown as it is, then the groups' counts), once, and kept so bind never
+  calls gettext. The backend writes no words: a missing name is '', a shelf the app names is
+  a key with an empty title (the Search page's kinds, New's `featured` shelf).
 - Lazy parts: an Item's `groups` are wrapped on first access; `songs` stays empty until
   `await library.build_songs()` (the Songs page asks), then `songs-ready`, and from then on
   every load and reload brings it up to date with the fewest splices; `song_count()` counts

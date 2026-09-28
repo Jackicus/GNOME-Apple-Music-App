@@ -3,9 +3,12 @@
 Pure functions turn Apple Music API answers into the Item, Track and shelf shapes that
 README.md describes: normalize_album() and the other normalize_* functions, the search and
 shelf shapers the engine's commands answer with, and group_songs_into_albums_and_artists() for
-the sync. Beside them, the artwork cache (a file name for each artwork URL, fetching what is
-missing, pruning what nothing names), library.json, and the answers the engine keeps for a
-day. The standard library only; the thread pool and urllib are imported where they are used.
+the sync. They write data, never words: counts are numbers (trackCount, durationMs,
+albumCount), a shelf the app names is a key with an empty title, a missing name is '', and
+the app makes and translates the words (library.py, the pages). Beside them, the artwork
+cache (a file name for each artwork URL, fetching what is missing, pruning what nothing
+names), library.json, and the answers the engine keeps for a day. The standard library only;
+the thread pool and urllib are imported where they are used.
 """
 
 import hashlib
@@ -66,42 +69,6 @@ def format_duration(duration_ms):
     if hours > 0:
         return f'{hours}:{minutes:02d}:{seconds:02d}'
     return f'{minutes}:{seconds:02d}'
-
-
-def format_count_label(song_count, total_duration_ms=None):
-    """Format song count and total duration into a count label.
-
-    e.g. '1 song' (no duration given), '12 songs, 43 min', '20 songs, 1 hr 15 min'.
-    """
-    count = max(0, int(song_count)) if song_count is not None else 0
-
-    song_word = 'song' if count == 1 else 'songs'
-    songs_part = f'{count} {song_word}'
-
-    if total_duration_ms is None:
-        return songs_part
-
-    duration = max(0, int(total_duration_ms))
-
-    if duration == 0:
-        dur_part = '0 min'
-    else:
-        total_minutes = round(duration / 60000)
-        if total_minutes == 0:
-            total_minutes = 1
-
-        hours = total_minutes // 60
-        minutes = total_minutes % 60
-
-        if hours > 0:
-            if minutes > 0:
-                dur_part = f'{hours} hr {minutes} min'
-            else:
-                dur_part = f'{hours} hr'
-        else:
-            dur_part = f'{minutes} min'
-
-    return f'{songs_part}, {dur_part}'
 
 
 def format_color(bg_color):
@@ -840,7 +807,7 @@ def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
 
     song_count = len(normalized_tracks)
     # No tracks in hand (a shelf item, normalised without its list): the
-    # count alone, rather than a "0 min" that reads as an empty album.
+    # count alone, and no total time rather than a 0 that reads as empty.
     total_duration_ms = (sum(t['durationMs'] for t in normalized_tracks)
                          if normalized_tracks else None)
     if song_count == 0 and attrs.get('trackCount'):
@@ -848,8 +815,6 @@ def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
             song_count = int(attrs['trackCount'])
         except (ValueError, TypeError):
             song_count = 0
-
-    count_label = format_count_label(song_count, total_duration_ms)
 
     content_rating = attrs.get('contentRating') or raw_album.get('contentRating')
     is_explicit = (
@@ -870,7 +835,8 @@ def normalize_album(raw_album, cache_dir=None, tracks=None, art_urls=None):
         'art': art,
         'thumb': thumb,
         'artColor': art_color,
-        'countLabel': count_label,
+        'trackCount': song_count,
+        'durationMs': total_duration_ms,
         'explicit': is_explicit,
         'catalogId': catalog_id,
         'url': url,
@@ -934,9 +900,6 @@ def normalize_artist(raw_artist, cache_dir=None, albums=None, art_urls=None):
             if norm_alb.get('explicit'):
                 has_explicit = True
 
-    album_count = len(groups)
-    count_label = f'{album_count} album' if album_count == 1 else f'{album_count} albums'
-
     return {
         'id': item_id,
         'kind': 'artist',
@@ -948,7 +911,7 @@ def normalize_artist(raw_artist, cache_dir=None, albums=None, art_urls=None):
         'art': art,
         'thumb': thumb,
         'artColor': art_color,
-        'countLabel': count_label,
+        'albumCount': len(groups),
         'explicit': has_explicit,
         'catalogId': catalog_id,
         'url': url,
@@ -1004,7 +967,7 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None, art_urls=None)
 
     song_count = len(normalized_tracks)
     # No tracks in hand (a shelf item, normalised without its list): the
-    # count alone, rather than a "0 min" that reads as an empty album.
+    # count alone, and no total time rather than a 0 that reads as empty.
     total_duration_ms = (sum(t['durationMs'] for t in normalized_tracks)
                          if normalized_tracks else None)
     if song_count == 0 and attrs.get('trackCount'):
@@ -1012,8 +975,6 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None, art_urls=None)
             song_count = int(attrs['trackCount'])
         except (ValueError, TypeError):
             song_count = 0
-
-    count_label = format_count_label(song_count, total_duration_ms)
 
     content_rating = attrs.get('contentRating') or raw_playlist.get('contentRating')
     is_explicit = (
@@ -1034,7 +995,8 @@ def normalize_playlist(raw_playlist, cache_dir=None, tracks=None, art_urls=None)
         'art': art,
         'thumb': thumb,
         'artColor': art_color,
-        'countLabel': count_label,
+        'trackCount': song_count,
+        'durationMs': total_duration_ms,
         'explicit': is_explicit,
         'catalogId': catalog_id,
         'url': url,
@@ -1084,7 +1046,6 @@ def normalize_station(raw_station, cache_dir=None, art_urls=None):
         'art': art,
         'thumb': thumb,
         'artColor': art_color,
-        'countLabel': None,
         'explicit': is_explicit,
         'catalogId': catalog_id,
         'url': url,
@@ -1123,7 +1084,7 @@ def normalize_song_as_item(raw_song, cache_dir=None, art_urls=None):
         'art': art,
         'thumb': thumb,
         'artColor': art_color,
-        'countLabel': format_duration(duration_ms),
+        'durationMs': duration_ms,
         'explicit': attrs.get('contentRating') == 'explicit' or attrs.get('explicit') is True,
         'catalogId': catalog_id,
         'url': attrs.get('url') or raw_song.get('url'),
@@ -1170,25 +1131,12 @@ def normalize_item(raw_item, cache_dir=None, include_groups=True, art_urls=None)
     return item
 
 
-# The shelves a search can answer with, as MusicKit names them, and what
-# each is called. `topResults` is the catalog's own pick of its best few
-# hits across every kind (asked for `with=topResults`; the library's search
-# has no such thing), which Apple Music's own search page puts first.
-SEARCH_SHELF_TITLES = {
-    'topResults': 'Top Results',
-    'artists': 'Artists',
-    'library-artists': 'Artists',
-    'albums': 'Albums',
-    'library-albums': 'Albums',
-    'songs': 'Songs',
-    'library-songs': 'Songs',
-    'playlists': 'Playlists',
-    'library-playlists': 'Playlists',
-    'music-videos': 'Music Videos',
-    'stations': 'Stations',
-}
-# The order the shelves take when the answer does not say: Apple's own for
-# a search of this kind, as its `meta.results.order` has it.
+# The shelves a search can answer with, as MusicKit names them, in the order they take when
+# the answer does not say (Apple's own for a search of this kind, as its `meta.results.order`
+# has it). Each is keyed by its kind without the "library-" (`top` for `topResults`, the
+# catalog's own pick of its best few hits across every kind, asked for `with=topResults`,
+# which Apple Music's own search page puts first) and untitled: the Search page has the
+# words.
 SEARCH_SHELF_ORDER = [
     'topResults', 'artists', 'library-artists', 'songs', 'library-songs',
     'albums', 'library-albums', 'playlists', 'library-playlists', 'music-videos', 'stations',
@@ -1197,9 +1145,10 @@ SEARCH_SHELF_ORDER = [
 
 def search_results(raw, cache_dir):
     """Engine.search()'s answer from MusicKit's: `shelves`, one per kind that
-    answered, each `{key, title, items}`, in the order Apple's own search
-    page shows them (`meta.results.order`, or SEARCH_SHELF_ORDER without
-    it) with Top Results first.
+    answered, each `{key, title: '', items}` (key `top`, `artists`,
+    `albums`, `songs`, `playlists`, `music-videos` or `stations`), in the
+    order Apple's own search page shows them (`meta.results.order`, or
+    SEARCH_SHELF_ORDER without it) with the top results first.
 
     A search never waits on a download, so a hit's `art` is its cached
     cover when the sync has fetched it and a small catalog URL otherwise,
@@ -1209,7 +1158,7 @@ def search_results(raw, cache_dir):
     order = ((raw or {}).get('meta') or {}).get('results', {}).get('order')
     if not isinstance(order, list):
         order = []
-    keys = [k for k in order if k in SEARCH_SHELF_TITLES]
+    keys = [k for k in order if k in SEARCH_SHELF_ORDER]
     keys += [k for k in SEARCH_SHELF_ORDER if k not in keys]
     shelves = []
     for key in keys:
@@ -1225,7 +1174,7 @@ def search_results(raw, cache_dir):
             hits.append(item)
         if hits:
             shelf_key = 'top' if key == 'topResults' else key.removeprefix('library-')
-            shelves.append({'key': shelf_key, 'title': SEARCH_SHELF_TITLES[key], 'items': hits})
+            shelves.append({'key': shelf_key, 'title': '', 'items': hits})
     return {'shelves': shelves}
 
 
@@ -1383,14 +1332,14 @@ def _element_contents(element):
     return out
 
 
-def _grouping_shelves(grouping, cache_dir, prefix, featured=None):
+def _grouping_shelves(grouping, cache_dir, prefix, featured=False):
     """The shelves of a grouping (a curator's, or the editorial one behind
     the New page): each editorial element of its tabs that has a title and
     something in it, as `{key, title, items}` in Apple's order, keyed
-    `<prefix>-<element id>`. An untitled element made of other elements —
-    the featured banners at the top of the New page — becomes the one shelf
-    titled `featured` when that is given; untitled elements are otherwise
-    left out, as are link rows and empty ones."""
+    `<prefix>-<element id>`. With `featured`, the first untitled element
+    made of other elements (the banners at the top of the New page) becomes
+    a shelf too, untitled and marked `featured: true`; untitled elements are
+    otherwise left out, as are link rows and empty ones."""
     shelves = []
     tabs = ((grouping.get('relationships') or {}).get('tabs') or {}).get('data') or []
     for tab in tabs:
@@ -1403,10 +1352,9 @@ def _grouping_shelves(grouping, cache_dir, prefix, featured=None):
             element_attrs = element.get('attributes') or {}
             shelf_title = str(element_attrs.get('title') or element_attrs.get('name') or '').strip()
             own = ((element.get('relationships') or {}).get('contents') or {}).get('data') or []
-            if not shelf_title:
-                if own or not featured:
-                    continue
-                shelf_title = featured
+            is_featured = not shelf_title
+            if is_featured and (own or not featured):
+                continue
             items = []
             seen = set()
             for raw_item in _element_contents(element):
@@ -1416,29 +1364,28 @@ def _grouping_shelves(grouping, cache_dir, prefix, featured=None):
                 seen.add((item['kind'], item['id']))
                 items.append(item)
             if items:
-                key = f"{prefix}-{element.get('id') or index}"
-                shelves.append({'key': key, 'title': shelf_title, 'items': items})
-                if shelf_title == featured:
-                    featured = None  # one Featured shelf
+                shelf = {'key': f"{prefix}-{element.get('id') or index}", 'title': shelf_title,
+                         'items': items}
+                if is_featured:
+                    shelf['featured'] = True
+                    featured = False  # one featured shelf
+                shelves.append(shelf)
     return shelves
-
-
-# What the New page's featured banners are called: the element has no title.
-FEATURED_TITLE = 'Featured'
 
 
 def editorial_shelves(raw, cache_dir):
     """`browse`'s answer from the editorial groupings behind Apple Music's
     own New page (`/v1/editorial/<storefront>/groupings` with `name=music`,
     `platform=web`): `shelves`, the grouping's editorial elements in
-    Apple's order — the featured banners first as one "Featured" shelf,
-    then Best New Songs, New Releases, playlists, stations, videos… — each
-    `{key, title, items}` with items as `search` has them (no groups, art
-    as it stands; a curator among them a category tile)."""
+    Apple's order — the featured banners first as one shelf marked
+    `featured` (and untitled: the page names it), then Best New Songs, New
+    Releases, playlists, stations, videos… — each `{key, title, items}` with
+    items as `search` has them (no groups, art as it stands; a curator among
+    them a category tile)."""
     shelves = []
     for grouping in (raw or {}).get('data') or []:
         if isinstance(grouping, dict):
-            shelves.extend(_grouping_shelves(grouping, cache_dir, 'new', featured=FEATURED_TITLE))
+            shelves.extend(_grouping_shelves(grouping, cache_dir, 'new', featured=True))
     return {'shelves': shelves}
 
 
@@ -1465,16 +1412,16 @@ def made_for_you_shelves(raw_recs, cache_dir=None):
     """
     return _recommendation_shelves(
         raw_recs, cache_dir, accept=lambda contents: all(map(_is_made_for_you, contents)),
-        settle=True, fallback='Made for You')
+        settle=True)
 
 
-def _recommendation_shelves(raw_recs, cache_dir, accept, settle, fallback, art_urls=None):
+def _recommendation_shelves(raw_recs, cache_dir, accept, settle, art_urls=None):
     """The shelves of Apple's recommendations, in Apple's order: one per
     recommendation whose contents `accept(contents)` takes, a group's members
     each a shelf of their own, its items through _shelf_item (no curators:
     a category tile is the Search page's) with `settle`; a recommendation
-    with nothing in it is left out. Titled as Apple titles it, `fallback`
-    when it does not."""
+    with nothing in it is left out. Titled as Apple titles it (in the
+    account's language), '' when it does not: the page has the words."""
     shelves = []
 
     def walk(rec):
@@ -1498,7 +1445,7 @@ def _recommendation_shelves(raw_recs, cache_dir, accept, settle, fallback, art_u
         title = attrs.get('title') or {}
         title = title.get('stringForDisplay') if isinstance(title, dict) else str(title)
         key = rec.get('id') or len(shelves)
-        shelves.append({'key': f'rec-{key}', 'title': title or fallback, 'items': items})
+        shelves.append({'key': f'rec-{key}', 'title': title or '', 'items': items})
 
     for rec in raw_recs or []:
         walk(rec)
@@ -1530,7 +1477,7 @@ def recommendation_shelves(raw_recs, cache_dir=None, art_urls=None):
     Shelf = {"key": "rec-<id>", "title": "…", "items": [Item]}
     """
     return _recommendation_shelves(raw_recs, cache_dir, accept=lambda contents: True,
-                                   settle=False, fallback='For You', art_urls=art_urls)
+                                   settle=False, art_urls=art_urls)
 
 
 def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):

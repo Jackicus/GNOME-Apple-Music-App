@@ -1232,7 +1232,8 @@ class SearchTest(EngineFixture):
         self.assertEqual(self.page.bridge_calls[-1], ('search', 'paper parachutes', False, 20))
         self.assertEqual([shelf['key'] for shelf in answer['shelves']],
                          ['artists', 'songs', 'albums', 'playlists'])
-        self.assertEqual(answer['shelves'][2]['title'], 'Albums')
+        self.assertEqual(answer['shelves'][2]['key'], 'albums')
+        self.assertEqual(answer['shelves'][2]['title'], '')  # the Search page has the words
         self.assertEqual(set(answer), {'shelves'})
         album = answer['shelves'][2]['items'][0]
         self.assertEqual(album['groups'], [])
@@ -1352,7 +1353,8 @@ class SearchTest(EngineFixture):
         self.assertEqual(self.page.api_params[-1],
                          {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork'})
         self.assertEqual([s['title'] for s in answer['shelves']],
-                         ['Featured', 'Best New Songs', 'New Releases', 'Stations'])
+                         ['', 'Best New Songs', 'New Releases', 'Stations'])
+        self.assertTrue(answer['shelves'][0]['featured'])
         self.assertTrue((self.cache / 'browse.json').is_file())
         await self.engine.stop()
         self.assertEqual(len((await self.engine.browse())['shelves']), 4)
