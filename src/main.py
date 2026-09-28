@@ -23,7 +23,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .backend import config  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
-from .engine import Engine, clear_cache, engine_paths  # noqa: E402
+from .engine import Engine, clear_cache  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
@@ -76,6 +76,8 @@ class Application(Adw.Application):
         )
         self.version = version
         self.profile = profile
+        # The .Devel build's Chrome profile and cache sit beside the release build's.
+        config.set_build_profile(profile)
         self.demo_dir = demo_dir
         self.demo = False  # True under --demo: an invented library and no engine
         self.library = None  # created in do_startup
@@ -179,13 +181,12 @@ class Application(Adw.Application):
         Adw.Application.do_shutdown(self)
 
     def _make_engine(self):
-        """The Engine on this build's Chrome profile (engine_paths: the .Devel build's beside
-        the release one's; APPLE_MUSIC_PROFILE wins), with the browser command and the
-        preferred mode from the settings, then and whenever they change (Preferences): both
-        apply when Chrome next starts."""
+        """The Engine on this build's Chrome profile (config.profile_dir()), with the browser
+        command and the preferred mode from the settings, then and whenever they change
+        (Preferences): both apply when Chrome next starts."""
         if self.demo:
             return Engine(demo=True)
-        engine = Engine(engine_paths(self.profile), self.settings.get_string('browser-command'))
+        engine = Engine(browser_command=self.settings.get_string('browser-command'))
         engine.prefer_headless = self.settings.get_boolean('engine-headless')
         self.settings.connect(
             'changed::browser-command',

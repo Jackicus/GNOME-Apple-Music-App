@@ -2,10 +2,13 @@
 
 This replaces the extension's GSettings lookup: nothing in the backend imports gi, so these are
 plain functions over the environment, read on every call, so that a test or demo mode can point
-them elsewhere before anything uses them.
+them elsewhere before anything uses them. The development build (set_build_profile, called once
+as the app starts) keeps a cache and a Chrome profile of its own beside the release build's.
 
-    APPLE_MUSIC_CACHE       the cache directory  (default $XDG_CACHE_HOME/apple-music)
-    APPLE_MUSIC_PROFILE     Chrome's profile     (default $XDG_DATA_HOME/apple-music/chrome)
+    APPLE_MUSIC_CACHE       the cache directory  (default $XDG_CACHE_HOME/apple-music, or
+                            apple-music-devel for the development build)
+    APPLE_MUSIC_PROFILE     Chrome's profile     (default $XDG_DATA_HOME/apple-music/chrome, or
+                            chrome-devel for the development build)
     APPLE_MUSIC_DEBUG_PORT  a DevTools port on 127.0.0.1 beside the engine's pipe, for a
                             developer to attach to (scripts/am.py --attach); unset by default,
                             and a risk while set: any local program can drive the signed-in
@@ -17,6 +20,9 @@ import tempfile
 from pathlib import Path
 
 APP_DIR = 'apple-music'
+DEVELOPMENT = 'development'  # the build profile (meson -Dprofile) with paths of its own
+
+_build_profile = 'default'
 
 # Artwork edge lengths in pixels. Thumbnails are what tiles and track rows draw (a tile is at
 # most 160 logical px, so 320 covers 2x scale); covers are the detail pages' hero.
@@ -41,15 +47,27 @@ def _override(variable):
     return Path(os.path.abspath(value)) if value else None
 
 
+def set_build_profile(profile):
+    """The build profile the app was built with ('default', or 'development' for the .Devel
+    build), set once as it starts: the paths below follow it."""
+    global _build_profile
+    _build_profile = profile or 'default'
+
+
+def build_profile():
+    return _build_profile
+
+
 def cache_dir():
-    """library.json, art/, thumb/, remote-art/, items/, lyrics/."""
-    return _override('APPLE_MUSIC_CACHE') or _xdg_dir('XDG_CACHE_HOME', '.cache') / APP_DIR
+    """library.json, art/, thumb/, remote-art/, items/, lyrics/: apple-music, or
+    apple-music-devel for the development build, under $XDG_CACHE_HOME."""
+    name = APP_DIR + ('-devel' if _build_profile == DEVELOPMENT else '')
+    return _override('APPLE_MUSIC_CACHE') or _xdg_dir('XDG_CACHE_HOME', '.cache') / name
 
 
 def profile_dir():
     """The Chrome profile the engine runs in (its own, never a browser's everyday one)."""
-    return (_override('APPLE_MUSIC_PROFILE')
-            or _xdg_dir('XDG_DATA_HOME', '.local/share') / APP_DIR / 'chrome')
+    return _override('APPLE_MUSIC_PROFILE') or default_profile_dir()
 
 
 def debug_port():
@@ -62,8 +80,10 @@ def debug_port():
 
 
 def default_profile_dir():
-    """Where the release build's profile is when nothing overrides it."""
-    return _xdg_dir('XDG_DATA_HOME', '.local/share') / APP_DIR / 'chrome'
+    """Where the build's Chrome profile is when nothing overrides it: chrome, or chrome-devel
+    for the development build, under $XDG_DATA_HOME/apple-music."""
+    name = 'chrome-devel' if _build_profile == DEVELOPMENT else 'chrome'
+    return _xdg_dir('XDG_DATA_HOME', '.local/share') / APP_DIR / name
 
 
 def state_file(profile=None):

@@ -58,6 +58,28 @@ class ConfigTest(unittest.TestCase):
         # A profile of its own keeps its engine state too, away from the real session's.
         self.assertEqual(config.state_file(), pathlib.Path('/o/profile/engine.json'))
 
+    def build(self, profile):
+        config.set_build_profile(profile)
+        self.addCleanup(config.set_build_profile, 'default')
+
+    def test_the_development_build_has_paths_of_its_own(self):
+        self.env(XDG_CACHE_HOME='/x/cache', XDG_DATA_HOME='/x/data')
+        self.build('development')
+        self.assertEqual(config.build_profile(), 'development')
+        self.assertEqual(config.cache_dir(), pathlib.Path('/x/cache/apple-music-devel'))
+        self.assertEqual(config.profile_dir(), pathlib.Path('/x/data/apple-music/chrome-devel'))
+        self.build('default')
+        self.assertEqual(config.cache_dir(), pathlib.Path('/x/cache/apple-music'))
+        self.assertEqual(config.profile_dir(), pathlib.Path('/x/data/apple-music/chrome'))
+
+    def test_the_environment_wins_in_either_build(self):
+        self.env(APPLE_MUSIC_CACHE='/o/cache', APPLE_MUSIC_PROFILE='/o/profile')
+        for profile in ('default', 'development'):
+            with self.subTest(profile=profile):
+                self.build(profile)
+                self.assertEqual(config.cache_dir(), pathlib.Path('/o/cache'))
+                self.assertEqual(config.profile_dir(), pathlib.Path('/o/profile'))
+
     def test_relative_override_is_made_absolute(self):
         self.env(APPLE_MUSIC_CACHE='some/cache')
         self.assertEqual(config.cache_dir(), pathlib.Path.cwd() / 'some' / 'cache')

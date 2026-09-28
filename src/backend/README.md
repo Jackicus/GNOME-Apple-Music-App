@@ -187,9 +187,9 @@ Read by `config.py` on every call:
 
 | Variable | Overrides |
 |---|---|
-| `APPLE_MUSIC_PROFILE` | Chrome's profile directory (default `$XDG_DATA_HOME/apple-music/chrome`); the engine state then lives in it too |
+| `APPLE_MUSIC_PROFILE` | Chrome's profile directory (default `$XDG_DATA_HOME/apple-music/chrome`, `chrome-devel` for the development build); the engine state then lives in it too |
 | `APPLE_MUSIC_DEBUG_PORT` | a DevTools port on 127.0.0.1 beside the engine's pipe, for `scripts/am.py --attach`; unset by default, and while it is set any local program can drive the signed-in session |
-| `APPLE_MUSIC_CACHE` | the cache directory (default `$XDG_CACHE_HOME/apple-music`) |
+| `APPLE_MUSIC_CACHE` | the cache directory (default `$XDG_CACHE_HOME/apple-music`, `apple-music-devel` for the development build) |
 
 ```bash
 python3 -m unittest discover -s tests -v   # the tests, the backend's among them
