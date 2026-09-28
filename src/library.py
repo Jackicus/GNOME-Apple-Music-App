@@ -74,6 +74,10 @@ EDITABLE = 'canEdit'
 # The id of the folders entry that lists the top level: the playlists and folders in no folder.
 ROOT_FOLDER = 'root'
 
+# A track's kind by the API resource `type` its entry carries: what it is rated and added as.
+TRACK_KINDS = {'songs': 'song', 'library-songs': 'song',
+               'music-videos': 'video', 'library-music-videos': 'video'}
+
 # The Item properties that views over the stores sort and filter by (pages/grid.py's SORTS,
 # the search page's filters). When a reload changes one, the stores holding the Item splice
 # it over itself so that those models place it again.
@@ -154,6 +158,7 @@ class Track(GObject.Object):
 
     `thumb` is the track's own thumbnail (a playlist's rows) or else its album's, and `play` is
     its group's play target, the queue `index` counts in: a row plays play with start-with index.
+    `kind` is 'song' or 'video' by the entry's API `type` (TRACK_KINDS), '' when it has none.
     """
 
     __gtype_name__ = 'AppleMusicTrack'
@@ -169,6 +174,9 @@ class Track(GObject.Object):
     duration_label = raw_property('durationLabel', str, '')
     explicit = raw_property('explicit', bool, False)
     index = raw_property('index', int, 0)
+    kind = GObject.Property(type=str, default='',
+                            getter=lambda self: TRACK_KINDS.get(_text(self.raw.get('type')), ''),
+                            flags=GObject.ParamFlags.READABLE)
     thumb = GObject.Property(type=str, getter=lambda self: self._thumb,
                              flags=GObject.ParamFlags.READABLE)
 
@@ -517,19 +525,63 @@ def _folder_item(raw, existing=None, changed=None):
     return Item(data)
 
 
-def apply_diff(store, items):
+def apply_diff(store, items, old=None):
     """Bring a Gio.ListStore to hold `items` (objects) in that order with the fewest splices:
     runs of the same objects in the same order are left alone, so a view over the store keeps
-    its rows and its scroll position through a reload that changed little. 23,000 items diff
-    in about 25 ms."""
-    old = [store.get_item(position) for position in range(store.get_n_items())]
-    if len(old) == len(items) and all(a is b for a, b in zip(old, items, strict=True)):
+    its rows and its scroll position through a reload that changed little. `old` is what the
+    store holds, as a list, when the caller has read it already.
+
+    The runs of the same objects at either end are set aside first. In what is left, when
+    the objects both lists hold are in the same order in both (nothing moved, as after most
+    syncs), one walk finds the runs that went and came, and each is one splice (a whole new
+    list is one); only moves need difflib, which takes 45 ms over 40,000 songs where the
+    walk takes 8."""
+    if old is None:
+        old = [store.get_item(position) for position in range(store.get_n_items())]
+    start, old_end, new_end = 0, len(old), len(items)
+    while start < old_end and start < new_end and old[start] is items[start]:
+        start += 1
+    while old_end > start and new_end > start and old[old_end - 1] is items[new_end - 1]:
+        old_end -= 1
+        new_end -= 1
+    if start == old_end and start == new_end:
         return
-    matcher = difflib.SequenceMatcher(None, [id(item) for item in old],
-                                      [id(item) for item in items], autojunk=False)
-    for tag, start, end, new_start, new_end in reversed(matcher.get_opcodes()):
-        if tag != 'equal':
-            store.splice(start, end - start, items[new_start:new_end])
+    old_part, new_part = old[start:old_end], items[start:new_end]
+    runs = _changed_runs(old_part, new_part)
+    if runs is None:  # something moved, or is there twice
+        matcher = difflib.SequenceMatcher(None, [id(item) for item in old_part],
+                                          [id(item) for item in new_part], autojunk=False)
+        runs = [opcode[1:] for opcode in matcher.get_opcodes() if opcode[0] != 'equal']
+    for old_from, old_to, new_from, new_to in reversed(runs):
+        store.splice(start + old_from, old_to - old_from, new_part[new_from:new_to])
+
+
+def _changed_runs(old, new):
+    """The runs that differ between two lists of objects, as (old from, old to, new from, new
+    to) in order, when the objects in both are in the same order in both and none is in
+    either twice; else None."""
+    positions = {id(item): position for position, item in enumerate(new)}
+    if len(positions) != len(new):
+        return None
+    runs = []
+    gone = None  # where the run of old objects not in `new` began
+    last = -1  # the new position of the last object in both
+    for position, item in enumerate(old):
+        found = positions.get(id(item))
+        if found is None:
+            if gone is None:
+                gone = position
+            continue
+        if found <= last:
+            return None
+        went = gone if gone is not None else position
+        if went < position or last + 1 < found:
+            runs.append((went, position, last + 1, found))
+        gone, last = None, found
+    went = gone if gone is not None else len(old)
+    if went < len(old) or last + 1 < len(new):
+        runs.append((went, len(old), last + 1, len(new)))
+    return runs
 
 
 class _Superseded(Exception):
@@ -591,7 +643,8 @@ class Library(GObject.Object):
         deduplicated by id, in album order.
 
         It stays empty until build_songs() fills it (`songs-ready`); from then on every load()
-        refills it.
+        and reload() brings it up to date with the fewest changes (apply_diff), so the views
+        over it keep the rows of the songs still there.
         """
         return self._songs
 
@@ -897,29 +950,54 @@ class Library(GObject.Object):
             tracks.append(track)
         self._loose_tracks = loose_tracks
         wrapped = time.monotonic()
-        if not await self._holds(self._songs, tracks, generation):
-            self._songs.splice(0, self._songs.get_n_items(), tracks)
+        count = len(tracks)
+        # The store brought to `tracks` with the fewest changes, so that the views over it
+        # (Songs, Search) keep their rows: most syncs change a few songs, or none. The diff
+        # (up to 13 ms over 40,000 songs, splices included) and letting go of the list (the
+        # last reference to most Track wrappers: 8 ms) each get a frame of their own.
+        same = await self._same_start(self._songs, tracks, generation)
+        if same < len(tracks) or same < self._songs.get_n_items():
+            old = tracks[:same] + await self._read_store(self._songs, same, generation)
+            await self._pause(generation)
+            apply_diff(self._songs, tracks, old)
+            spliced = time.monotonic()
+            await self._pause(generation)
+            del old, tracks, seen
+        else:
+            spliced = time.monotonic()
         if not self.songs_ready:
             self.songs_ready = True
         log.debug('Songs built in %.0f ms: %d songs (wrapped in %.0f ms, spliced in %.0f ms: '
-                  "the views' sort and rows)", (time.monotonic() - started) * 1000,
-                  len(tracks), (wrapped - started) * 1000, (time.monotonic() - wrapped) * 1000)
+                  "the views' sort and rows)", (time.monotonic() - started) * 1000, count,
+                  (wrapped - started) * 1000, (spliced - wrapped) * 1000)
 
-    async def _holds(self, store, items, generation):
-        """Whether the store holds the objects `items`, in that order: read with a pause for a
-        frame every FRAME_BUDGET (reading a store from Python costs about a microsecond an
-        item, 40 ms for 40,000 songs) and no list of what it holds kept (a Track wrapper
-        that no Python reference holds goes, and its state stays with the object)."""
-        count = store.get_n_items()
-        if count != len(items):
-            return False
+    async def _same_start(self, store, items, generation):
+        """How many of the store's first items are the objects `items` starts with.
+
+        Reading a store from Python costs about a microsecond an item (40 ms for 40,000 songs),
+        so it is read with a pause for a frame every FRAME_BUDGET, and without keeping a list
+        of what it holds: a Track's wrapper that no Python reference holds goes (its state
+        stays with the object), and 40,000 of them are 2.4 MB."""
+        count = min(store.get_n_items(), len(items))
         for start in range(0, count, 1000):
             for position in range(start, min(start + 1000, count)):
                 if store.get_item(position) is not items[position]:
-                    return False
+                    return position
             if time.monotonic() - self._paused > FRAME_BUDGET:
                 await self._pause(generation)
-        return True
+        return count
+
+    async def _read_store(self, store, start, generation):
+        """The store's items from position `start` on, as a list, read with a pause for a
+        frame every FRAME_BUDGET."""
+        items = []
+        count = store.get_n_items()
+        for batch in range(start, count, 1000):
+            items.extend(store.get_item(position)
+                         for position in range(batch, min(batch + 1000, count)))
+            if time.monotonic() - self._paused > FRAME_BUDGET:
+                await self._pause(generation)
+        return items
 
     def _check(self, generation):
         if generation != self._generation:
