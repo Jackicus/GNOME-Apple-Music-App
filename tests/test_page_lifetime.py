@@ -191,6 +191,9 @@ def _classes():
         def refuse_in_demo(self):
             return self.demo
 
+        def start_engine(self):
+            return self.spawn(self.engine.start())
+
         def toast(self, _title):
             pass
 

@@ -223,7 +223,9 @@ class PreferencesDialog(Adw.PreferencesDialog):
     def _on_engine_clicked(self, _button):
         engine = self._engine
         if engine.state == 'down':
-            command = engine.start()
+            command = self._app.start_engine()  # a task quitting cancels; it reports its errors
+            if command is None:
+                return
         elif engine.state == 'up':
             command = engine.stop()
         else:

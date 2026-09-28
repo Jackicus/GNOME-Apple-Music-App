@@ -49,9 +49,11 @@ log = logging.getLogger(__name__)
 
 RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
 
-# How long quitting waits for the engine to stop (its own SIGTERM grace is 5 s) before Chrome is
-# killed outright and the app quits anyway.
+# How long quitting waits for the sync and the engine to stop before Chrome is killed outright
+# and the app quits anyway; the engine's stop, Browser.close (up to 2 s) then SIGTERM, is
+# given QUIT_GRACE after the SIGTERM (5 s otherwise) so that it fits.
 QUIT_TIMEOUT = 6.0
+QUIT_GRACE = 3.0
 
 
 class Application(Adw.Application):
@@ -87,6 +89,7 @@ class Application(Adw.Application):
         self._quitting = None  # the task stopping the engine before the app quits
         self._signin = None  # the sign-in dialog while it is open
         self._engine_start = None  # a start the app asked for (app.start-engine)
+        self._autostart_task = None  # the engine's start at launch
         self._preferences = None  # the Preferences dialog while it is open
         self._first_load = None  # the library's first load(), reading since do_startup
         # Startup timing (timing.py): name -> GLib.get_monotonic_time(), for scripts/bench.py.
@@ -220,6 +223,8 @@ class Application(Adw.Application):
         return GLib.SOURCE_REMOVE
 
     def do_activate(self):
+        if self._quitting is not None:
+            return  # the window is going: nothing to show
         window = self.get_active_window()
         if window is None:
             from .window import Window
@@ -234,7 +239,7 @@ class Application(Adw.Application):
             window.connect('map', self._timing.on_window_mapped)
             self.spawn(self._log_event_loop())
             if self._autostart_wanted():
-                self.spawn(self._autostart())
+                self._autostart_task = self.spawn(self._autostart())
         else:
             self.library_sync.check()  # launched again: a sync when one is due
         self.library.resume_reading()  # present() waits for the compositor
@@ -489,22 +494,32 @@ class Application(Adw.Application):
             self._quitting = self.spawn(self._quit())
 
     async def _quit(self):
+        """Everything shown goes at once; then a start the app asked for is cancelled (it
+        would hold the engine's stop until Chrome is up), and the sync (its thread included)
+        and the engine are stopped, QUIT_TIMEOUT at most, before Chrome is killed if it
+        still runs."""
         if self.background is not None:
             self.background.leave()
+        if self._signin is not None:
+            self._signin.force_close()  # cancels the sign-in, which stops the engine too
         for window in self.get_windows():
             if hasattr(window, 'prepare_quit'):  # a dialog's toplevel has none
                 window.prepare_quit()  # remembers its state and hides at once
+        for task in (self._autostart_task, self._engine_start):
+            if task is not None and not task.done():
+                task.cancel()
+        stopping = [self.engine.stop(grace=QUIT_GRACE)]
         if self.library_sync is not None:
-            self.spawn(self.library_sync.cancel())  # its downloads give up at the next one
+            stopping.append(self.library_sync.cancel())
         try:
-            await asyncio.wait_for(self.engine.stop(), QUIT_TIMEOUT)
+            await asyncio.wait_for(asyncio.gather(*stopping), QUIT_TIMEOUT)
         except TimeoutError:
             log.warning('the engine took longer than %g s to stop', QUIT_TIMEOUT)
-            self.engine.kill()
         except Exception:
             log.exception('stopping the engine failed')
-            self.engine.kill()
         finally:
+            if self.engine.pid:
+                self.engine.kill()  # the stop ran out of time, or failed
             Gio.Application.quit(self)
 
     # -- tasks, actions, dialogs ---------------------------------------------------------
