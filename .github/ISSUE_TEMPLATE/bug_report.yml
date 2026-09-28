@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in Apple Music for GNOME does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please search the
+        [existing issues](https://github.com/Jackicus/GNOME-Apple-Music-App/issues?q=is%3Aissue)
+        first. A security or privacy problem should not be reported here: see
+        [SECURITY.md](https://github.com/Jackicus/GNOME-Apple-Music-App/blob/main/SECURITY.md).
+
+        **Privacy:** this issue is public. Leave out your Apple Account name or email, your
+        playlist and library contents, and anything from `~/.cache/apple-music` or
+        `~/.local/share/apple-music` (the Chrome profile holds your sign-in).
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Main menu › About Apple Music shows it under the name (for example 0.9.0).
+      placeholder: 0.9.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - AUR package (gnome-apple-music)
+        - Built from source with Meson
+        - Flatpak (development manifest)
+        - Other (say below)
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and GNOME version
+      description: For example "Arch Linux, GNOME 50" or "Fedora 43, GNOME 49". GNOME Settings › System › About shows both.
+    validations:
+      required: true
+  - type: input
+    id: chrome
+    attributes:
+      label: Google Chrome version
+      description: The playback engine. `google-chrome-stable --version` prints it.
+      placeholder: Google Chrome 154.0.0000.00
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Albums
+        2. Play an album
+        3. Press Next
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Screenshots help for anything visual (check they show nothing private).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: |
+        Quit the app, run `apple-music --debug` in a terminal (or set `APPLE_MUSIC_DEBUG=1`),
+        reproduce the problem and paste the output. **Remove account data first**: names,
+        emails, playlist and song titles, library IDs and anything that looks like a token.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: This report contains no account data (names, emails, tokens, library contents).
+          required: true
