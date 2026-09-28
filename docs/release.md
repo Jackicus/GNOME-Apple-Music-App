@@ -77,6 +77,12 @@ for GNOME Builder or flatpak-builder. It talks to `org.freedesktop.Flatpak` so t
 the host's Chrome, owns the MPRIS name for both app IDs, and has no audio socket, because the
 host's Chrome makes the sound. In the sandbox, `chrome.find_chrome()` asks the host for the
 binary through `flatpak-spawn --host`, and `chrome_args()` prefixes
-`flatpak-spawn --host --watch-bus`: the pid the engine holds is flatpak-spawn's, whose command
-line carries `--user-data-dir`, which relays SIGTERM to Chrome and whose end ends Chrome. It has
-not been built: there is no GNOME 50 runtime or flatpak-builder on the development machine.
+`flatpak-spawn --host --watch-bus --forward-fd=3 --forward-fd=4`, which passes the DevTools pipe
+on to the host's Chrome. The pid the engine holds is flatpak-spawn's, which relays SIGTERM to
+Chrome and whose end ends Chrome (`--watch-bus`), so `setpriv` is not used there; the profile's
+`SingletonLock` names a host pid, which the sandbox cannot check, so a Chrome left on the
+profile is not ended at the next start. It has not been built: there is no GNOME 50 runtime or
+flatpak-builder on the development machine.
+
+Nothing installed may set `APPLE_MUSIC_DEBUG_PORT`: the launcher, the desktop file, the
+PKGBUILD and the manifest leave the engine on its pipe alone.

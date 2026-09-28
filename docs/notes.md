@@ -77,6 +77,21 @@ its "Performance pass" phase.
   `?ids=` form `{data: []}`; a loved item is `{type: 'ratings', attributes: {value: 1}}`. The
   library's artist ids (`l.art_…`) and loose songs' stand-in albums (`l.alb_…`) are made up by
   the sync, so Apple answers nothing for them: no rating, link or queue entry.
+- The DevTools pipe (2026-09-28): asyncio's pipe transports (`connect_read_pipe`,
+  `connect_write_pipe`) work on gi.events' loop. Chrome gets its ends through
+  `Gio.SubprocessLauncher.take_fd()`, and `launcher.close()` after the spawn is what closes this
+  process's copies: without it, Chrome's exit never read as the end of the pipe. That closing
+  the pipe also makes Chrome quit, as Puppeteer relies on, is not confirmed on Chrome 154; the
+  engine sends `Browser.close` and signals anyway.
+- A cancelled `Gio.Subprocess.wait_async()` raised `GLib.Error` (cancelled), not
+  `CancelledError`, hence `engine._process_exit()`.
+- Chrome rewrites its `/proc/<pid>/cmdline` into one space-joined string, its helpers too (with
+  `--type=`), so splitting it on NULs never finds `--user-data-dir=<profile>` as an argument,
+  and a prefix match takes `…/chrome-devel` for `…/chrome`. `<profile>/SingletonLock` is a
+  symlink to `<hostname>-<pid>` of the browser process holding the profile.
+- `setpriv --pdeathsig TERM --` execs Chrome, so the pid and command line the engine sees are
+  Chrome's. The parent-death signal follows the thread that spawned it, which is the main
+  thread; a grandchild spawned this way exited within a second of its parent's SIGKILL.
 - Chrome's own MPRIS player would be `org.mpris.MediaPlayer2.chromium.instance<pid>`; with
   `--disable-features=HardwareMediaKeyHandling`, `busctl --user list | grep -i mpris` shows the
   app's name and nothing for the engine's pid. `MediaSessionService` did not need disabling.

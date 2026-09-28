@@ -8,9 +8,9 @@
     "org.freedesktop.Flatpak talk-name; the Chrome profile under ~/.var/app is the same path on",
     "both sides, and the DevTools pipe (descriptors 3 and 4) is passed on to the host's Chrome",
     "with flatpak-spawn --forward-fd=3 --forward-fd=4, written without a Flatpak runtime to test",
-    "it on. Audio comes out of the host's Chrome, not the app. The app owns org.mpris.MediaPlayer2.<its id> for the Shell's media",
-    "controls: the .Devel name for this build, the release name for a build without",
-    "-Dprofile=development."
+    "it on. Audio comes out of the host's Chrome, not the app. The app owns",
+    "org.mpris.MediaPlayer2.<its id> for the Shell's media controls: the .Devel name for this",
+    "build, the release name for a build without -Dprofile=development."
   ],
   "id": "io.github.jackicus.AppleMusic.Devel",
   "runtime": "org.gnome.Platform",

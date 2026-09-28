@@ -22,7 +22,8 @@ streaming API. WebKitGTK cannot play them, and neither can Chromium, which ships
 without Widevine. Google's own Chrome can. So the app starts Google Chrome with
 a private profile, shows music.apple.com in it and drives Apple's own player in
 that page over Chrome's DevTools protocol, through a private pipe (no network
-port). Chrome opens a window once, for you to sign in. After that it runs headless, with no window.
+port). Chrome opens a window once, for you to sign in. After that it runs
+headless, with no window, and it stops when the app does.
 
 Because the sound comes from Chrome, your system's per-app volume controls list
 it as Chrome. The app talks only to Apple: through that Chrome page, plus
@@ -119,9 +120,10 @@ scripts/am.py status    # drive the engine without the GUI (status, eval, now-pl
 ```
 
 The development build installs beside a release build, with its own app ID,
-Chrome profile and port, and shares the release build's settings. `--demo`
-never starts Chrome. `docs/architecture.md` describes the architecture, `CLAUDE.md`
-the conventions, and `docs/history/build-plan.md` holds the plan the app was built from.
+Chrome profile and cache, and shares the release build's settings (the signed-in
+state included). `--demo` never starts Chrome. `docs/architecture.md` describes
+the architecture, `CLAUDE.md` the conventions, and `docs/history/build-plan.md`
+holds the plan the app was built from.
 
 GNOME Builder can build and run the development profile through the Flatpak
 manifest in `build-aux/flatpak/`. That manifest is for development only: from

@@ -8,9 +8,12 @@ docstring has the detail; this page is the map and the flows between the parts.
 Apple Music's streams are Widevine-protected, WebKitGTK cannot play them, and Apple publishes
 no streaming API. Google Chrome can play them. So the app starts its own Chrome, with a
 private profile, on music.apple.com, and drives Apple's MusicKit JS in that page over the
-Chrome DevTools Protocol. `src/backend/bridge.js` is injected into the page and is the only code
-that runs there; MusicKit's events come back through a CDP binding. Chrome shows a window once,
-for signing in, and runs headless afterwards. The sound comes out of Chrome.
+Chrome DevTools Protocol. The protocol runs over a pipe between the app and its Chrome
+(`--remote-debugging-pipe`, Chrome's file descriptors 3 and 4), so no port is open for other
+programs to reach the signed-in session through. `src/backend/bridge.js` is injected into the
+page and is the only code that runs there; MusicKit's events come back through a CDP binding.
+Chrome shows a window once, for signing in, and runs headless afterwards. The sound comes out
+of Chrome, and Chrome ends when the app does.
 
 ## One thread, one loop
 
@@ -42,8 +45,10 @@ widgets.
 - **Sync** (`sync.py`): fetches the library through the engine, turns Apple's answers into the
   library.json shapes with the backend's pure functions, downloads missing thumbnails, writes
   the file atomically and has the library reload itself in place.
-- **Engine** (`engine.py` over `backend/`): Chrome's lifecycle, the one CDP connection, and
-  every command as a coroutine. The backend package is the standard library and asyncio only.
+- **Engine** (`engine.py` over `backend/`): Chrome's lifecycle, the one CDP connection over
+  Chrome's pipe, attached to the music.apple.com page, and every command as a coroutine; a
+  command issued while Chrome starts waits for it. It says through `lost(reason)` when it goes
+  down on its own. The backend package is the standard library and asyncio only.
 - **Player** (`player.py`): what is playing, as GObject properties fed by MusicKit's events,
   and the playback commands. The player bar, the Now Playing sheet and MPRIS all follow it.
 - **MPRIS** (`mpris.py`): the app on the session bus as `org.mpris.MediaPlayer2.<app id>`, for
@@ -66,15 +71,23 @@ widgets.
   starts `sync_library()`. Progress shows in a banner; the end is a toast with the counts, a
   failure a toast with Retry. Pages keep their scroll positions, because the reload keeps every
   object that is still in the library.
+- **Losing the engine.** Chrome crashing or being killed, the page crashing or closing, and a
+  page that no longer answers after a call timed out (the engine probes it) all end the
+  connection: the engine emits `lost(reason)` and goes down, and the next play starts a fresh
+  Chrome. When the page loads a new document, the client injects the bridge again and the
+  engine passes a `bridgeReset` event on; if MusicKit does not come back after four tries, the
+  connection is given up the same way.
 - **Signing in and out.** Sign-in restarts Chrome visible on music.apple.com, waits until
   MusicKit is authorized, records it, reads the account name if it can, restarts Chrome
   headless (if `engine-headless` is on) and syncs. Sign-out asks first, then stops Chrome,
   deletes the profile and the cache, and empties the library.
 - **Quitting.** Every way out (Ctrl+Q, closing the window, MPRIS Quit, SIGINT or SIGTERM)
   activates `app.quit`: the windows save their state, the sync is cancelled, and Chrome is
-  stopped (given 6 seconds) before the app exits. With background playback on (it is off by
-  default), closing the window while music plays hides it instead; the app then quits once
-  playback has stayed stopped for 10 seconds.
+  stopped (given 6 seconds, then killed) before the app exits. If the app dies any other way,
+  the kernel sends Chrome SIGTERM (`setpriv --pdeathsig`), and the next start ends a Chrome that
+  still holds the profile. With background playback on (it is off by default), closing the
+  window while music plays hides it instead; the app then quits once playback has stayed stopped
+  for 10 seconds.
 - **Demo mode.** `--demo` reads an invented library from build/demo and has no engine at all,
   so every page and screenshot works without Chrome or an account.
 
@@ -82,14 +95,16 @@ widgets.
 
 | What | Where |
 |---|---|
-| library.json, artwork, lyrics, the engine's kept answers | `$XDG_CACHE_HOME/apple-music/` |
+| library.json, artwork, lyrics, the engine's kept answers | `$XDG_CACHE_HOME/apple-music/` (`apple-music-devel/` for the development build) |
 | Chrome's profile, which holds the sign-in | `$XDG_DATA_HOME/apple-music/chrome/` (`chrome-devel/` for the development build) |
-| Which Chrome belongs to the app | `$XDG_RUNTIME_DIR/apple-music/engine.json` (the development build keeps it in its profile) |
 | Settings | GSettings, `io.github.jackicus.AppleMusic` |
 
-The development build (`-Dprofile=development`) has its own app ID, Chrome profile and DevTools
-port, so it runs beside a release build. It shares the release build's cache and settings,
-the signed-in state included.
+Nothing records which Chrome is the app's: Chrome's own lock in the profile (`SingletonLock`)
+names the process that holds it.
+
+The development build (`-Dprofile=development`) has its own app ID, Chrome profile and cache,
+so it runs beside a release build. It shares the release build's settings, the signed-in state
+included.
 
 ## Further reading
 

@@ -20,9 +20,13 @@ paths:
   test, `pump()`/`wait_for()` for the main loop, and under a second per test. They must pass on
   CI's Xvfb with the cairo renderer and no accessibility bus.
 - Tests never start Chrome, touch the real profile or cache, or reach the network: point
-  `APPLE_MUSIC_CACHE` (and `APPLE_MUSIC_PROFILE`) at a temporary directory. The engine tests use
-  a sleeping Python process as Chrome and test_client.py's fake DevTools page; they still look a
-  Chrome binary up on PATH, which is why CI installs a stub.
+  `APPLE_MUSIC_CACHE` (and `APPLE_MUSIC_PROFILE`) at a temporary directory. test_engine.py runs
+  on gi.events' `GLibEventLoop` (`loop_factory`), as the app does, with `chrome.find_chrome`
+  patched to a script that runs `tests/fake_chrome_relay.py` through the real `Engine._spawn`:
+  it relays the DevTools pipe to test_client.py's `FakeBrowser` over a Unix socket and lives and
+  dies as Chrome would (`FAKE_CHROME_MODE` `stubborn` or `exit:N`). test_client.py drives
+  `PipeFakeChrome` (two pipes) and `FakeChrome` (a WebSocket, the attach); test_am_cli.py runs
+  am.py's commands against the engine fixture. No test looks for a real Chrome, so CI has none.
 - Fixtures (`tests/fixtures/`) and anything a test writes are invented: no real titles, names
   or IDs.
 - Some tests guard project rules rather than behaviour: test_build_lists (install, blueprint,
