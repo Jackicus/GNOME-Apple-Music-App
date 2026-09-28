@@ -15,6 +15,7 @@ from gettext import gettext as _
 from gi.repository import Adw, Gtk
 
 from ..backend.errors import EngineError
+from ..widgets.util import connect_weak
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ class SignInDialog(Adw.Dialog):
         self._app = app
         self._task = None
         self._closed = False
+        # Weakly (widgets/util.py): a bound method would keep every closed dialog alive.
+        connect_weak(self.cancel_button, 'clicked', self._on_cancel_clicked)
         self.connect('closed', self._on_closed)
 
     def present(self, parent=None):
@@ -78,8 +81,7 @@ class SignInDialog(Adw.Dialog):
         if not self._closed:
             self.close()
 
-    @Gtk.Template.Callback()
-    def on_cancel_clicked(self, _button):
+    def _on_cancel_clicked(self, _button):
         self._cancel()
 
     def _on_closed(self, _dialog):

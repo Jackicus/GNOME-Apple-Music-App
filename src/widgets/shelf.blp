@@ -44,7 +44,6 @@ template $AppleMusicShelf: Box {
       label: _("See All");
       valign: center;
       visible: false;
-      clicked => $on_see_all_clicked();
 
       styles [
         "flat",
@@ -56,18 +55,12 @@ template $AppleMusicShelf: Box {
     hscrollbar-policy: automatic;
     vscrollbar-policy: never;
 
-    // Recycled like the grids: a Gtk.ListView as the scrolled window's own child.
+    // Recycled like the grids: a Gtk.ListView as the scrolled window's own child. Its
+    // factory and handlers are shelf.py's, connected weakly.
     child: ListView list_view {
       orientation: horizontal;
       single-click-activate: true;
       tab-behavior: item;
-      activate => $on_activate();
-
-      factory: SignalListItemFactory {
-        setup => $on_setup();
-        bind => $on_bind();
-        unbind => $on_unbind();
-      };
 
       styles [
         "shelf-list",

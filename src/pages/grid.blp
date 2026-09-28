@@ -11,7 +11,6 @@ template $AppleMusicGridPage: Adw.NavigationPage {
       DropDown sort_dropdown {
         tooltip-text: _("Sort By");
         visible: false;
-        notify::selected => $on_sort_selected();
       }
     }
 
@@ -38,10 +37,9 @@ template $AppleMusicGridPage: Adw.NavigationPage {
         // The title scrolls with the grid. A Gtk.GridView only recycles its tiles as the
         // scrollable child of a Gtk.ScrolledWindow, so the title cannot sit above it in a box
         // in the same scrolled window: it is laid over the grid's top padding (style.css) and
-        // moved up as the grid scrolls (on_title_position).
+        // moved up as the grid scrolls (_on_title_position).
         child: Overlay overlay {
           overflow: hidden;
-          get-child-position => $on_title_position();
 
           child: ScrolledWindow scrolled_window {
             hscrollbar-policy: never;
@@ -51,7 +49,6 @@ template $AppleMusicGridPage: Adw.NavigationPage {
               max-columns: 12;
               single-click-activate: true;
               tab-behavior: item;
-              activate => $on_activate();
 
               styles [
                 "tile-grid",

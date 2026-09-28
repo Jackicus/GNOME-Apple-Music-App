@@ -22,6 +22,7 @@ from ..backend import config
 from ..backend.errors import EngineError
 from ..engine import cache_size, engine_paths
 from ..sync import INTERVALS, interval_index, last_sync_text
+from ..widgets.util import connect_weak
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +88,12 @@ class PreferencesDialog(Adw.PreferencesDialog):
             (engine, engine.connect('notify::authorized', self._update_engine)),
             (engine, engine.connect('notify::headless', self._update_engine)),
         ]
-        self.interval_row.connect('notify::selected', self._on_interval_selected)
+        # The dialog's own rows and buttons are connected weakly (widgets/util.py): a bound
+        # method would keep every closed dialog alive.
+        connect_weak(self.interval_row, 'notify::selected', self._on_interval_selected)
+        connect_weak(self.clear_button, 'clicked', self._on_clear_clicked)
+        connect_weak(self.engine_button, 'clicked', self._on_engine_clicked)
+        connect_weak(self.sign_out_row, 'activated', self._on_sign_out_activated)
         self.connect('closed', self._on_closed)
 
         self._update_interval()
@@ -136,8 +142,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         if not self._closed and not self._clearing:
             self.cache_row.set_subtitle(GLib.format_size(size) if size else _('Empty'))
 
-    @Gtk.Template.Callback()
-    def on_clear_clicked(self, _button):
+    def _on_clear_clicked(self, _button):
         if self._app.demo:
             self.add_toast(Adw.Toast(title=_('Not available with the demo library')))
             return
@@ -152,7 +157,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         dialog.set_response_appearance('clear', Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response('cancel')
         dialog.set_close_response('cancel')
-        dialog.connect('response', self._on_clear_response)
+        connect_weak(dialog, 'response', self._on_clear_response)
         dialog.present(self)
 
     def _on_clear_response(self, _dialog, response):
@@ -205,8 +210,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.engine_button.set_sensitive(
             not self._app.demo and not self._engine_busy and state in ('down', 'up'))
 
-    @Gtk.Template.Callback()
-    def on_engine_clicked(self, _button):
+    def _on_engine_clicked(self, _button):
         engine = self._engine
         if engine.state == 'down':
             command = engine.start()
@@ -244,8 +248,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
             subtitle = _('Applies the next time the engine starts')
         self.port_row.set_subtitle(subtitle)
 
-    @Gtk.Template.Callback()
-    def on_sign_out_activated(self, _row):
+    def _on_sign_out_activated(self, _row):
         self._app.activate_action('sign-out')  # asks first, over this dialog
 
     def _update_account(self, *_args):

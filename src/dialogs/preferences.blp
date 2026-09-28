@@ -49,7 +49,6 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
           label: _("C_lear");
           use-underline: true;
           valign: center;
-          clicked => $on_clear_clicked();
         }
       }
     }
@@ -72,7 +71,6 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
           label: _("_Start");
           use-underline: true;
           valign: center;
-          clicked => $on_engine_clicked();
         }
       }
     }
@@ -117,7 +115,6 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       Adw.ButtonRow sign_out_row {
         title: _("Sign _Out");
         use-underline: true;
-        activated => $on_sign_out_activated();
 
         styles [
           "destructive-action",

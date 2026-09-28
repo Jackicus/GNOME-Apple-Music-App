@@ -14,6 +14,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 from ..library import Item
 from ..widgets import context_menu
 from ..widgets.tile import Tile
+from ..widgets.util import connect_weak
 from . import mark_bound
 
 
@@ -126,25 +127,30 @@ class GridPage(Adw.NavigationPage):
         self._sorters = [SORTS[key][1]() for key in sorts]
         self._sorted = Gtk.SortListModel(
             model=self._model(), sorter=self._sorters[0] if self._sorters else None)
-        self._sorted.connect('items-changed', self._update_state)
+        # Every signal of a child or of an object the page holds is connected weakly
+        # (widgets/util.py): a bound method would keep the page alive once popped.
+        connect_weak(self._sorted, 'items-changed', self._update_state)
 
         factory = Gtk.SignalListItemFactory()
-        factory.connect('setup', self._on_setup)
-        factory.connect('bind', self._on_bind)
-        factory.connect('unbind', self._on_unbind)
+        connect_weak(factory, 'setup', self._on_setup)
+        connect_weak(factory, 'bind', self._on_bind)
+        connect_weak(factory, 'unbind', self._on_unbind)
         self.grid_view.set_factory(factory)
+        connect_weak(self.grid_view, 'activate', self._on_activate)
+        connect_weak(self.overlay, 'get-child-position', self._on_title_position)
         # Before the model: the grid makes tiles for max-columns columns until it has a
-        # width of its own (estimate_columns); on_title_position keeps it fitting after.
+        # width of its own (estimate_columns); _on_title_position keeps it fitting after.
         self._columns_idle = None
         self._set_columns(estimate_columns())
         self.grid_view.set_model(Gtk.NoSelection(model=self._sorted))
         context_menu.attach(self.grid_view)
         # After the grid has its model: setting the drop-down's selects its first choice,
-        # which scrolls the grid (on_sort_selected).
+        # which scrolls the grid (_on_sort_selected).
+        connect_weak(self.sort_dropdown, 'notify::selected', self._on_sort_selected)
         if len(sorts) > 1:
             self.sort_dropdown.set_model(Gtk.StringList.new([SORTS[key][0]() for key in sorts]))
 
-        self.scrolled_window.get_vadjustment().connect('value-changed', self._on_scrolled)
+        connect_weak(self.scrolled_window.get_vadjustment(), 'value-changed', self._on_scrolled)
         self._update_state()
 
     def _model(self):
@@ -207,8 +213,7 @@ class GridPage(Adw.NavigationPage):
     def _on_unbind(self, _factory, list_item):
         list_item.get_child().unbind()
 
-    @Gtk.Template.Callback()
-    def on_sort_selected(self, dropdown, _pspec):
+    def _on_sort_selected(self, dropdown, _pspec):
         position = dropdown.get_selected()
         if position < len(self._sorters):
             self._sorted.set_sorter(self._sorters[position])
@@ -217,8 +222,7 @@ class GridPage(Adw.NavigationPage):
             if self._sorted.get_n_items():
                 self.grid_view.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
 
-    @Gtk.Template.Callback()
-    def on_activate(self, _grid_view, position):
+    def _on_activate(self, _grid_view, position):
         item = self._sorted.get_item(position)
         if item is not None:
             self.get_root().open_item(item)
@@ -233,8 +237,7 @@ class GridPage(Adw.NavigationPage):
     def _title_height(self):
         return self.title_label.measure(Gtk.Orientation.VERTICAL, -1)[1]
 
-    @Gtk.Template.Callback()
-    def on_title_position(self, overlay, widget, allocation):
+    def _on_title_position(self, overlay, widget, allocation):
         """Place the title at the top of the overlay, as far up as the grid has scrolled.
 
         Called at each layout of the overlay, so also where the page learns its width: the
