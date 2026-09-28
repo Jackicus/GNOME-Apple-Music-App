@@ -1485,7 +1485,12 @@ def recommendation_shelves(raw_recs, cache_dir=None, art_urls=None):
 
 
 def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
-    """Group songs from /v1/me/library/songs?include=albums into albums and artists."""
+    """Group songs from /v1/me/library/songs?include=albums into albums and artists.
+
+    A song in no library album (a loose song) goes under a stand-in album the library makes
+    up (`l.alb_<hash of its album and artist names>`), which Apple has no resource for: it
+    plays its songs by id, {"kind": "songs", "id": "<song id>,<song id>…"} in its entries'
+    order, for the album and each of its groups, so a row's `index` starts at its song."""
     albums_map = {}
     for s in songs:
         s_attrs = s.get('attributes') or {}
@@ -1530,6 +1535,7 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
             albums_map[alb_id] = {
                 'album': alb_obj,
                 'songs': [],
+                'stand_in': not rel_albums,
             }
         albums_map[alb_id]['songs'].append(s)
 
@@ -1538,6 +1544,12 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
     for entry in albums_map.values():
         alb_norm = normalize_album(entry['album'], cache_dir=cache_dir, tracks=entry['songs'],
                                    art_urls=art_urls)
+        if entry['stand_in']:
+            song_ids = ','.join(track['id'] for group in alb_norm['groups']
+                                for track in group['entries'])
+            alb_norm['play'] = {'kind': 'songs', 'id': song_ids}
+            for group in alb_norm['groups']:
+                group['play'] = dict(alb_norm['play'])
         albums_list.append(alb_norm)
 
         art_name = alb_norm['subtitle']

@@ -302,16 +302,25 @@ class BridgeTest(unittest.TestCase):
         mk.apiAnswers['/v1/catalog/gb/artists/42/view/top-songs'] = {data: [{id: '1'}, {id: '2'}]};
         await bridge.play('artist', '42');
         await bridge.play('artist', '43');   // no top songs: the artist's station
-        return mk.calls.filter(call => call[0] === 'setQueue').map(call => call[1]);
+        await bridge.play('songs', 'i.a,i.b,i.c', {startWith: 1});   // a stand-in album
+        await bridge.playNext('songs', 'i.d,i.e');
+        await bridge.playLater('album', 'l.alb2');
+        await bridge.playNext('song', '1000000001');
+        return mk.calls.filter(call => ['setQueue', 'playNext', 'playLater'].includes(call[0]))
+            .map(call => [call[0], call[1]]);
     """)
     def test_play_queues_each_kind(self, value):
         self.assertEqual(value, [
-            {'startWith': 2, 'startPlaying': True, 'album': 'l.alb1'},
-            {'startWith': 0, 'startPlaying': True, 'playlist': 'p.pl1'},
-            {'startWith': 0, 'startPlaying': True, 'station': 'ra.1'},
-            {'startWith': 0, 'startPlaying': True, 'musicVideo': '1000000009'},
-            {'startWith': 0, 'startPlaying': True, 'songs': ['1', '2']},
-            {'startWith': 0, 'startPlaying': True, 'station': '43'},
+            ['setQueue', {'startWith': 2, 'startPlaying': True, 'album': 'l.alb1'}],
+            ['setQueue', {'startWith': 0, 'startPlaying': True, 'playlist': 'p.pl1'}],
+            ['setQueue', {'startWith': 0, 'startPlaying': True, 'station': 'ra.1'}],
+            ['setQueue', {'startWith': 0, 'startPlaying': True, 'musicVideo': '1000000009'}],
+            ['setQueue', {'startWith': 0, 'startPlaying': True, 'songs': ['1', '2']}],
+            ['setQueue', {'startWith': 0, 'startPlaying': True, 'station': '43'}],
+            ['setQueue', {'startWith': 1, 'startPlaying': True, 'songs': ['i.a', 'i.b', 'i.c']}],
+            ['playNext', {'songs': ['i.d', 'i.e']}],
+            ['playLater', {'album': 'l.alb2'}],
+            ['playNext', {'song': '1000000001'}],
         ])
 
     @scenario("""

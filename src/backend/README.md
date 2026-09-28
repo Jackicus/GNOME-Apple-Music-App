@@ -82,7 +82,7 @@ from `config.py`; the app's own GSettings keys arrived with the Engine
 | `status` | `{engine, authorized, storefront, bitrate}` |
 | `sync [--only albums\|artists\|playlists\|radio\|shelves]` | Fetches the missing artwork in threads at the `cover-size`/`thumb-size` settings, then writes library.json once (atomically: a temporary file renamed over it), then prunes: the artwork nothing names, and `remote-art/` to a budget. `{counts, generated}` |
 | `item <kind> <id>` | One full item with its `groups`, for a shelf or search result picked on demand; fetches its artwork too |
-| `play <kind> <id> [--start-with N] [--shuffle]` | `{ok: true}`. kind ∈ `album playlist station song musicVideo artist`. The bridge's `play(kind, id, {startWith, shuffle})`: shuffle `true` turns MusicKit's shuffle on, `false` off (a Play button plays in order), `null` leaves it (a track row); MusicKit refusing answers `{error, code}` (the Engine raises `EngineError('api')` with `musickit_code`) |
+| `play <kind> <id> [--start-with N] [--shuffle]` | `{ok: true}`. kind ∈ `album playlist station song musicVideo artist songs` (`songs`: song ids joined by commas, a stand-in album's). The bridge's `play(kind, id, {startWith, shuffle})`: shuffle `true` turns MusicKit's shuffle on, `false` off (a Play button plays in order), `null` leaves it (a track row); MusicKit refusing answers `{error, code}` (the Engine raises `EngineError('api')` with `musickit_code`) |
 | `play-next <kind> <id>`, `play-later <kind> <id>` | `{ok: true}` |
 | `control play\|pause\|toggle\|next\|previous\|stop`, `seek <sec>` | `{ok: true}` |
 | `volume <0..1>` | `{volume}` — the level as MusicKit has it after the set. It is the engine's own, not the system's; Apple's page keeps it across restarts, and a nought is a mute |
@@ -148,8 +148,10 @@ stays 1; the demo library has the first two):
 ```jsonc
 {
   "sections": {…, "songs": [Track],            // the loose songs: in no library album (each
-                                               // is also under a stand-in album); the Songs
-                                               // page merges them by id after the albums'
+                                               // is also under a stand-in album, `l.alb_…`,
+                                               // which plays {"kind": "songs", "id":
+                                               // "<id>,<id>…"}); the Songs page merges them
+                                               // by id after the albums'
                "videos": [Item]},              // kind "video", play {"kind": "musicVideo"},
                                                // "durationMs" its length
   "folders": [{"id": "root", "title": "", "parent": null,      // Apple's p.playlistsroot
