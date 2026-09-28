@@ -7,11 +7,12 @@ and the Songs store are wrapped only when first asked for. SongOrder sorts the S
 GLib, GObject and Gio only, no GTK, so the model works in tests without a display.
 
 Besides the README's shape, library.json may hold `folders`, the user's playlist folders (an
-optional key, like `sections.songs` and `sections.videos`; the demo and the sync write it): a
+optional key, like `sections.videos`; the demo and the sync write it): a
 list of {id, title, parent, children}, `parent` a folder id or null and `children` a list of
 {kind: "folder" | "playlist", id} in Apple's order. The entry with id "root" lists what is in
-no folder. PlaylistTree reads it. `sections.songs` holds Track dicts: the library's loose songs,
-which the Songs store takes after the albums' tracks, by id. `sections.videos` holds Items of
+no folder. PlaylistTree reads it. `sections.songs`, which only older syncs wrote, holds Track
+dicts: the library's loose songs, which the Songs store takes after the albums' tracks, by id
+(the sync now leaves them under their stand-in albums only). `sections.videos` holds Items of
 kind 'video'.
 
 load() makes new objects for everything; reload() (after a sync) reads the file again and brings
@@ -86,7 +87,7 @@ def N_(text):
 
 
 # Home's shelves of the library's own are titled by key, in the app's language: the sync
-# writes English titles into library.json (which older versions show).
+# writes no title for them (older versions wrote English ones, which nothing shows now).
 FIXED_SHELF_TITLES = {
     # Translators: a shelf on the Home page, as Apple Music names it: the albums,
     # playlists and stations played most lately.

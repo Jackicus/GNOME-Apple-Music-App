@@ -85,7 +85,10 @@ them before changing either. What matters most:
   through the engine only, normalises in a thread with `backend.normalize`'s pure functions,
   fetches missing thumbnails (covers are fetched on demand by the pages that show them), writes
   library.json atomically, prunes, then `reload()`s. A failed optional section keeps last
-  time's entry; a failed songs or playlists listing, or a lost engine, fails the sync.
+  time's entry (a playlist whose tracks failed keeps last time's tracks under its fresh
+  listing, or gets `groups: []` for its page to fetch), read from library.json only then; a
+  404 for a playlist's tracks or a folder's children means none; a failed songs or playlists
+  listing, or a lost engine, fails the sync. It writes no words (shelf titles included).
 - When to sync: `LibrarySync.schedule()` (not in demo mode) starts one when `due()` (the
   last sync older than `sync-interval`, or `library_ok()` false: library.json missing,
   unreadable or older than `LIBRARY_VERSION`, whatever the interval) and it can run without

@@ -11,9 +11,15 @@ the music videos, the recently played radio stations and the Home shelves (Apple
 recommendations, Heavy Rotation, Recently Added); normalises them with the backend's pure
 functions in a thread; fetches the thumbnails that are missing (covers are fetched on demand
 by the pages that show them: widgets.artwork.Artwork.fetch_cover); writes library.json
-atomically; prunes the artwork nothing names; and finally has the
-Library reload() itself in place. `progress(section, done, total)` is called as it goes
-(section one of PROGRESS_SECTIONS; total None until known). Every failure is an EngineError.
+atomically; prunes the artwork nothing names and the caches that only grow; and finally has
+the Library reload() itself in place. `progress(section, done, total)` is called as it goes
+(section one of PROGRESS_SECTIONS; total None until known). The songs and playlists listings
+must be fetched; anything else that fails keeps last time's entry (a playlist's tracks
+included: its listing is still the fresh one), read from library.json only then. Apple's 404
+for a playlist's tracks or a folder's children means there are none. A failure is an
+EngineError; a sync cancelled, or whose cache was wiped under it, raises store.Cancelled.
+The listings are read with `unique` (api_pages): an item met twice while the library changed
+under the read is kept once.
 
 What the web player asks for, found by watching its requests (2026-09-28):
 
@@ -46,7 +52,6 @@ last_sync_text() saying how long ago the last one was.
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import time
@@ -63,7 +68,7 @@ from gi.repository import GdkPixbuf, GLib, GObject  # noqa: E402
 from .backend import config  # noqa: E402
 from .backend import normalize, store  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
-from .library import EDITABLE, FAVOURITES, ROOT_FOLDER  # noqa: E402
+from .library import EDITABLE, FAVOURITES, ROOT_FOLDER, parse  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -78,17 +83,18 @@ RADIO_ENDPOINT = '/v1/me/recent/radio-stations'
 RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
 APPLE_ROOT_FOLDER = 'p.playlistsroot'
 FAVOURITE_TAG = 'favorited'
-PLAYLIST_PARAMS = {'extend': 'tags,hasCollaboration'}
+PLAYLIST_PARAMS = {'extend': 'tags'}
 FOLDER_PARAMS = {'omit[resource]': 'autos', 'platform': 'web'}
 PAGE = 100
 PLAYLIST_CONCURRENCY = 4   # playlists whose tracks are fetched at once
 FOLDER_TYPE = 'library-playlist-folders'
 PLAYLIST_TYPE = 'library-playlists'
-# The fixed shelves after Apple's recommendations: (key, title, endpoint, page size, at most).
-# Each endpoint has a page cap of its own (a bigger `limit` is a 400, not a clamp).
+# The fixed shelves after Apple's recommendations: (key, endpoint, page size, at most), titled
+# by the app (library.FIXED_SHELF_TITLES). Each endpoint has a page cap of its own (a bigger
+# `limit` is a 400, not a clamp).
 SHELF_DEFS = (
-    ('heavy-rotation', 'Heavy Rotation', '/v1/me/history/heavy-rotation', 10, 10),
-    ('recently-added', 'Recently Added', '/v1/me/library/recently-added', 25, 100),
+    ('heavy-rotation', '/v1/me/history/heavy-rotation', 10, 10),
+    ('recently-added', '/v1/me/library/recently-added', 25, 100),
 )
 
 
@@ -202,7 +208,7 @@ def install_scaler():
 
 async def sync_library(engine, library, progress=None):
     """The whole sync (see the module). Returns the counts: {albums, artists, playlists,
-    songs, videos, radio, folders, shelves, art: {wanted, fetched, failed}}."""
+    loose, videos, radio, folders, shelves, art: {wanted, fetched, failed}}."""
     report = progress or (lambda section, done, total: None)
     generation = store.cache_generation()  # a wipe from here on leaves this sync's files out
     status = await engine.status()
@@ -210,49 +216,47 @@ async def sync_library(engine, library, progress=None):
         raise EngineError('not-signed-in', 'sign in to Apple Music to sync your library')
     storefront = str(status.get('storefront') or 'us')
     cache_dir = str(config.cache_dir())
-    # The sizes this sync builds at, before anything names a file (a changed thumbnail size
-    # wipes the old thumbnails), and what library.json holds now: a fetch that fails keeps
-    # its old entry rather than emptying its section.
-    await asyncio.to_thread(normalize.apply_art_sizes, cache_dir, config.COVER_SIZE,
-                            config.THUMB_SIZE, generation)
-    previous = await asyncio.to_thread(_previous_library, cache_dir)
-    old_sections = previous.get('sections') if isinstance(previous.get('sections'), dict) else {}
-    old_shelves = [shelf for shelf in previous.get('shelves') or [] if isinstance(shelf, dict)]
+    # The sizes this sync builds at, before anything names a file (the URLs carry them). The
+    # marker, and the wipe of the thumbnails a changed size needs, wait for the artwork step:
+    # a sync that fails before it keeps the thumbnails there are.
+    normalize.ART_SIZES.update(normalize.wanted_art_sizes(config.COVER_SIZE, config.THUMB_SIZE))
+    raw = {}  # Apple's answers, for the build, which lets go of them once they are used
 
     # 1. The songs, each with its album: the Albums and Artists sections come from them.
     report('songs', 0, None)
-    raw_songs = await engine.api_pages(
-        SONGS_ENDPOINT, {'include': 'albums'}, page=PAGE,
+    raw['songs'] = await engine.api_pages(
+        SONGS_ENDPOINT, {'include': 'albums'}, page=PAGE, unique=True,
         progress=lambda done, total: report('songs', done, total))
 
     # 2. The playlists, then each one's tracks (a few at a time).
     report('playlists', 0, None)
-    raw_playlists = await engine.api_pages(PLAYLISTS_ENDPOINT, PLAYLIST_PARAMS, page=PAGE)
-    playlist_tracks = await _fetch_playlist_tracks(engine, raw_playlists, report)
+    raw['playlists'] = await engine.api_pages(PLAYLISTS_ENDPOINT, PLAYLIST_PARAMS, page=PAGE,
+                                              unique=True)
+    raw['tracks'] = await _fetch_playlist_tracks(engine, raw['playlists'], report)
 
     # 3. The playlist folders; 4. the music videos; 5. the stations; 6. the shelves. None of
-    # these stops the sync: what fails keeps last time's entry.
+    # these stops the sync: what fails is None here, and keeps last time's entry.
     try:
-        folders = await _fetch_folders(engine, report)
+        raw['folders'] = await _fetch_folders(engine, report)
     except EngineError as error:
         _keep_going(error)
-        folders = [entry for entry in previous.get('folders') or [] if isinstance(entry, dict)]
+        raw['folders'] = None
     report('videos', 0, None)
     try:
-        raw_videos = await engine.api_pages(
-            VIDEOS_ENDPOINT, page=PAGE,
+        raw['videos'] = await engine.api_pages(
+            VIDEOS_ENDPOINT, page=PAGE, unique=True,
             progress=lambda done, total: report('videos', done, total))
     except EngineError as error:
         _keep_going(error)
-        raw_videos = None
+        raw['videos'] = None
     report('radio', 0, 1)
     try:
-        raw_stations = (await engine.api(RADIO_ENDPOINT)).get('data') or []
+        raw['stations'] = (await engine.api(RADIO_ENDPOINT)).get('data') or []
     except EngineError as error:
         _keep_going(error)
-        raw_stations = None
+        raw['stations'] = None
     report('radio', 1, 1)
-    shelves_raw = await _fetch_shelves(engine, report)
+    raw['shelves'] = await _fetch_shelves(engine, report)
 
     # 7. Everything into the Item shapes, the missing thumbnails fetched, the file written and
     # the caches pruned: all in a thread, the artwork's progress relayed to this loop. The
@@ -265,9 +269,9 @@ async def sync_library(engine, library, progress=None):
         loop.call_soon_threadsafe(report, 'artwork', done, total)
 
     build = asyncio.ensure_future(asyncio.to_thread(
-        _build_and_write, cache_dir, storefront, raw_songs, raw_playlists, playlist_tracks,
-        folders, raw_videos, raw_stations, shelves_raw, old_sections, old_shelves,
-        art_progress, lambda: stop['cancelled'], generation))
+        _build_and_write, cache_dir, storefront, raw, art_progress,
+        lambda: stop['cancelled'], generation))
+    del raw  # the build's now
     try:
         await asyncio.wait([build])  # cancelling this wait leaves the build running
     except asyncio.CancelledError:
@@ -300,7 +304,8 @@ def _keep_going(error):
 
 async def _fetch_playlist_tracks(engine, raw_playlists, report):
     """{playlist id: its raw tracks, or None when they could not be fetched}, a few playlists
-    at a time; progress per playlist done."""
+    at a time; progress per playlist done. Apple answers 404 for a playlist with no songs:
+    that is an empty list."""
     tracks = {}
     total = len(raw_playlists)
     done = 0
@@ -314,8 +319,11 @@ async def _fetch_playlist_tracks(engine, raw_playlists, report):
                 answer = await engine.api_pages(f'{PLAYLISTS_ENDPOINT}/{playlist_id}/tracks',
                                                 page=PAGE)
             except EngineError as error:
-                _keep_going(error)
-                answer = None
+                if error.status == 404:
+                    answer = []
+                else:
+                    _keep_going(error)
+                    answer = None
         tracks[playlist_id] = answer
         done += 1
         report('playlists', done, total)
@@ -327,20 +335,33 @@ async def _fetch_playlist_tracks(engine, raw_playlists, report):
 
 async def _fetch_folders(engine, report):
     """library.json's `folders` from Apple's playlist folders: the root's children, then each
-    folder's, breadth first, in Apple's order. Apple's root is called ROOT_FOLDER here."""
+    folder's, breadth first, in Apple's order. Apple's root is called ROOT_FOLDER here. A
+    folder answering 404 has nothing in it; one listed again (in a folder of its own) is left
+    out the second time, so the tree stays a tree."""
     folders = []
+    seen = {APPLE_ROOT_FOLDER}
     queue = [(APPLE_ROOT_FOLDER, None, '')]
     report('folders', 0, None)
     while queue:
         apple_id, parent, title = queue.pop(0)
-        children = await engine.api_pages(f'{FOLDERS_ENDPOINT}/{apple_id}/children',
-                                          FOLDER_PARAMS, page=PAGE)
+        try:
+            children = await engine.api_pages(f'{FOLDERS_ENDPOINT}/{apple_id}/children',
+                                              FOLDER_PARAMS, page=PAGE, unique=True)
+        except EngineError as error:
+            if error.status != 404:
+                raise
+            children = []
         entry = {'id': _folder_id(apple_id), 'title': title, 'parent': parent, 'children': []}
         for child in children:
             child_id = str(child.get('id') or '')
             if not child_id:
                 continue
             if child.get('type') == FOLDER_TYPE:
+                if child_id in seen:
+                    log.warning('sync: a playlist folder is listed twice (in a folder of its '
+                                'own?); left out the second time')
+                    continue
+                seen.add(child_id)
                 entry['children'].append({'kind': 'folder', 'id': _folder_id(child_id)})
                 name = (child.get('attributes') or {}).get('name') or ''
                 queue.append((child_id, entry['id'], str(name)))
@@ -368,7 +389,7 @@ async def _fetch_shelves(engine, report):
         recommendations = None
     report('shelves', 1, total)
     fixed = {}
-    for number, (key, _title, endpoint, page, limit) in enumerate(SHELF_DEFS, 2):
+    for number, (key, endpoint, page, limit) in enumerate(SHELF_DEFS, 2):
         try:
             fixed[key] = await engine.api_pages(endpoint, page=page, limit=limit)
         except EngineError as error:
@@ -378,63 +399,34 @@ async def _fetch_shelves(engine, report):
     return {'recommendations': recommendations, 'fixed': fixed}
 
 
-def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_tracks, folders,
-                     raw_videos, raw_stations, shelves_raw, old_sections, old_shelves,
-                     art_progress, cancelled, generation=None):
-    """In a thread: normalise, fetch the missing thumbnails, write library.json, prune."""
+def _build_and_write(cache_dir, storefront, raw, art_progress, cancelled, generation=None):
+    """In a thread: normalise Apple's answers (`raw`, emptied once used), fetch the missing
+    thumbnails, write library.json, prune. What could not be fetched (None in `raw`) keeps
+    last time's entry, read from library.json only then."""
     counts = {}
     art_urls = {}  # every artwork path named here, and its URL
-    albums, artists = normalize.group_songs_into_albums_and_artists(raw_songs, cache_dir,
+    previous = _Previous(cache_dir)
+    albums, artists = normalize.group_songs_into_albums_and_artists(raw['songs'], cache_dir,
                                                                     art_urls)
     sections = {'albums': albums, 'artists': artists}
-    sections['songs'] = loose_songs(raw_songs, cache_dir, art_urls)
-
-    old_playlists = {entry.get('id'): entry for entry in old_sections.get('playlists') or []
-                     if isinstance(entry, dict)}
-    playlists = []
-    for raw in raw_playlists:
-        playlist_id = str(raw.get('id') or '')
-        tracks = playlist_tracks.get(playlist_id)
-        if tracks is None:
-            old = old_playlists.get(playlist_id)
-            if old and old.get('groups'):
-                playlists.append(old)  # its tracks from last time, not an empty playlist
-                continue
-            tracks = []
-        item = normalize.normalize_playlist(raw, cache_dir, tracks=tracks, art_urls=art_urls)
-        flag_favourites(item, raw)
-        playlists.append(item)
-    sections['playlists'] = playlists
-
-    if raw_videos is None:
-        sections['videos'] = old_sections.get('videos') or []
+    counts['loose'] = loose_count(raw['songs'])
+    sections['playlists'] = _playlists(raw['playlists'], raw['tracks'], cache_dir, art_urls,
+                                       previous)
+    if raw['videos'] is None:
+        sections['videos'] = previous.section('videos')
     else:
-        sections['videos'] = [normalize.normalize_item(raw, cache_dir, include_groups=False,
+        sections['videos'] = [normalize.normalize_item(item, cache_dir, include_groups=False,
                                                        art_urls=art_urls)
-                              for raw in raw_videos]
-    if raw_stations is None:
-        sections['radio'] = old_sections.get('radio') or []
+                              for item in raw['videos']]
+    if raw['stations'] is None:
+        sections['radio'] = previous.section('radio')
     else:
-        sections['radio'] = [normalize.normalize_station(raw, cache_dir, art_urls=art_urls)
-                             for raw in raw_stations]
-
-    shelves = []
-    if shelves_raw['recommendations'] is None:
-        shelves.extend(shelf for shelf in old_shelves
-                       if str(shelf.get('key', '')).startswith('rec-'))
-    else:
-        shelves.extend(normalize.recommendation_shelves(shelves_raw['recommendations'],
-                                                        cache_dir, art_urls))
-    for key, title, _endpoint, _page, _limit in SHELF_DEFS:
-        raw_items = shelves_raw['fixed'].get(key)
-        if raw_items is None:
-            items = next((shelf.get('items') or [] for shelf in old_shelves
-                          if shelf.get('key') == key), [])
-        else:
-            items = [normalize.normalize_item(raw, cache_dir, include_groups=False,
-                                              art_urls=art_urls)
-                     for raw in raw_items]
-        shelves.append({'key': key, 'title': title, 'items': items})
+        sections['radio'] = [normalize.normalize_station(item, cache_dir, art_urls=art_urls)
+                             for item in raw['stations']]
+    shelves = _shelves(raw['shelves'], cache_dir, art_urls, previous)
+    folders = raw['folders'] if raw['folders'] is not None else previous.folders()
+    raw.clear()  # the answers are not needed for the long artwork step
+    previous.forget()
 
     library_data = {
         'version': LIBRARY_VERSION,
@@ -445,13 +437,16 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
         'folders': folders,
     }
     add_art_urls(library_data, art_urls)
-    for name in ('albums', 'artists', 'playlists', 'songs', 'videos', 'radio'):
+    for name in ('albums', 'artists', 'playlists', 'videos', 'radio'):
         counts[name] = len(sections[name])
     counts['folders'] = max(0, len(folders) - 1)  # the root is not a folder of the user's
     counts['shelves'] = sum(len(shelf['items']) for shelf in shelves)
 
     # The thumbnails first, and the listing only once they are on disk, so tiles never show
     # placeholders for artwork that is about to arrive. A failure is logged, nothing more.
+    # The sizes' marker is written now: a changed thumbnail size wipes thumb/ here, not before.
+    _stop_if(cancelled, generation, cache_dir)
+    normalize.apply_art_sizes(cache_dir, config.COVER_SIZE, config.THUMB_SIZE, generation)
     try:
         counts['art'] = normalize.download_art(thumb_urls(library_data, cache_dir, art_urls),
                                                cache_dir,
@@ -469,9 +464,102 @@ def _build_and_write(cache_dir, storefront, raw_songs, raw_playlists, playlist_t
     normalize.prune_art(library_data, cache_dir)
     normalize.prune_caches(cache_dir)
     log.info('library synced: %s', ', '.join(
-        f'{counts[name]} {name}' for name in ('albums', 'artists', 'playlists', 'songs',
-                                               'videos', 'radio', 'folders')))
+        f'{counts[name]} {label}' for name, label in (
+            ('albums', 'albums'), ('artists', 'artists'), ('playlists', 'playlists'),
+            ('loose', 'loose songs'), ('videos', 'videos'), ('radio', 'stations'),
+            ('folders', 'folders'))))
     return counts
+
+
+def _playlists(raw_playlists, playlist_tracks, cache_dir, art_urls, previous):
+    """The playlist Items, each from the listing just fetched (its title, artwork, tags). One
+    whose tracks could not be fetched keeps last time's tracks and counts, or, new since,
+    has no groups yet, which its page fetches when it is shown: never an empty list that
+    would read as an empty playlist."""
+    playlists = []
+    for raw in raw_playlists:
+        playlist_id = str(raw.get('id') or '')
+        tracks = playlist_tracks.get(playlist_id)
+        item = normalize.normalize_playlist(raw, cache_dir, tracks=tracks or [],
+                                            art_urls=art_urls)
+        flag_favourites(item, raw)
+        if tracks is None:
+            old = previous.playlist(playlist_id)
+            if old is not None and old.get('groups'):
+                item['groups'] = old['groups']
+                counted = old
+            else:
+                item['groups'] = []
+                counted = {'trackCount': (raw.get('attributes') or {}).get('trackCount')}
+            for key in ('trackCount', 'durationMs', 'countLabel'):
+                if counted.get(key) is not None:
+                    item[key] = counted[key]
+                else:
+                    item.pop(key, None)
+        playlists.append(item)
+    return playlists
+
+
+def _shelves(shelves_raw, cache_dir, art_urls, previous):
+    """The Home shelves: Apple's recommendations, then the fixed shelves (SHELF_DEFS), each
+    keeping last time's when it could not be fetched. The app titles them by key."""
+    shelves = []
+    if shelves_raw['recommendations'] is None:
+        shelves.extend(shelf for shelf in previous.shelves()
+                       if str(shelf.get('key', '')).startswith('rec-'))
+    else:
+        shelves.extend(normalize.recommendation_shelves(shelves_raw['recommendations'],
+                                                        cache_dir, art_urls))
+    for key, _endpoint, _page, _limit in SHELF_DEFS:
+        raw_items = shelves_raw['fixed'].get(key)
+        if raw_items is None:
+            items = next((shelf.get('items') or [] for shelf in previous.shelves()
+                          if shelf.get('key') == key), [])
+        else:
+            items = [normalize.normalize_item(item, cache_dir, include_groups=False,
+                                              art_urls=art_urls)
+                     for item in raw_items]
+        shelves.append({'key': key, 'title': '', 'items': items})
+    return shelves
+
+
+class _Previous:
+    """Last time's library.json, read (in the build's thread, a list element at a time:
+    library.parse) only when something could not be fetched and falls back to it."""
+
+    def __init__(self, cache_dir):
+        self._path = os.path.join(cache_dir, 'library.json')
+        self._data = None
+        self._playlists = None
+
+    def _read(self):
+        if self._data is None:
+            try:
+                with open(self._path, encoding='utf-8') as file:
+                    data = parse(file.read())
+            except (OSError, ValueError, RecursionError):
+                data = {}
+            self._data = data if isinstance(data, dict) else {}
+        return self._data
+
+    def section(self, name):
+        sections = self._read().get('sections')
+        entries = sections.get(name) if isinstance(sections, dict) else None
+        return [entry for entry in entries or [] if isinstance(entry, dict)]
+
+    def shelves(self):
+        return [shelf for shelf in self._read().get('shelves') or [] if isinstance(shelf, dict)]
+
+    def folders(self):
+        return [entry for entry in self._read().get('folders') or [] if isinstance(entry, dict)]
+
+    def playlist(self, playlist_id):
+        if self._playlists is None:
+            self._playlists = {entry.get('id'): entry for entry in self.section('playlists')}
+        return self._playlists.get(playlist_id)
+
+    def forget(self):
+        self._data = self._playlists = None
 
 
 def _stop_if(cancelled, generation, cache_dir):
@@ -483,20 +571,12 @@ def _stop_if(cancelled, generation, cache_dir):
         raise normalize.Cancelled('sync')
 
 
-def loose_songs(raw_songs, cache_dir, art_urls=None):
-    """The Track dicts of the library's loose songs (sections.songs): the songs that belong
-    to no library album (their `albums` relationship is empty; the Albums section holds them
-    under a stand-in album), in the library's order. The Songs store merges them by id after
-    the albums' tracks, and plays each as a song."""
-    loose = []
-    for raw in raw_songs:
-        if not str(raw.get('id') or ''):
-            continue
-        albums = ((raw.get('relationships') or {}).get('albums') or {}).get('data')
-        if not albums:
-            loose.append(normalize.normalize_track(raw, index=0, cache_dir=cache_dir,
-                                                   art_urls=art_urls))
-    return loose
+def loose_count(raw_songs):
+    """How many of the library's songs are in no library album (their `albums` relationship
+    is empty): the Albums section holds each under a stand-in album, which plays its songs."""
+    return sum(1 for raw in raw_songs
+               if str(raw.get('id') or '')
+               and not ((raw.get('relationships') or {}).get('albums') or {}).get('data'))
 
 
 def flag_favourites(item, raw):
@@ -535,7 +615,7 @@ def thumb_urls(library_data, cache_dir, art_urls):
 def _every_item(library_data):
     for name, items in (library_data.get('sections') or {}).items():
         if name == 'songs':
-            continue  # Track dicts: their thumbnails are fetched, covers they have none
+            continue  # an older sync's Track dicts: thumbnails only
         for item in items:
             if isinstance(item, dict):
                 yield item
@@ -543,16 +623,6 @@ def _every_item(library_data):
         for item in shelf.get('items') or []:
             if isinstance(item, dict):
                 yield item
-
-
-def _previous_library(cache_dir):
-    """What library.json holds now, or {}."""
-    try:
-        with open(os.path.join(cache_dir, 'library.json'), encoding='utf-8') as file:
-            data = json.load(file)
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 # -- the app's sync ----------------------------------------------------------------------
