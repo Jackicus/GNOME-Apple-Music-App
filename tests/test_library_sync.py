@@ -396,12 +396,18 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
     async def test_the_timer_starts_nothing_while_the_engine_is_down(self):
         self.stamp(10)  # overdue at 6 hours
         self.sync.schedule()
+        self.assertEqual(self.timers.seconds(), [])  # nothing to look at with the engine down
+        self.engine.state = 'up'  # up, not yet authorized: the timer is set
         self.assertEqual(self.timers.seconds(), [app_sync.CHECK_MIN])
+        # The engine goes down just as the timer fires: nothing starts, not even Chrome.
+        self.engine.freeze_notify()
+        self.engine.state = 'down'
         self.timers.fire(app_sync.CHECK_MIN)
         await self.settle()
         self.assertEqual(self.runs, [])
-        self.assertEqual(self.engine.starts, 0)  # a timer never starts Chrome
-        self.assertEqual(self.timers.seconds(), [app_sync.CHECK_MIN])  # it looks again
+        self.assertEqual(self.engine.starts, 0)
+        self.engine.thaw_notify()
+        self.assertEqual(self.timers.seconds(), [])
 
     async def test_the_engine_coming_up_starts_one_sync_when_due(self):
         self.stamp(10)

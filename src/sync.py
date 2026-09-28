@@ -832,9 +832,9 @@ class LibrarySync(GObject.Object):
         app = self._app
         app.settings.connect('changed::sync-interval', self._arm)
         app.settings.connect('changed::' + app.account_key('last-sync'), self._arm)
-        app.engine.connect('notify::state', self.check)
-        app.engine.connect('notify::authorized', self.check)
-        app.library.connect('changed', self._on_library_changed)
+        app.engine.connect('notify::state', self._on_changed)
+        app.engine.connect('notify::authorized', self._on_changed)
+        app.library.connect('changed', self._on_changed)
         self._arm()
 
     def check(self, *_args):
@@ -857,7 +857,9 @@ class LibrarySync(GObject.Object):
         return (self._failed_at is not None
                 and self._clock() - self._failed_at < RETRY_DELAY)
 
-    def _on_library_changed(self, _library):
+    def _on_changed(self, *_args):
+        """The engine came up or went down, was signed in or out, or the library was read:
+        a sync if one is due now, and the timer set again."""
         self.check()
         self._arm()
 
@@ -865,13 +867,17 @@ class LibrarySync(GObject.Object):
         """The scheduler's next look: when the library will be due (next_sync_delay; at once
         for a library not to keep), no sooner than CHECK_MIN nor later than CHECK_MAX
         seconds from now, and not before a failed sync's RETRY_DELAY is over. None while the
-        interval is manual and the library fine."""
+        interval is manual and the library fine, and while the engine is not up or the
+        account not signed in (their change sets it again)."""
         if not self._scheduled:
             return
         if self._timer is not None:
             self._remove_timeout(self._timer)
             self._timer = None
         app = self._app
+        if (app.engine.state != 'up'
+                or not app.settings.get_boolean(app.account_key('signed-in'))):
+            return
         delay = next_sync_delay(app.settings.get_string(app.account_key('last-sync')),
                                 app.settings.get_int('sync-interval'))
         if not library_ok(app.library):
