@@ -6,6 +6,7 @@ No display needed: the model is GObject and Gio only, and load() runs under asyn
 import asyncio
 import gc
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -74,6 +75,25 @@ def folder(folder_id, children, parent=ROOT_FOLDER, title=None):
     return {'id': folder_id, 'title': title or folder_id, 'parent': parent,
             'children': [{'kind': 'folder', 'id': child[2:]} if child.startswith('f:')
                          else {'kind': 'playlist', 'id': child} for child in children]}
+
+
+def collation_order(tracks, column, descending=False):
+    """SongOrder's order as sorting by the keys themselves makes it: collation keys, numbers
+    and (disc, track) pairs, ties broken by SongOrder.TIES."""
+    def key(name, track):
+        raw = track.raw
+        if name == 'time':
+            return library_module._number(raw.get('durationMs'))
+        if name == 'track':
+            return (library_module._number(raw.get('discNumber')),
+                    library_module._number(raw.get('trackNumber')))
+        return library_module.collation_key(library_module._text(raw.get(name)) or '')
+
+    positions = list(range(len(tracks)))
+    for name in reversed(SongOrder.TIES[column]):
+        positions.sort(key=lambda position, name=name: key(name, tracks[position]))
+    positions.sort(key=lambda position: key(column, tracks[position]), reverse=descending)
+    return [tracks[position] for position in positions]
 
 
 def shape(tree):
@@ -189,6 +209,27 @@ class TestDemoLibrary(unittest.TestCase):
         # The same Track objects as the albums' own groups.
         first_album = self.library.albums.get_item(0)
         self.assertIs(songs.get_item(0), first_album.groups[0].entries.get_item(0))
+
+    def test_song_orders_are_the_collation_orders(self):
+        """Every SongOrder order, list for list, is the one sorting by the collation keys and
+        (disc, track) pairs themselves gives (SongOrder before it kept ranks), in the C
+        locale and in a real one."""
+        songs = list(build_songs(self.library))
+        collate = locale.setlocale(locale.LC_COLLATE)
+        self.addCleanup(locale.setlocale, locale.LC_COLLATE, collate)
+        for name in ('C', 'en_GB.UTF-8', 'en_US.UTF-8'):
+            try:
+                locale.setlocale(locale.LC_COLLATE, name)
+            except locale.Error:
+                continue  # not installed here
+            order = SongOrder(songs)
+            asyncio.run(order.prepare('title'))
+            for column in SongOrder.TIES:
+                for descending in (False, True):
+                    with self.subTest(locale=name, column=column, descending=descending):
+                        self.assertEqual(
+                            [t.id for t in order.tracks(column, descending)],
+                            [t.id for t in collation_order(songs, column, descending)])
 
     def test_favourite_songs(self):
         flagged = [raw['id'] for raw in self.data['sections']['playlists']
@@ -1224,10 +1265,16 @@ class TestSongOrder(unittest.TestCase):
 
         order = SongOrder(self.tracks)
         with mock.patch.object(SongOrder, 'STEP', 2), \
+                mock.patch.object(library_module, 'FRAME_BUDGET', 0), \
                 mock.patch.object(library_module, 'yield_to_frames', counting_yield):
             asyncio.run(order.prepare('title'))
         self.assertEqual(set(order._keys), {'title', 'artist', 'album', 'track'})
-        self.assertEqual(len(pauses), 4 * 2)  # 5 tracks in steps of 2: 2 pauses a key
+        # 5 tracks in steps of 2 (3 steps): the track numbers pause after each step; a text
+        # column after each step of collation and of ranks, after each sorted run of its
+        # distinct texts, and after each step of their merge.
+        distinct = {'title': 5, 'artist': 3, 'album': 3}
+        self.assertEqual(len(pauses), 3 + sum(3 + (count + 1) // 2 + count // 2 + 3
+                                              for count in distinct.values()))
         self.assertEqual([t.id for t in order.tracks('title')], self.ids('title'))
 
     def test_same_objects_and_repeatable(self):
