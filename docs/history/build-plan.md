@@ -1,3 +1,8 @@
+> **History, not instructions.** The plan this app was built from, one phase per
+> session, with the notes each phase left for the next. Finished on 2026-09-28 and not
+> maintained: CLAUDE.md, `.claude/rules/` and `docs/` describe the app as it is. The
+> reusable prompts at the end live on as skills in `.claude/skills/`.
+
 # Plan: Apple Music for GNOME
 
 One phase per Claude Code session. Paste the phase's prompt; `CLAUDE.md` is loaded automatically.
@@ -198,7 +203,7 @@ unchanged (backend has no UI strings).
 ```text
 Phase 2 of prompts.md: Vendor the backend. Read CLAUDE.md first.
 
-Source: /home/jackt/Projects/GNOME-Extensions/GNOME-Apple-Music-Library. Read its
+Source: the GNOME Shell extension's repository (GNOME-Apple-Music-Library). Read its
 src/backend/README.md fully (the command table, error codes, library.json/Item/Track shapes, the
 environment overrides). Copy: src/backend/{cdp.py,bridge.js,sync.py,am.py} to src/backend/;
 tests/{test_cdp.py,test_sync.py,test_demo_schema.py} and tests/fixtures/ to tests/;
@@ -2610,7 +2615,7 @@ the cause.
 
 ```text
 Refresh the vendored backend from
-/home/jackt/Projects/GNOME-Extensions/GNOME-Apple-Music-Library/src/backend. Read CLAUDE.md and
+the extension's src/backend. Read CLAUDE.md and
 the provenance list in src/backend/__init__.py first. Diff each vendored file against upstream,
 port upstream fixes that apply (cdp.py codec, sync.py normalisation, bridge.js calls) while
 keeping this app's edits (config.py, the event subscription, queueJump, the async client),
