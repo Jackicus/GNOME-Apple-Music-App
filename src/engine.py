@@ -65,6 +65,14 @@ when Chrome is spawned, so a change applies at the next start and a running Chro
 alone. APPLE_MUSIC_DEBUG_PORT, when set, also opens DevTools on that port of 127.0.0.1 for a
 developer's debug CLI to attach to, with a warning at every start. What the cache holds and
 how it is cleared is src/cache.py's.
+
+Chrome's session bus is the app's, or APPLE_MUSIC_HOST_SESSION_BUS when that is set
+(scripts/headless.sh sets it to the desktop's while the app runs on a private one): the
+keyring holding the key that encrypts the profile's cookies answers there. A start on a
+profile whose Local State records that key (chrome.profile_used_keyring) first checks that
+org.freedesktop.secrets is up on that bus, or comes up when asked, and is
+EngineError('no-keyring') otherwise, Chrome never spawned: without its key Chrome deletes the
+cookies it cannot decrypt, the sign-in among them.
 """
 
 import asyncio
@@ -94,6 +102,7 @@ CDP_TIMEOUT = 30.0        # a CDP call without a timeout of its own
 PROBE_TIMEOUT = 5.0       # after a call timed out: a page silent this long is wedged
 CLOSE_WAIT = 2.0          # Chrome closing on Browser.close, before SIGTERM
 STOP_GRACE = 5.0          # after SIGTERM, before SIGKILL
+KEYRING_WAIT = 5.0        # the keyring answering on Chrome's bus, or starting when asked
 SIGNIN_TIMEOUT = 600.0    # ten minutes to sign in
 SIGNIN_POLL = 2.0         # isAuthorized is polled this often while signing in
 API_RETRIES = 3           # tries of an API read that may pass another time (api.is_final)
@@ -245,6 +254,15 @@ async def _process_exit(process):
     a cancelled wait_async() raises GLib.Error, not CancelledError)."""
     try:
         await process.wait_async()
+    except GLib.Error:
+        pass
+
+
+def _connection_closed(connection, result):
+    """A D-Bus connection's close done (Gio.DBusConnection.close's callback): a failure to
+    close one the engine is finished with is nothing to report."""
+    try:
+        connection.close_finish(result)
     except GLib.Error:
         pass
 
@@ -417,6 +435,8 @@ class Engine(GObject.Object):
         except OSError as e:
             raise EngineError('engine-down',
                               f'could not prepare {self.profile_dir}: {e.strerror or e}') from e
+        host_bus = config.host_session_bus()
+        await self._check_keyring(host_bus)
         # A Chrome already on the profile (the debug CLI's, or one an app crash left behind)
         # would take the new one's arguments and let it exit at once.
         await self._end_owner()
@@ -428,7 +448,10 @@ class Engine(GObject.Object):
         argv = with_pdeathsig(
             chrome.chrome_args(binary, self.profile_dir, headless, debug_port=debug_port))
         log.debug('exec %s', chrome.describe_argv(argv))  # the profile's path left out
-        self._process, transport = self._spawn(argv, binary)
+        environment = chrome.chrome_environment(host_bus)
+        if environment:
+            log.debug("Chrome's session bus is APPLE_MUSIC_HOST_SESSION_BUS's")
+        self._process, transport = self._spawn(argv, binary, environment)
         self._pid = int(self._process.get_identifier())
         log.info('Chrome %d started %s', self._pid, 'headless' if headless else 'visible')
         client = self._client = CDPClient(timeout=CDP_TIMEOUT)
@@ -444,16 +467,86 @@ class Engine(GObject.Object):
         self._watch = asyncio.create_task(self._watch_connection(client), name='engine-watch')
         log.info('engine up: %s', 'authorized' if self.authorized else 'not signed in')
 
-    def _spawn(self, argv, name=None):
+    async def _check_keyring(self, host_bus):
+        """Before Chrome is spawned: nothing for a profile whose Local State does not record
+        the OS keyring's key (a fresh one, or one that never reached the keyring), else
+        EngineError('no-keyring') unless org.freedesktop.secrets is up on the session bus
+        Chrome will use (`host_bus`, or this process's own), or comes up when asked as Chrome
+        would ask, within KEYRING_WAIT seconds. Started on such a profile without its key,
+        Chrome encrypts with a fallback one and deletes the cookies it cannot decrypt: the
+        sign-in. Not in a Flatpak sandbox: Chrome is the host's, on the host's session."""
+        if chrome.in_flatpak():
+            return
+        if not await asyncio.to_thread(chrome.profile_used_keyring, self.profile_dir):
+            return
+        cancellable = Gio.Cancellable()
+        try:
+            reason = await asyncio.wait_for(self._secret_service(host_bus, cancellable),
+                                            KEYRING_WAIT)
+        except TimeoutError:
+            cancellable.cancel()
+            reason = f'{chrome.SECRETS_NAME} did not answer within {KEYRING_WAIT:g} s'
+        if reason is None:
+            return
+        where = 'APPLE_MUSIC_HOST_SESSION_BUS' if host_bus else "the app's session bus"
+        log.warning('not starting Chrome: %s on %s, and the profile is encrypted with the '
+                    "keyring's key, so Chrome would drop its sign-in", reason, where)
+        raise EngineError('no-keyring',
+                          f"{reason} on {where}: Chrome would drop the profile's sign-in")
+
+    @staticmethod
+    async def _secret_service(address, cancellable):
+        """None when org.freedesktop.secrets has an owner on the session bus at `address`
+        (None: this process's own), or is activatable there and comes up when asked; else
+        why not, in a few words. A connection of its own to an address, closed after."""
+        flags = (Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+                 | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION)
+        try:
+            if address:
+                connection = await Gio.DBusConnection.new_for_address(address, flags, None,
+                                                                      cancellable)
+            else:
+                connection = await Gio.bus_get(Gio.BusType.SESSION, cancellable)
+        except GLib.Error as e:
+            return f'no session bus for Chrome ({e.message})'
+
+        async def bus_call(method, parameters, reply_type):
+            answer = await connection.call(
+                'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                method, parameters, GLib.VariantType(reply_type), Gio.DBusCallFlags.NONE,
+                int(KEYRING_WAIT * 1000), cancellable)
+            return answer.unpack()[0]
+
+        name = chrome.SECRETS_NAME
+        try:
+            if await bus_call('NameHasOwner', GLib.Variant('(s)', (name,)), '(b)'):
+                return None
+            if name not in await bus_call('ListActivatableNames', None, '(as)'):
+                return f'no {name} (no keyring service)'
+            try:
+                await bus_call('StartServiceByName', GLib.Variant('(su)', (name, 0)), '(u)')
+            except GLib.Error as e:
+                return f'{name} did not start: {e.message}'
+            return None
+        except GLib.Error as e:
+            return f'the session bus did not answer: {e.message}'
+        finally:
+            if address:
+                connection.close(None, _connection_closed)
+
+    def _spawn(self, argv, name=None, environment=None):
         """Chrome as a Gio.Subprocess, the DevTools pipe on its descriptors 3 (it reads) and 4
         (it writes); its output silenced, or its stderr relayed to the log when that is at
-        DEBUG. Answers the process and the PipeTransport over this end of the pipe."""
+        DEBUG; `environment`'s variables set over this process's (chrome.chrome_environment).
+        Answers the process and the PipeTransport over this end of the pipe."""
         debug = log.isEnabledFor(logging.DEBUG)
         flags = Gio.SubprocessFlags.STDOUT_SILENCE | (
             Gio.SubprocessFlags.STDERR_PIPE if debug else Gio.SubprocessFlags.STDERR_SILENCE)
         commands, chrome_in = os.pipe()     # Chrome reads commands on its 3
         chrome_out, answers = os.pipe()     # and writes answers and events on its 4
         launcher = Gio.SubprocessLauncher.new(flags)
+        for variable, value in (environment or {}).items():
+            launcher.setenv(variable, value, True)
         launcher.take_fd(commands, 3)
         launcher.take_fd(answers, 4)
         try:

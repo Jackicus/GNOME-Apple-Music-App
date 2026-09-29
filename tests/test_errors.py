@@ -20,6 +20,9 @@ class ErrorMessageTest(unittest.TestCase):
             'app.show-engine-preferences'))
         self.assertEqual(error_message('engine-down'), (
             'The playback engine is not running', 'Start', 'app.start-engine'))
+        self.assertEqual(error_message('no-keyring'), (
+            'The keyring is not available, so starting would lose the Apple Music sign-in',
+            'Retry', 'app.start-engine'))
         self.assertEqual(error_message('not-signed-in'), (
             'Sign in to Apple Music again', 'Sign In', 'app.sign-in'))
         self.assertEqual(error_message('timeout'), (

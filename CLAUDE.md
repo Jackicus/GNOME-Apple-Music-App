@@ -88,7 +88,8 @@ name) in `src/applemusic.gresource.xml`; a file with user-visible strings in `po
 ## Commands
 
 Anything that opens a window (the app, the widget tests, the scripts that show one) runs
-through `scripts/headless.sh COMMAND…`, a private invisible display, never on the desktop.
+through `scripts/headless.sh COMMAND…`, a private invisible display, never on the desktop. It
+hands Chrome the desktop's session bus, so a live check there keeps the keyring and the sign-in.
 
 ```
 scripts/demo.sh [args]       build the development profile into build/install and run it on the
@@ -192,9 +193,8 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
 - Skills in `.claude/skills/`: `review-pass`, `fix-bug`, `hig-polish`, `performance-pass`,
   `screenshots`, `live-engine-check`.
 - `docs/`: `architecture.md` (how the parts work together), `decisions.md` (settled decisions
-  and why), `notes.md` (measurements, lab notes), `accessibility.md` (the keyboard
-  walkthrough), `release.md` (releasing, packaging), `history/build-plan.md` (the plan the app
-  was built from; history, not instructions). `src/backend/README.md`: the bridge, its events,
-  the library.json shapes.
+  and why), `notes.md` (measurements, lab notes), `accessibility.md` (the keyboard walkthrough),
+  `release.md` (releasing, packaging), `history/build-plan.md` (the plan the app was built from;
+  history, not instructions). `src/backend/README.md`: the bridge, events, library.json shapes.
 - A change that makes a line in these files wrong fixes that line in the same commit
   (tests/test_docs.py checks the paths and keys they name, and this file's 200 lines).

@@ -82,6 +82,15 @@ changes, change it here, with the date. The plan they came from is in
   engine's pid any more: the old one could sit at a predictable path in /tmp, and its check
   matched the profile as a substring. Without util-linux's `setpriv`, a crash can leave Chrome
   running until the next start.
+- **No Chrome without its keyring** (2026-09-29). Chrome keeps the key that encrypts its
+  profile's cookies in the desktop's keyring, and a Chrome that cannot reach it deletes those
+  cookies, the Apple Music sign-in among them, for good. So the engine refuses to start Chrome
+  on a profile whose `Local State` records the keyring's key when no `org.freedesktop.secrets`
+  answers, or comes up when asked, on the bus Chrome will use (`no-keyring`, a toast with
+  Retry), and `scripts/headless.sh` hands Chrome the desktop's session bus
+  (`APPLE_MUSIC_HOST_SESSION_BUS`) while the app stays on its private one. A refused start is
+  a toast and a retry; a lost sign-in is a trip to Apple's sign-in page and a full sync. A
+  profile that never reached the keyring starts as before, since there is nothing to lose.
 - **State from events, not polling** (2026-09-27). What is playing comes from MusicKit's events,
   forwarded through a CDP binding (`Runtime.addBinding`), plus one read when the engine comes
   up. The only polling is while waiting for sign-in, and briefly after it for the account's

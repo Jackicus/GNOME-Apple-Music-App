@@ -105,6 +105,12 @@ on background playback in Preferences (<kbd>Ctrl</kbd>+<kbd>,</kbd>).
   Google Chrome, or name its command in Preferences › Engine › Browser Program.
 - **"The playback engine stopped."** Chrome exited or its page stopped
   answering. Click **Restart** in the message, or just play something.
+- **"The keyring is not available, so starting would lose the Apple Music
+  sign-in."** Chrome keeps the key that encrypts its sign-in in your keyring
+  (GNOME Keyring or KWallet's Secret Service), and none answered on the session
+  bus, so the app did not start Chrome: without that key, Chrome would delete
+  the sign-in. Make sure the keyring is running and unlocked, then click
+  **Retry**.
 - **"Your Apple Music sign-in has expired."** Apple ended the session: click
   **Sign In** on that banner, or **Sign In Again** in the account menu at the
   bottom of the sidebar.

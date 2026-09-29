@@ -51,7 +51,11 @@ touches widgets.
 - **Engine** (`engine.py` over `backend/`): Chrome's lifecycle, the one CDP connection over
   Chrome's pipe, attached to the music.apple.com page, and every command as a coroutine; a
   command issued while Chrome starts waits for it. It says through `lost(reason)` when it goes
-  down on its own. The backend package is the standard library and asyncio only.
+  down on its own. Before spawning Chrome on a profile whose cookies are encrypted with a key
+  in the desktop's keyring, it checks that the keyring answers on the session bus Chrome will
+  use (the app's, or `APPLE_MUSIC_HOST_SESSION_BUS`) and refuses otherwise, since a Chrome
+  without its key deletes those cookies, the sign-in among them. The backend package is the
+  standard library and asyncio only.
 - **Player** (`player.py`): what is playing, as GObject properties fed by MusicKit's events,
   and the playback commands. The player bar, the Now Playing sheet and MPRIS all follow it.
 - **MPRIS** (`mpris.py`): the app on the session bus as `org.mpris.MediaPlayer2.<app id>`, for

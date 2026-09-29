@@ -133,6 +133,22 @@ paths:
   call it in a thread), and the argv starts
   `flatpak-spawn --host --watch-bus --forward-fd=3 --forward-fd=4` (untested), without setpriv
   (`--watch-bus` ends Chrome); `profile_owner()` answers None there.
+- Chrome's environment (`chrome.chrome_environment()`, applied in `Engine._spawn`): the app's,
+  plus `DBUS_SESSION_BUS_ADDRESS` set to `APPLE_MUSIC_HOST_SESSION_BUS` when that is set
+  (`config.host_session_bus()`; scripts/headless.sh sets it to the desktop's bus). Chrome
+  encrypts its cookies with a key it keeps in the OS keyring (`org.freedesktop.secrets` on its
+  session bus); started where no keyring answers, it encrypts with a fallback key and deletes
+  the cookies it cannot decrypt, the sign-in among them, for good. So `_start()` runs
+  `_check_keyring()` before anything touches the profile: when `Local State` records the
+  keyring's key (`chrome.profile_used_keyring()`: `os_crypt.<provider>.prev_init_success`,
+  `portal` on Chrome 154) and the bus Chrome will use has no owner of that name, or the name
+  is activatable but does not come up when asked (`StartServiceByName`, as Chrome would ask;
+  "activatable" alone was what the incident's private bus had), or the bus does not answer
+  within `KEYRING_WAIT` (5 s), the start is `EngineError('no-keyring')`, logged with the
+  reason, and Chrome is never spawned. A profile without the record (never run, or never
+  reached the keyring) starts as before. Not in a Flatpak sandbox: Chrome runs on the host
+  with the host's session, which the sandbox cannot check, and gets no bus variable. The check
+  is Gio D-Bus, async, in engine.py; the file read and the environment are the backend's.
 - Logs: Chrome's argv is logged through `chrome.describe_argv()`, which leaves the profile's
   path out; never log tokens, API URLs with their queries, or the account name.
 - CDP: `Runtime.addBinding('__amEvent')` is per CDP session, so every connection registers it

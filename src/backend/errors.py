@@ -6,12 +6,14 @@
 # The README's codes. The UI shows a toast for each, never a traceback.
 ENGINE_DOWN = 'engine-down'      # Chrome not running, exited, or the connection closed
 NO_BROWSER = 'no-browser'        # no Google Chrome to run, or it could not be started
+NO_KEYRING = 'no-keyring'        # the profile's sign-in is encrypted with a keyring's key and
+                                 # no keyring answers: Chrome was not started (it would drop it)
 NOT_SIGNED_IN = 'not-signed-in'  # MusicKit is not authorized
 API = 'api'                      # Apple, MusicKit or the page said no
 TIMEOUT = 'timeout'              # Chrome or the page took too long
 USAGE = 'usage'                  # a bad argument (the debug CLI's)
 
-CODES = (ENGINE_DOWN, NO_BROWSER, NOT_SIGNED_IN, API, TIMEOUT, USAGE)
+CODES = (ENGINE_DOWN, NO_BROWSER, NO_KEYRING, NOT_SIGNED_IN, API, TIMEOUT, USAGE)
 
 
 class EngineError(Exception):
