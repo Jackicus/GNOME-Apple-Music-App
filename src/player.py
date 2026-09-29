@@ -11,8 +11,9 @@ the playback commands as thin coroutines over the engine.
                        # artwork_url, index, explicit), or None
     player.position, player.duration           # seconds, floats
     player.shuffle (bool), player.repeat ('none', 'one', 'all'), player.volume (0 to 1)
-    player.position_updated_at                 # time.monotonic() when position last arrived
-    player.estimated_position()                # position, plus the time since while playing
+    player.position_updated_at                 # time.monotonic() when position last changed
+    player.estimated_position()                # position, plus the time since (a second at
+                                               # most) while playing: between the events
     player.queue, player.queue_index           # a Gio.ListStore of NowPlaying (the queue's
                                                # entries, in order) and where the item playing
                                                # is in it (-1: nowhere, or nothing playing)
@@ -348,6 +349,7 @@ class Player(GObject.Object):
         if state != 'seeking':
             self._resting = state
         if state != self.state:
+            self.position_updated_at = time.monotonic()  # the position runs on, or stops, from here
             self.state = state
 
     def _set_track(self, data, fetch_lyrics=True):
@@ -478,9 +480,11 @@ class Player(GObject.Object):
             self.lyrics_loading = loading
 
     def _set_position(self, position, duration=None):
+        """The position (stamped only when it changes: MusicKit reports whole seconds
+        four times a second, and the stamp is when the second began) and the duration."""
         position = max(0.0, position)
-        self.position_updated_at = time.monotonic()
         if position != self.position:
+            self.position_updated_at = time.monotonic()
             self.position = position
         if duration is not None:
             self._set_duration(duration)
@@ -531,11 +535,14 @@ class Player(GObject.Object):
         return self.track is None or self.resting in STOPPED_STATES
 
     def estimated_position(self):
-        """The position now: the last one reported, plus the time since while playing
-        (MPRIS asks between events), never past the duration when that is known."""
+        """The position now: the last one reported plus the time since while playing (a
+        second at most: the reports are whole seconds, so the truth is within the second
+        that began at the stamp, and a stalled stream does not run ahead), never past the
+        duration when that is known. What MPRIS answers between events and the lyrics
+        follow."""
         position = self.position
         if self.state == 'playing':
-            position += time.monotonic() - self.position_updated_at
+            position += min(time.monotonic() - self.position_updated_at, 1.0)
             if self.duration:
                 position = min(position, self.duration)
         return position
