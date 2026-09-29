@@ -95,11 +95,11 @@ class _Row(Gtk.Box):
 class DetailPage(Adw.NavigationPage):
     """An album's or a playlist's page.
 
-    DetailPage(library, item) shows item, pushed over the page it was opened from, its title in
-    the header bar. As a destination's root page (Favourite Songs), DetailPage(library,
-    find=function, root=True, title=…) shows whatever find() returns, asked again whenever the
-    library changes: a spinner while it loads, an empty state (icon_name, empty_title,
-    empty_description) when find() has nothing, and no title in the header bar.
+    DetailPage(library, item) shows item, pushed over the page it was opened from, and titled
+    by it. As a destination's root page (Favourite Songs, a sidebar playlist),
+    DetailPage(library, find=function, root=True, title=…) shows whatever find() returns,
+    asked again whenever the library changes: a spinner while it loads, an empty state
+    (icon_name, empty_title, empty_description) when find() has nothing.
 
     Either way the page follows the Item it shows while it is shown: a reload keeps the Item
     and tells what changed, through `notify` (the hero's labels and cover) and
