@@ -63,7 +63,8 @@ skipped at -1. Only stale files are compiled again, so development installs stay
   `-i`: build and check it, don't install it. Without `blueprint-compiler` installed, use
   `makepkg --nodeps` with a `blueprint-compiler` shim on PATH that runs
   `subprojects/blueprint-compiler/blueprint-compiler.py`.
-- The PKGBUILD's `check()` runs `meson test` and the unit tests; neither needs a display.
+- The PKGBUILD's `check()` runs `meson test`: the unit tests (Meson's `unit` suite, whose
+  widget tests skip without a display) and the desktop file, metainfo and schema validation.
 
 ## Screenshots
 
@@ -81,8 +82,9 @@ committing.
 
 `build-aux/flatpak/io.github.jackicus.AppleMusic.Devel.json` builds the development profile
 for GNOME Builder or flatpak-builder. It talks to `org.freedesktop.Flatpak` so the app can run
-the host's Chrome, owns the MPRIS name for both app IDs, and has no audio socket, because the
-host's Chrome makes the sound. In the sandbox, `chrome.find_chrome()` asks the host for the
+the host's Chrome, and has no audio socket, because the host's Chrome makes the sound; the MPRIS
+name, `org.mpris.MediaPlayer2.<app id>`, is one Flatpak lets an app own without asking. Its
+desktop entry's name ends in " (Development)". In the sandbox, `chrome.find_chrome()` asks the host for the
 binary through `flatpak-spawn --host`, and `chrome_args()` prefixes
 `flatpak-spawn --host --watch-bus --forward-fd=3 --forward-fd=4`, which passes the DevTools pipe
 on to the host's Chrome. The pid the engine holds is flatpak-spawn's, which relays SIGTERM to
