@@ -4,7 +4,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gio, Gtk
 
-from ..library import Item, Shelf as ShelfModel
+from ..library import Item, ShelfModel
 from ..widgets import context_menu
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.tile import Tile

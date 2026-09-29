@@ -15,7 +15,7 @@ URL as an item's `art` when the sync has not fetched its cover (and no `thumb`):
 `remote_item(data)` gives such a dict the paths fetch_remote() would use (`thumb` at
 THUMB_SIZE, `art` at COVER_SIZE, with `thumbUrl` and `artUrl` to fetch them by), so a tile
 shows the thumbnail once `await fetch_thumb(item)` has brought it and a detail page's
-fetch_cover() the cover. remote_shelves() makes the engine's shelf dicts into library.Shelf
+fetch_cover() the cover. remote_shelves() makes the engine's shelf dicts into ShelfModel
 objects of such Items, titled in the app's words (shelf_title()), and fetch_shelf_art() brings
 their thumbnails a few at a time, each Item notifying `thumb` as its file arrives: the tiles
 showing it follow their Item (widgets/tile.py).
@@ -36,7 +36,7 @@ import re
 from gettext import gettext as _
 
 from .backend import config, normalize, store
-from .library import N_, Item, Shelf
+from .library import N_, Item, ShelfModel
 
 log = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ def shelf_title(data):
 
 
 def remote_shelves(dicts):
-    """library.Shelf objects for the engine's shelf dicts ({key, title, items}), titled by
+    """ShelfModel objects for the engine's shelf dicts ({key, title, items}), titled by
     shelf_title(), the items wrapped as Items with their artwork under remote-art
     (remote_item()); a shelf with nothing in it, or an item without an id and a kind, is left
     out."""
@@ -229,7 +229,7 @@ def remote_shelves(dicts):
         items = [Item(remote_item(entry)) for entry in data.get('items') or []
                  if isinstance(entry, dict) and entry.get('id') and entry.get('kind')]
         if items:
-            shelves.append(Shelf(str(data.get('key') or ''), shelf_title(data), items))
+            shelves.append(ShelfModel(str(data.get('key') or ''), shelf_title(data), items))
     return shelves
 
 

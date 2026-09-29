@@ -26,7 +26,7 @@ them before changing either. What matters most:
   sets it), so a page can show an empty library as on its way.
 - `load()` (the first load, after sign-out) makes new objects. `reload()` (after a sync) matches
   everything by kind and id and keeps every object still in the library: Items (with their
-  Groups and Tracks when the groups are unchanged), Shelf objects by key, folder Items and the
+  Groups and Tracks when the groups are unchanged), ShelfModels by key, folder Items and the
   folders' stores by id, the Songs store. Open pages, scroll positions and the sidebar's
   selection survive it.
 - A reload says what changed through signals. `Item.merge(data, replace=True)` does nothing
@@ -43,7 +43,7 @@ them before changing either. What matters most:
   shared by all of them); it lets GTK paint and gives up when a newer load has started. A new
   loop in a load does the same, not a budget of its own.
 - Properties: most of Track's and Item's are `raw_property`s, read from the object's `raw` at
-  each access (an Item's are writable into it); Group and Shelf use `model_property`. Both are
+  each access (an Item's are writable into it); Group and ShelfModel use `model_property`. Both are
   real GObject properties, so `Gtk.PropertyExpression` works on them. When wrapping in bulk,
   don't pass properties to `GObject.Object.__init__` (several µs each): assign the attributes
   as the wrappers do.
