@@ -5,7 +5,7 @@ Thanks for helping with Apple Music for GNOME. Everyone taking part is expected 
 
 ## Build and test
 
-You need GTK 4.20+, libadwaita 1.9+, GLib 2.84+, Python 3 with PyGObject 3.50+, Meson 1.2+,
+You need GTK 4.20+, libadwaita 1.9+, GLib 2.84+, Python 3.12+ with PyGObject 3.50+, Meson 1.2+,
 gettext and `blueprint-compiler` 0.22 (Meson downloads it when it is missing). The demo library
 generator (`scripts/demo_library.py`, used by the tests) also needs pycairo (`python-cairo` on
 Arch). Google Chrome is only needed to play music: the demo library and the tests work without
