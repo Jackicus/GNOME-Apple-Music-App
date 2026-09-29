@@ -34,8 +34,10 @@ widgets.
   Now Playing. Choosing a sidebar item replaces the navigation stack with that destination's
   root page; tiles and rows push album, playlist, artist and See All pages through the window's
   `open_item()`, `open_shelf()` and `open_songs()`, and every "play this" goes through its
-  `play_request()`. The item actions and context menus are `actions.py` and
-  `widgets/context_menu.py`.
+  `play_request()`. The sidebar itself (its items following the library, the selection, the
+  folders, the drops) is `sidebar_view.py`'s controller, with its decisions as `sidebar.py`'s
+  functions; which playback action a key runs is `keyboard.py`'s decision. The item actions
+  and context menus are `actions.py` and `widgets/context_menu.py`.
 - **Pages** (`pages/`): one module per destination or pushed page, built when first shown. The
   library pages bind the library's stores; New, Made for You and Search ask the engine (the
   first two, and Search's categories, keep its answers in the cache for a day).

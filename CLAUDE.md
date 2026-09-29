@@ -34,9 +34,12 @@ One thread runs GTK and asyncio: the GLib main loop is the asyncio loop
 ```
 Application (main.py)    app.settings, .library, .engine, .player, .mpris, .library_sync, .demo;
 │                        app.spawn(coro), app.toast(), app.report(error), app.player_command(coro)
-├─ Window (window.py)    AdwBottomSheet > AdwToastOverlay > AdwNavigationSplitView
-│  ├─ sidebar            AdwSidebar: sections.py's destinations, then the Playlists section
-│  │                     (sidebar.py entries over library.playlist_tree())
+├─ Window (window.py)    AdwBottomSheet > AdwToastOverlay > AdwNavigationSplitView; its own
+│  │                     keys decided by keyboard.py; the banners docked under each page's
+│  │                     header bar
+│  ├─ sidebar            AdwSidebar, run by sidebar_view.SidebarController: sections.py's
+│  │                     destinations, then the Playlists section (sidebar.py entries over
+│  │                     library.playlist_tree(), and its decisions as pure functions)
 │  ├─ content            AdwNavigationView: a sidebar item replaces the stack with its root page
 │  │                     (pages/, made on first visit); tiles and rows push pages
 │  ├─ bottom bar, sheet  PlayerBar (player_bar.py), NowPlayingSheet (widgets/now_playing.py)
@@ -65,8 +68,8 @@ GSettings, one schema for both builds; the sign-in's keys are each build's own (
 ```
 src/main.py, src/window.py      the Application and the Window
 src/*.py                        services and logic without widgets (engine, player, mpris, sync,
-                                account, background, cache, actions, lyrics, shortcuts, sidebar,
-                                sections, timing, remote): new ones go here
+                                account, background, cache, actions, lyrics, shortcuts, keyboard,
+                                sidebar, sidebar_view, sections, timing, remote): new ones go here
 src/library.py                  the data model: GLib, GObject and Gio only, no GTK
 src/pages/<name>.py + .blp      one module per sidebar destination or pushed page (PAGES in
                                 pages/__init__.py)
@@ -142,7 +145,8 @@ sudo meson install -C _build --skip-subprojects
   actions.py). Every shortcut goes in `src/shortcuts.py`, which feeds the accelerators and the
   Keyboard Shortcuts dialog (tests/test_shortcuts.py). A bare key or an editing chord (Space,
   Ctrl+Left) must not be an application accelerator: GTK runs those before the focused widget,
-  so typing would trigger them.
+  so typing would trigger them; the window handles those itself, as `src/keyboard.py`
+  decides (Space belongs to a focused button, switch, check box or list row, as in GTK).
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
   saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
 - **Demo mode** (`--demo`, `app.demo`): no engine (commands raise `engine-down`), no MPRIS, its
