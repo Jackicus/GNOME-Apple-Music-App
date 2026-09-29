@@ -80,7 +80,8 @@ changes, change it here, with the date. The plan they came from is in
 - **The cache as the library** (2026-09-27). `$XDG_CACHE_HOME/apple-music/library.json` is the
   one library snapshot, parsed off the main thread from the start of the process and wrapped
   into GObjects a section at a time. Thumbnails (320 px) are fetched for every item at sync;
-  covers (640 px) on demand. Decoded textures live in a 32 MB LRU at the size they are drawn.
+  covers (640 px) on demand. Decoded textures live in an LRU at the size they are drawn: 8 MB at
+  a scale factor of 1, the same tiles' 32 MB at 2 (2026-09-29).
 - **Songs sorted in Python** (2026-09-27). Past a few thousand rows that the user re-sorts and
   filters, GTK's sorters read each Python item's properties from C too slowly, and a column
   view's own sorter compares pairs. The Songs page sorts and filters in Python and splices the

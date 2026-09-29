@@ -22,7 +22,7 @@ from tests.gtk import pump
 from applemusic.widgets import artwork
 
 gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import GdkPixbuf  # noqa: E402
+from gi.repository import GdkPixbuf, Gio, GObject  # noqa: E402
 
 # PyGObject 3.56 looks the asyncio loop up through asyncio's policy when a GLib source runs
 # (the slots' idles, run by pump()), which Python 3.14 deprecates; the app filters it too.
@@ -279,6 +279,87 @@ class TestArtwork(unittest.TestCase):
     async def _load(self, loader, path):
         loader.request(path, lambda _texture: None)
         await settle()
+
+
+class _Monitor(GObject.Object):
+    """A Gdk.Monitor as the budget sees one: its scale factor, notified."""
+
+    scale_factor = GObject.Property(type=int, default=1)
+
+    def get_scale_factor(self):
+        return self.scale_factor
+
+
+class _Display:
+    def __init__(self, *scales):
+        self.monitors = Gio.ListStore(item_type=_Monitor)
+        for scale in scales:
+            self.add(scale)
+
+    def add(self, scale):
+        monitor = _Monitor(scale_factor=scale)
+        self.monitors.append(monitor)
+        return monitor
+
+    def get_monitors(self):
+        return self.monitors
+
+
+class TestBudget(unittest.TestCase):
+    """The cache's budget by the scale factor: 8 MB at 1× (a screen of tiles and a page
+    ahead), the same tiles' bytes at 2×, never more than 32 MB."""
+
+    MB = 1024 * 1024
+
+    def test_budget_for_the_scale(self):
+        self.assertEqual(artwork.budget_for(1), 8 * self.MB)
+        self.assertEqual(artwork.budget_for(2), 32 * self.MB)
+        self.assertEqual(artwork.budget_for(3), 32 * self.MB)
+        self.assertEqual(artwork.budget_for(0), 8 * self.MB)
+
+    def test_the_largest_monitor_counts(self):
+        self.assertEqual(artwork.display_scale(None), 1)
+        self.assertEqual(artwork.display_scale(_Display()), 1)
+        self.assertEqual(artwork.display_scale(_Display(1, 2)), 2)
+
+    def test_the_loader_follows_the_monitors(self):
+        loader = artwork.Artwork()
+        display = _Display(1)
+        watch = artwork._MonitorWatch(loader, display)
+        self.assertEqual(loader.budget, 8 * self.MB)
+        second = display.add(2)  # a HiDPI monitor plugged in
+        self.assertEqual(loader.budget, 32 * self.MB)
+        second.scale_factor = 1  # its scale changed in Settings
+        self.assertEqual(loader.budget, 8 * self.MB)
+        second.scale_factor = 2
+        display.monitors.remove(1)  # unplugged
+        self.assertEqual(loader.budget, 8 * self.MB)
+        second.scale_factor = 3  # no longer followed
+        self.assertEqual(loader.budget, 8 * self.MB)
+        del watch
+
+    def test_a_smaller_budget_lets_go_of_the_least_recently_used(self):
+        paths = []
+        with tempfile.TemporaryDirectory() as directory:
+            for n in range(3):
+                path = os.path.join(directory, f'cover{n}.png')
+                pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 5, 5)
+                pixbuf.fill(0x336699ff)
+                pixbuf.savev(path, 'png', [], [])
+                paths.append(path)
+            loader = artwork.Artwork()
+
+            async def go():
+                for path in paths:
+                    loader.request(path, lambda _texture: None)
+                    await settle()
+
+            run(go())
+        self.assertEqual(loader.cached(), (3, 300))
+        loader.set_budget(250)
+        self.assertEqual(loader.cached(), (2, 200))
+        self.assertIsNone(loader.get(paths[0]))
+        self.assertIsNotNone(loader.get(paths[2]))
 
 
 class FakeLoader:
