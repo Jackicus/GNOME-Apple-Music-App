@@ -15,7 +15,7 @@ Pages reach the application through app(), and the window through get_root() and
 
 from gettext import gettext as _
 
-from gi.repository import Gio
+from gi.repository import Gio, GObject
 
 from ..library import ROOT_FOLDER
 from ..sidebar import FOLDER_ICON, PLAYLIST_ICON
@@ -25,6 +25,15 @@ def app():
     """The application (Gio.Application.get_default()): its engine, settings, spawn() and
     report(). How every page reaches it; None only in a test without one."""
     return Gio.Application.get_default()
+
+
+def estimate_width(default_width, maximized, monitor_width, sidebar):
+    """The content pane's width before the window has laid it out (the page restored at
+    startup): the window's default width, or the largest monitor's while it is maximized or
+    fullscreen (the default width stays the unmaximized one), less the sidebar's width while
+    it shows (0 when collapsed)."""
+    width = monitor_width if maximized and monitor_width > 0 else default_width
+    return max(0, width - sidebar)
 
 
 def mark_bound(page):
@@ -147,13 +156,21 @@ def playlist(library, playlist_id, title):
 
 def folder(library, folder_id, title, root=True):
     """A folder's page: its folders and playlists as tiles, in Apple's order, following the
-    library by the folder's id. A sidebar folder's is a root page; a folder opened from a tile
-    is pushed (root=False) over the page it was in."""
+    library by the folder's id, with a missing state once the folder is gone. A sidebar
+    folder's is a root page (the window retitles it); a folder opened from a tile is pushed
+    (root=False) over the page it was in, and follows its folder Item's title (a reload keeps
+    the Item)."""
     from .grid import GridPage
 
-    return GridPage(library, title, lambda: library.folder_items(folder_id), root=root,
+    page = GridPage(library, title, lambda: library.folder_items(folder_id), root=root,
                     icon_name=FOLDER_ICON, empty_title=_('Empty Folder'),
-                    empty_description=_('Playlists you put in this folder appear here'))
+                    empty_description=_('Playlists you put in this folder appear here'),
+                    missing_title=_('Folder Not Found'),
+                    missing_description=_('This folder is no longer in your library'))
+    item = library.by_id('folder', folder_id) if not root else None
+    if item is not None:
+        item.bind_property('title', page, 'title', GObject.BindingFlags.SYNC_CREATE)
+    return page
 
 
 PAGES = {

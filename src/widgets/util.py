@@ -187,7 +187,7 @@ class HeaderTitle:
         self._header_bar = header_bar
         self._title_label = title_label
         self._shown = None
-        self._tick = None
+        self._painted = None  # (the frame clock, the after-paint handler) while waiting
         for scrolled_window in scrolled_windows:
             connect_weak(scrolled_window.get_vadjustment(), 'value-changed', self._on_moved)
         connect_weak(title_label, 'map', self._on_moved)
@@ -196,21 +196,25 @@ class HeaderTitle:
 
     def _on_moved(self, *_args):
         self.update()
-        label = self._title_label
-        if not label.get_mapped():
-            if self._tick is not None:
-                label.remove_tick_callback(self._tick)
-                self._tick = None
-        elif self._tick is None:
-            # Again at the next frame, once laid out: a title just mapped has no size yet,
-            # and the grid's moves only as it is allocated.
-            self._tick = label.add_tick_callback(weak_method(self._next_frame))
+        clock = self._title_label.get_frame_clock()
+        if self._painted is not None and self._painted[0] is not clock:
+            self._stop_waiting()
+        if clock is not None and self._painted is None:
+            # Again once the frame has been laid out and painted: a title just mapped has no
+            # size yet, and the grid's moves only as it is allocated (a frame's ticks come
+            # before its layout).
+            self._painted = (clock, connect_weak(clock, 'after-paint', self._after_paint))
 
-    def _next_frame(self, _widget, _clock):
-        if not self.update():
-            return GLib.SOURCE_CONTINUE  # not laid out yet (a frame's ticks come before)
-        self._tick = None
-        return GLib.SOURCE_REMOVE
+    def _after_paint(self, _clock):
+        if self.update():
+            self._stop_waiting()
+
+    def _stop_waiting(self):
+        if self._painted is not None:
+            clock, handler = self._painted
+            if clock.handler_is_connected(handler):
+                clock.disconnect(handler)
+            self._painted = None
 
     def update(self):
         """Show the title in the header bar or not; False when the title is not laid out

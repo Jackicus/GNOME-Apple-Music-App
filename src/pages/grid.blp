@@ -7,10 +7,16 @@ template $AppleMusicGridPage: Adw.NavigationPage {
     Adw.HeaderBar header_bar {
       show-title: false;
 
+      // Its menu is grid.py's: the page's orders, as radio items of the page.sort action.
       [end]
-      DropDown sort_dropdown {
+      MenuButton sort_button {
+        icon-name: "view-sort-descending-symbolic";
         tooltip-text: _("Sort By");
         visible: false;
+
+        accessibility {
+          label: _("Sort By");
+        }
       }
     }
 

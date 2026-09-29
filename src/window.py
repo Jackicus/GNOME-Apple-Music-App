@@ -222,6 +222,22 @@ class Window(Adw.ApplicationWindow):
         if page is not None and hasattr(page, 'focus_entry'):
             page.focus_entry()
 
+    def content_width(self):
+        """The content pane's width in px, for a page sizing itself before it is laid out
+        (the grids' columns): its allocation once it has one, else an estimate
+        (pages.estimate_width: the default width, or the largest monitor's while maximized or
+        fullscreen, less the sidebar's while it shows)."""
+        width = self.navigation_view.get_width()
+        if width > 0:
+            return width
+        maximized = (self.is_maximized() or self.is_fullscreen()
+                     or self._settings.get_boolean('window-maximized'))
+        monitors = Gdk.Display.get_default().get_monitors()
+        monitor = max((monitors.get_item(n).get_geometry().width
+                       for n in range(monitors.get_n_items())), default=0)
+        sidebar = 0 if self.split_view.get_collapsed() else self.split_view.get_max_sidebar_width()
+        return pages.estimate_width(self.get_default_size()[0], maximized, monitor, sidebar)
+
     def open_songs(self, search=''):
         """Show the Songs page filtered by `search` (Your Library results' See All)."""
         self._select('songs')

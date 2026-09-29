@@ -44,8 +44,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 - A destination's root page is an `Adw.NavigationPage` with its own `Adw.ToolbarView` and
   `Adw.HeaderBar` (`show-title: false`; the `title-1` in the content is the title), registered in
   `pages.PAGES`. Its module is imported by its factory, never at the top of window.py or main.py
-  (startup time). Pushed pages (album, playlist, artist, See All) show their title in the header
-  bar too. Playlist and folder root pages are kept only for the last few shown
+  (startup time). Pushed album, playlist and artist pages show their title in the header bar
+  too; the other pages, root or pushed, only while the big title is out of view (HeaderTitle,
+  below). Playlist and folder root pages are kept only for the last few shown
   (`window.ROOT_LIMIT`). Sign-out forgets the pages that show the account's things
   (`Window.forget_account_pages()`: the pushed pages, New, Made for You, Search and every
   playlist and folder root), to be built again on the next visit.

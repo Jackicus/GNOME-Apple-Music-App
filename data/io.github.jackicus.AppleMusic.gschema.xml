@@ -89,5 +89,10 @@
       <summary>Hours between automatic library syncs</summary>
       <description>While the app runs, the library is synced again whenever the last sync is older than this many hours and the engine is running and signed in (it is not started for a sync). 0 syncs only when asked (Refresh Library). A library missing or damaged on disk is synced as soon as the engine is up, whatever this says.</description>
     </key>
+    <key name="grid-sort" type="a{ss}">
+      <default>{}</default>
+      <summary>Sort order of each grid page</summary>
+      <description>The order last chosen in a grid page's Sort By menu (title, artist or year), by page: albums, artists or music-videos.</description>
+    </key>
   </schema>
 </schemalist>
