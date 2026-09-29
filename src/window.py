@@ -353,6 +353,7 @@ class Window(Adw.ApplicationWindow):
         # it was restored before the library had loaded), unless it is gone: then Home.
         if self._sidebar.selected_key() != self.shown:
             self._sidebar.select(self.shown)
+            self._sidebar.reveal_selected()
         entries = self._sidebar.entries_by_key()
         for key in stale_roots(self._roots, entries, self.shown):
             self._drop_root(key)
@@ -449,6 +450,7 @@ class Window(Adw.ApplicationWindow):
         else:
             self._sidebar.select(select, show=False)
             self.show_root(show)
+        self._sidebar.reveal_selected()
 
     def show_root(self, key, pop=False):
         """Make key's root page the navigation view's root. Pages pushed over it stay when it is
@@ -565,7 +567,8 @@ class Window(Adw.ApplicationWindow):
     def _save_window_state(self):
         """The settings the window keeps, written as it closes or hides: its size, the page
         shown (last-page) and the expanded folders. Written then rather than as they change
-        (a click, a toggle): each write is a dconf round trip, and only the last matters."""
+        (a click, a toggle): only the last matters, so this is fewer writes (a write is
+        asynchronous; nothing waits on it)."""
         width, height = self.get_default_size()
         self._settings.set_int('window-width', width)
         self._settings.set_int('window-height', height)

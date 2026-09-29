@@ -13,8 +13,10 @@ When a key or a page changes, change this list and the script together.
 1. Ctrl+1 puts the focus on the selected sidebar row. Down and Up move through every
    destination: in the wide layout they select, which shows the page; in the narrow one they
    only move (each section is a boxed list of its own there, and libadwaita passes the focus
-   on from one to the next). Enter shows the row's page (and opens or closes a folder); a
-   screen reader hears whether a folder is expanded.
+   on from one to the next). Enter shows the row's page (and, in the wide layout, opens or
+   closes a folder); Right opens a focused folder and Left closes it, without changing the
+   page, and Left on a playlist inside a folder moves to the folder. A screen reader hears
+   whether a folder is expanded and how deep an item is nested.
 2. Ctrl+2 puts the focus in the page: the first tile of a grid, the Songs table, the Search
    entry, an album's Play; from the page's header bar (Back, Sort By, a filter) too. Arrows
    move between tiles and rows, Tab leaves a grid, shelf or list after one item, Enter opens a
