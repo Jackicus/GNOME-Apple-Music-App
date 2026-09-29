@@ -198,10 +198,6 @@ class Window(Adw.ApplicationWindow):
 
     # -- toasts and the sheet --------------------------------------------------------------
 
-    def toast(self, title):
-        """A plain toast (never markup): Application.toast() is the app's way to make one."""
-        self.add_toast(Adw.Toast(title=title, use_markup=False))
-
     def add_toast(self, toast):
         """Show a toast over the content, or inside the Now Playing sheet while that is open
         (the sheet is modal: the window's overlay is under it)."""
