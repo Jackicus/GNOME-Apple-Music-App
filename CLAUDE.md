@@ -177,8 +177,7 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
    every pull request, in an Arch Linux container under Xvfb with software rendering, no
    accessibility bus and no Chrome: widget tests must pass there.
 2. Anything visible: screenshots of the demo library (the `screenshots` skill), each looked at
-   with the Read tool; also `--light`, and `--size 360x640` (the narrowest supported width)
-   for anything adaptive.
+   with the Read tool; also `--light`, and `--size 360x640` (the narrowest width) if adaptive.
 3. Keyboard or accessibility changes, or a new page: `scripts/a11y_check.py`, also with
    `--size 360x640` and `--names`; a new page or key gets a step there.
 4. The startup path, a page's first build or a list's bind: `scripts/bench.py` and
@@ -197,4 +196,5 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
   walkthrough), `release.md` (releasing, packaging), `history/build-plan.md` (the plan the app
   was built from; history, not instructions). `src/backend/README.md`: the bridge, its events,
   the library.json shapes.
-- A change that makes a line in these files wrong fixes that line in the same commit.
+- A change that makes a line in these files wrong fixes that line in the same commit
+  (tests/test_docs.py checks the paths and keys they name, and this file's 200 lines).

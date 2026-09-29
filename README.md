@@ -188,12 +188,12 @@ To make a release tarball, run `meson dist -C build`.
 The strings are in gettext's usual form. To start a translation, say German:
 
 ```bash
-meson compile -C build apple-music-pot      # po/apple-music.pot from the sources
+meson compile -C build apple-music-pot      # the template, apple-music.pot, from the sources
 cd po && msginit -l de -i apple-music.pot -o de.po
 ```
 
-then add `de` to `po/LINGUAS`, translate `po/de.po` and rebuild; `meson compile
--C build apple-music-update-po` merges new strings into every translation.
+then add `de` to `po/LINGUAS`, translate `de.po` and rebuild; `meson compile -C build
+apple-music-update-po` merges new strings into every translation.
 Source strings are in British English.
 
 ## License
