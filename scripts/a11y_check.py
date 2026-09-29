@@ -346,7 +346,7 @@ async def walkthrough(window):
           and window.get_focus().__gtype__.name == 'GtkListItemWidget')
     requests = []
     play_request = window.play_request
-    window.play_request = lambda play, start_with=None, shuffle=False: requests.append(
+    window.play_request = lambda play, start_with=None, shuffle=None: requests.append(
         start_with)
     await key(window, 'Down')
     await key(window, 'Return')

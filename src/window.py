@@ -7,7 +7,7 @@ The pages reach the window through get_root() and these seams, not its internals
                                       play a station, song or video
     open_shelf(shelf)                 a shelf's items as a grid (See All)
     open_songs(text)                  the Songs page, filtered
-    play_request(play, start_with=None, shuffle=False)
+    play_request(play, start_with=None, shuffle=None)
                                       every "play this": the Player, the sign-in, the toasts
     add_toast(toast)                  a toast over the content, or in the open sheet
     announce(text, priority)          Gtk.Accessible's, for assistive technology
@@ -30,6 +30,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from . import keyboard, pages
 from .actions import ItemActions
 from .backend.errors import EngineError
+from .player import playback_error_text
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
 from .sections import HOME
@@ -233,9 +234,11 @@ class Window(Adw.ApplicationWindow):
         activating a tile does.
 
         Albums and playlists push a DetailPage, artists an ArtistPage, playlist folders their
-        grid of folders and playlists, search categories their page of shelves, over the page
-        shown. A station or a song (a search hit, a Best New Songs tile) has no page: it plays,
-        as on music.apple.com. A video toasts its title, until phase 12 decides what it does.
+        grid of folders and playlists (the page follows the folder Item: a rename, a
+        deletion), search categories their page of shelves, over the page shown. A station,
+        a song (a search hit, a Best New Songs tile) or a music video has no page: it plays,
+        as on music.apple.com (a video as its audio, in the headless engine, as the context
+        menu's Play does). Anything else is named in a toast.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'item', None) is item:
@@ -255,7 +258,7 @@ class Window(Adw.ApplicationWindow):
             from .pages.shelves import category_page
 
             page = category_page(item)
-        elif item.kind in ('station', 'song'):
+        elif item.kind in ('station', 'song', 'video'):
             self.play_request(item.play)
             return
         else:
@@ -267,7 +270,7 @@ class Window(Adw.ApplicationWindow):
         """Show a shelf's items as a grid, pushed over the page shown: a shelf's See All.
 
         A shelf of the library's is followed by its key, so the page shows what a later load
-        puts on it; any other (phase 15's search results) is shown as it is.
+        puts on it; any other (a search's results, a category's) is shown as it is.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'shelf', None) is shelf:
@@ -291,14 +294,17 @@ class Window(Adw.ApplicationWindow):
         page.shelf = shelf
         self.navigation_view.push(page)
 
-    def play_request(self, play, start_with=None, shuffle=False):
+    def play_request(self, play, start_with=None, shuffle=None):
         """Play what play names ({kind, id}: an Item's or a Group's play target), from its entry at
-        queue position start_with (a track row: track.play, track.index), or shuffled.
+        queue position start_with (a track row: track.play, track.index); `shuffle` True
+        shuffled (a Shuffle button), False in order (a Play button), None as the mode is (a
+        track row, a tile).
 
         The one way into playback from the pages (a Play button, a track row, a station's
-        tile), as `am.py play <kind> <id> [--start-with N] [--shuffle]` was upstream: the
-        Player plays it through the engine, starting that first if need be; signed out, the
-        sign-in flow opens instead; a failure is toasted. The bar follows the engine's events.
+        tile): the Player plays it through the engine, starting that first if need be;
+        signed out, the sign-in flow opens instead; a failure is toasted, a play MusicKit
+        refused as what its code means for the user (player.playback_error_text). The bar
+        follows the engine's events.
         """
         app = self.get_application()
         if app.refuse_in_demo():
@@ -313,7 +319,11 @@ class Window(Adw.ApplicationWindow):
         try:
             await app.player.play(play, start_with=start_with, shuffle=shuffle)
         except EngineError as error:
-            app.report(error)  # signed out, that opens the sign-in
+            if error.code == 'api' and error.musickit_code:
+                log.warning('play refused: %s', error)
+                app.toast(playback_error_text(error.musickit_code))
+            else:
+                app.report(error)  # signed out, that opens the sign-in
 
     # -- the account and the banners -------------------------------------------------------
 

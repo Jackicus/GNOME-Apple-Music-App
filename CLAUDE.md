@@ -51,7 +51,7 @@ Application (main.py)    app.settings, .library, .engine, .player, .mpris, .libr
 ```
 
 Pages reach the app through the window's seams (`self.get_root()`): `open_item(item)`,
-`open_shelf(shelf)`, `open_songs(text)`, `play_request(play, start_with=None, shuffle=False)`
+`open_shelf(shelf)`, `open_songs(text)`, `play_request(play, start_with=None, shuffle=None)`
 (every "play this"), `add_toast(toast)` and `item_actions`, not its internals; the Application
 through `pages.app()`.
 
