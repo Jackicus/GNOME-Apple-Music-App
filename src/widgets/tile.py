@@ -45,7 +45,7 @@ ART_SIZE = 160
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/tile.ui')
 class Tile(Gtk.Box):
     """A 160 px square cover over a title and a dim subtitle; with artist=True, a round portrait
-    over a centred name.
+    over a centred name, on two lines when it needs them.
 
     A playlist folder (an Item of kind 'folder') has no cover: its tile shows a folder icon.
     bind(item) and unbind() are called by a list factory as tiles are recycled; the Item bound
@@ -99,7 +99,8 @@ class Tile(Gtk.Box):
         if self.avatar is not None:
             self.avatar.set_visible(artist)
         self.label.set_xalign(0.5 if artist else 0)
-        self.label.set_min_lines(1 if artist else 3)
+        # A name wraps to a second line, as an album's title does; no subtitle follows it.
+        self.label.set_min_lines(2 if artist else 3)
 
     @property
     def context_item(self):
