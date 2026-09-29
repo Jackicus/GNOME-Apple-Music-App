@@ -54,7 +54,8 @@ class FakeEngine(GObject.Object):
         return None
 
     async def now_playing(self):
-        return await self._command('now_playing')
+        await self._command('now_playing')
+        raise EngineError('api', 'the page gave no now-playing answer')
 
     async def control(self, action):
         return await self._command('control', action)
@@ -70,6 +71,12 @@ class FakeEngine(GObject.Object):
 
     async def repeat(self, mode):
         return await self._command('repeat', mode)
+
+    async def queue(self):
+        return await self._command('queue')
+
+    async def lyrics(self, catalog_id):
+        return await self._command('lyrics', catalog_id)
 
 
 class FakeSettings:

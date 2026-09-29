@@ -206,9 +206,9 @@ class Mpris:
         self._handlers = []
         self._sent = {}          # property name → the Variant last put on the bus
         self._status = 'Stopped'  # the PlaybackStatus last computed (seeking keeps it)
+        self._shown = None       # the Player's track as last followed (_on_track)
         self._art_path = None    # the cached artwork file of the track shown, once on disk
         self._art_task = None
-        self._duration_known = True  # the Player's duration is this track's, not the last one's
         self._hold_until = 0.0   # until when positions are not looked at for a seek
         self._noted = (0.0, time.monotonic(), False)  # position, when, running: for Seeked
 
@@ -229,6 +229,7 @@ class Mpris:
             player.connect('notify::volume', self._on_volume),
         ]
         self._status = self._playback_status()
+        self._shown = player.track
         self._art_path = self._cached_art(player.track)
         self._note()
         self._owner = Gio.bus_own_name(
@@ -290,11 +291,9 @@ class Mpris:
         return playback_status(self._player.state, self._status)
 
     def _metadata(self):
-        """The Metadata now. The Player's duration stands in for a track without a length
-        of its own only once a duration has arrived for this track: from the track's notify
-        until then it is still the previous item's."""
-        return metadata(self._player.track, self._art_path,
-                        self._player.duration if self._duration_known else None)
+        """The Metadata now: the Player's duration stands in for a track without a length
+        of its own (the Player sets it with the track, so it is never the previous item's)."""
+        return metadata(self._player.track, self._art_path, self._player.duration)
 
     def _track_path(self):
         track = self._player.track
@@ -379,17 +378,19 @@ class Mpris:
         self._changed('PlaybackStatus')
 
     def _on_track(self, *_args):
+        """A new item (its times reset with it, whichever notify comes first: the
+        position's and the duration's wait for this one)."""
+        self._shown = self._player.track
         self._follow_art()
         self._status = self._playback_status()
-        self._duration_known = False  # the Player resets it after this notify, or MusicKit does
         self._hold_until = time.monotonic() + TRACK_HOLD  # the reset to 0 is not a seek
         self._note(0.0)
         self._changed('Metadata', 'PlaybackStatus', 'CanGoNext', 'CanGoPrevious', 'CanPlay',
                       'CanPause', 'CanSeek')
 
     def _on_duration(self, *_args):
-        self._duration_known = True
-        self._changed('Metadata')
+        if self._player.track is self._shown:
+            self._changed('Metadata')
 
     def _on_shuffle(self, *_args):
         self._changed('Shuffle')
@@ -404,6 +405,8 @@ class Mpris:
         """A position from MusicKit: Seeked when it is not where the last one led (a seek
         from the bar or from Apple's page), except in the moments after a track change and
         after a seek asked for here (TRACK_HOLD, SEEK_HOLD), when stale ones arrive."""
+        if self._player.track is not self._shown:
+            return  # a new item's 0: its notify follows, and notes it
         position = self._player.position
         expected = self._expected()
         self._note(position)
