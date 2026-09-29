@@ -40,7 +40,7 @@ import time
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from . import sections
+from . import sections, shortcuts
 from .library import TrackRef
 from .sections import FAVOURITE_SONGS, HOME, PLAYLISTS_SECTION
 from .sidebar import (SidebarEntry, SidebarItem, is_shown, plan_update, playlist_entries,
@@ -121,10 +121,11 @@ class SidebarController:
         motion = Gtk.DropControllerMotion()
         motion.connect('leave', lambda *_: self._cancel_spring())
         self._sidebar.add_controller(motion)
-        # Right and Left on a focused row: a folder opens and closes, a nested item goes to
-        # its folder. Only with the focus in the sidebar (a bubble-phase controller).
+        # Right and Left on a focused row (shortcuts.FOLDER_OPEN and FOLDER_CLOSE): a folder
+        # opens and closes, a nested item goes to its folder. Only with the focus in the
+        # sidebar (a bubble-phase controller).
         keys = Gtk.ShortcutController(propagation_phase=Gtk.PropagationPhase.BUBBLE)
-        for accel, expand in (('Right', True), ('Left', False)):
+        for accel, expand in ((shortcuts.FOLDER_OPEN, True), (shortcuts.FOLDER_CLOSE, False)):
             keys.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(accel),
                 Gtk.CallbackAction.new(lambda _widget, _args, expand=expand: self._on_arrow(

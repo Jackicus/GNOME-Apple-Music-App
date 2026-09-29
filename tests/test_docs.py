@@ -87,7 +87,8 @@ def app_keys():
     found = set()
     for accelerators in list(shortcuts.ACCELS.values()) + list(shortcuts.PLAYBACK.values()):
         found.update(accelerator_names(accelerator) for accelerator in accelerators)
-    for accelerator in (shortcuts.MAIN_MENU, *shortcuts.CONTEXT_MENU.split(), shortcuts.CLOSE):
+    for accelerator in (shortcuts.MAIN_MENU, *shortcuts.CONTEXT_MENU.split(), shortcuts.CLOSE,
+                        shortcuts.FOLDER_OPEN, shortcuts.FOLDER_CLOSE):
         found.add(accelerator_names(accelerator))
     return found
 
