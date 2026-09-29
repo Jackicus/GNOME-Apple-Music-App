@@ -550,9 +550,11 @@ class HandlerTest(WidgetTestCase):
                                          sorts=('title', 'year'), root=False), Tile)
         view_model = page.grid_view.get_model()
         self.assertEqual(view_model.get_item(0).title, 'Album 000')
-        page.sort_dropdown.set_selected(1)  # Year: newest first
+        from gi.repository import GLib
+
+        page.activate_action('page.sort', GLib.Variant('s', 'year'))  # newest first
         self.assertEqual(view_model.get_item(0).title, 'Album 059')
-        page.sort_dropdown.set_selected(0)
+        page.activate_action('page.sort', GLib.Variant('s', 'title'))
         self.assertEqual(view_model.get_item(0).title, 'Album 000')
 
         page.grid_view.emit('activate', 2)
