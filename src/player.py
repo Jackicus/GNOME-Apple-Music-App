@@ -307,16 +307,18 @@ class Player(GObject.Object):
 
     def apply_queue(self, snapshot):
         """Set the queue from a {index, items: [Track…]} snapshot (the bridge's queue()
-        answer and the queueItemsDidChange event), or empty it (None). Entries showing the
-        same items as before, in the same order, are kept (a repeated snapshot rebinds no
-        rows); the index is the snapshot's, or the track's place when it says -1."""
+        answer and the queueItemsDidChange event), or empty it (None). A snapshot of the
+        same entries as before (their data compared, before any object is made: MusicKit
+        re-sends the whole queue at every change) rebinds no rows; one that differs, in a
+        title too, replaces them in one splice; the index is the snapshot's, or the track's
+        place when it says -1."""
         items = snapshot.get('items') if isinstance(snapshot, dict) else None
         items = items if isinstance(items, list) else []
-        items = [item for item in items if isinstance(item, dict)]
-        entries = [NowPlaying(dict(item, index=position)) for position, item in enumerate(items)]
-        current = [entry.id for entry in self.queue]
-        if [entry.id for entry in entries] != current:
-            self.queue.splice(0, len(current), entries)
+        wanted = [dict(item, index=position) for position, item in enumerate(items)
+                  if isinstance(item, dict)]
+        if [entry.raw for entry in self.queue] != wanted:
+            self.queue.splice(0, self.queue.get_n_items(),
+                              [NowPlaying(data) for data in wanted])
         index = snapshot.get('index') if isinstance(snapshot, dict) else None
         index = int(index) if isinstance(index, int) and not isinstance(index, bool) else -1
         if index < 0 and self.track is not None:

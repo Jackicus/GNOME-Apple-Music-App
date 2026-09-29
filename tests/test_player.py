@@ -837,10 +837,24 @@ class QueueTest(unittest.TestCase):
         self.engine.event('queueItemsDidChange', dict(QUEUE, index=0))
         self.assertEqual(self.changes, [(0, 0, 3)])
         self.assertEqual(self.player.queue_index, 0)
+        # The same entries with a title filled in: replaced (the rows show the new title).
+        renamed = [dict(item) for item in QUEUE['items']]
+        renamed[1]['title'] = 'Pilot Light (Live)'
+        self.engine.event('queueItemsDidChange', {'index': 0, 'items': renamed})
+        self.assertEqual(self.changes, [(0, 0, 3), (0, 3, 3)])
+        self.assertEqual(self.player.queue.get_item(1).title, 'Pilot Light (Live)')
         # A different queue replaces it in one splice.
         self.engine.event('queueItemsDidChange', {'index': 0, 'items': QUEUE['items'][:1]})
         self.assertEqual(self.ids(), ['i.demo0003'])
-        self.assertEqual(self.changes, [(0, 0, 3), (0, 3, 1)])
+        self.assertEqual(self.changes, [(0, 0, 3), (0, 3, 3), (0, 3, 1)])
+
+    def test_an_identical_snapshot_makes_no_objects(self):
+        self.engine.event('queueItemsDidChange', QUEUE)
+        entries = list(self.player.queue)
+        with mock.patch('applemusic.player.NowPlaying', side_effect=AssertionError('made')):
+            self.engine.event('queueItemsDidChange', dict(QUEUE, index=1))
+        self.assertEqual(list(self.player.queue), entries)  # the same objects
+        self.assertEqual(self.player.queue_index, 1)
 
     def test_index_before_playback_is_the_tracks_place(self):
         self.engine.event('nowPlayingItemDidChange', {'track': QUEUE['items'][1], 'index': 1})

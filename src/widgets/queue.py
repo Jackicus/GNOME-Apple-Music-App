@@ -1,20 +1,34 @@
-"""AppleMusicQueueView: the Now Playing sheet's Up Next tab, the Player's queue.
+"""AppleMusicQueueView: the Now Playing sheet's Up Next tab, the Player's queue from the
+entry playing on.
 
-A Gtk.ListView over player.queue (a Gio.ListStore of NowPlaying): rows like a playlist's
-track rows (a number, the title, the artist, the duration), the entry playing marked with
-a play icon in place of its number and a bold title. Activating a row (a double click, or
-Enter) plays that entry (player.queue_jump). An empty queue shows a compact status page.
+A Gtk.ListView over a Gtk.SliceListModel of player.queue (a Gio.ListStore of NowPlaying)
+that starts at the entry playing (slice_offset), so the list shows what its name says: the
+entry playing first, marked with a play icon in place of its number and a bold title, then
+what comes next. Rows are like a playlist's track rows (a number, the title with its
+explicit badge, the artist, the duration). Activating a row (a double click, or Enter) plays
+that entry (player.queue_jump, with the slice's offset put back). An empty queue shows a
+compact status page. The list is named "Up Next" for assistive technology and each row by
+labels.track_label.
 """
 
 from gettext import gettext as _
+from gettext import pgettext as C_
 
-from gi.repository import Adw, Gtk, Pango
+from gi.repository import Adw, GLib, Gtk, Pango
 
 from ..player import format_time
+from .labels import track_label
+
+
+def slice_offset(queue_index):
+    """Where the Up Next slice of the queue starts: the entry playing, or the top when
+    nothing is (queue_index -1)."""
+    return max(queue_index, 0)
 
 
 class QueueRow(Gtk.Box):
-    """One queue entry: number or play icon, title and artist, duration."""
+    """One queue entry: number or play icon, title (and its explicit badge) and artist,
+    duration."""
 
     def __init__(self):
         super().__init__(spacing=12)
@@ -35,15 +49,26 @@ class QueueRow(Gtk.Box):
 
         titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER,
                          hexpand=True)
+        title_line = Gtk.Box(spacing=6)
         self.title_label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END,
                                      single_line_mode=True)
         self.title_label.add_css_class('queue-title')
+        # The badge marking a song with explicit lyrics, as the track rows show it; the
+        # row's accessible name says "explicit" (track_label), so the badge is decoration.
+        self.explicit_badge = Gtk.Label(
+            # Translators: the badge marking a song with explicit lyrics, as Apple Music shows it
+            label=C_('explicit badge', 'E'), tooltip_text=_('Explicit'), visible=False,
+            valign=Gtk.Align.CENTER, accessible_role=Gtk.AccessibleRole.PRESENTATION)
+        self.explicit_badge.add_css_class('caption')
+        self.explicit_badge.add_css_class('explicit-badge')
+        title_line.append(self.title_label)
+        title_line.append(self.explicit_badge)
         self.artist_label = Gtk.Inscription(xalign=0,
                                             text_overflow=Gtk.InscriptionOverflow.ELLIPSIZE_END,
                                             visible=False)
         self.artist_label.add_css_class('caption')
         self.artist_label.add_css_class('dim-label')
-        titles.append(self.title_label)
+        titles.append(title_line)
         titles.append(self.artist_label)
         self.append(titles)
 
@@ -56,6 +81,7 @@ class QueueRow(Gtk.Box):
     def bind(self, entry, position, current):
         self.number_label.set_text(str(position + 1))
         self.title_label.set_label(entry.title or _('Unknown Title'))
+        self.explicit_badge.set_visible(entry.explicit)
         self.artist_label.set_text(entry.artist)
         self.artist_label.set_visible(bool(entry.artist))
         self.duration_label.set_text(
@@ -82,10 +108,9 @@ class QueueView(Gtk.Stack):
         self._player = None
         self._app = None
         self._active = False
-        self._rows = {}  # bound position -> its QueueRow
-        # What a row reads to assistive technology (looked up once: rows are bound often).
-        self._label_format = _('{title}, {artist}')
-        self._playing = _('Playing')
+        self._rows = {}  # bound position (in the slice) -> its QueueRow
+        self._slice = None  # the queue from the entry playing on
+        self._playing = _('Playing')  # looked up once: rows are bound often
 
         self.empty_page = Adw.StatusPage(icon_name='playlist-symbolic', title=_('Nothing Queued'),
                                          description=_('Play something to fill Up Next'))
@@ -100,6 +125,7 @@ class QueueView(Gtk.Stack):
         self.list_view = Gtk.ListView(factory=factory, model=Gtk.NoSelection(),
                                       tab_behavior=Gtk.ListTabBehavior.ITEM)
         self.list_view.add_css_class('queue-list')
+        self.list_view.update_property([Gtk.AccessibleProperty.LABEL], [_('Up Next')])
         self.list_view.connect('activate', self._on_activate)
         self.scrolled = Gtk.ScrolledWindow(child=self.list_view,
                                            hscrollbar_policy=Gtk.PolicyType.NEVER)
@@ -108,11 +134,12 @@ class QueueView(Gtk.Stack):
     def set_player(self, player, app):
         self._player = player
         self._app = app
-        self.list_view.set_model(Gtk.NoSelection(model=player.queue))
-        player.queue.connect('items-changed', lambda *_: self._update_page())
+        self._slice = Gtk.SliceListModel(model=player.queue, offset=0, size=GLib.MAXUINT)
+        self.list_view.set_model(Gtk.NoSelection(model=self._slice))
+        player.queue.connect('items-changed', lambda *_: self._on_items_changed())
         player.connect('notify::queue-index', lambda *_: self._on_index())
-        self._update_page()
         self._on_index()
+        self._update_page()
 
     def set_active(self, active):
         """Scroll to the entry playing when shown."""
@@ -123,18 +150,27 @@ class QueueView(Gtk.Stack):
     def _update_page(self):
         self.set_visible_child_name('list' if self._player.queue.get_n_items() else 'empty')
 
+    def _on_items_changed(self):
+        """A new queue: its page, and the entry playing on top (a new queue with the same
+        index number fires no index notify)."""
+        self._update_page()
+        if self._active:
+            self._scroll_to_current()
+
     def _on_index(self):
+        """The entry playing changed: the slice starts there, and the rows show it."""
         index = self._player.queue_index
+        self._slice.set_offset(slice_offset(index))
         for position, row in self._rows.items():
-            row.set_current(position == index)
-            self._describe(row, position == index)
+            current = position == 0 and index >= 0
+            row.set_current(current)
+            self._describe(row, current)
         if self._active:
             self._scroll_to_current()
 
     def _scroll_to_current(self):
-        index = self._player.queue_index if self._player is not None else -1
-        if 0 <= index < self._player.queue.get_n_items():
-            self.list_view.scroll_to(index, Gtk.ListScrollFlags.NONE, None)
+        if self._player is not None and self._player.queue_index >= 0 and self._slice.get_n_items():
+            self.list_view.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
 
     def _on_setup(self, _factory, list_item):
         list_item.set_child(QueueRow())
@@ -144,13 +180,10 @@ class QueueView(Gtk.Stack):
         row = list_item.get_child()
         self._rows[position] = row
         entry = list_item.get_item()
-        current = position == self._player.queue_index
+        current = position == 0 and self._player.queue_index >= 0
         row.bind(entry, position, current)
         row.list_item = list_item
-        title = row.title_label.get_label()
-        list_item.set_accessible_label(
-            self._label_format.format(title=title, artist=entry.artist) if entry.artist
-            else title)
+        list_item.set_accessible_label(track_label(entry, show_artist=True, show_album=False))
         self._describe(row, current)
 
     def _describe(self, row, current):
@@ -169,4 +202,4 @@ class QueueView(Gtk.Stack):
     def _on_activate(self, _list_view, position):
         if self._player is None:
             return
-        self._app.player_command(self._player.queue_jump(position))
+        self._app.player_command(self._player.queue_jump(position + self._slice.get_offset()))
