@@ -265,8 +265,22 @@ def describe(widget):
 
 
 async def key(window, accel, wait=0.25):
-    press(window, accel)
+    """Press accel and wait; what handled it (press())."""
+    handled = press(window, accel)
     await asyncio.sleep(wait)
+    return handled
+
+
+async def until(condition, timeout=2.0):
+    """Wait, up to timeout seconds, for condition() to hold: True when it did. For what
+    follows a press after a delay of the toolkit's (a button pressed by its key shows its
+    pressed state for a moment before it clicks)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        await asyncio.sleep(0.05)
+    return condition()
 
 
 async def walkthrough(window):
@@ -326,18 +340,25 @@ async def walkthrough(window):
     await key(window, '<primary>3')
     check('Ctrl+3 puts the focus on the play button',
           window.get_focus() is window.player_bar.play_button)
+    # Watched at the actions: Space presses the focused button, whose own activation runs
+    # its action (never the window's key handler); the window handles Ctrl+Right and Ctrl+Left.
     actions = []
-    activate = app.activate_action
-    app.activate_action = lambda name, *rest: actions.append(name)
-    await key(window, 'space')
+    handlers = [(app.lookup_action(name), app.lookup_action(name).connect(
+        'activate', lambda action, _parameter: actions.append(action.get_name())))
+        for name in ('play-pause', 'next', 'previous')]
+    handled = await key(window, 'space')
+    await until(lambda: actions)  # the button clicks once its pressed state has shown
+    check('Space presses the focused play button (play-pause)',
+          actions == ['play-pause'] and handled == 'signal(activate)', (actions, handled))
     await key(window, '<primary>Right')
     await key(window, '<primary>Left')
-    app.activate_action = activate
+    for action, handler in handlers:
+        action.disconnect(handler)
     check('Space, Ctrl+Right, Ctrl+Left: play-pause, next, previous',
           actions == ['play-pause', 'next', 'previous'], actions)
     print('-- Now Playing')
-    await key(window, '<primary>n', 0.8)
-    check('Ctrl+N opens the sheet with the focus on its play button',
+    await key(window, '<primary><shift>n', 0.8)
+    check('Ctrl+Shift+N opens the sheet with the focus on its play button',
           window.bottom_sheet.get_open() and window.get_focus() is window.now_playing.play_button)
     for _ in range(4):  # Next, Repeat, the tabs, a lyric line
         await key(window, 'Tab', 0.1)
@@ -376,6 +397,15 @@ async def walkthrough(window):
     for each in popover:
         each.popdown()
     await asyncio.sleep(0.3)
+    actions = []
+    handler = app.lookup_action('play-pause').connect(
+        'activate', lambda action, _parameter: actions.append(action.get_name()))
+    handled = await key(window, 'space')
+    await until(lambda: actions)
+    app.lookup_action('play-pause').disconnect(handler)
+    check('Space on a tile plays or pauses',
+          actions == ['play-pause'] and (handled or '').endswith('key controller'),
+          (actions, handled, describe(window.get_focus())))
     print('-- Preferences')
     await key(window, '<primary>comma', 1.0)
     dialog = app._preferences

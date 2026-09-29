@@ -48,12 +48,21 @@ class RoutingTest(unittest.TestCase):
                 with self.subTest(focus=focus_type.__name__, accel=accel):
                     self.assertIsNone(route(accel, focus_type))
 
-    def test_space_belongs_to_what_space_toggles(self):
-        for focus_type in (Gtk.ToggleButton, Gtk.Switch, Gtk.CheckButton):
+    def test_space_belongs_to_what_space_presses(self):
+        # GTK's own binding: Space presses a button (a toggle, a menu button's inner button,
+        # a toggle group's toggle), flips a switch or a check box, activates a boxed-list
+        # row. The skip keys still go to playback there.
+        for focus_type in (Gtk.Button, Gtk.ToggleButton, Gtk.LinkButton, Gtk.Switch,
+                           Gtk.CheckButton, Gtk.ListBoxRow):
             with self.subTest(focus=focus_type.__name__):
                 self.assertIsNone(route('space', focus_type))
                 self.assertIsNone(route('KP_Space', focus_type))
                 self.assertEqual(route('<primary>Right', focus_type), 'next')
+
+    def test_space_plays_where_nothing_presses(self):
+        for focus_type in (NO_FOCUS, ListItemWidget, Gtk.Scale, Gtk.Widget):
+            with self.subTest(focus=focus_type.__name__):
+                self.assertEqual(route('space', focus_type), 'play-pause')
 
     def test_a_dialog_or_a_menu_keeps_the_keys(self):
         self.assertIsNone(route('space', dialog_open=True))
@@ -77,6 +86,16 @@ class KeysTest(unittest.TestCase):
         self.assertTrue(keyboard.is_main_menu(Gdk.KEY_F10, 0))
         self.assertFalse(keyboard.is_main_menu(Gdk.KEY_F10, Gdk.ModifierType.SHIFT_MASK))
         self.assertFalse(keyboard.is_main_menu(Gdk.KEY_F9, 0))
+
+    def test_context_menu_keys_match(self):
+        """The keys context_menu binds are the ones the shortcuts dialog lists."""
+        from applemusic.widgets import context_menu
+
+        bound = {Gtk.accelerator_parse(alt)[1:] for alt in context_menu.MENU_KEYS.split('|')}
+        listed = {Gtk.accelerator_parse(alt)[1:] for alt in shortcuts.CONTEXT_MENU.split()}
+        self.assertEqual(bound, listed)
+        self.assertTrue(all(ok for ok in bound))
+        self.assertIsNotNone(Gtk.ShortcutTrigger.parse_string(context_menu.MENU_KEYS))
 
 
 if __name__ == '__main__':
