@@ -18,7 +18,7 @@ from gi.repository import Adw, Gtk
 from ..backend.errors import EngineError
 from ..remote import fetch_shelf_art, remote_shelves
 from ..widgets.engine_status import EngineStatus
-from ..widgets.shelf import Shelf
+from ..widgets.shelf import ShelfColumn
 from ..widgets.util import connect_weak
 from . import app
 
@@ -58,13 +58,13 @@ class ShelvesPage(Adw.NavigationPage):
         self._task = None  # the fetch running
         self._art_task = None  # the thumbnails being fetched for the shelves shown
         self._shelves = []  # the ShelfModel objects shown
-        self._widgets = []  # their AppleMusicShelf widgets, in order
         # What the page says when the engine cannot answer, and what its button does.
         self._engine_status = EngineStatus(app(), self._show_status, self.load, {
             'engine-down': _('Start the engine to load this page'),
             'not-signed-in': _('This page appears once you sign in to Apple Music'),
             'failed': _('Could Not Load This Page'),
         })
+        self._column = ShelfColumn(self.shelves_box, anchor=self.title_label)
         self.header_bar.set_show_title(not root)
         self.title_label.set_label(title)
         # Connected weakly (widgets/util.py): a bound method would keep a popped page alive.
@@ -111,17 +111,7 @@ class ShelvesPage(Adw.NavigationPage):
         shelves = remote_shelves(dicts)
         if self._art_task is not None and not self._art_task.done():
             self._art_task.cancel()
-        for position, shelf in enumerate(shelves):
-            if position < len(self._widgets):
-                widget = self._widgets[position]
-            else:
-                widget = Shelf(hero=self._hero and position == 0, see_all=True)
-                self.shelves_box.append(widget)
-                self._widgets.append(widget)
-            widget.bind_shelf(shelf)
-        for widget in self._widgets[len(shelves):]:
-            self.shelves_box.remove(widget)
-        del self._widgets[len(shelves):]
+        self._column.show(shelves, hero_first=self._hero)
         self._shelves = shelves
         self._engine_status.clear()
         if shelves:

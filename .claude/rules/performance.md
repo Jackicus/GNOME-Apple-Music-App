@@ -69,6 +69,7 @@ docs/notes.md.
 - Everything in `do_startup`, `do_activate` and a restored page's construction is on the
   startup path: keep it small. Import modules at the top of main.py's import chain (before the
   library's parse starts) or lazily; page modules only in their factories.
-- A page that builds many widgets builds what shows first and the rest a frame apart (Home's
-  `FIRST_SHELVES`). Chunked main-thread work yields with `await yield_to_frames()`.
+- A page that builds many widgets builds what shows first and the rest a frame apart
+  (`ShelfColumn`'s `FIRST_SHELVES`, then one shelf per `await widgets.util.next_frame(widget)`).
+  Chunked main-thread work yields with `await yield_to_frames()`.
 - Garbage collection around big loads: see `library.md` (`paused_gc`).

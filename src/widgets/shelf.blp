@@ -7,7 +7,7 @@ template $AppleMusicShelf: Box {
   orientation: vertical;
 
   Box {
-    spacing: 12;
+    spacing: 6;
     margin-start: 24;
     margin-end: 14;
 
@@ -15,35 +15,55 @@ template $AppleMusicShelf: Box {
       "shelf-header",
     ]
 
-    Box {
-      orientation: vertical;
+    Label title_label {
+      xalign: 0;
       valign: center;
       hexpand: true;
+      ellipsize: end;
 
-      Label title_label {
-        xalign: 0;
-        ellipsize: end;
-
-        styles [
-          "title-2",
-        ]
-      }
-
-      Label subtitle_label {
-        xalign: 0;
-        ellipsize: end;
-        visible: false;
-
-        styles [
-          "dim-label",
-        ]
-      }
+      styles [
+        "title-2",
+      ]
     }
 
+    // Page the row sideways, for a pointer without a sideways wheel: shown while the row
+    // overflows, each sensitive while there is more that way (shelf.py).
+    Button previous_button {
+      icon-name: "go-previous-symbolic";
+      tooltip-text: _("Scroll Left");
+      valign: center;
+      visible: false;
+
+      styles [
+        "flat",
+        "circular",
+      ]
+    }
+
+    Button next_button {
+      icon-name: "go-next-symbolic";
+      tooltip-text: _("Scroll Right");
+      valign: center;
+      visible: false;
+
+      styles [
+        "flat",
+        "circular",
+      ]
+    }
+
+    // Shown only when the row does not show everything (shelf.py); described by the title,
+    // so that each shelf's reads differently.
     Button see_all_button {
       label: _("See All");
       valign: center;
       visible: false;
+
+      accessibility {
+        described-by: [
+          title_label,
+        ];
+      }
 
       styles [
         "flat",

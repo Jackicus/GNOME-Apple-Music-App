@@ -25,7 +25,7 @@ from ..widgets import context_menu
 from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
 from ..widgets.engine_status import EngineStatus
-from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
+from ..widgets.shelf import ShelfColumn  # also registers $AppleMusicShelf for the template
 from ..widgets.track_row import TrackRow
 from ..widgets.util import MappedHandlers
 from . import app
@@ -59,22 +59,15 @@ class Suggestion(GObject.Object):
         self.item = item
 
 
-# How many of a library shelf's matches its row shows: See All opens them all. A row of a
-# Gtk.ListView creates up to 200 tiles whatever it shows, 70 ms of widgets a shelf on a broad
-# term ("a" matches most of 3,000 albums).
-ROW_LIMIT = 50
-
-
 class LibraryShelf:
     """What a shelf widget binds in Your Library mode: a title over a filtered library store
-    (bind_shelf() and open_shelf() only need `key`, `title` and `items`; the row shows
-    `row_items`, the first ROW_LIMIT of them)."""
+    (bind_shelf() and open_shelf() only need `key`, `title` and `items`; the row shows the
+    first shelf.ROW_LIMIT of them, See All the rest)."""
 
     def __init__(self, key, title, items):
         self.key = key
         self.title = title
         self.items = items
-        self.row_items = Gtk.SliceListModel(model=items, offset=0, size=ROW_LIMIT)
 
 
 def _item_filter():
@@ -132,8 +125,7 @@ class SearchPage(Adw.NavigationPage):
         self._categories = Gio.ListStore(item_type=Item)
         self._landing_loaded = False
         self._suggestions = Gio.ListStore(item_type=Suggestion)
-        self._results = []  # the library.Shelf objects of the last search
-        self._result_widgets = []
+        self._results = ShelfColumn(self.results_box)  # a search's answer, as shelves
         self._art_task = None
         # What the page says when the engine cannot answer, and what its button does; its
         # retry asks again for what failed, in Apple Music mode only.
@@ -358,19 +350,8 @@ class SearchPage(Adw.NavigationPage):
         shelves = remote_shelves(dicts)
         if self._art_task is not None and not self._art_task.done():
             self._art_task.cancel()
-        for position, shelf in enumerate(shelves):
-            if position < len(self._result_widgets):
-                widget = self._result_widgets[position]
-            else:
-                widget = Shelf(see_all=True)
-                self.results_box.append(widget)
-                self._result_widgets.append(widget)
-            widget.set_property('hero', shelf.key == 'top')
-            widget.bind_shelf(shelf)
-        for widget in self._result_widgets[len(shelves):]:
-            self.results_box.remove(widget)
-        del self._result_widgets[len(shelves):]
-        self._results = shelves
+        # Top Results, Apple's best few hits of any kind, first and as cards.
+        self._results.show(shelves, hero_first=bool(shelves) and shelves[0].key == 'top')
         if shelves:
             self._show('results')
             self._art_task = app().spawn(fetch_shelf_art(shelves))

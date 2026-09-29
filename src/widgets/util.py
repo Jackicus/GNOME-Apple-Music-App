@@ -1,7 +1,7 @@
 """connect_weak(): a signal connection that does not keep the handler's widget alive (and
 weak_method(), the same for any other callback a child holds); MappedHandlers: a widget's
 handlers on objects that outlive it (the library, the engine), connected only while it is
-mapped.
+mapped; next_frame(): wait for a widget's next frame.
 
 A widget that connects one of its children's signals (or an owned object's: a list factory,
 an adjustment, a sort model, an event controller) to one of its own bound methods makes a
@@ -29,9 +29,10 @@ object it holds this way. Handlers on the widget itself (`self.connect('map', ..
 GObject vfuncs (`do_map`) need nothing: PyGObject sees those.
 """
 
+import asyncio
 import weakref
 
-from gi.repository import GObject
+from gi.repository import GLib, GObject
 
 
 def _weak_target(method):
@@ -141,3 +142,27 @@ class MappedHandlers:
     def _on_unmap(self, _widget):
         for entry in self._entries:
             self._disconnect(entry)
+
+
+# How long next_frame() waits for a tick at most: a widget unmapped before its next frame
+# gets none.
+FRAME_TIMEOUT_MS = 100
+
+
+def next_frame(widget):
+    """A future resolved at the widget's next frame (its frame clock's tick), so that a page
+    building in steps builds one a frame and GTK paints in between; while the widget is not
+    mapped (it gets no frames), in an idle. Await it in a task on the running loop."""
+    future = asyncio.get_running_loop().create_future()
+
+    def done(*_args):
+        if not future.done():
+            future.set_result(None)
+        return GLib.SOURCE_REMOVE
+
+    if widget.get_mapped():
+        widget.add_tick_callback(done)
+        GLib.timeout_add(FRAME_TIMEOUT_MS, done)
+    else:
+        GLib.idle_add(done)
+    return future
