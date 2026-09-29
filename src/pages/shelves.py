@@ -97,7 +97,6 @@ class ShelvesPage(Adw.NavigationPage):
         # Connected weakly (widgets/util.py): a bound method would keep a popped page alive.
         connect_weak(self.refresh_button, 'clicked', self._on_refresh_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
-        connect_weak(self.stack, 'notify::visible-child', self._on_stack_changed)
 
     # The engine outlives the page: it is watched only while the page is shown.
 
@@ -175,9 +174,6 @@ class ShelvesPage(Adw.NavigationPage):
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
         self.stack.set_visible_child_name('status')
-
-    def _on_stack_changed(self, _stack, _pspec):
-        self._header_title.update()
 
     def _on_refresh_clicked(self, _button):
         if self._engine_status.status in ('engine-down', 'not-signed-in'):
