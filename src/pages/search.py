@@ -26,6 +26,7 @@ from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.track_row import TrackRow
+from ..widgets.util import MappedHandlers
 from . import app
 
 log = logging.getLogger(__name__)
@@ -134,7 +135,6 @@ class SearchPage(Adw.NavigationPage):
         self._result_widgets = []
         self._art_task = None
         self._engine_handlers = []
-        self._library_handlers = []
         self._accessible_format = _('{title}, {subtitle}')
         self.title_label.set_label(title)
 
@@ -170,6 +170,10 @@ class SearchPage(Adw.NavigationPage):
         self.songs_list.set_model(Gtk.NoSelection(model=self._songs_shown))
         context_menu.attach(self.songs_list, drag=True)
         context_menu.attach(self.suggestions_list)  # the top hits' rows
+        # The library outlives the window: followed only while the page is shown.
+        self._handlers = MappedHandlers(self)
+        self._handlers.add(library, 'notify::state', self._on_library_results_changed)
+        self._handlers.add(library, 'notify::songs-ready', self._on_library_results_changed)
 
     @property
     def mode(self):
@@ -197,9 +201,6 @@ class SearchPage(Adw.NavigationPage):
             engine.connect('notify::state', self._on_engine_changed),
             engine.connect('notify::authorized', self._on_engine_changed),
         ]
-        self._library_handlers = [
-            self._library.connect('notify::songs-ready', self._on_library_results_changed),
-        ]
         if self._stale():
             self._refresh()
 
@@ -208,9 +209,6 @@ class SearchPage(Adw.NavigationPage):
         for handler in self._engine_handlers:
             engine.disconnect(handler)
         self._engine_handlers = []
-        for handler in self._library_handlers:
-            self._library.disconnect(handler)
-        self._library_handlers = []
         Adw.NavigationPage.do_unmap(self)
 
     def _stale(self):

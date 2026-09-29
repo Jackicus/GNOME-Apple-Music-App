@@ -49,8 +49,11 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   (`window.ROOT_LIMIT`). Sign-out forgets the pages that show the account's things
   (`Window.forget_account_pages()`: the pushed pages, New, Made for You, Search and every
   playlist and folder root), to be built again on the next visit.
-- Pages listen to `app.library` while mapped (`do_map`/`do_unmap`): the library outlives them.
-  A page that must follow while hidden says why in a comment (SongsPage does).
+- Pages listen to `app.library` (and anything else that outlives them) only while mapped:
+  they declare the handlers once, in `__init__`, on a `widgets.util.MappedHandlers(self)`,
+  which connects them (weakly) on map and disconnects them on unmap; `do_map` catches up with
+  what changed while hidden. A page that must follow while hidden says why in a comment
+  (SongsPage does). Pages reach the Application through `pages.app()`.
 - New, Made for You and a search category are `ShelvesPage`s over the engine's answers: a
   spinner, then Start Engine / Sign In / Try Again states when the engine cannot answer (in demo
   mode it always answers `engine-down`).

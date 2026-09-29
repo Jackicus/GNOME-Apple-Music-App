@@ -18,7 +18,10 @@ paths:
   `tests/gtk.py`: `@requires_gtk` on the class or method (it skips without a display or a
   compiled gresource from build/src or build/install), template modules imported inside the
   test, `pump()`/`wait_for()` for the main loop, and under a second per test. They must pass on
-  CI's Xvfb with the cairo renderer and no accessibility bus.
+  CI's Xvfb with the cairo renderer and no accessibility bus. A page test subclasses
+  `tests/page_harness.py`'s `PageTestCase`: a presented stand-in window (the seams, recorded),
+  a stand-in application (`pages.app()`) and an engine that answers each request from
+  `engine.answers`.
 - Tests never start Chrome, touch the real profile or cache, or reach the network (a server
   the test runs itself on 127.0.0.1, as test_normalize's artwork fetch does, is fine): point
   `APPLE_MUSIC_CACHE` (and `APPLE_MUSIC_PROFILE`) at a temporary directory. test_engine.py runs

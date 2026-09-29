@@ -14,7 +14,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 from ..library import Item
 from ..widgets import context_menu
 from ..widgets.tile import Tile
-from ..widgets.util import connect_weak
+from ..widgets.util import MappedHandlers, connect_weak
 from . import app, mark_bound
 
 
@@ -110,7 +110,6 @@ class GridPage(Adw.NavigationPage):
         self._library = library
         self._get_model = model if callable(model) else lambda: model
         self._artist = artist
-        self._library_handlers = []
         self._title_offset = 0
         self._bound = False  # a tile has been bound (the startup timing's mark)
         self._nothing = Gio.ListStore(item_type=Item)  # shown while `model` returns None
@@ -151,6 +150,10 @@ class GridPage(Adw.NavigationPage):
             self.sort_dropdown.set_model(Gtk.StringList.new([SORTS[key][0]() for key in sorts]))
 
         connect_weak(self.scrolled_window.get_vadjustment(), 'value-changed', self._on_scrolled)
+        # The library outlives the window: the page follows it only while it is shown.
+        self._handlers = MappedHandlers(self)
+        self._handlers.add(library, 'notify::state', self._update_state)
+        self._handlers.add(library, 'changed', self._on_library_changed)
         self._update_state()
 
     def _model(self):
@@ -163,21 +166,9 @@ class GridPage(Adw.NavigationPage):
             self.grid_view.set_max_columns(columns)
         return GLib.SOURCE_REMOVE
 
-    # The library outlives the window, so the page listens to it only while it is shown.
-
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        self._library_handlers = [
-            self._library.connect('notify::state', self._update_state),
-            self._library.connect('changed', self._on_library_changed),
-        ]
         self._on_library_changed()
-
-    def do_unmap(self):
-        for handler in self._library_handlers:
-            self._library.disconnect(handler)
-        self._library_handlers = []
-        Adw.NavigationPage.do_unmap(self)
 
     def _on_library_changed(self, *_args):
         model = self._model()

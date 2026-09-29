@@ -4,6 +4,7 @@ from gi.repository import Adw, Gtk
 
 from ..library import yield_to_frames
 from ..widgets.shelf import Shelf
+from ..widgets.util import MappedHandlers
 from . import app
 
 # The shelves bound before the page is drawn: the hero cards and what fits under them. The
@@ -34,29 +35,20 @@ class HomePage(Adw.NavigationPage):
     def __init__(self, library, title, icon_name=None):
         super().__init__(title=title)
         self._library = library
-        self._library_handlers = []
         self._shelves = []  # the library.Shelf objects shown
         self._widgets = []  # their AppleMusicShelf widgets, in order
         self._generation = 0  # counts _show()s: an older one's remaining shelves are dropped
         self.title_label.set_label(title)
         self.empty_page.set_icon_name(icon_name)
+        # The library outlives the window: the page follows it only while it is shown.
+        self._handlers = MappedHandlers(self)
+        self._handlers.add(library, 'notify::state', self._update)
+        self._handlers.add(library, 'changed', self._update)
         self._update()
-
-    # The library outlives the window, so the page listens to it only while it is shown.
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        self._library_handlers = [
-            self._library.connect('notify::state', self._update),
-            self._library.connect('changed', self._update),
-        ]
         self._update()
-
-    def do_unmap(self):
-        for handler in self._library_handlers:
-            self._library.disconnect(handler)
-        self._library_handlers = []
-        Adw.NavigationPage.do_unmap(self)
 
     def _update(self, *_args):
         shelves = [shelf for shelf in self._library.shelves if shelf.items.get_n_items()]
