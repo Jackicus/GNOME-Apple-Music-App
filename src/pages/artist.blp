@@ -17,8 +17,7 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
         name_label.justify: center;
         caption_label.xalign: 0.5;
         caption_label.justify: center;
-        summary_label.xalign: 0.5;
-        summary_label.justify: center;
+        buttons_box.halign: center;
       }
     }
 
@@ -35,8 +34,7 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
         name_label.justify: center;
         caption_label.xalign: 0.5;
         caption_label.justify: center;
-        summary_label.xalign: 0.5;
-        summary_label.justify: center;
+        buttons_box.halign: center;
         content_box.margin-start: 12;
         content_box.margin-end: 12;
       }
@@ -44,11 +42,11 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
 
     child: Adw.ToolbarView {
       [top]
-      Adw.HeaderBar {}
+      Adw.HeaderBar header_bar {}
 
       // A box of a few tens of tiles, not a Gtk.GridView: an artist has tens of albums, and a
       // flow box can sit under the hero in one scrolled window.
-      content: ScrolledWindow {
+      content: ScrolledWindow scrolled_window {
         hscrollbar-policy: never;
 
         child: Box content_box {
@@ -94,17 +92,41 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
                   "dim-label",
                 ]
               }
+
+              // Play (a catalog artist's top songs) and the artist's own menu.
+              Box buttons_box {
+                spacing: 12;
+                margin-top: 12;
+
+                Button play_button {
+                  visible: false;
+
+                  child: Adw.ButtonContent {
+                    icon-name: "media-playback-start-symbolic";
+                    label: _("Play");
+                  };
+
+                  styles [
+                    "pill",
+                    "suggested-action",
+                  ]
+                }
+
+                MenuButton more_button {
+                  icon-name: "view-more-symbolic";
+                  tooltip-text: _("More Options");
+                  valign: center;
+
+                  accessibility {
+                    label: _("More Options");
+                  }
+
+                  styles [
+                    "circular",
+                  ]
+                }
+              }
             }
-          }
-
-          Label summary_label {
-            xalign: 0;
-            wrap: true;
-            visible: false;
-
-            styles [
-              "dim-label",
-            ]
           }
 
           Label albums_label {
@@ -117,13 +139,54 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
             ]
           }
 
+          // Each tile at the start of its cell, the first on the page's margin (and a
+          // child's 3 px padding), 12 px apart, as Radio's.
           FlowBox flow_box {
             homogeneous: true;
             selection-mode: none;
             activate-on-single-click: true;
             min-children-per-line: 2;
             max-children-per-line: 12;
+            column-spacing: 12;
             valign: start;
+          }
+
+          // The biography after the albums, three lines at most: More shows it whole.
+          Box summary_box {
+            orientation: vertical;
+            spacing: 6;
+            margin-top: 12;
+            visible: false;
+
+            Label {
+              label: _("About");
+              xalign: 0;
+
+              styles [
+                "title-2",
+              ]
+            }
+
+            Label summary_label {
+              xalign: 0;
+              wrap: true;
+              lines: 3;
+              ellipsize: end;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Button more_notes_button {
+              label: _("More");
+              halign: start;
+              visible: false;
+
+              styles [
+                "flat",
+              ]
+            }
           }
 
           // In place of the albums: an artist that came without them (a shelf's) while the

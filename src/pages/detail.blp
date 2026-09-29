@@ -18,11 +18,13 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
         title_label.justify: center;
         subtitle_label.xalign: 0.5;
         subtitle_label.justify: center;
+        artist_button.halign: center;
         caption_label.xalign: 0.5;
         caption_label.justify: center;
         buttons_box.halign: center;
         summary_label.xalign: 0.5;
         summary_label.justify: center;
+        more_notes_button.halign: center;
       }
     }
 
@@ -51,7 +53,7 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
           name: "item";
 
           // The hero and every track in one list, the hero its first row (see detail.py).
-          child: ScrolledWindow {
+          child: ScrolledWindow scrolled_window {
             hscrollbar-policy: never;
 
             child: ListView list_view {
@@ -105,6 +107,8 @@ Box hero {
         ]
       }
 
+      // The subtitle: an album's artist as a link to their page when the library has them
+      // (artist_button), else plain text (a playlist's curator, an artist not in the library).
       Label subtitle_label {
         xalign: 0;
         wrap: true;
@@ -112,7 +116,27 @@ Box hero {
 
         styles [
           "title-3",
-          "accent",
+        ]
+      }
+
+      Button artist_button {
+        halign: start;
+        visible: false;
+
+        child: Label artist_label {
+          xalign: 0;
+          wrap: true;
+          wrap-mode: word_char;
+
+          styles [
+            "title-3",
+          ]
+        };
+
+        styles [
+          "link",
+          "flat",
+          "artist-link",
         ]
       }
 
@@ -152,18 +176,51 @@ Box hero {
             "pill",
           ]
         }
+
+        // The item's own menu (Favourite, Add to Library, Play Next…), made as it opens.
+        MenuButton more_button {
+          icon-name: "view-more-symbolic";
+          tooltip-text: _("More Options");
+          valign: center;
+
+          accessibility {
+            label: _("More Options");
+          }
+
+          styles [
+            "circular",
+          ]
+        }
       }
     }
   }
 
-  Label summary_label {
-    xalign: 0;
-    wrap: true;
+  // The notes, three lines at most; More shows them whole, when they are cut (detail.py).
+  Box summary_box {
+    orientation: vertical;
+    spacing: 6;
     visible: false;
 
-    styles [
-      "dim-label",
-    ]
+    Label summary_label {
+      xalign: 0;
+      wrap: true;
+      lines: 3;
+      ellipsize: end;
+
+      styles [
+        "dim-label",
+      ]
+    }
+
+    Button more_notes_button {
+      label: _("More");
+      halign: start;
+      visible: false;
+
+      styles [
+        "flat",
+      ]
+    }
   }
 
   // In place of the tracks: an item that came without them (a shelf's) while the engine

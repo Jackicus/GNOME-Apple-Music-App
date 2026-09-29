@@ -25,13 +25,29 @@ from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for 
 from ..widgets.engine_status import EngineStatus
 from ..widgets.labels import track_label
 from ..widgets.track_row import TrackRow
-from ..widgets.util import MappedHandlers, connect_weak
-from . import app
+from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
+from . import app, show_notes
 
 log = logging.getLogger(__name__)
 
 # The kinds whose tracks the engine's item() fetches when an Item came without them.
 FETCHED_KINDS = ('album', 'playlist')
+
+
+def resolve_artist(library, item):
+    """The artist Item an album's subtitle names, for the link to their page: by the artist
+    id the album carries, if any, else the library's artist of that name (case folded), else
+    None (the subtitle stays plain text). Only albums: a playlist's subtitle is its curator."""
+    if item is None or item.kind != 'album' or not item.subtitle:
+        return None
+    artist_id = item.raw.get('artistId')
+    if artist_id:
+        found = library.by_id('artist', artist_id)
+        if found is not None:
+            return found
+    name = item.subtitle.casefold()
+    return next((artist for artist in library.artists if artist.title.casefold() == name),
+                None)
 
 
 def should_fetch(item, fetched):
@@ -91,6 +107,12 @@ class DetailPage(Adw.NavigationPage):
     hidden. An Item that came without its tracks has them fetched once (should_fetch());
     the fetch is cancelled when the page is hidden (do_hidden), and asked again when it
     shows.
+
+    The hero: an album's artist links to their page (resolve_artist()), a More Options menu
+    button offers the item's own menu (window.item_actions), and the notes show three lines,
+    with More for the whole text. The header bar shows the title once the hero's has scrolled
+    away (HeaderTitle). Tab from the hero's last button goes on into the tracks, and Shift+Tab
+    from the first track back to it.
     """
 
     __gtype_name__ = 'AppleMusicDetailPage'
@@ -103,10 +125,16 @@ class DetailPage(Adw.NavigationPage):
     cover = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
     subtitle_label = Gtk.Template.Child()
+    artist_button = Gtk.Template.Child()
+    artist_label = Gtk.Template.Child()
     caption_label = Gtk.Template.Child()
     play_button = Gtk.Template.Child()
     shuffle_button = Gtk.Template.Child()
+    more_button = Gtk.Template.Child()
+    summary_box = Gtk.Template.Child()
     summary_label = Gtk.Template.Child()
+    more_notes_button = Gtk.Template.Child()
+    scrolled_window = Gtk.Template.Child()
     status_box = Gtk.Template.Child()
     status_icon = Gtk.Template.Child()
     status_spinner = Gtk.Template.Child()
@@ -127,6 +155,9 @@ class DetailPage(Adw.NavigationPage):
         self._fetched = None  # the Item this page asked the engine for (once: should_fetch)
         self._fetch_task = None
         self._shown_groups = None  # item.groups when the tracks were shown: a new list is new
+        self._artist = None  # the artist Item the subtitle links to
+        self._painted = None  # (frame clock, handler): the notes' More follows each paint
+        self._focused = False  # the page has put the focus on Play once, as it was pushed
         # What the status box says when the engine cannot answer, and what its button does.
         self._engine_status = EngineStatus(app(), self._show_status, self._refetch, {
             'engine-down': _('Start the engine to load the songs'),
@@ -134,7 +165,6 @@ class DetailPage(Adw.NavigationPage):
             'failed': _('Could Not Load the Songs'),
         })
 
-        self.header_bar.set_show_title(not root)
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(empty_title or self.get_title())
         self.empty_page.set_description(empty_description)
@@ -154,7 +184,11 @@ class DetailPage(Adw.NavigationPage):
         connect_weak(self.play_button, 'clicked', self._on_play_clicked)
         connect_weak(self.shuffle_button, 'clicked', self._on_shuffle_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
-        # Tab from Shuffle goes on into the tracks (see _on_list_key_pressed).
+        connect_weak(self.artist_button, 'clicked', self._on_artist_clicked)
+        connect_weak(self.more_notes_button, 'clicked', self._on_more_notes_clicked)
+        self.more_button.set_create_popup_func(weak_method(self._on_more_popup))
+        self._header_title = HeaderTitle(self.header_bar, self.title_label, self.scrolled_window)
+        # Tab from the hero's last button goes on into the tracks (_on_list_key_pressed).
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         connect_weak(keys, 'key-pressed', self._on_list_key_pressed)
         self.list_view.add_controller(keys)
@@ -178,10 +212,27 @@ class DetailPage(Adw.NavigationPage):
         self._engine_status.watch()
         if should_fetch(self.item, self._fetched):
             self._fetch(self.item)  # a fetch cancelled when the page was hidden
+        clock = self.get_frame_clock()
+        if clock is not None and self._painted is None:
+            self._painted = (clock, connect_weak(clock, 'after-paint', self._on_painted))
 
     def do_unmap(self):
         self._engine_status.unwatch()
+        if self._painted is not None:
+            clock, handler = self._painted
+            clock.disconnect(handler)
+            self._painted = None
         Adw.NavigationPage.do_unmap(self)
+
+    def do_shown(self):
+        # A push focuses the page's first button, the artist's link: Play is the hero's.
+        if not self._focused:
+            self._focused = True
+            focus = self.get_root().get_focus() if self.get_root() is not None else None
+            if focus is not None and (focus is self.artist_button
+                                      or focus.is_ancestor(self.artist_button)):
+                self.play_button.grab_focus()
+        Adw.NavigationPage.do_shown(self)
 
     def do_hidden(self):
         # Left (popped, covered, or another destination shown), not just unmapped (a push
@@ -270,13 +321,16 @@ class DetailPage(Adw.NavigationPage):
             # A sync fetches thumbnails only: the cover comes now, if it is not on disk yet.
             app().spawn(self._fetch_cover(item))
         self.title_label.set_label(item.title)
+        self._artist = resolve_artist(self._library, item)
         self.subtitle_label.set_label(item.subtitle)
-        self.subtitle_label.set_visible(bool(item.subtitle))
+        self.subtitle_label.set_visible(bool(item.subtitle) and self._artist is None)
+        self.artist_label.set_label(item.subtitle)
+        self.artist_button.set_visible(self._artist is not None)
         details = [item.genre, str(item.year) if item.year else None, item.count_label]
         self.caption_label.set_label(' · '.join(detail for detail in details if detail))
         self.caption_label.set_visible(any(details))
         self.summary_label.set_label(item.summary or '')
-        self.summary_label.set_visible(bool(item.summary))
+        self.summary_box.set_visible(bool(item.summary))
         self._update_buttons()
 
     def _update_buttons(self):
@@ -375,22 +429,41 @@ class DetailPage(Adw.NavigationPage):
             list_item.set_accessible_label('')
             list_item.set_accessible_description('')
 
+    def _last_button(self):
+        """The hero's last button that takes the focus: More Options, Shuffle or Play."""
+        for button in (self.more_button, self.shuffle_button, self.play_button):
+            if button.get_visible() and button.get_sensitive():
+                return button
+        return None
+
     def _on_list_key_pressed(self, _controller, keyval, _keycode, state):
-        """Tab from the hero's last button (Shuffle) into the tracks. The list's Tab leaves
-        it after the focused item (tab-behavior item), and the hero is its first item, so the
-        tracks would otherwise be reached only with Down."""
-        if keyval not in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab):
-            return False
-        if state & Gtk.accelerator_get_default_mod_mask():
+        """Tab from the hero's last button into the tracks, and Shift+Tab from the first
+        track back to it. The list's Tab leaves it after the focused item (tab-behavior
+        item), and the hero is its first item, so the tracks would otherwise be reached only
+        with Down, and the hero's buttons backwards only with Up."""
+        mods = state & Gtk.accelerator_get_default_mod_mask()
+        forward = keyval in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab) and not mods
+        backward = (keyval == Gdk.KEY_ISO_Left_Tab
+                    or (keyval in (Gdk.KEY_Tab, Gdk.KEY_KP_Tab)
+                        and mods == Gdk.ModifierType.SHIFT_MASK))
+        if not (forward or backward) or self._rows.get_n_items() < 2:
             return False
         focus = self.get_root().get_focus() if self.get_root() is not None else None
-        if focus is None or not (focus is self.shuffle_button
-                                 or focus.is_ancestor(self.shuffle_button)):
+        last = self._last_button()
+        if focus is None or last is None:
             return False
-        if self._rows.get_n_items() < 2:
-            return False
-        self.list_view.scroll_to(1, Gtk.ListScrollFlags.FOCUS, None)
-        return True
+        if forward and (focus is last or focus.is_ancestor(last)):
+            self.list_view.scroll_to(1, Gtk.ListScrollFlags.FOCUS, None)
+            return True
+        if backward:
+            row = focus if isinstance(focus, _Row) else focus.get_ancestor(_Row)
+            if row is None and focus.get_first_child() is not None:
+                row = focus.get_first_child()  # the list item's own widget: its row inside
+            first = self._rows.get_item(1)
+            if isinstance(row, _Row) and row.track_row.context_item is first:
+                last.grab_focus()
+                return True
+        return False
 
     def _on_unbind(self, _factory, list_item):
         list_item.get_child().clear(self.hero)
@@ -411,6 +484,28 @@ class DetailPage(Adw.NavigationPage):
         track = self._rows.get_item(position)
         if isinstance(track, Track):
             self.get_root().play_request(track.play, start_with=track.index)
+
+    # The hero's links and menus.
+
+    def _on_artist_clicked(self, _button):
+        if self._artist is not None:
+            self.get_root().open_item(self._artist)
+
+    def _on_more_popup(self, button):
+        """The item's menu, made as it opens: whether it is a favourite is asked then."""
+        actions = getattr(self.get_root(), 'item_actions', None)
+        button.set_menu_model(actions.menu_for(self.item) if actions and self.item else None)
+
+    def _on_more_notes_clicked(self, _button):
+        if self.item is not None:
+            show_notes(self, self.item.title, self.item.summary or '')
+
+    def _on_painted(self, _clock):
+        """More under the notes, while they are cut to their three lines."""
+        layout = self.summary_label.get_layout()
+        cut = self.summary_label.get_mapped() and layout is not None and layout.is_ellipsized()
+        if cut != self.more_notes_button.get_visible():
+            self.more_notes_button.set_visible(cut)
 
     def _on_play_clicked(self, _button):
         self.get_root().play_request(self.item.play, shuffle=False)

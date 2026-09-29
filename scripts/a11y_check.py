@@ -302,7 +302,15 @@ async def walkthrough(window):
     await key(window, 'Tab')
     check('Tab: Shuffle', inside(window.get_focus(), detail.shuffle_button))
     await key(window, 'Tab')
+    check('Tab: More Options', inside(window.get_focus(), detail.more_button))
+    await key(window, 'Tab')
     check('Tab: the first track', inside(window.get_focus(), detail.list_view)
+          and window.get_focus().__gtype__.name == 'GtkListItemWidget')
+    await key(window, '<shift>ISO_Left_Tab')
+    check('Shift+Tab: back to More Options', inside(window.get_focus(), detail.more_button),
+          describe(window.get_focus()))
+    await key(window, 'Tab')
+    check('Tab: the first track again', inside(window.get_focus(), detail.list_view)
           and window.get_focus().__gtype__.name == 'GtkListItemWidget')
     requests = []
     play_request = window.play_request

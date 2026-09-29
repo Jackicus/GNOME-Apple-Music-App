@@ -36,6 +36,22 @@ def estimate_width(default_width, maximized, monitor_width, sidebar):
     return max(0, width - sidebar)
 
 
+def show_notes(parent, title, text):
+    """An album's notes or an artist's biography in full, in a dialog over `parent` (the page
+    shows three lines and More)."""
+    from gi.repository import Adw, Gtk
+
+    label = Gtk.Label(label=text, wrap=True, xalign=0, selectable=True, margin_start=18,
+                      margin_end=18, margin_top=6, margin_bottom=18, valign=Gtk.Align.START)
+    toolbar = Adw.ToolbarView(content=Gtk.ScrolledWindow(child=label,
+                                                         hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                                         propagate_natural_height=True))
+    toolbar.add_top_bar(Adw.HeaderBar())
+    dialog = Adw.Dialog(title=title, child=toolbar, content_width=480, content_height=420)
+    dialog.present(parent)
+    return dialog
+
+
 def mark_bound(page):
     """Note a page's first tile or row being bound, for the startup timing
     (Application.mark: '<tag>-bound', and '<tag>-painted' at the end of that frame), when

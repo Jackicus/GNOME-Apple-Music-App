@@ -44,9 +44,7 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 - A destination's root page is an `Adw.NavigationPage` with its own `Adw.ToolbarView` and
   `Adw.HeaderBar` (`show-title: false`; the `title-1` in the content is the title), registered in
   `pages.PAGES`. Its module is imported by its factory, never at the top of window.py or main.py
-  (startup time). Pushed album, playlist and artist pages show their title in the header bar
-  too; the other pages, root or pushed, only while the big title is out of view (HeaderTitle,
-  below). Playlist and folder root pages are kept only for the last few shown
+  (startup time). Playlist and folder root pages are kept only for the last few shown
   (`window.ROOT_LIMIT`). Sign-out forgets the pages that show the account's things
   (`Window.forget_account_pages()`: the pushed pages, New, Made for You, Search and every
   playlist and folder root), to be built again on the next visit.
@@ -59,8 +57,13 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `groups-changed` for the tracks), pushed pages too. An Item that came without tracks is
   fetched once per page (`detail.should_fetch()`: an answer without tracks shows "No Songs",
   never a second request), and the fetch is cancelled when the page is hidden (`do_hidden`).
-- A page's header bar shows its title exactly when the page's own `title-1` is out of view
-  (a spinner or status page instead, or scrolled away): `widgets.util.HeaderTitle`.
+- Root or pushed, a page's header bar shows its title exactly when the page's own `title-1`
+  is out of view (a spinner or status page instead, or scrolled away):
+  `widgets.util.HeaderTitle`, which looks again after each paint that follows a move.
+- The album and artist pages' own menu is a More Options `Gtk.MenuButton` whose model
+  `window.item_actions.menu_for(item)` makes as it opens (`set_create_popup_func`); long
+  notes show three lines and More (`pages.show_notes()`); an album's artist is a link when
+  the library has them (`detail.resolve_artist()`).
 - New, Made for You and a search category are `ShelvesPage`s over the engine's answers. They,
   Search and the album and artist pages show what the engine's failure means through one
   `widgets.engine_status.EngineStatus` (no widget; tests/test_engine_status.py): the spinner
