@@ -1,21 +1,25 @@
 """The transport pieces the player bar and the Now Playing sheet share, each a plain object
 over widgets a template built: the play/pause button's icon (PlayButton), the seek slider
-with its times (SeekControl), the shuffle and repeat toggles (ModeControl), a cover
-following the item's remote artwork (RemoteCover), and the bar's heart (HeartControl, which
-talks to the engine rather than the Player). `attach(player, app)` makes one follow
-the Player's properties and send its commands through the Player; a command that fails is
-toasted by the app (run_command) and the widget put back to the Player's state.
+with its times (SeekControl), the shuffle and repeat toggles (ModeControl), the volume
+button (VolumeControl), a cover following the item's remote artwork (RemoteCover), and the
+heart (HeartControl, which talks to the engine rather than the Player). `attach(player,
+app)` makes one follow the Player's properties and send its commands through the Player; a
+command that fails is toasted by the app (run_command) and the widget put back to the
+Player's state.
 
 The heart (HeartControl) shows whether the item playing is loved: unloved as each item
 starts, then what the engine's rating() answers (one read per item, nothing polled), and
 whatever its `rated` signal says after (the heart's own love, a context menu's); a click
 loves or unloves the item's catalog song, and puts the heart back when that fails.
 
-The seek slider ignores incoming positions while it is dragged and until the seek it sent
-has taken (MusicKit reports a position near the target, or SEEK_HOLD passes). The repeat
-button cycles none → one → all → none, showing the mode it asked for until MusicKit
-confirms. The artwork is fetched at the cover size (remote.fetch_remote into remote-art/),
-so the bar, the sheet and MPRIS share one file.
+The seek slider's decisions are a SeekGuard (no GTK, tested on its own): nothing incoming
+counts while a seek waits to be sent (SEEK_SETTLE after the last movement), and after it
+is sent until MusicKit reports a position near the target (SEEK_TOLERANCE) or SEEK_HOLD
+passes; a seek that fails releases the guard. The volume button sends one command at a
+time and the latest level after it (a Coalescer), and ignores the echoes of older levels
+meanwhile. The repeat button cycles none → one → all → none, showing the mode it asked for
+until MusicKit confirms. The artwork is fetched at the cover size (remote.fetch_remote into
+remote-art/), so the bar, the sheet and MPRIS share one file.
 """
 
 import logging
@@ -34,6 +38,74 @@ log = logging.getLogger(__name__)
 SEEK_SETTLE = 0.25       # seconds after the last slider movement before the seek is sent
 SEEK_HOLD = 1.5          # seconds after a seek during which stale positions are ignored
 SEEK_TOLERANCE = 2.0     # a reported position this close to the seek's target is the seek's
+
+
+class SeekGuard:
+    """Which incoming positions the seek slider shows while a seek is about: see the
+    module. `target` is the position asked for while a seek waits to be sent or has just
+    gone out, else None."""
+
+    def __init__(self, hold=SEEK_HOLD, tolerance=SEEK_TOLERANCE):
+        self._hold = hold
+        self._tolerance = tolerance
+        self.target = None
+        self._until = None  # None while the seek waits to be sent; then the hold's end
+
+    def moved(self, value):
+        """The slider moved to `value`: a seek there is being prepared."""
+        self.target = value
+        self._until = None
+
+    def sent(self, now):
+        """The seek has gone out: stale positions are ignored until the hold passes."""
+        self._until = now + self._hold
+
+    def release(self):
+        """Forget the seek (it failed, or the item changed)."""
+        self.target = None
+        self._until = None
+
+    def accept(self, position, now):
+        """Whether an incoming `position` is to be shown: always without a seek about;
+        never while one waits to be sent; once it is sent, when the position is within the
+        tolerance of the target (the seek has taken) or the hold has passed, either of
+        which releases the guard."""
+        if self.target is None:
+            return True
+        if self._until is None:
+            return False
+        if abs(position - self.target) <= self._tolerance or now >= self._until:
+            self.release()
+            return True
+        return False
+
+
+class Coalescer:
+    """One command in flight at a time, and the latest value asked for meanwhile sent when
+    it returns: what the volume button does with a drag's stream of levels."""
+
+    def __init__(self):
+        self.in_flight = None  # the value with the engine, while one is
+        self.waiting = None    # the latest value asked for while one was in flight
+
+    def moved(self, value):
+        """A new value: the one to send now, or None while another is in flight."""
+        if self.in_flight is None:
+            self.in_flight = value
+            return value
+        self.waiting = value
+        return None
+
+    def done(self):
+        """The command in flight returned: the value to send next (now in flight), or None
+        when none waits."""
+        self.in_flight, self.waiting = self.waiting, None
+        return self.in_flight
+
+    @property
+    def target(self):
+        """The level the engine is being asked for, or None when idle."""
+        return self.waiting if self.waiting is not None else self.in_flight
 
 REPEAT_ICONS = {
     'none': 'media-playlist-repeat-symbolic',
@@ -109,8 +181,7 @@ class SeekControl:
         self._app = None
         self._syncing = False       # the slider is being set from the Player
         self._seek_timeout = 0      # the GLib source waiting for the drag to settle
-        self._seek_target = None    # the position asked for while a seek is pending or fresh
-        self._seek_until = 0.0      # until when a stale position is ignored after a seek
+        self._guard = SeekGuard()
         scale.connect('change-value', self._on_change_value)
 
     def attach(self, player, app):
@@ -126,16 +197,13 @@ class SeekControl:
         self.update()
 
     def update(self):
-        """Show the Player's position, unless a seek is on its way: the positions from
-        before it are stale until MusicKit reports one near the target, or the hold runs
-        out."""
+        """Show the Player's position, unless a seek is about (SeekGuard): the positions
+        from before it are stale until MusicKit reports one near the target, or the hold
+        runs out."""
         if self._player is None:
             return
-        if self._seek_target is not None:
-            if (abs(self._player.position - self._seek_target) > SEEK_TOLERANCE
-                    and time.monotonic() < self._seek_until):
-                return
-            self._seek_target = None
+        if not self._guard.accept(self._player.position, time.monotonic()):
+            return
         self.show(self._player.position, self._player.duration)
 
     def show(self, position, duration):
@@ -168,8 +236,7 @@ class SeekControl:
             return False
         duration = self._player.duration
         value = min(max(value, 0.0), duration if duration else value)
-        self._seek_target = value
-        self._seek_until = float('inf')  # nothing incoming until the seek has been sent
+        self._guard.moved(value)
         self._show_times(value, duration)
         if self._seek_timeout:
             GLib.source_remove(self._seek_timeout)
@@ -178,20 +245,24 @@ class SeekControl:
 
     def _send_seek(self):
         self._seek_timeout = 0
-        target = self._seek_target
+        target = self._guard.target
         if target is None:
             return GLib.SOURCE_REMOVE
-        self._seek_until = time.monotonic() + SEEK_HOLD
+        self._guard.sent(time.monotonic())
         log.debug('seek to %.1f s', target)
-        run_command(self._app, self._player.seek(target), self.update)
+        run_command(self._app, self._player.seek(target), self._on_seek_failed)
         return GLib.SOURCE_REMOVE
+
+    def _on_seek_failed(self):
+        self._guard.release()
+        self.update()
 
     def cancel(self):
         """Forget a seek being prepared (the item changed)."""
         if self._seek_timeout:
             GLib.source_remove(self._seek_timeout)
             self._seek_timeout = 0
-        self._seek_target = None
+        self._guard.release()
 
 
 class ModeControl:
@@ -249,6 +320,95 @@ class ModeControl:
         finally:
             self._syncing = False
         run_command(self._app, self._player.set_repeat(mode), self.update)
+
+
+class VolumeControl:
+    """A Gtk.ScaleButton (with the slider in its popover) following the Player's volume
+    and setting it, one command at a time (Coalescer); the button and the slider are named
+    "Volume" for assistive technology and read their level as a percentage."""
+
+    def __init__(self, button, adjustment):
+        self.button = button
+        self.adjustment = adjustment
+        self._player = None
+        self._app = None
+        self._syncing = False  # the adjustment is being set from the Player
+        self._coalescer = Coalescer()
+        self._scale = None  # the slider in the button's popover
+        self._strings = {}
+        button.connect('value-changed', self._on_changed)
+        adjustment.connect('value-changed', lambda *_: self._describe())
+
+    def attach(self, player, app):
+        self._player = player
+        self._app = app
+        self._strings = {'volume': _('Volume'), 'percent': _('{percent}%')}
+        self._label()
+        player.connect('notify::volume', lambda *_: self.update())
+        self.update()
+        self._describe()
+
+    def _label(self):
+        label = self._strings['volume']
+        self.button.update_property([Gtk.AccessibleProperty.LABEL], [label])
+        self._scale = find_descendant(self.button.get_popup(), Gtk.Scale)
+        if self._scale is not None:
+            self._scale.update_property([Gtk.AccessibleProperty.LABEL], [label])
+
+    def _describe(self):
+        if not self._strings:
+            return
+        text = self._strings['percent'].format(percent=round(self.adjustment.get_value() * 100))
+        for widget in (self.button, self._scale):
+            if widget is not None:
+                widget.update_property([Gtk.AccessibleProperty.VALUE_TEXT], [text])
+
+    def update(self):
+        """Show the Player's volume, unless a level of the user's is still with the engine
+        and this is the echo of an older one."""
+        if self._player is None:
+            return
+        volume = self._player.volume
+        target = self._coalescer.target
+        if target is not None and abs(volume - target) > 0.001:
+            return
+        if abs(self.adjustment.get_value() - volume) < 0.001:
+            return
+        self._syncing = True
+        try:
+            self.adjustment.set_value(volume)
+        finally:
+            self._syncing = False
+
+    def _on_changed(self, _button, value):
+        if self._syncing or self._player is None:
+            return
+        to_send = self._coalescer.moved(value)
+        if to_send is not None:
+            self._send(to_send)
+
+    def _send(self, value):
+        async def command():
+            try:
+                await self._player.set_volume(value)
+            finally:
+                following = self._coalescer.done()
+                if following is not None:
+                    self._send(following)
+        run_command(self._app, command(), self.update)
+
+
+def find_descendant(widget, cls):
+    """The first descendant of widget (itself included) that is a cls, or None."""
+    if widget is None or isinstance(widget, cls):
+        return widget
+    child = widget.get_first_child()
+    while child is not None:
+        found = find_descendant(child, cls)
+        if found is not None:
+            return found
+        child = child.get_next_sibling()
+    return None
 
 
 class HeartControl:
