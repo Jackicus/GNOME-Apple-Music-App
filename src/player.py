@@ -19,7 +19,10 @@ the playback commands as thin coroutines over the engine.
                                                # is in it (-1: nowhere, or nothing playing)
     player.lyrics, player.lyrics_loading       # a lyrics.Lyrics for the track (None: none, or
                                                # not there yet), and whether one is being read
-    await player.play({'kind': 'album', 'id': …}, start_with=2, shuffle=False)
+    player.pending                             # a play request is with the engine (the play
+                                               # buttons show a spinner)
+    await player.play({'kind': 'album', 'id': …}, start_with=2, shuffle=False)  # or True,
+                                               # or None: the mode as it is
     await player.queue_jump(3)  # play the queue's entry at index 3
     await player.toggle()       # pause while active (playing, loading…), else play
     await player.pause() / resume() / next() / previous() / stop()
@@ -175,6 +178,7 @@ class Player(GObject.Object):
     queue_index = GObject.Property(type=int, default=-1)
     lyrics = GObject.Property(type=Lyrics, default=None)
     lyrics_loading = GObject.Property(type=bool, default=False)
+    pending = GObject.Property(type=bool, default=False)
 
     def __init__(self, app):
         """`app` gives the engine (`app.engine`), the settings (`signed-in`), `toast()`,
@@ -188,6 +192,8 @@ class Player(GObject.Object):
         self._track_since = float('-inf')  # when the item playing started (_plausible)
         self._events = 0  # state and track events so far: a refresh() answer older than one
         self._queue_events = 0  # is not applied over it (the same for the queue's)
+        self._play_lock = asyncio.Lock()  # one play request at a time, in order
+        self._play_serial = 0  # the latest request's number: an older one waiting is dropped
         self.position_updated_at = time.monotonic()
         self.queue = Gio.ListStore(item_type=NowPlaying)
         self._lyrics_task = None  # the task reading the track's lyrics, while one runs
@@ -589,18 +595,37 @@ class Player(GObject.Object):
         self._app.toast(_('Starting playback engine…'))
         await self._engine.start()
 
-    async def play(self, play, start_with=None, shuffle=False):
+    async def play(self, play, start_with=None, shuffle=None):
         """Play what `play` names ({kind, id}: an Item's or a Group's play target), from its
-        entry at queue position `start_with`, or shuffled."""
+        entry at queue position `start_with`; `shuffle` True shuffled (a Shuffle button),
+        False in order (a Play button), None as the mode is (a track row). Requests go to
+        the engine one at a time, in order, and one superseded while it waits is dropped
+        (the newest wins: a second album clicked while the first's queue loads). `pending`
+        is True from a request until the engine has answered it, or it failed."""
         kind = play.get('kind') if isinstance(play, dict) else None
         item_id = play.get('id') if isinstance(play, dict) else None
         if not kind or item_id in (None, ''):
             raise EngineError('usage', 'nothing to play')
-        await self.ensure_engine()
-        log.info('play %s %s%s%s', kind, item_id,
-                 f' from {start_with}' if start_with is not None else '',
-                 ' shuffled' if shuffle else '')
-        await self._engine.play(kind, item_id, start_with=start_with, shuffle=shuffle)
+        self._play_serial += 1
+        serial = self._play_serial
+        self._set_pending(True)
+        try:
+            async with self._play_lock:
+                if serial != self._play_serial:
+                    log.debug('play %s %s superseded', kind, item_id)
+                    return
+                await self.ensure_engine()
+                log.info('play %s %s%s%s', kind, item_id,
+                         f' from {start_with}' if start_with is not None else '',
+                         {True: ' shuffled', False: ' in order'}.get(shuffle, ''))
+                await self._engine.play(kind, item_id, start_with=start_with, shuffle=shuffle)
+        finally:
+            if serial == self._play_serial:
+                self._set_pending(False)
+
+    def _set_pending(self, pending):
+        if pending != self.pending:
+            self.pending = pending
 
     async def play_next(self, kind, item_id):
         await self.ensure_engine()

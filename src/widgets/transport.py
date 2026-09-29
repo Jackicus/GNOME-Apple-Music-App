@@ -22,7 +22,7 @@ import logging
 import time
 from gettext import gettext as _
 
-from gi.repository import GLib, Gtk
+from gi.repository import Adw, GLib, Gtk
 
 from ..backend import config
 from ..backend.errors import EngineError
@@ -65,22 +65,32 @@ def track_subtitle(track):
 
 
 class PlayButton:
-    """A play/pause button whose icon and tooltip follow the Player's state; its action
+    """A play/pause button whose icon and tooltip follow the Player's state, with a spinner
+    in place of the icon while a play request is with the engine (`pending`); its action
     (app.play-pause) is the template's."""
 
     def __init__(self, button):
         self.button = button
         self._player = None
+        self._spinner = None
 
     def attach(self, player):
         self._player = player
         player.connect('notify::state', lambda *_: self.update())
+        player.connect('notify::pending', lambda *_: self.update())
         self.update()
 
     def update(self):
-        active = self._player is not None and self._player.active
-        self.button.set_icon_name(
-            'media-playback-pause-symbolic' if active else 'media-playback-start-symbolic')
+        player = self._player
+        active = player is not None and player.active
+        if player is not None and player.pending:
+            if self._spinner is None:
+                self._spinner = Adw.Spinner()
+            if self.button.get_child() is not self._spinner:
+                self.button.set_child(self._spinner)
+        else:
+            self.button.set_icon_name(
+                'media-playback-pause-symbolic' if active else 'media-playback-start-symbolic')
         self.button.set_tooltip_text(_('Pause') if active else _('Play'))
 
 
