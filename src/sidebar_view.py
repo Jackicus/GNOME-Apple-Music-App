@@ -135,9 +135,10 @@ class SidebarController:
 
     # -- the selection -------------------------------------------------------------------
 
-    def select(self, key, show=True):
+    def select(self, key, show=True, pop=False):
         """Select the sidebar item for key, or Home's when there is none, and show its page
-        (`show`; else the caller does). The key selected.
+        (`show`; else the caller does), over anything pushed on it when `pop` (the user
+        asked for the page itself). The key selected.
 
         An item in a collapsed folder is shown first: its folders are expanded.
         """
@@ -150,7 +151,7 @@ class SidebarController:
             self._apply_expanded()
         self._set_selected(item.get_index())
         if show:
-            self._window.show_root(key)
+            self._window.show_root(key, pop=pop)
         return key
 
     def _set_selected(self, index):

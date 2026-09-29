@@ -264,6 +264,11 @@ def describe(widget):
     return widget.__gtype__.name if widget is not None else 'nothing'
 
 
+def row_title(row):
+    """The title of a page-mode sidebar row (an action row), or '' for anything else."""
+    return getattr(row, 'get_title', lambda: '')() if row is not None else ''
+
+
 async def key(window, accel, wait=0.25):
     """Press accel and wait; what handled it (press())."""
     handled = press(window, accel)
@@ -290,12 +295,25 @@ async def walkthrough(window):
     check('Ctrl+1 puts the focus on the selected sidebar row',
           isinstance(window.get_focus(), Gtk.ListBoxRow) and inside(window.get_focus(),
                                                                      window.sidebar))
-    for _ in range(5):  # Home → New, Radio, Recently Added, Artists, Albums
-        await key(window, 'Down', 0.15)
     if narrow:
-        focus = window.get_focus()
-        check('Down moves to Albums', getattr(focus, 'get_title', lambda: '')() == 'Albums')
+        # The page mode's sidebar is a boxed list per section. Down from a section's last
+        # row moves to the next section's first (libadwaita passes the focus on) only in an
+        # active window: GtkListBoxRow's focus handler reads the row's has-focus, which
+        # GTK sets while the toplevel has the keyboard, and a headless window never has
+        # it. The script steps over the section's end itself.
+        for _ in range(2):  # Home → New, Radio
+            await key(window, 'Down', 0.15)
+        check('Down moves to Radio', row_title(window.get_focus()) == 'Radio',
+              row_title(window.get_focus()))
+        rows = window._sidebar.rows()
+        next((row for row in rows if row_title(row) == 'Recently Added'), rows[0]).grab_focus()
+        for _ in range(2):  # Recently Added → Artists, Albums
+            await key(window, 'Down', 0.15)
+        check('Down moves to Albums', row_title(window.get_focus()) == 'Albums',
+              row_title(window.get_focus()))
     else:
+        for _ in range(5):  # Home → New, Radio, Recently Added, Artists, Albums
+            await key(window, 'Down', 0.15)
         check('Down selects Albums and shows it', window.shown == 'albums', window.shown)
     await key(window, 'Return', 0.6)
     check('Enter shows Albums', window.shown == 'albums' and (
@@ -382,6 +400,19 @@ async def walkthrough(window):
     await key(window, '<shift>Tab')
     await key(window, 'Escape')
     check('Escape in the entry clears it', search.search_entry.get_text() == '')
+    print('-- search over a pushed page, the Songs filter')
+    window.open_item(app.library.albums.get_item(0))  # a result opened from Search
+    await asyncio.sleep(0.6)
+    await key(window, '<primary>f', 0.8)
+    check('Ctrl+F over a page pushed on Search pops it and focuses the visible entry',
+          window.navigation_view.get_visible_page() is search
+          and inside(window.get_focus(), search.search_entry), describe(window.get_focus()))
+    window.select_page('songs')
+    await asyncio.sleep(0.8)
+    songs = window.navigation_view.get_visible_page()
+    await key(window, '<primary>f', 0.6)
+    check("Ctrl+F on Songs puts the cursor in the page's filter",
+          inside(window.get_focus(), songs.filter_entry), describe(window.get_focus()))
     print('-- menus')
     await key(window, 'F10', 0.6)
     menu = window.primary_menu_button.get_popover()
@@ -390,7 +421,11 @@ async def walkthrough(window):
     check('Escape closes it', not menu.get_visible())
     window.select_page('albums')
     await asyncio.sleep(0.4)
+    grid = window.navigation_view.get_visible_page()
+    grid.sort_button.grab_focus()  # the header bar's Sort By
     await key(window, '<primary>2', 0.6)
+    check("Ctrl+2 from the page's header bar moves into the grid",
+          inside(window.get_focus(), grid.grid_view), describe(window.get_focus()))
     await key(window, 'Menu', 0.6)
     popover = harness.popovers(grid)
     check("Menu opens the focused tile's context menu", bool(popover))
