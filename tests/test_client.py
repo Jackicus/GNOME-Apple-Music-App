@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Unit tests for src/backend/client.py: the asynchronous CDP client against fake Chromes.
 
 FakeBrowser is Chrome's browser endpoint as the client meets it: Target.getTargets lists a

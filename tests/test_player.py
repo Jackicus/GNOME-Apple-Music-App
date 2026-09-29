@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Player: its properties fed by synthetic engine events, and its commands over a fake
 engine. GObject only, no GTK or display; the commands run under asyncio.run."""
 

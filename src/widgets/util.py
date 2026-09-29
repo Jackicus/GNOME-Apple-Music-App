@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """connect_weak(): a signal connection that does not keep the handler's widget alive (and
 weak_method(), the same for any other callback a child holds); MappedHandlers: a widget's
 handlers on objects that outlive it (the library, the engine), connected only while it is

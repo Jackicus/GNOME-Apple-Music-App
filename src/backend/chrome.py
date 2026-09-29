@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Finding and describing the Chrome the engine runs in.
 
 Nothing here starts a process: the Engine spawns Chrome with Gio.Subprocess from the command

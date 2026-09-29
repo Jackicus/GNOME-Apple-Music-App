@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The developer scripts' shared start: the installed app, on its own, off the desktop's
 settings, on the demo library.
 

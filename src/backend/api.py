@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Apple Music API as the app knows it, apart from any connection to it: which ids are the
 library's, the path that answers with one item, the resource type a kind is rated and added
 under, the resources of one page of an answer, and Apple's error answers as an EngineError.

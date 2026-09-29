@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicNowPlayingSheet: the bottom sheet's Now Playing view, following the Player.
 
 The window hands it the Player, the app and the Adw.BottomSheet it sits in (set_player)

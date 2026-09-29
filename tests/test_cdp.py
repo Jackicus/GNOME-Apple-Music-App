@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Unit tests for src/backend/cdp.py: the WebSocket handshake and frame codec, pure functions
 (test_client.py drives them through a socket)."""
 

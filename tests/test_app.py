@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Application (src/main.py) built without being run: its settings on the memory backend,
 stand-ins for the engine, the player and the library, no window. What it decides on its own:
 when a sync may start, how it quits (where errors go: tests/test_errors.py).

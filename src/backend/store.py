@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Writing the cache: every file through one atomic write.
 
     store.atomic_write(path, lambda file: json.dump(data, file), root=cache_dir, text=True)

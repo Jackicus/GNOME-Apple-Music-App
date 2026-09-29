@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The engine's backend: Chrome DevTools, the page bridge, and turning Apple's answers into data.
 
 Pure Python and the standard library: nothing here imports gi (GTK stays in the app), and

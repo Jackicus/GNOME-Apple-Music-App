@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicRadioPage: the library's radio stations, the first few as large cards."""
 
 from gettext import gettext as _

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Lyrics as a model: the engine's answer ({synced, lines: [{startMs, endMs, text}]}) as a
 Lyrics object holding LyricLine GObjects in a Gio.ListStore, and the lookup of the line
 current at a playback position, which the Now Playing sheet highlights.

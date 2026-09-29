@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The application: what the app is made of, its app.* actions and its lifecycle.
 
     app = Application(version, app_id, base_id, profile, demo_dir)   # the launcher's main()

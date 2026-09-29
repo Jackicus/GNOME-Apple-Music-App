@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """MPRIS: the app as a media player on the session bus, so GNOME Shell's media controls and
 the media keys reach it as itself (the plan's decision: the app owns the service, Chrome's own
 is disabled by --disable-features=HardwareMediaKeyHandling).

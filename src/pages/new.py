@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The New destination: Apple Music's editorial New page (engine.browse(): the featured
 banners, Best New Songs, New Releases, playlists, stations, videos) as shelves."""
 

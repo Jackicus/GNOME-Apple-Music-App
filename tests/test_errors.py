@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The error policy: each EngineError code's sentence and button (src/errors.py), and where
 Application.report() and the engine's `lost` send them (tests/test_app.py's app)."""
 

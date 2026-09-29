@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The hand-kept build lists name every source file: the tests import src/ directly, so a
 module missing from src/meson.build's install lists, a .blp missing from the blueprint list
 or the gresource, or a file with translatable strings missing from po/POTFILES.in, would pass

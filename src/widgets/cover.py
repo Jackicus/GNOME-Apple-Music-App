@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicCover: square artwork over a placeholder, for rows, cards and detail pages."""
 
 from gi.repository import GObject, Gtk

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Context menus and track drags for the items of a view: a Gtk.GridView, Gtk.ListView or
 Gtk.ColumnView of tiles or rows, a Gtk.FlowBox or Gtk.ListBox, or a single widget.
 

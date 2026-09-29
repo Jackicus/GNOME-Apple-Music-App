@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The transport pieces' decisions without a display: the seek slider's guard, the volume
 button's coalescer, and the heart and the mode toggles over stand-in buttons and the
 test_player fakes. No GTK widgets are built (importing the module needs the typelib only)."""

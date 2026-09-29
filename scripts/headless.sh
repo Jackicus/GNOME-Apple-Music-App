@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 # Run a command on a private, invisible display: a headless mutter with a virtual monitor, in
 # its own D-Bus session. Test windows never appear on (or take focus from) the desktop, and the
 # app's MPRIS player and other bus names never reach the real session.

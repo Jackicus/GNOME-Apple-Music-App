@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Artwork loader: decoding in threads, the LRU, shared and cancelled requests.
 
 Runs under asyncio.run, without GTK's main loop or a display: textures are made from files.

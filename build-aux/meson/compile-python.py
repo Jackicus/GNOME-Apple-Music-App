@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Byte-compile the app's installed modules: meson install's last step (src/meson.build).
 
     compile-python.py MODULEDIR [LEVEL]

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicPlayerBar: the transport bar, following the Player.
 
 The window hands it the Player (set_player) once, after the template is built. Everything

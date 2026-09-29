@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """New, Made for You and a category (pages/shelves.py) over the stand-in engine
 (tests/page_harness.py): Refresh, the title, a day-old answer, a popped page's requests."""
 

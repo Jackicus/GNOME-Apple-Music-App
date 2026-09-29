@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Translations: the one place the gettext domain is bound.
 
 Two gettext implementations read the catalogues. C's libintl serves GtkBuilder, so the

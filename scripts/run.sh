@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 # Build the development profile into ./build and run it from there, no root needed.
 set -euo pipefail
 cd "$(dirname "$0")/.."

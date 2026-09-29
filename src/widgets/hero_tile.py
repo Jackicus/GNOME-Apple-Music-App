@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicHeroTile: a shelf's large card, the cover over a band in the artwork's colour."""
 
 from gi.repository import Gio, Graphene, Gtk

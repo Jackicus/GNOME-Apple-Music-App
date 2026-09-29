@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicSearchPage: the Search destination.
 
 Two modes, an Adw.ToggleGroup beside the entry: Apple Music, which searches the catalog

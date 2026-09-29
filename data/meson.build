@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 desktop_file = i18n.merge_file(
   input: configure_file(
     input: base_id + '.desktop.in',

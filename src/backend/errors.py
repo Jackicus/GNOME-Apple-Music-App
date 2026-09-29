@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The one error the backend raises, and the codes the UI switches on."""
 
 # The README's codes. The UI shows a toast for each, never a traceback.

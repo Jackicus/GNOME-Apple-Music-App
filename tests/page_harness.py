@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """What the page tests share: stand-ins for the application, the engine and the window the
 pages reach (pages.app() and get_root()), invented library data, and PageTestCase, a presented
 window over an asyncio loop on GLib's (as the app runs).

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Unit tests for src/backend/chrome.py and errors.py: the argv, finding Chrome, which Chrome
 holds a profile, picking the page target, and a DevTools port's /json (against a local HTTP
 server)."""

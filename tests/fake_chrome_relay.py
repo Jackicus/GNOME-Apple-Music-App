@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Google Chrome as the engine tests have it: a process the Engine spawns with its DevTools pipe
 on descriptors 3 and 4, relaying that pipe to the test's fake browser over a Unix socket.
 

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicWindow: the main window, holding the sidebar, the content's navigation view, the
 player bar and the Now Playing sheet, the account button and the banners.
 

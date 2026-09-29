@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The WebSocket side of the Chrome DevTools Protocol, as pure functions: the RFC 6455
 handshake and frame codec, and the one line a JavaScript exception comes to.
 

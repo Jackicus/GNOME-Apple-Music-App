@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Unit tests for tests/gtk.py: a template widget builds under requires_gtk, settings are the
 test's own, the main-loop helpers, and a clean skip where GTK cannot start."""
 

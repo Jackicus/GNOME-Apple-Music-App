@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Syncing the library: Apple's answers, through the engine, into library.json and the models.
 
     app.library_sync = LibrarySync(app)      # the app's one: start(), cancel(), `running`

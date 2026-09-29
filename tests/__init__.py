@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Test package. Importing it registers src/ as the ``applemusic`` package.
 
 The source tree is laid out for installation (src/ becomes applemusic/), so

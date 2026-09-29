@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """src/backend/bridge.js, run under gjs against the fake page in tests/bridge_harness.js.
 
 bridge.js runs in music.apple.com, where no test can reach it; gjs (GNOME's JavaScript, on every

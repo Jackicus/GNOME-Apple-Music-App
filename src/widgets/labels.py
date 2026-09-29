@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """What tiles and rows read to assistive technology: the rules in one place, the words
 looked up once (a list binds its rows by the thousand, and gettext is slow when hot).
 

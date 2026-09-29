@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2026 Jack Tully
+
 /**
  * The app's side of music.apple.com. The app's CDP client (client.load_bridge) injects it
  * into the page, where it defines window.__appleMusicLibrary over the page's own MusicKit
