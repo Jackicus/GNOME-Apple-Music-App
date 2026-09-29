@@ -13,6 +13,12 @@ Ground rules:
 - Everything with real data stays outside the repository: logs, screenshots and notes go to a
   scratch directory, and a report that will be shared names no titles, names or IDs.
 - Keep audio short and quiet.
+- Chrome must reach the desktop's keyring, or it deletes the profile's cookies and the sign-in
+  is gone for good. `scripts/headless.sh` hands the engine the desktop's session bus
+  (`APPLE_MUSIC_HOST_SESSION_BUS`) for Chrome, and the engine refuses to start Chrome on a
+  signed-in profile when no `org.freedesktop.secrets` answers there (`no-keyring`: the toast
+  "The keyring is not available…", or am.py's `{"error": "no-keyring"}`). Never work around
+  that refusal (a wrapper, a private bus, unsetting the variable); fix the keyring, or stop.
 
 1. Ask which build holds the sign-in if the user has not said. The release build uses the
    Chrome profile `$XDG_DATA_HOME/apple-music/chrome` and the cache
@@ -28,7 +34,8 @@ Ground rules:
    build; a release install is `apple-music --debug`). Its window opens on the desktop: say so
    first, or run the app and every command below inside one `scripts/headless.sh bash -c '…'`,
    so that they share its private display and session bus (the session-bus checks in step 4
-   then see that bus, not the desktop's). It starts the engine itself when signed
+   then see that bus, not the desktop's; Chrome alone is on the desktop's bus, for its
+   keyring, and its own MPRIS is off). It starts the engine itself when signed
    in and `engine-autostart` is on. The engine has no port otherwise; while this one is open
    any local program can drive the signed-in session, so set it on that command line alone,
    never in a shell profile. The log warns about it at every engine start.

@@ -35,7 +35,8 @@ SAMPLE_TARGETS = [
 
 class EngineErrorTest(unittest.TestCase):
     def test_codes(self):
-        for code in ('engine-down', 'no-browser', 'not-signed-in', 'api', 'timeout', 'usage'):
+        for code in ('engine-down', 'no-browser', 'no-keyring', 'not-signed-in', 'api',
+                     'timeout', 'usage'):
             error = EngineError(code, 'why')
             self.assertEqual((error.code, error.message, str(error)), (code, 'why', f'{code}: why'))
         self.assertEqual(str(EngineError('timeout')), 'timeout')
@@ -92,6 +93,65 @@ class ChromeArgsTest(unittest.TestCase):
             self.assertEqual(chrome.chrome_args('chrome', '/p')[0], 'flatpak-spawn')
         with mock.patch.object(chrome, 'in_flatpak', lambda: False):
             self.assertEqual(chrome.chrome_args('chrome', '/p')[0], 'chrome')
+
+
+class ChromeEnvironmentTest(unittest.TestCase):
+    def test_the_host_session_bus_when_one_is_set(self):
+        self.assertEqual(chrome.chrome_environment('unix:path=/run/user/1000/bus', host=False),
+                         {'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus'})
+
+    def test_nothing_without_one_or_in_a_sandbox(self):
+        self.assertEqual(chrome.chrome_environment(None, host=False), {})
+        self.assertEqual(chrome.chrome_environment('', host=False), {})
+        self.assertEqual(chrome.chrome_environment('unix:path=/run/user/1000/bus', host=True),
+                         {})
+
+    def test_host_follows_the_sandbox(self):
+        with mock.patch.object(chrome, 'in_flatpak', lambda: True):
+            self.assertEqual(chrome.chrome_environment('unix:path=/b'), {})
+        with mock.patch.object(chrome, 'in_flatpak', lambda: False):
+            self.assertEqual(chrome.chrome_environment('unix:path=/b'),
+                             {'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/b'})
+
+
+class ProfileUsedKeyringTest(unittest.TestCase):
+    """profile_used_keyring(): Local State's os_crypt.<provider>.prev_init_success."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.profile = pathlib.Path(self.tmp.name) / 'chrome'
+        self.profile.mkdir()
+
+    def local_state(self, text):
+        (self.profile / chrome.LOCAL_STATE).write_text(text)
+
+    def test_a_profile_that_reached_the_keyring(self):
+        self.local_state(json.dumps({'os_crypt': {'portal': {
+            'prev_init_success': True, 'prev_desktop': 'GNOME'}}}))
+        self.assertTrue(chrome.profile_used_keyring(self.profile))
+
+    def test_any_provider_recorded_the_same_way(self):
+        self.local_state(json.dumps({'os_crypt': {'portal': {'prev_init_success': False},
+                                                  'other': {'prev_init_success': True}}}))
+        self.assertTrue(chrome.profile_used_keyring(str(self.profile)))
+
+    def test_a_profile_that_did_not(self):
+        self.local_state(json.dumps({'os_crypt': {'portal': {'prev_init_success': False}}}))
+        self.assertFalse(chrome.profile_used_keyring(self.profile))
+
+    def test_a_profile_that_records_nothing(self):
+        for text in ('{}', '{"os_crypt": {}}', '{"os_crypt": "yes"}', '{"os_crypt": {"portal": 1}}',
+                     '{"os_crypt": {"portal": {"prev_init_success": "true"}}}', '[]'):
+            with self.subTest(text=text):
+                self.local_state(text)
+                self.assertFalse(chrome.profile_used_keyring(self.profile))
+
+    def test_no_local_state_or_one_that_cannot_be_read(self):
+        self.assertFalse(chrome.profile_used_keyring(self.profile))
+        self.assertFalse(chrome.profile_used_keyring(self.profile / 'missing'))
+        self.local_state('{not json')
+        self.assertFalse(chrome.profile_used_keyring(self.profile))
 
 
 class HostChromeTest(unittest.TestCase):

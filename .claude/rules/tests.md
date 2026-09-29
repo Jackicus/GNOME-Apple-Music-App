@@ -29,7 +29,13 @@ paths:
   on gi.events' `GLibEventLoop` (`loop_factory`), as the app does, with `chrome.find_chrome`
   patched to a script that runs `tests/fake_chrome_relay.py` through the real `Engine._spawn`:
   it relays the DevTools pipe to test_client.py's `FakeBrowser` over a Unix socket and lives and
-  dies as Chrome would (`FAKE_CHROME_MODE` `stubborn` or `exit:N`). test_client.py drives
+  dies as Chrome would (`FAKE_CHROME_MODE` `stubborn` or `exit:N`); its first line reports the
+  argv and the session bus it was given. test_engine's `KeyringTest` stands in for the bus
+  Chrome would use with a private `dbus-daemon` of its own (a config file with a service
+  directory of the test's, as test_mpris's `PrivateBusTest` runs one), owning, activating or
+  lacking `org.freedesktop.secrets`; never a service that hangs, since dbus-daemon leaves an
+  activated child running. tests/test_headless.py runs scripts/headless.sh with stand-ins for
+  mutter and dbus-run-session on PATH. test_client.py drives
   `PipeFakeChrome` (two pipes) and `FakeChrome` (a WebSocket, the attach); test_am_cli.py runs
   am.py's commands against the engine fixture. No test looks for a real Chrome, so CI has none.
   test_bridge.py runs src/backend/bridge.js under gjs against tests/bridge_harness.js's fake

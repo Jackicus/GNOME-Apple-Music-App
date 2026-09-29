@@ -16,6 +16,11 @@ as the app starts) keeps a cache and a Chrome profile of its own beside the rele
                             developer to attach to (scripts/am.py --attach); unset by default,
                             and a risk while set: any local program can drive the signed-in
                             session through it
+    APPLE_MUSIC_HOST_SESSION_BUS
+                            the D-Bus address Chrome runs with as its session bus when the
+                            app runs on another one (scripts/headless.sh's private session
+                            sets it to the desktop's): the keyring that encrypts the
+                            profile's sign-in answers there. Unset, Chrome inherits the app's
 """
 
 import os
@@ -79,6 +84,12 @@ def debug_port():
     except ValueError:
         return None
     return value if 0 < value < 65536 else None
+
+
+def host_session_bus():
+    """The D-Bus address Chrome gets as DBUS_SESSION_BUS_ADDRESS (APPLE_MUSIC_HOST_SESSION_BUS),
+    or None when Chrome inherits the app's session bus."""
+    return os.environ.get('APPLE_MUSIC_HOST_SESSION_BUS') or None
 
 
 def default_profile_dir():

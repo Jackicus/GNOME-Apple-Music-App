@@ -30,6 +30,7 @@ from unittest import mock
 from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic package)
 
 from gi.events import GLibEventLoop
+from gi.repository import Gio, GLib
 
 from applemusic import engine as engine_module
 from applemusic.backend import chrome, normalize, store
@@ -162,8 +163,8 @@ class TestEngine(Engine):
         super().__init__(**kwargs)
         self.spawned = []   # [(process, argv)]
 
-    def _spawn(self, argv, name=None):
-        process, transport = super()._spawn(argv, name)
+    def _spawn(self, argv, name=None, environment=None):
+        process, transport = super()._spawn(argv, name, environment)
         self.spawned.append((process, argv))
         return process, transport
 
@@ -205,7 +206,8 @@ class EngineFixture(unittest.IsolatedAsyncioTestCase):
         patcher = mock.patch.dict(os.environ, environment)
         patcher.start()
         self.addCleanup(patcher.stop)
-        for name in ('APPLE_MUSIC_DEBUG_PORT', 'APPLE_MUSIC_PROFILE'):
+        for name in ('APPLE_MUSIC_DEBUG_PORT', 'APPLE_MUSIC_PROFILE',
+                     'APPLE_MUSIC_HOST_SESSION_BUS'):
             os.environ.pop(name, None)
         self.browser_commands = []
         patcher = mock.patch.object(chrome, 'find_chrome', self.find_chrome)
@@ -279,6 +281,17 @@ class LifecycleTest(EngineFixture):
         self.assertEqual(argv[1:4], ['--pdeathsig', 'TERM', '--'])
         self.assertTrue(argv[0].endswith('setpriv'))
         self.assertEqual(argv[4], str(self.binary))
+
+    async def test_chrome_gets_the_host_session_bus_when_one_is_set(self):
+        # A fresh profile (no Local State): no keyring check, so the bus need not exist.
+        os.environ['APPLE_MUSIC_HOST_SESSION_BUS'] = 'unix:path=/nonexistent/host-bus'
+        await self.engine.start()
+        self.assertEqual(self.chrome.chromes[-1]['bus'], 'unix:path=/nonexistent/host-bus')
+
+    async def test_chrome_inherits_the_session_bus_otherwise(self):
+        await self.engine.start()
+        self.assertEqual(self.chrome.chromes[-1]['bus'],
+                         os.environ.get('DBUS_SESSION_BUS_ADDRESS'))
 
     async def test_the_exec_line_leaves_the_profile_s_path_out(self):
         with self.assertLogs(engine_module.log, 'DEBUG') as logs:
@@ -1679,6 +1692,191 @@ class SearchTest(EngineFixture):
         self.assertTrue((self.cache / 'made-for-you.json').is_file())
         await self.engine.stop()
         self.assertEqual(len((await self.engine.made_for_you())['shelves']), 1)
+
+
+BUS_CONFIG = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:path={socket}</listen>
+  <servicedir>{services}</servicedir>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"""
+
+# A secret service the private bus can activate: it owns the name on the bus it is given and
+# lives while that bus does (exit_on_close), so it goes with the test's dbus-daemon.
+SECRETS_SERVICE = """\
+import sys
+import gi
+gi.require_version('Gio', '2.0')
+from gi.repository import Gio, GLib
+flags = (Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+         | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION)
+connection = Gio.DBusConnection.new_for_address_sync(sys.argv[1], flags, None, None)
+connection.set_exit_on_close(True)
+Gio.bus_own_name_on_connection(connection, sys.argv[2], Gio.BusNameOwnerFlags.NONE, None, None)
+GLib.timeout_add_seconds(60, sys.exit, 0)
+GLib.MainLoop().run()
+"""
+
+BUS_FLAGS = (Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+             | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION)
+
+
+@unittest.skipUnless(shutil.which('dbus-daemon'), 'no dbus-daemon for a private bus')
+class KeyringTest(EngineFixture):
+    """A start on a profile whose Local State records the keyring's key checks for
+    org.freedesktop.secrets on the session bus Chrome will use, here a private dbus-daemon
+    with a service directory of its own, so what it owns and can activate is the test's.
+    Refused, nothing is spawned: Chrome without its key would delete the sign-in."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        root = pathlib.Path(self.tmp.name)
+        self.services = root / 'services'
+        self.services.mkdir()
+        config = root / 'bus.conf'
+        config.write_text(BUS_CONFIG.format(socket=root / 'bus', services=self.services))
+        daemon = subprocess.Popen(
+            ['dbus-daemon', '--config-file', str(config), '--nofork', '--nopidfile',
+             '--print-address=1'],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.addCleanup(daemon.wait)
+        self.addCleanup(daemon.terminate)
+        self.address = daemon.stdout.readline().strip()
+        daemon.stdout.close()
+        if not self.address:
+            raise unittest.SkipTest('dbus-daemon gave no address')
+        os.environ['APPLE_MUSIC_HOST_SESSION_BUS'] = self.address
+        self.record_keyring_use(True)
+
+    def record_keyring_use(self, used):
+        """A Local State as Chrome 154 writes it after a start with (or without) the keyring."""
+        self.profile.mkdir(parents=True, exist_ok=True)
+        (self.profile / chrome.LOCAL_STATE).write_text(json.dumps({
+            'os_crypt': {'portal': {'prev_init_success': used, 'prev_desktop': 'GNOME'}}}))
+
+    def bus_call(self, method, parameters=None, reply_type=None):
+        """One call to the private bus's driver, on a connection of the test's own."""
+        connection = Gio.DBusConnection.new_for_address_sync(self.address, BUS_FLAGS, None,
+                                                             None)
+        try:
+            answer = connection.call_sync(
+                'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                method, parameters, GLib.VariantType(reply_type) if reply_type else None,
+                Gio.DBusCallFlags.NONE, 3000, None)
+        finally:
+            connection.close_sync(None)
+        return answer.unpack()[0] if reply_type else None
+
+    def own_the_name(self):
+        """The test's own connection owning org.freedesktop.secrets until the test ends."""
+        connection = Gio.DBusConnection.new_for_address_sync(self.address, BUS_FLAGS, None,
+                                                             None)
+        self.addCleanup(connection.close_sync, None)
+        reply = connection.call_sync(
+            'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+            'RequestName', GLib.Variant('(su)', (chrome.SECRETS_NAME, 0)),
+            GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, 3000, None)
+        self.assertEqual(reply.unpack()[0], 1)  # the primary owner
+
+    def name_has_owner(self):
+        return self.bus_call('NameHasOwner', GLib.Variant('(s)', (chrome.SECRETS_NAME,)), '(b)')
+
+    def make_activatable(self, exec_line):
+        """A service file for org.freedesktop.secrets the daemon can activate."""
+        (self.services / f'{chrome.SECRETS_NAME}.service').write_text(
+            f'[D-BUS Service]\nName={chrome.SECRETS_NAME}\nExec={exec_line}\n')
+        self.bus_call('ReloadConfig')
+
+    async def refused(self):
+        """The EngineError a refused start raises, nothing spawned and the engine down."""
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.start()
+        self.assertEqual(raised.exception.code, 'no-keyring')
+        self.assertEqual((self.engine.spawned, self.chrome.chromes), ([], []))
+        self.assertEqual((self.engine.state, self.states), ('down', ['starting', 'down']))
+        return raised.exception
+
+    async def test_no_secret_service_on_the_bus_refuses_the_start(self):
+        with self.assertLogs(engine_module.log, 'WARNING') as logs:
+            error = await self.refused()
+        self.assertIn('no org.freedesktop.secrets', error.message)
+        self.assertIn('APPLE_MUSIC_HOST_SESSION_BUS', error.message)
+        self.assertTrue(any('not starting Chrome' in line and 'drop its sign-in' in line
+                            for line in logs.output), logs.output)
+
+    async def test_an_owner_lets_chrome_start_on_that_bus(self):
+        self.own_the_name()
+        await self.engine.start()
+        self.assertEqual(self.chrome.chromes[-1]['bus'], self.address)
+
+    async def test_an_activatable_service_that_comes_up_lets_chrome_start(self):
+        script = pathlib.Path(self.tmp.name) / 'secrets_service.py'
+        script.write_text(SECRETS_SERVICE)
+        self.make_activatable(f'{sys.executable} {script} {self.address} {chrome.SECRETS_NAME}')
+        self.assertFalse(self.name_has_owner())
+        await self.engine.start()
+        self.assertTrue(self.name_has_owner())  # started by the check, as Chrome would
+        self.assertEqual(self.chrome.chromes[-1]['bus'], self.address)
+
+    async def test_an_activatable_service_that_fails_refuses_the_start(self):
+        # Activatable was what the private session of the incident had: the name in a
+        # system service file, and an activation that never came up.
+        self.make_activatable('/bin/false')
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            error = await self.refused()
+        self.assertIn('org.freedesktop.secrets did not start', error.message)
+
+    async def test_a_bus_that_never_answers_refuses_the_start_in_time(self):
+        async def never(address, cancellable):
+            await asyncio.sleep(3600)
+
+        with mock.patch.object(engine_module, 'KEYRING_WAIT', 0.2), \
+                mock.patch.object(Engine, '_secret_service', staticmethod(never)), \
+                self.assertLogs(engine_module.log, 'WARNING'):
+            error = await self.refused()
+        self.assertIn('did not answer within 0.2 s', error.message)
+
+    async def test_a_bus_that_cannot_be_reached_refuses_the_start(self):
+        os.environ['APPLE_MUSIC_HOST_SESSION_BUS'] = 'unix:path=/nonexistent/host-bus'
+        with self.assertLogs(engine_module.log, 'WARNING'):
+            error = await self.refused()
+        self.assertIn('no session bus for Chrome', error.message)
+
+    async def test_a_profile_that_never_reached_the_keyring_starts_as_before(self):
+        self.record_keyring_use(False)
+        await self.engine.start()  # the bus has no secret service
+        self.assertEqual(self.chrome.chromes[-1]['bus'], self.address)
+
+    async def test_without_a_host_bus_the_app_s_own_is_checked(self):
+        del os.environ['APPLE_MUSIC_HOST_SESSION_BUS']
+
+        async def private_bus(bus_type, cancellable):
+            self.assertEqual(bus_type, Gio.BusType.SESSION)
+            return await Gio.DBusConnection.new_for_address(self.address, BUS_FLAGS, None,
+                                                            cancellable)
+
+        with mock.patch.object(Gio, 'bus_get', private_bus):
+            with self.assertLogs(engine_module.log, 'WARNING'):
+                error = await self.refused()
+            self.assertIn("on the app's session bus", error.message)
+            self.own_the_name()
+            await self.engine.start()
+        self.assertEqual(self.chrome.chromes[-1]['bus'],
+                         os.environ.get('DBUS_SESSION_BUS_ADDRESS'))
+
+    async def test_nothing_is_checked_in_a_flatpak_sandbox(self):
+        # Chrome is the host's there, on the host's session, which this cannot see; the spawn
+        # itself would go through flatpak-spawn, so the check alone is called.
+        with mock.patch.object(chrome, 'in_flatpak', lambda: True):
+            self.assertIsNone(await self.engine._check_keyring(self.address))
+            self.assertIsNone(await self.engine._check_keyring(None))
 
 
 class PdeathsigTest(unittest.TestCase):

@@ -131,6 +131,20 @@ is 158 MB on the desktop, 105 of it file-backed; 192 MB headless, 64 of it anony
 - Chrome's own MPRIS player would be `org.mpris.MediaPlayer2.chromium.instance<pid>`; with
   `--disable-features=HardwareMediaKeyHandling`, `busctl --user list | grep -i mpris` shows the
   app's name and nothing for the engine's pid. `MediaSessionService` did not need disabling.
+- Chrome without its keyring drops the encrypted cookies (2026-09-29). Chrome 154 encrypts its
+  cookies with a key kept in the Secret Service (`org.freedesktop.secrets` on its session bus,
+  through the desktop portal's secret provider, which `Local State` records as
+  `os_crypt.portal.prev_init_success`). Started inside `scripts/headless.sh`'s private D-Bus
+  session, it found the name activatable (the system's gnome-keyring service file) but the
+  activation timed out after dbus-daemon's 25 s, so Chrome sat on `about:blank` that long, ran
+  on a fallback key, and deleted the cookies it could not decrypt: the .Devel profile came up
+  signed out and stayed so with the keyring back (one `geo` cookie left, `prev_init_success`
+  flipped to false, `Failed to log in to GCM … wrong_secret` in its log). Hence
+  `APPLE_MUSIC_HOST_SESSION_BUS` and the engine's refusal (`no-keyring`) before a start on
+  such a profile. On this machine a private `dbus-daemon --session` lists 65 activatable names,
+  `org.freedesktop.secrets` among them, and `StartServiceByName` for it hangs: an activatable
+  name is no sign of a working keyring, so the check asks for the activation and waits 5 s.
+  dbus-daemon does not end a child it activated when the activation fails or the daemon exits.
 
 ## MPRIS and GNOME Shell
 

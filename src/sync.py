@@ -116,10 +116,10 @@ CHECK_MIN = 60
 CHECK_MAX = 60 * 60
 RETRY_DELAY = 15 * 60
 
-# The failures a sync reports as any command would (errors.error_message: the engine missing
-# or down, the account signed out), with the button that helps; any other is "Could not
-# sync your library" with Retry.
-REPORTED = ('no-browser', 'engine-down', 'not-signed-in')
+# The failures a sync reports as any command would (errors.error_message: the engine missing,
+# down or kept from its keyring, the account signed out), with the button that helps; any
+# other is "Could not sync your library" with Retry.
+REPORTED = ('no-browser', 'engine-down', 'no-keyring', 'not-signed-in')
 
 
 def interval_index(hours):

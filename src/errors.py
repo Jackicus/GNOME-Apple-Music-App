@@ -23,6 +23,11 @@ def error_message(code):
                 'app.show-engine-preferences')
     if code == errors.ENGINE_DOWN:
         return _('The playback engine is not running'), _('Start'), 'app.start-engine'
+    if code == errors.NO_KEYRING:
+        # Chrome was not started: without the keyring it would delete the cookies that hold
+        # the sign-in, encrypted with a key kept there.
+        return (_('The keyring is not available, so starting would lose the Apple Music '
+                  'sign-in'), _('Retry'), 'app.start-engine')
     if code == errors.NOT_SIGNED_IN:
         return _('Sign in to Apple Music again'), _('Sign In'), 'app.sign-in'
     if code == errors.TIMEOUT:

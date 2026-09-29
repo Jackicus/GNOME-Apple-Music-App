@@ -11,7 +11,8 @@ module; run by the fake `google-chrome-stable` the tests write, with Chrome's ar
 which it ignores but reports. The environment says the rest:
 
     FAKE_CHROME_SOCKET  the Unix socket to connect to (the first line sent is JSON:
-                        {"pid", "argv"}; NUL-framed CDP both ways after it)
+                        {"pid", "argv", "bus": its DBUS_SESSION_BUS_ADDRESS or null};
+                        NUL-framed CDP both ways after it)
     FAKE_CHROME_LOG     a file each event is appended to as "<event> <pid>": start, term
                         (SIGTERM received), eof (the pipe closed), exit
     FAKE_CHROME_MODE    '' (as Chrome), 'stubborn' (SIGTERM and the pipe's end ignored:
@@ -57,7 +58,8 @@ def main():
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.connect(os.environ['FAKE_CHROME_SOCKET'])
-    hello = json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:]}) + '\n'
+    hello = json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:],
+                        'bus': os.environ.get('DBUS_SESSION_BUS_ADDRESS')}) + '\n'
     sock.sendall(hello.encode())
     sources = [PIPE_IN, sock]
     while sources:

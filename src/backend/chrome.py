@@ -6,9 +6,15 @@
 Nothing here starts a process: the Engine spawns Chrome with Gio.Subprocess from the command
 line chrome_args() builds, which has Chrome speak the DevTools protocol over a pipe on its file
 descriptors 3 and 4 (--remote-debugging-pipe) rather than on a port any local program could
-reach. select_page() picks the music.apple.com page from Chrome's targets. get_json() reads a
-DevTools port's /json, for the developer attach only (APPLE_MUSIC_DEBUG_PORT, scripts/am.py
---attach); its HTTP is urllib in a thread, so nothing blocks the loop.
+reach. chrome_environment() is what Chrome's environment gets over the app's: the desktop's
+session bus (config.host_session_bus()) when the app runs on another, since the keyring that
+encrypts the profile's cookies answers there. profile_used_keyring() reads whether a profile's
+`Local State` records that key coming from the OS keyring: a Chrome started on such a profile
+without reaching the keyring encrypts with a fallback key and deletes the cookies it cannot
+decrypt, the sign-in among them, so the Engine refuses to start one. select_page() picks the
+music.apple.com page from Chrome's targets. get_json() reads a DevTools port's /json, for the
+developer attach only (APPLE_MUSIC_DEBUG_PORT, scripts/am.py --attach); its HTTP is urllib in
+a thread, so nothing blocks the loop.
 
 Inside a Flatpak sandbox (/.flatpak-info exists; the development manifest only) Chrome is the
 host's: find_chrome() asks the host's shell for it and chrome_args() runs it through
@@ -40,6 +46,10 @@ DEVTOOLS_HOST = '127.0.0.1'
 
 # Chrome's lock on its profile: a symlink to "<hostname>-<pid>" of the browser holding it.
 SINGLETON_LOCK = 'SingletonLock'
+# Chrome's profile-wide preferences (JSON), among them os_crypt: how its encryption key was got.
+LOCAL_STATE = 'Local State'
+# The Secret Service (GNOME Keyring, KWallet): where Chrome keeps its encryption key on Linux.
+SECRETS_NAME = 'org.freedesktop.secrets'
 
 FLATPAK_INFO = '/.flatpak-info'
 # How a sandboxed app runs a host command; --watch-bus ends it when flatpak-spawn ends.
@@ -131,6 +141,37 @@ def chrome_args(binary, profile, headless=True, debug_port=None, host=None):
     if host:
         args[:0] = [*HOST_SPAWN, *HOST_PIPE]
     return args
+
+
+def chrome_environment(host_bus=None, host=None):
+    """The variables set in Chrome's environment over this process's: DBUS_SESSION_BUS_ADDRESS
+    when `host_bus` names the session bus Chrome is to use (config.host_session_bus(): the
+    desktop's, while the app runs on a private one), so that it reaches the keyring its
+    profile is encrypted with. Nothing with `host` (by default when in_flatpak()): the host's
+    Chrome has the host's session already."""
+    if host is None:
+        host = in_flatpak()
+    if host_bus and not host:
+        return {'DBUS_SESSION_BUS_ADDRESS': host_bus}
+    return {}
+
+
+def profile_used_keyring(profile):
+    """Whether `profile`'s Local State records that Chrome's encryption key came from the OS
+    keyring: `os_crypt.<provider>.prev_init_success` is true (Chrome 154's provider is
+    `portal`; any provider recorded the same way counts). Such a profile's cookies, the
+    sign-in among them, are encrypted with that key. False for a profile without the file
+    (never run), one that records nothing, or one that cannot be read. Blocking (a file
+    read): call it in a thread."""
+    try:
+        state = json.loads((Path(profile) / LOCAL_STATE).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    os_crypt = state.get('os_crypt') if isinstance(state, dict) else None
+    if not isinstance(os_crypt, dict):
+        return False
+    return any(isinstance(provider, dict) and provider.get('prev_init_success') is True
+               for provider in os_crypt.values())
 
 
 def describe_argv(argv):

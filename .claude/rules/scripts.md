@@ -22,7 +22,13 @@ paths:
   unset. Run every GUI script through it (screenshot.py, a11y_check.py, scroll_test.py,
   bench.py, the widget tests) so no window opens on, or takes focus from, the user's desktop, and
   the app's MPRIS player never reaches the real session. Compare timings only with other
-  headless runs.
+  headless runs. Chrome is the one thing it sends back to the desktop: before
+  `dbus-run-session`, it records the desktop's session bus as `APPLE_MUSIC_HOST_SESSION_BUS`
+  (the address in the environment, else `$XDG_RUNTIME_DIR/bus`; a nested run keeps the
+  outer's), which the engine gives Chrome as its `DBUS_SESSION_BUS_ADDRESS`, so Chrome reaches
+  the desktop's keyring, where the key that encrypts its profile's cookies is. Without it, a
+  Chrome on a signed-in profile deletes those cookies (the sign-in with them) and the engine
+  refuses to start one (engine.md). tests/test_headless.py checks the export with stand-ins.
 - screenshot.py and a11y_check.py also use the stock GNOME look (Adwaita icons, Adwaita Sans 11)
   and no animations, so shots do not depend on the desktop's theme.
 - `screenshot.py` without `--demo` reads the release build's real cache (`APPLE_MUSIC_CACHE`
@@ -43,7 +49,9 @@ paths:
   holds the profile, `status` says so and the rest refuse. `--attach [PORT]` drives the running
   app instead, which must have been started with `APPLE_MUSIC_DEBUG_PORT` (a bare `--attach`
   reads that variable). One JSON value per command, or `{"error": code, "message": …}` and
-  exit 1. It never signs in.
+  exit 1. It never signs in. Its Chrome is the app's Engine's, so it gets
+  `APPLE_MUSIC_HOST_SESSION_BUS` and the keyring check the same way: inside headless.sh it
+  keeps the profile's sign-in, and without a keyring on Chrome's bus it answers `no-keyring`.
 - `demo_library.py` writes invented data only and, without options, the same library every
   time: tests and the metainfo screenshots depend on both.
 - Scripts may print; app code logs.

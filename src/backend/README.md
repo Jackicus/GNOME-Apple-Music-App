@@ -12,13 +12,13 @@ app reaches Chrome only through the Engine; other modules may import the pure pa
 |---|---|
 | `errors.py` | `EngineError(code, message, status=None, musickit_code=None)`, the one error that leaves the backend, and its codes |
 | `api.py` | the Apple Music API apart from any connection: library ids, an item's endpoint, resource types, the endpoints the pages use, Apple's `{errors}` answers as an `EngineError` (`api_error()`), and which failures are final (`is_final()`) |
-| `chrome.py` | finding Chrome (`find_chrome()`), its argv (`chrome_args()`: `--remote-debugging-pipe`, `--headless=new`, an `--app=` window when visible; `flatpak-spawn --host` from a Flatpak sandbox), which Chrome holds a profile (`profile_owner()`, from its `SingletonLock`), `select_page()`, and `get_json()` for the developer attach |
+| `chrome.py` | finding Chrome (`find_chrome()`), its argv (`chrome_args()`: `--remote-debugging-pipe`, `--headless=new`, an `--app=` window when visible; `flatpak-spawn --host` from a Flatpak sandbox), its environment (`chrome_environment()`: the session bus of `APPLE_MUSIC_HOST_SESSION_BUS`), whether a profile's `Local State` records the keyring's key (`profile_used_keyring()`), which Chrome holds a profile (`profile_owner()`, from its `SingletonLock`), `select_page()`, and `get_json()` for the developer attach |
 | `client.py` | the transports (`PipeTransport`, Chrome's DevTools pipe on its descriptors 3 and 4; `WebSocketTransport`, a DevTools port) and `CDPClient`: one asynchronous CDP connection attached to the music.apple.com page, its calls, events, and the bridge kept in the page across navigations |
 | `cdp.py` | the RFC 6455 handshake and frame codec as pure functions, for `WebSocketTransport`, and `exception_message()`, a page's JavaScript exception in one line |
 | `bridge.js` | the only code that runs in the page: `window.__appleMusicLibrary` over the page's MusicKit instance, and MusicKit's events posted through the `__amEvent` binding |
 | `normalize.py` | Apple's answers as the library's Item, Track and shelf shapes; the artwork cache (naming, fetching, pruning); library.json; the kept answers; `prune_caches()` |
 | `store.py` | every write into the cache: `atomic_write()` / `atomic_create()`, the cache's generation (`cache_generation()`, `bump_cache_generation()`), `CacheGone` and `Cancelled` |
-| `config.py` | the cache and profile directories for each build profile, the developer's DevTools port, the artwork sizes, `BRIDGE_JS` |
+| `config.py` | the cache and profile directories for each build profile, the developer's DevTools port, Chrome's session bus when the app runs on another (`host_session_bus()`), the artwork sizes, `BRIDGE_JS` |
 
 ## Error codes
 
@@ -28,6 +28,7 @@ app reaches Chrome only through the Engine; other modules may import the pure pa
 |---|---|
 | `engine-down` | Chrome is not running, exited, or the connection closed (also every command in demo mode) |
 | `no-browser` | no Google Chrome to run, or it could not be started |
+| `no-keyring` | the keyring that encrypts the profile's sign-in is not reachable on Chrome's session bus: Chrome was not started, as it would delete the sign-in |
 | `not-signed-in` | MusicKit is not authorized |
 | `api` | Apple, MusicKit or the page said no (`status`: Apple's HTTP status; `musickit_code`: MusicKit's code for a refused play) |
 | `timeout` | Chrome or the page took too long |
@@ -155,6 +156,7 @@ Read by `config.py` on every call:
 | `APPLE_MUSIC_CACHE` | the cache directory (default `$XDG_CACHE_HOME/apple-music`, `apple-music-devel` for the development build) |
 | `APPLE_MUSIC_PROFILE` | Chrome's profile (default `$XDG_DATA_HOME/apple-music/chrome`, `chrome-devel` for the development build) |
 | `APPLE_MUSIC_DEBUG_PORT` | also opens a DevTools port on 127.0.0.1, for `scripts/am.py --attach`. Developers only: while it is set, any local program can drive the signed-in session |
+| `APPLE_MUSIC_HOST_SESSION_BUS` | the D-Bus address Chrome runs with as its session bus when the app runs on another one (`scripts/headless.sh` sets it to the desktop's): the keyring that encrypts the profile's cookies answers there. Unset, Chrome inherits the app's |
 
 ## Provenance
 
