@@ -25,7 +25,6 @@ import sys
 import tempfile
 import time
 import unittest
-import warnings
 from unittest import mock
 
 from tests import ROOT, SRC  # noqa: F401  (registers src/ as the applemusic package)
@@ -41,9 +40,6 @@ from tests.test_client import FakeBrowser, FakePage, context_created, thrown, un
 
 FIXTURES = pathlib.Path(__file__).parent / 'fixtures'
 RELAY = pathlib.Path(__file__).parent / 'fake_chrome_relay.py'
-# PyGObject 3.56's awaitable Gio calls look the loop up through asyncio's policy, which Python
-# 3.14 deprecates; main.use_glib_event_loop() filters the same warning in the app.
-warnings.filterwarnings('ignore', r"'asyncio\.\w*policy\w*' is deprecated", DeprecationWarning)
 PLAYBACK_METHODS = ('signout', 'play', 'playNext', 'playLater', 'control', 'seek', 'volume',
                     'shuffle',
                     'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
