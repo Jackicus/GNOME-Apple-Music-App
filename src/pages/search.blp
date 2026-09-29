@@ -245,7 +245,7 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                       valign: center;
                       hexpand: true;
 
-                      Label {
+                      Label songs_title_label {
                         label: _("Songs");
                         xalign: 0;
                         ellipsize: end;
@@ -269,6 +269,12 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                       label: _("See All");
                       valign: center;
                       clicked => $on_songs_see_all_clicked();
+
+                      accessibility {
+                        described-by: [
+                          songs_title_label,
+                        ];
+                      }
 
                       styles [
                         "flat",

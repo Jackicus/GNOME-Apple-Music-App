@@ -48,5 +48,39 @@ class TrackLabelTest(unittest.TestCase):
         self.assertEqual(labels.track_label(track, show_album=False), 'T, A')
 
 
+
+class _ListItem:
+    """What bind_label() names: a list item's accessible label."""
+
+    label = None
+
+    def set_accessible_label(self, label):
+        self.label = label
+
+
+class BindLabelTest(unittest.TestCase):
+    def test_the_label_follows_a_renamed_item_until_unbound(self):
+        album = Item({'id': 'l.a1', 'kind': 'album', 'title': 'Invented Album',
+                      'subtitle': 'Invented Artist'})
+        list_item = _ListItem()
+        labels.bind_label(list_item, album)
+        self.assertEqual(list_item.label, 'Invented Album, Invented Artist')
+        album.merge(dict(album.raw, title='Renamed Album'), replace=True)
+        self.assertEqual(list_item.label, 'Renamed Album, Invented Artist')
+        labels.unbind_label(list_item)
+        album.merge(dict(album.raw, title='Again'), replace=True)
+        self.assertEqual(list_item.label, 'Renamed Album, Invented Artist')
+
+    def test_binding_another_item_lets_go_of_the_first(self):
+        first = Item({'id': 'l.a1', 'kind': 'album', 'title': 'First'})
+        second = Item({'id': 'l.a2', 'kind': 'artist', 'title': 'Second', 'subtitle': 'x'})
+        list_item = _ListItem()
+        labels.bind_label(list_item, first)
+        labels.bind_label(list_item, second)
+        self.assertEqual(list_item.label, 'Second')
+        first.merge(dict(first.raw, title='Changed'), replace=True)
+        self.assertEqual(list_item.label, 'Second')
+
+
 if __name__ == '__main__':
     unittest.main()

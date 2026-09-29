@@ -65,9 +65,12 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   failure the app reports), Try Again, and "Not Available in the Demo" with no button (the
   demo engine always answers `engine-down`). A state the page shows is not toasted too.
 - A page of shelves is a vertical `Gtk.Box` of a handful of `AppleMusicShelf`, each a horizontal
-  `Gtk.ListView` in its own scrolled window. Keep the shelf widgets on a reload and
-  `bind_shelf()` the new `library.ShelfModel` objects into them. Anything unbounded gets a page of its own (See
-  All), since a `Gtk.GridView` cannot sit under a shelf in the same scrolled window.
+  `Gtk.ListView` in its own scrolled window, placed by a `widgets.shelf.ShelfColumn`: a shelf
+  shown again keeps its widget (moved into place), new ones are bound a frame apart after
+  `FIRST_SHELVES`, and leftover widgets are hidden for later. A row shows at most `ROW_LIMIT`
+  tiles; See All (the whole shelf, as a grid) and the paging arrows show only when the row does
+  not show everything. Anything unbounded gets a page of its own (See All), since a
+  `Gtk.GridView` cannot sit under a shelf in the same scrolled window.
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
   The item actions take their object as a `(ss)` target (kind, id), not as state.
