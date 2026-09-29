@@ -7,7 +7,8 @@ the playback commands as thin coroutines over the engine.
     player = Player(app)                       # made once, in Application.do_startup
     player.state       # a MusicKit.PlaybackStates name: 'none', 'loading', 'playing', 'paused',
                        # 'stopped', 'ended', 'seeking', 'waiting', 'stalled', 'completed'
-    player.resting     # the state with 'seeking' seen through (the one before the seek)
+    player.resting     # the state with 'seeking' seen through (the one before the seek),
+                       # and, while a play request is pending, the stops of the queue swap
     player.active, player.stopped              # playback under way (the bar shows Pause);
                                                # nothing playing or paused (no item, or ended)
     player.track       # a NowPlaying (id, catalog_id, title, artist, album, duration_ms,
@@ -23,7 +24,7 @@ the playback commands as thin coroutines over the engine.
     player.lyrics, player.lyrics_loading       # a lyrics.Lyrics for the track (None: none, or
                                                # not there yet), and whether one is being read
     player.pending                             # a play request is with the engine (the play
-                                               # buttons show a spinner)
+                                               # buttons show a spinner; `resting` holds)
     await player.play({'kind': 'album', 'id': …}, start_with=2, shuffle=False)  # or True,
                                                # or None: the mode as it is
     await player.queue_jump(3)  # play the queue's entry at index 3
@@ -221,6 +222,7 @@ class Player(GObject.Object):
         self._app = app
         self._engine = app.engine
         self._resting = 'none'  # the last state that was not 'seeking'
+        self._held = None  # while a play request is pending: the resting state held (resting)
         self.track_grace_ms = TRACK_GRACE_MS  # 0: a null item clears the track at once
         self._clear_source = 0  # the GLib source waiting out the grace, while one does
         self._track_since = float('-inf')  # when the item playing started (_plausible)
@@ -285,6 +287,7 @@ class Player(GObject.Object):
         repeat and the volume are Apple's page's, kept across engine restarts, and the
         next refresh() reads them)."""
         if not isinstance(now_playing, dict):
+            self._release_hold()  # nothing plays: nothing to hold through
             self._cancel_clear()
             self._set_track(None)
             self._set_state('none')
@@ -421,6 +424,8 @@ class Player(GObject.Object):
             log.debug('unknown playback state %r', state)
         if state != 'seeking':
             self._resting = state
+            if self._held is not None and state in ACTIVE_STATES:
+                self._held = state
         if state != self.state:
             self.position_updated_at = time.monotonic()  # the position runs on, or stops, from here
             self.state = state
@@ -591,8 +596,16 @@ class Player(GObject.Object):
     @property
     def resting(self):
         """The state with 'seeking' seen through: the state before the seek while it lasts
-        (a seek while playing stays playing, one while paused stays paused)."""
-        return self._resting if self.state == 'seeking' else self.state
+        (a seek while playing stays playing, one while paused stays paused). While a play
+        request is pending, the states that are not ACTIVE_STATES are seen through too:
+        MusicKit pauses, seeks and stops the queue playing as it loads the new one, and
+        the bar and MPRIS would flip to Play and Stopped for a moment. The last active
+        state since the request shows instead, or the resting state it began in; MusicKit's
+        own once the engine has answered (notify::state then, when that differs)."""
+        state = self._resting if self.state == 'seeking' else self.state
+        if self._held is not None and state not in ACTIVE_STATES:
+            return self._held
+        return state
 
     @property
     def active(self):
@@ -664,8 +677,25 @@ class Player(GObject.Object):
                 self._set_pending(False)
 
     def _set_pending(self, pending):
-        if pending != self.pending:
-            self.pending = pending
+        """A play request pending or not; the resting state is held while one is."""
+        if pending == self.pending:
+            return
+        if pending:
+            self._held = self.resting
+        else:
+            self._release_hold()
+        self.pending = pending
+
+    def _release_hold(self):
+        """Show MusicKit's own resting state again (the request answered or failed, or the
+        engine gone), telling the views through notify::state when it is not what they
+        showed: they read `resting`, `active` and `stopped` there."""
+        if self._held is None:
+            return
+        shown = self.resting
+        self._held = None
+        if self.resting != shown:
+            self.notify('state')
 
     async def play_next(self, kind, item_id):
         await self.ensure_engine()

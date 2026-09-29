@@ -25,6 +25,11 @@ paths:
   does the cleaning once:
   - `resting` is the state with MusicKit's `seeking` transient seen through; `active` and
     `stopped` derive from it, so a seek never flips the play button or the background timer.
+    While a play request is `pending` it also holds through the states that are not active
+    (MusicKit pauses, seeks and stops the old queue as it loads the new one): the last active
+    state since the request, or the one it began in, so the bar and MPRIS show no Play or
+    Stopped blip. When the hold ends (the answer, a failure, the engine going) and MusicKit's
+    own state differs, `notify::state` is emitted again for the views that read `resting`.
   - A null `nowPlayingItemDidChange` clears the track only after `TRACK_GRACE_MS` (800) with
     no new item (`track_grace_ms`, 0 in synchronous tests): MusicKit sends one between
     queues, right before the next item. Positions reported meanwhile are ignored.
@@ -42,10 +47,11 @@ paths:
   `down` engine when signed in (`ensure_engine()`) and raises `not-signed-in` otherwise; see
   engine.md for the `starting` state. Play requests go out one at a time, the newest winning
   (a request superseded while it waits is dropped), and `pending` is True while one is with
-  the engine (the play buttons show a spinner). `play(shuffle=None)` keeps the mode (a track
-  row); a Play button passes False, a Shuffle button True. `previous()` restarts the item
-  after `PREVIOUS_RESTART` seconds. A `mediaPlaybackError` is emitted as `error(sentence)`,
-  the sentence `playback_error_text(code)` gives MusicKit's code; the app toasts it as it is.
+  the engine (the play buttons show a spinner, and `resting` holds). `play(shuffle=None)`
+  keeps the mode (a track row); a Play button passes False, a Shuffle button True.
+  `previous()` restarts the item after `PREVIOUS_RESTART` seconds. A `mediaPlaybackError` is
+  emitted as `error(sentence)`, the sentence `playback_error_text(code)` gives MusicKit's
+  code; the app toasts it as it is.
 - `player.stopped` means no item, or `none`, `stopped`, `ended` or `completed` (paused is not).
   MusicKit passes through `ended` and `stopped` between items, so anything acting on "stopped"
   waits a moment (background playback waits 10 s before quitting).
@@ -90,6 +96,7 @@ paths:
   under the test's control for both; no `asyncio.sleep(> 0)` inside it. The `FakeEngine` has
   per-command gates (`engine.gate(name)`) to hold an answer back. test_mpris.py's
   `SEQUENCES` table replays the event sequences seen live through a Player and the service
-  together: add a sequence there when a new one is recorded. One test runs the service on a
-  dbus-daemon of its own and talks to it through GDBus (never `Gio.TestDBus`, which is for a
-  process of its own). Checks on the session bus are in the `live-engine-check` skill.
+  together (`play` and `answer` steps put a pending play request around them): add a
+  sequence there when a new one is recorded. One test runs the service on a dbus-daemon of
+  its own and talks to it through GDBus (never `Gio.TestDBus`, which is for a process of its
+  own). Checks on the session bus are in the `live-engine-check` skill.
