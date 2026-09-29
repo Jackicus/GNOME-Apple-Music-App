@@ -1251,7 +1251,7 @@ class Engine(GObject.Object):
         """A search of the catalog (the Search page's Apple Music mode): {shelves: [{key,
         title, items: [Item without groups]}]}, the shelves in Apple's order (Top Results
         first). `limit` is per kind. A hit's `art` is its cached cover or a thumbnail-sized
-        catalog URL (widgets.artwork.remote_item gives it a place under <cache>/remote-art/);
+        catalog URL (remote.remote_item gives it a place under <cache>/remote-art/);
         `thumb` is on disk or None."""
         term = ' '.join(str(term or '').split())
         if not term:

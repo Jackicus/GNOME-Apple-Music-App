@@ -2,89 +2,25 @@
 Made for You (engine.made_for_you()) and a search category (engine.category(id)).
 
 Unlike Home, whose shelves are the library's, these pages own their Items: the engine's
-shelf dicts are wrapped here (remote_shelves), their artwork pointed at <cache>/remote-art/
-(widgets.artwork.remote_item) and fetched in the background (fetch_shelf_art), each tile
-rebound as its thumbnail arrives. The page shows a spinner while the answer is on its way,
-a status page with the fitting button when the engine is down or signed out (or the answer
-failed), and the shelves otherwise; a refresh button in the header bar asks Apple again past
-the day-long cache.
+shelf dicts are wrapped (remote.remote_shelves), their artwork pointed at <cache>/remote-art/
+(remote.remote_item) and fetched in the background (remote.fetch_shelf_art), each tile
+following its Item as its thumbnail arrives. The page shows a spinner while the answer is on
+its way, a status page with the fitting button when the engine is down or signed out (or the
+answer failed), and the shelves otherwise; a refresh button in the header bar asks Apple
+again past the day-long cache.
 """
 
-import asyncio
 import logging
 from gettext import gettext as _
 
 from gi.repository import Adw, Gio, Gtk
 
 from ..backend.errors import EngineError
-from ..library import N_, Item, Shelf as ShelfModel
-from ..widgets import artwork
+from ..remote import fetch_shelf_art, remote_shelves
 from ..widgets.shelf import Shelf
 from ..widgets.util import connect_weak
 
 log = logging.getLogger(__name__)
-
-# Thumbnails fetched at once for a page of shelves (the downloads run in threads).
-ART_CONCURRENCY = 6
-
-# The headings of a search's shelves, by the key the engine gives each (normalize.search_results).
-SEARCH_TITLES = {
-    # Translators: the first shelf of a search's results: Apple's best few hits of any kind.
-    'top': N_('Top Results'),
-    'artists': N_('Artists'),
-    'albums': N_('Albums'),
-    'songs': N_('Songs'),
-    'playlists': N_('Playlists'),
-    'music-videos': N_('Music Videos'),
-    'stations': N_('Stations'),
-}
-
-
-def shelf_title(data):
-    """A shelf's heading in the app's language: the name of its kind for a search's shelf
-    (SEARCH_TITLES, by key), 'Featured' for the New page's banners, Apple's own title for the
-    rest (it comes in the account's language), and 'Made for You' for a recommendation that
-    has none."""
-    if data.get('featured'):
-        # Translators: the shelf of banners at the top of the New page.
-        return _('Featured')
-    title = SEARCH_TITLES.get(str(data.get('key') or ''))
-    if title is not None:
-        return _(title)
-    return str(data.get('title') or '') or _('Made for You')
-
-
-def remote_shelves(dicts):
-    """library.Shelf objects for the engine's shelf dicts ({key, title, items}), titled by
-    shelf_title(), the items wrapped as Items with their artwork under remote-art; a shelf with
-    nothing in it, or an item without an id and a kind, is left out."""
-    shelves = []
-    for data in dicts or []:
-        if not isinstance(data, dict):
-            continue
-        items = [Item(artwork.remote_item(entry)) for entry in data.get('items') or []
-                 if isinstance(entry, dict) and entry.get('id') and entry.get('kind')]
-        if items:
-            shelves.append(ShelfModel(str(data.get('key') or ''), shelf_title(data), items))
-    return shelves
-
-
-async def fetch_shelf_art(shelves):
-    """Fetch the thumbnails of the shelves' items that are not on disk, a few at a time, and
-    rebind each item's tile as its file arrives (the item spliced over itself in its shelf's
-    store, which is how a reload rebinds changed Items too)."""
-    loader = artwork.get_default()
-    gate = asyncio.Semaphore(ART_CONCURRENCY)
-
-    async def fetch(store, item):
-        async with gate:
-            if await loader.fetch_thumb(item):
-                found, position = store.find(item)
-                if found:
-                    store.splice(position, 1, [item])
-
-    await asyncio.gather(*(fetch(shelf.items, item) for shelf in shelves
-                           for item in list(shelf.items) if artwork.thumb_missing(item)))
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/shelves.ui')

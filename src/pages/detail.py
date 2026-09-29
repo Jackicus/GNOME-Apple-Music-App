@@ -19,7 +19,8 @@ from gi.repository import Adw, Gdk, Gio, GObject, Gtk, Pango
 
 from ..backend.errors import EngineError
 from ..library import Track
-from ..widgets import artwork, context_menu
+from ..remote import fetch_cover
+from ..widgets import context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
 from ..widgets.util import connect_weak
@@ -228,7 +229,7 @@ class DetailPage(Adw.NavigationPage):
         self._update_state()
 
     async def _fetch_cover(self, item):
-        if await artwork.get_default().fetch_cover(item) and self.item is item:
+        if await fetch_cover(item) and self.item is item:
             self.cover.refresh()
 
     # Fetching the tracks of an item that came without them.

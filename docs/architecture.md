@@ -55,7 +55,9 @@ widgets.
 - **MPRIS** (`mpris.py`): the app on the session bus as `org.mpris.MediaPlayer2.<app id>`, for
   GNOME Shell's media controls and the media keys. Chrome's own MPRIS player is switched off.
 - **Artwork** (`widgets/artwork.py`): one loader that decodes covers in threads, at the size
-  they are drawn, into a small LRU of textures.
+  they are drawn, into a small LRU of textures. The files it decodes that the sync does not
+  bring (covers, the item playing, the engine's search and browse answers) are downloaded by
+  `remote.py`, in threads of their own.
 
 ## Flows
 

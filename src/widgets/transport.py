@@ -14,7 +14,7 @@ loves or unloves the item's catalog song, and puts the heart back when that fail
 The seek slider ignores incoming positions while it is dragged and until the seek it sent
 has taken (MusicKit reports a position near the target, or SEEK_HOLD passes). The repeat
 button cycles none → one → all → none, showing the mode it asked for until MusicKit
-confirms. The artwork is fetched at the cover size (Artwork.fetch_remote into remote-art/),
+confirms. The artwork is fetched at the cover size (remote.fetch_remote into remote-art/),
 so the bar, the sheet and MPRIS share one file.
 """
 
@@ -27,7 +27,7 @@ from gi.repository import GLib, Gtk
 from ..backend import config
 from ..backend.errors import EngineError
 from ..player import format_time
-from . import artwork
+from ..remote import fetch_remote
 
 log = logging.getLogger(__name__)
 
@@ -337,6 +337,6 @@ class RemoteCover:
             self._app.spawn(self._fetch(url))
 
     async def _fetch(self, url):
-        path = await artwork.get_default().fetch_remote(url, config.COVER_SIZE)
+        path = await fetch_remote(url, config.COVER_SIZE)
         if path and self._url == url:
             self.cover.set_paths(path)

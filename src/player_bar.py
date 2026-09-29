@@ -2,7 +2,7 @@
 
 The window hands it the Player (set_player) once, after the template is built. Everything
 shown comes from the Player's properties: the play button's icon from `state`, the title,
-artist and artwork from `track` (the artwork fetched by Artwork.fetch_remote at the cover
+artist and artwork from `track` (the artwork fetched by remote.fetch_remote at the cover
 size, so the Now Playing sheet and MPRIS find the same file), the seek slider and the times
 from `position` and `duration`, the toggles from `shuffle` and `repeat`, the volume button
 from `volume`, the heart from the engine's rating of the track (HeartControl). The previous,

@@ -10,7 +10,7 @@ Artists sections are built from), the playlists and each one's tracks, the playl
 the music videos, the recently played radio stations and the Home shelves (Apple's
 recommendations, Heavy Rotation, Recently Added); normalises them with the backend's pure
 functions in a thread; fetches the thumbnails that are missing (covers are fetched on demand
-by the pages that show them: widgets.artwork.Artwork.fetch_cover); writes library.json
+by the pages that show them: remote.fetch_cover); writes library.json
 atomically; prunes the artwork nothing names and the caches that only grow; and finally has
 the Library reload() itself in place. `progress(section, done, total)` is called as it goes
 (section one of PROGRESS_SECTIONS; total None until known). The songs and playlists listings
