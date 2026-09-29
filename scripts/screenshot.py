@@ -125,7 +125,7 @@ def open_now_playing(window):
     """--now-playing: the invented item on the Player (the demo's first album playing, with
     the lyrics fixture) and the sheet open on the tab."""
     app.player.apply(harness.invented_playing_state(app, lyrics=True))
-    window.now_playing.tabs.set_active_name(args.now_playing)
+    window.now_playing.tab_stack.set_visible_child_name(args.now_playing)
     window.bottom_sheet.set_open(True)
 
 

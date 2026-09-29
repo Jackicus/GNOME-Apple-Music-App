@@ -1,12 +1,20 @@
 using Gtk 4.0;
 using Adw 1;
 
-// Now Playing (widgets/now_playing.py): the AdwBottomSheet's sheet. A header bar with only a
-// close button (the sheet's drag handle sits over it), then, in a clamp, the item playing
-// (artwork, title, artist, transport, seek) and the Lyrics / Up Next tabs (a toggle group
-// over a stack whose pages now_playing.py builds). `wide` (the window's 900sp breakpoint)
-// puts the two side by side; `compact` (600sp) shrinks the artwork.
+// Now Playing (widgets/now_playing.py): the AdwBottomSheet's sheet. A header bar with the
+// close button at the start (the sheet's drag handle sits over it) and the heart and the
+// volume at the end, then, in a clamp, the item playing (artwork, title, artist, transport,
+// seek) and the Lyrics / Up Next tabs (an inline view switcher over a view stack whose pages
+// now_playing.py builds). `wide` (the window's 900sp breakpoint) puts the two side by side;
+// `compact` (600sp) shrinks the artwork; `short` (the window's height breakpoints) puts a
+// small cover beside the titles so the tabs keep their room.
 template $AppleMusicNowPlayingSheet: Adw.Bin {
+  accessible-role: group;
+
+  accessibility {
+    label: _("Now Playing");
+  }
+
   styles [
     "now-playing",
   ]
@@ -23,6 +31,48 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
         icon-name: "go-down-symbolic";
         tooltip-text: _("Close");
         clicked => $on_close_clicked();
+      }
+
+      // Whether the item playing is loved: a click loves or unloves it (widgets/transport.py).
+      [end]
+      ToggleButton heart_button {
+        icon-name: "heart-outline-symbolic";
+        tooltip-text: _("Favourite");
+        sensitive: false;
+        valign: center;
+
+        accessibility {
+          label: _("Favourite");
+        }
+
+        styles [
+          "flat",
+          "heart-button",
+        ]
+      }
+
+      [end]
+      ScaleButton volume_button {
+        icons: [
+          "audio-volume-muted-symbolic",
+          "audio-volume-high-symbolic",
+          "audio-volume-low-symbolic",
+          "audio-volume-medium-symbolic",
+        ];
+        adjustment: Adjustment volume_adjustment {
+          lower: 0;
+          upper: 1;
+          step-increment: 0.05;
+          page-increment: 0.1;
+          value: 1;
+        };
+        tooltip-text: _("Volume");
+        sensitive: false;
+        valign: center;
+
+        styles [
+          "flat",
+        ]
       }
     }
 
@@ -45,41 +95,53 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
             halign: center;
             valign: center;
 
-            $AppleMusicCover cover {
-              size: 320;
+            // The artwork over the titles, or beside them when the window is short.
+            Box item_box {
+              orientation: vertical;
+              spacing: 18;
               halign: center;
 
-              styles [
-                "large",
-              ]
-            }
-
-            Box {
-              orientation: vertical;
-              spacing: 4;
-
-              Label title_label {
-                label: _("Not Playing");
-                justify: center;
-                ellipsize: end;
-                single-line-mode: true;
-                max-width-chars: 32;
+              $AppleMusicCover cover {
+                size: 320;
+                halign: center;
 
                 styles [
-                  "title-2",
+                  "large",
                 ]
               }
 
-              Label subtitle_label {
-                justify: center;
-                ellipsize: end;
-                single-line-mode: true;
-                max-width-chars: 40;
-                visible: false;
+              Box titles_box {
+                orientation: vertical;
+                spacing: 4;
+                valign: center;
 
-                styles [
-                  "dim-label",
-                ]
+                Label title_label {
+                  label: _("Not Playing");
+                  justify: center;
+                  wrap: true;
+                  wrap-mode: word_char;
+                  lines: 2;
+                  ellipsize: end;
+                  max-width-chars: 32;
+
+                  styles [
+                    "title-2",
+                  ]
+                }
+
+                Label subtitle_label {
+                  justify: center;
+                  wrap: true;
+                  wrap-mode: word_char;
+                  lines: 2;
+                  ellipsize: end;
+                  max-width-chars: 40;
+                  visible: false;
+
+                  styles [
+                    "dim-label",
+                  ]
+                }
               }
             }
 
@@ -110,7 +172,6 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
                   step-increment: 5;
                   page-increment: 30;
                 };
-                accessible-role: slider;
 
                 accessibility {
                   label: _("Position");
@@ -147,7 +208,7 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
                 ]
               }
 
-              Button previous_button {
+              Button {
                 icon-name: "media-skip-backward-symbolic";
                 tooltip-text: _("Previous");
                 action-name: "app.previous";
@@ -173,7 +234,7 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
                 ]
               }
 
-              Button next_button {
+              Button {
                 icon-name: "media-skip-forward-symbolic";
                 tooltip-text: _("Next");
                 action-name: "app.next";
@@ -206,26 +267,14 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
             hexpand: true;
             vexpand: true;
 
-            Adw.ToggleGroup tabs {
+            Adw.InlineViewSwitcher {
+              stack: tab_stack;
               halign: center;
               homogeneous: true;
-              active-name: "lyrics";
-              notify::active-name => $on_tab_changed();
-
-              Adw.Toggle {
-                name: "lyrics";
-                label: _("Lyrics");
-              }
-
-              Adw.Toggle {
-                name: "queue";
-                label: _("Up Next");
-              }
             }
 
-            Stack tab_stack {
+            Adw.ViewStack tab_stack {
               vexpand: true;
-              transition-type: crossfade;
             }
           }
         };
