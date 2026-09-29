@@ -7,9 +7,11 @@ models as you type (Gtk.FilterListModel over the albums, artists, playlists and 
 works with the engine down.
 
 Requests are debounced (DEBOUNCE_MS after the last keystroke) and numbered: an answer that
-arrives after a newer request was made is dropped. The engine's failures become a status
-page with the button that helps (Start Engine, Sign In, Try Again); the page watches the
-engine while shown and asks again once it is up or signed in.
+arrives after a newer request was made, or after a switch to Your Library, is dropped. The
+engine's failures become a status page with the button that helps (widgets/engine_status.py:
+Start Engine, Sign In, Try Again) and a way into Your Library; the page watches the engine
+while shown and asks again once it is up or signed in. Status titles and a search's results
+are announced to assistive technology.
 """
 
 import logging
@@ -26,8 +28,9 @@ from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
 from ..widgets.engine_status import EngineStatus
 from ..widgets.shelf import ShelfColumn  # also registers $AppleMusicShelf for the template
+from ..widgets.labels import accessible_label, flow_child, track_label
 from ..widgets.track_row import TrackRow
-from ..widgets.util import MappedHandlers
+from ..widgets.util import MappedHandlers, connect_weak, weak_method
 from . import app
 
 log = logging.getLogger(__name__)
@@ -94,14 +97,21 @@ def _song_filter():
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/search.ui')
 class SearchPage(Adw.NavigationPage):
+    """The Search destination (see the module). Every change of mode or text numbers a new
+    request, so an answer that arrives after it (a suggestion, a search, the landing, or its
+    failure) is dropped whatever the page shows now, Your Library included. Sign-out drops the
+    page (window.forget_account_pages()): its handlers are connected weakly."""
+
     __gtype_name__ = 'AppleMusicSearchPage'
 
     title_label = Gtk.Template.Child()
+    search_row = Gtk.Template.Child()
     search_entry = Gtk.Template.Child()
     mode_toggle = Gtk.Template.Child()
     stack = Gtk.Template.Child()
     status_page = Gtk.Template.Child()
     status_button = Gtk.Template.Child()
+    status_library_button = Gtk.Template.Child()
     categories_box = Gtk.Template.Child()
     suggestions_list = Gtk.Template.Child()
     results_box = Gtk.Template.Child()
@@ -121,11 +131,13 @@ class SearchPage(Adw.NavigationPage):
         self._debounce = None  # the GLib source waiting for the typing to pause
         self._setting_text = False  # the page is putting a term in the entry, not the user
         self._status = None  # what the status page says, or None
+        self._announced = None  # the status title last announced
         self._retry = None  # what to do again once the engine is up or signed in
+        self._focus_on_map = False  # focus_entry() asked while the page was not shown
         self._categories = Gio.ListStore(item_type=Item)
         self._landing_loaded = False
         self._suggestions = Gio.ListStore(item_type=Suggestion)
-        self._results = ShelfColumn(self.results_box)  # a search's answer, as shelves
+        self._column = ShelfColumn(self.results_box)  # a search's answer, as shelves
         self._art_task = None
         # What the page says when the engine cannot answer, and what its button does; its
         # retry asks again for what failed, in Apple Music mode only.
@@ -137,16 +149,28 @@ class SearchPage(Adw.NavigationPage):
         }
         self._engine_status = EngineStatus(app(), self._show_engine_status,
                                            self._retry_request, texts)
-        self._accessible_format = _('{title}, {subtitle}')
         self.title_label.set_label(title)
 
-        self.categories_box.bind_model(self._categories, self._create_category_tile)
-        self.suggestions_list.bind_model(self._suggestions, self._create_suggestion_row)
+        # What a child holds calls the page weakly (widgets/util.py): sign-out drops the
+        # page, and a bound method would keep it alive.
+        connect_weak(self.search_entry, 'changed', self._on_entry_changed)
+        connect_weak(self.search_entry, 'activate', self._on_entry_activated)
+        connect_weak(self.search_entry, 'stop-search', self._on_stop_search)
+        connect_weak(self.mode_toggle, 'notify::active-name', self._on_mode_changed)
+        connect_weak(self.status_button, 'clicked', self._on_status_clicked)
+        connect_weak(self.status_library_button, 'clicked', self._on_search_library_clicked)
+        connect_weak(self.categories_box, 'child-activated', self._on_category_activated)
+        connect_weak(self.suggestions_list, 'row-activated', self._on_suggestion_activated)
+        connect_weak(self.songs_list, 'activate', self._on_song_activated)
+        connect_weak(self.songs_see_all_button, 'clicked', self._on_songs_see_all_clicked)
+        self.categories_box.bind_model(self._categories, weak_method(self._create_category_tile))
+        self.suggestions_list.bind_model(self._suggestions,
+                                         weak_method(self._create_suggestion_row))
 
         # Your Library: the filtered models, bound once; the search text is set on the filters.
         # Each is over its store only while there is a text: with none, a filter matches
         # everything, and the stack measures the hidden results even so, so the rows would
-        # build 200 tiles each for nothing (the search page cost 250 ms to open).
+        # build their tiles for nothing (the search page cost 250 ms to open).
         self._item_filters = []
         self._library_models = []  # (Gtk.FilterListModel, the store it filters)
         for widget, key, title, store in (
@@ -156,18 +180,18 @@ class SearchPage(Adw.NavigationPage):
             any_filter, filters = _item_filter()
             self._item_filters.extend(filters)
             model = Gtk.FilterListModel(model=None, filter=any_filter)
-            model.connect('items-changed', self._on_library_results_changed)
+            connect_weak(model, 'items-changed', self._on_library_results_changed)
             self._library_models.append((model, store))
             widget.bind_shelf(LibraryShelf(key, title, model))
         self._song_filter = _song_filter()
         self._songs = Gtk.FilterListModel(model=None, filter=self._song_filter)
-        self._songs.connect('items-changed', self._on_library_results_changed)
+        connect_weak(self._songs, 'items-changed', self._on_library_results_changed)
         self._library_models.append((self._songs, library.songs))
         self._songs_shown = Gtk.SliceListModel(model=self._songs, offset=0, size=SONG_LIMIT)
         factory = Gtk.SignalListItemFactory()
-        factory.connect('setup', self._on_song_setup)
-        factory.connect('bind', self._on_song_bind)
-        factory.connect('unbind', self._on_song_unbind)
+        connect_weak(factory, 'setup', self._on_song_setup)
+        connect_weak(factory, 'bind', self._on_song_bind)
+        connect_weak(factory, 'unbind', self._on_song_unbind)
         self.songs_list.set_factory(factory)
         self.songs_list.set_model(Gtk.NoSelection(model=self._songs_shown))
         context_menu.attach(self.songs_list, drag=True)
@@ -190,7 +214,11 @@ class SearchPage(Adw.NavigationPage):
         return ' '.join(self.search_entry.get_text().split())
 
     def focus_entry(self):
-        """Put the cursor in the entry with its text selected (win.search)."""
+        """Put the cursor in the entry with its text selected (win.search): now if the page
+        is shown, else as it is shown."""
+        if not self.get_mapped():
+            self._focus_on_map = True
+            return
         self.search_entry.grab_focus()
         self.search_entry.select_region(0, -1)
 
@@ -201,6 +229,9 @@ class SearchPage(Adw.NavigationPage):
         if self._stale():
             self._refresh()
         self._engine_status.watch()
+        if self._focus_on_map:
+            self._focus_on_map = False
+            self.focus_entry()
 
     def do_unmap(self):
         self._engine_status.unwatch()
@@ -221,43 +252,44 @@ class SearchPage(Adw.NavigationPage):
 
     # Typing.
 
-    @Gtk.Template.Callback()
-    def on_entry_changed(self, _entry):
+    def _on_entry_changed(self, _entry):
         if self._setting_text:
             return
+        self._cancel_debounce()
+        self._debounce = GLib.timeout_add(DEBOUNCE_MS, weak_method(self._on_typing_paused))
+
+    def _cancel_debounce(self):
         if self._debounce is not None:
             GLib.source_remove(self._debounce)
-        self._debounce = GLib.timeout_add(DEBOUNCE_MS, self._on_typing_paused)
+            self._debounce = None
 
     def _on_typing_paused(self):
         self._debounce = None
         self._refresh()
         return GLib.SOURCE_REMOVE
 
-    @Gtk.Template.Callback()
-    def on_entry_activated(self, _entry):
-        """Enter: the full search (Apple Music); the filter is live already (Your Library)."""
-        if self._debounce is not None:
-            GLib.source_remove(self._debounce)
-            self._debounce = None
-        if self.mode == 'library':
+    def _on_entry_activated(self, _entry):
+        """Enter: the full search (Apple Music); what the text calls for otherwise (the
+        library filtered, which is live already; the landing, for no text)."""
+        self._cancel_debounce()
+        if self.mode == 'library' or not self.text:
             self._refresh()
-        elif self.text:
+        else:
             self._search(self.text)
 
-    @Gtk.Template.Callback()
-    def on_stop_search(self, entry):
+    def _on_stop_search(self, entry):
         entry.set_text('')
 
-    @Gtk.Template.Callback()
-    def on_mode_changed(self, _toggle, _pspec):
+    def _on_mode_changed(self, _toggle, _pspec):
         self.search_entry.set_placeholder_text(
             _('Search Your Library') if self.mode == 'library' else _('Search Apple Music'))
+        self._cancel_debounce()
         self._refresh()
 
     def _refresh(self):
         """Show what the mode and the text call for: the landing, suggestions or results
-        (Apple Music), or the filtered library."""
+        (Apple Music), or the filtered library. Whatever was asked before is dropped."""
+        self._next_serial()
         self._retry = None
         text = self.text
         if self.mode == 'library':
@@ -273,24 +305,28 @@ class SearchPage(Adw.NavigationPage):
         self._serial += 1
         return self._serial
 
+    def _current(self, serial):
+        """Whether an answer to request `serial` is still wanted: nothing newer was asked
+        and the page is in Apple Music mode."""
+        return serial == self._serial and self.mode == 'music'
+
     def _show_landing(self):
         if self._landing_loaded:
             self._show('landing')
             return
         self._retry = self._show_landing
         serial = self._next_serial()
-        if self._categories.get_n_items() == 0:
-            self._show('loading')
+        self._show('loading')
         app().spawn(self._load_landing(serial))
 
     async def _load_landing(self, serial):
         try:
             answer = await app().engine.landing()
         except EngineError as error:
-            if serial == self._serial:
+            if self._current(serial):
                 self._fail(error, self._show_landing)
             return
-        if serial != self._serial:
+        if not self._current(serial):
             return
         categories = [Item(remote_item(data))
                       for data in answer.get('categories') or []
@@ -313,11 +349,11 @@ class SearchPage(Adw.NavigationPage):
         try:
             answer = await app().engine.suggest(text)
         except EngineError as error:
-            if serial == self._serial:
+            if self._current(serial):
                 self._fail(error, lambda: self._suggest(text))
             return
-        if serial != self._serial:
-            return  # typed on since: a newer request answers
+        if not self._current(serial):
+            return  # typed on since, or switched to Your Library
         rows = [Suggestion(term=term.get('term'), display=term.get('display'))
                 for term in answer.get('terms') or [] if term.get('term')]
         rows += [Suggestion(item=Item(remote_item(data)))
@@ -339,10 +375,10 @@ class SearchPage(Adw.NavigationPage):
         try:
             answer = await app().engine.search(text)
         except EngineError as error:
-            if serial == self._serial:
+            if self._current(serial):
                 self._fail(error, lambda: self._search(text))
             return
-        if serial != self._serial:
+        if not self._current(serial):
             return
         self._show_results(answer.get('shelves') or [])
 
@@ -351,10 +387,15 @@ class SearchPage(Adw.NavigationPage):
         if self._art_task is not None and not self._art_task.done():
             self._art_task.cancel()
         # Top Results, Apple's best few hits of any kind, first and as cards.
-        self._results.show(shelves, hero_first=bool(shelves) and shelves[0].key == 'top')
+        self._column.show(shelves, hero_first=bool(shelves) and shelves[0].key == 'top')
         if shelves:
             self._show('results')
             self._art_task = app().spawn(fetch_shelf_art(shelves))
+            count = len(shelves)
+            # Translators: said to a screen reader when a search's results show: how many
+            # shelves of them (Top Results, Artists, Albums…) there are.
+            text = ngettext('{count} shelf of results', '{count} shelves of results', count)
+            self._announce(text.format(count=count))
         else:
             self._show_status('no-results')
 
@@ -412,6 +453,7 @@ class SearchPage(Adw.NavigationPage):
 
     def _show(self, name):
         self._status = None
+        self._announced = None
         self._engine_status.clear()
         self.stack.set_visible_child_name(name)
 
@@ -434,9 +476,11 @@ class SearchPage(Adw.NavigationPage):
         self._draw_status(status, icon, title, description, None)
 
     def _show_engine_status(self, status, title, description, button):
-        """EngineStatus's show: the spinner, or why Apple Music cannot answer."""
+        """EngineStatus's show: the spinner, or why Apple Music cannot answer (with a way
+        into Your Library, which works regardless)."""
         if status == 'loading':
             self._status = None
+            self._announced = None
             self.stack.set_visible_child_name('loading')
             return
         self._draw_status(status, self._icon_name, title, description, button)
@@ -448,25 +492,35 @@ class SearchPage(Adw.NavigationPage):
         self.status_page.set_description(description)
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
+        self.status_library_button.set_visible(status in ('engine-down', 'not-signed-in',
+                                                          'demo'))
         self.stack.set_visible_child_name('status')
+        if title != self._announced:  # once, not at every keystroke that keeps it
+            self._announced = title
+            self._announce(title)
 
-    @Gtk.Template.Callback()
-    def on_status_clicked(self, _button):
+    def _announce(self, text):
+        """Tell assistive technology what the page shows now, through the window (GTK drops
+        an announcement from a widget no client has asked about yet)."""
+        root = self.get_root()
+        if root is not None and self.get_mapped():
+            root.announce(text, Gtk.AccessibleAnnouncementPriority.MEDIUM)
+
+    def _on_status_clicked(self, _button):
         self._engine_status.activate()
+
+    def _on_search_library_clicked(self, _button):
+        self.set_mode('library')
+        self.focus_entry()
 
     # The landing's tiles.
 
     def _create_category_tile(self, item):
         tile = CategoryTile()
         tile.bind(item)
-        child = Gtk.FlowBoxChild(child=tile)
-        label = (self._accessible_format.format(title=item.title, subtitle=item.subtitle)
-                 if item.subtitle else item.title)
-        child.update_property([Gtk.AccessibleProperty.LABEL], [label])
-        return child
+        return flow_child(tile, accessible_label(item))
 
-    @Gtk.Template.Callback()
-    def on_category_activated(self, _flow_box, child):
+    def _on_category_activated(self, _flow_box, child):
         item = self._categories.get_item(child.get_index())
         if item is not None:
             self.get_root().open_item(item)
@@ -491,15 +545,10 @@ class SearchPage(Adw.NavigationPage):
             row.add_prefix(cover)
             row.context_item = item  # its context menu (widgets/context_menu.py)
             if needs_thumb(item):
-                app().spawn(self._fetch_row_art(item, cover))
+                app().spawn(_fetch_row_art(item, cover))
         return row
 
-    async def _fetch_row_art(self, item, cover):
-        if await fetch_thumb(item):
-            cover.refresh()
-
-    @Gtk.Template.Callback()
-    def on_suggestion_activated(self, _list_box, row):
+    def _on_suggestion_activated(self, _list_box, row):
         suggestion = self._suggestions.get_item(row.get_index())
         if suggestion is None:
             return
@@ -507,9 +556,7 @@ class SearchPage(Adw.NavigationPage):
             self.get_root().open_item(suggestion.item)
             return
         # A term: searched for as if typed and entered (the entry's own change is ignored).
-        if self._debounce is not None:
-            GLib.source_remove(self._debounce)
-            self._debounce = None
+        self._cancel_debounce()
         self._setting_text = True
         try:
             self.search_entry.set_text(suggestion.term)
@@ -526,19 +573,20 @@ class SearchPage(Adw.NavigationPage):
     def _on_song_bind(self, _factory, list_item):
         track = list_item.get_item()
         list_item.get_child().bind(track)
-        list_item.set_accessible_label(
-            self._accessible_format.format(title=track.title, subtitle=track.artist)
-            if track.artist else track.title)
+        list_item.set_accessible_label(track_label(track, show_album=False))
 
     def _on_song_unbind(self, _factory, list_item):
         list_item.get_child().unbind()
 
-    @Gtk.Template.Callback()
-    def on_song_activated(self, _list_view, position):
+    def _on_song_activated(self, _list_view, position):
         track = self._songs_shown.get_item(position)
         if isinstance(track, Track):
             self.get_root().play_request(track.play, start_with=track.index)
 
-    @Gtk.Template.Callback()
-    def on_songs_see_all_clicked(self, _button):
+    def _on_songs_see_all_clicked(self, _button):
         self.get_root().open_songs(self.text)
+
+
+async def _fetch_row_art(item, cover):
+    if await fetch_thumb(item):
+        cover.refresh()

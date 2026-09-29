@@ -6,13 +6,34 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow: the mode toggle goes under the entry.
+    // Narrow: the mode toggle goes under the entry, as wide as the page (side by side they
+    // need about 640 px).
+    Adw.Breakpoint {
+      condition ("max-width: 640sp")
+
+      setters {
+        search_row.orientation: vertical;
+        search_row.halign: fill;
+        search_entry.hexpand: true;
+        search_entry.width-request: -1;
+        mode_toggle.halign: center;
+      }
+    }
+
+    // Narrower still: the category tiles one a line, too (two would break their names
+    // mid-word). The last breakpoint that matches is the one applied: this repeats the one
+    // above.
     Adw.Breakpoint {
       condition ("max-width: 520sp")
 
       setters {
         search_row.orientation: vertical;
+        search_row.halign: fill;
+        search_entry.hexpand: true;
+        search_entry.width-request: -1;
         mode_toggle.halign: center;
+        categories_box.min-children-per-line: 1;
+        categories_box.max-children-per-line: 1;
       }
     }
 
@@ -41,45 +62,42 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
           ]
         }
 
-        // The entry and the mode, centred and no wider than 600 px, as on the web player.
-        Adw.Clamp {
-          maximum-size: 600;
-          tightening-threshold: 480;
+        // The entry and the mode on the page's 24 px margin, as the title and the results
+        // are. The page's handlers are connected in search.py (weakly: sign-out drops it).
+        Box search_row {
+          spacing: 12;
+          halign: start;
           margin-start: 24;
           margin-end: 24;
           margin-top: 12;
           margin-bottom: 12;
 
-          child: Box search_row {
-            spacing: 12;
+          SearchEntry search_entry {
+            width-request: 360;
+            placeholder-text: _("Search Apple Music");
 
-            SearchEntry search_entry {
-              hexpand: true;
-              placeholder-text: _("Search Apple Music");
-              changed => $on_entry_changed();
-              activate => $on_entry_activated();
-              stop-search => $on_stop_search();
+            accessibility {
+              label: _("Search");
+            }
+          }
 
-              accessibility {
-                label: _("Search");
-              }
+          Adw.ToggleGroup mode_toggle {
+            valign: center;
+
+            accessibility {
+              label: _("Search In");
             }
 
-            Adw.ToggleGroup mode_toggle {
-              valign: center;
-              notify::active-name => $on_mode_changed();
-
-              Adw.Toggle {
-                name: "music";
-                label: _("Apple Music");
-              }
-
-              Adw.Toggle {
-                name: "library";
-                label: _("Your Library");
-              }
+            Adw.Toggle {
+              name: "music";
+              label: _("Apple Music");
             }
-          };
+
+            Adw.Toggle {
+              name: "library";
+              label: _("Your Library");
+            }
+          }
         }
 
         Stack stack {
@@ -102,15 +120,31 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
             name: "status";
 
             child: Adw.StatusPage status_page {
-              child: Button status_button {
+              child: Box {
+                orientation: vertical;
+                spacing: 12;
                 halign: center;
-                visible: false;
-                clicked => $on_status_clicked();
 
-                styles [
-                  "pill",
-                  "suggested-action",
-                ]
+                Button status_button {
+                  visible: false;
+
+                  styles [
+                    "pill",
+                    "suggested-action",
+                  ]
+                }
+
+                // Your Library works whatever the engine: offered where Apple Music cannot
+                // answer (the engine down, signed out, the demo).
+                Button status_library_button {
+                  label: _("Search Your Library");
+                  visible: false;
+
+                  styles [
+                    "pill",
+                    "flat",
+                  ]
+                }
               };
             };
           }
@@ -152,7 +186,6 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                   valign: start;
                   margin-start: 24;
                   margin-end: 24;
-                  child-activated => $on_category_activated();
                 }
               };
             };
@@ -176,7 +209,6 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                 child: ListBox suggestions_list {
                   selection-mode: none;
                   valign: start;
-                  row-activated => $on_suggestion_activated();
 
                   styles [
                     "boxed-list",
@@ -268,7 +300,6 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                     Button songs_see_all_button {
                       label: _("See All");
                       valign: center;
-                      clicked => $on_songs_see_all_clicked();
 
                       accessibility {
                         described-by: [
@@ -287,7 +318,6 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                   ListView songs_list {
                     single-click-activate: false;
                     tab-behavior: item;
-                    activate => $on_song_activated();
 
                     styles [
                       "track-list",
