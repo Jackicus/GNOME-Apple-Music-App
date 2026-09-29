@@ -8,7 +8,7 @@ from . import artwork
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .util import connect_weak
 
-# The subtitle's opacity on the band (style.css, `.hero-caption > .dim-label`): the band is
+# The subtitle's opacity on the band (style.css, `.hero-caption > .dimmed`): the band is
 # made dark or light enough for it to read (artwork.band_colour).
 SUBTITLE_OPACITY = 0.75
 

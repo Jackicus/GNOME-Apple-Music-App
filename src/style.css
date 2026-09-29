@@ -160,15 +160,15 @@ listview.shelf-list > row {
   padding: 10px 12px 12px 12px;
 }
 
-/* The subtitle, less dim than a dim-label elsewhere: it sits on a colour, not the page (which
+/* The subtitle, less dim than a .dimmed label elsewhere: it sits on a colour, not the page (which
    hero_tile.py makes deep or light enough for it: SUBTITLE_OPACITY). With the high-contrast
    setting, libadwaita's dim opacity (90%). */
-.hero-caption > .dim-label {
+.hero-caption > .dimmed {
   opacity: 0.75;
 }
 
 @media (prefers-contrast: more) {
-  .hero-caption > .dim-label {
+  .hero-caption > .dimmed {
     opacity: var(--dim-opacity);
   }
 }
@@ -183,7 +183,7 @@ listview.shelf-list > row {
 
 /* The Now Playing sheet (widgets/now_playing.blp): larger transport buttons than the bar's,
    the play button largest; the lyrics as big bold lines, the current one at full opacity
-   (the others carry dim-label); the queue's rows as the detail pages' track rows. */
+   (the others carry .dimmed); the queue's rows as the detail pages' track rows. */
 .now-playing .play-button {
   min-width: 56px;
   min-height: 56px;
