@@ -13,7 +13,8 @@ from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
 from applemusic.backend.errors import EngineError
 from applemusic.lyrics import Lyrics
-from applemusic.player import ACTIVE_STATES, STOPPED_STATES, NowPlaying, Player, format_time
+from applemusic.player import (ACTIVE_STATES, STOPPED_STATES, NowPlaying, Player, format_time,
+                               playback_error_text)
 
 
 class Clock:
@@ -498,14 +499,25 @@ class EventTest(unittest.TestCase):
         self.assertEqual(self.notified, [])
         self.assertEqual(self.player.state, 'none')
 
-    def test_playback_error_is_a_signal(self):
+    def test_playback_error_is_a_signal_with_a_sentence(self):
         errors = []
         self.player.connect('error', lambda _p, message: errors.append(message))
-        self.engine.event('mediaPlaybackError', {'message': 'CONTENT_UNAVAILABLE'})
-        self.engine.event('mediaPlaybackError', {})
-        self.assertEqual(errors[0], 'CONTENT_UNAVAILABLE')
-        self.assertEqual(len(errors), 2)
-        self.assertTrue(errors[1])  # a wording of its own
+        with self.assertLogs('applemusic.player', level='WARNING') as logged:
+            self.engine.event('mediaPlaybackError',
+                              {'code': 'CONTENT_UNAVAILABLE', 'message': 'x'})
+            self.engine.event('mediaPlaybackError', {'code': 'BOGUS', 'message': 'y'})
+            self.engine.event('mediaPlaybackError', {})
+        self.assertEqual(errors[0], "This isn't available in your country or region")
+        self.assertEqual(errors[1], 'This could not be played')  # an unknown code
+        self.assertEqual(errors[2], 'This could not be played')
+        self.assertIn('CONTENT_UNAVAILABLE: x', logged.output[0])  # the raw text, logged
+        for code, sentence in (('GEO_BLOCK', "This isn't available in your country or region"),
+                               ('CONTENT_RESTRICTED', 'This content is restricted'),
+                               ('SUBSCRIPTION_ERROR',
+                                'An Apple Music subscription is needed to play this'),
+                               ('MEDIA_LICENSE', 'The engine could not play protected content'),
+                               ('', 'This could not be played')):
+            self.assertEqual(playback_error_text(code), sentence, code)
 
 
 class StalePositionTest(unittest.TestCase):

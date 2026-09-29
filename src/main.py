@@ -358,7 +358,7 @@ class Application(Adw.Application):
             action.set_enabled(playing)
 
     def _on_playback_error(self, _player, message):
-        self.toast(_('Playback failed: {message}').format(message=message))
+        self.toast(message)  # the Player's sentence for MusicKit's code (playback_error_text)
 
     def player_command(self, coro):
         """A Player command as a task, its EngineError toasted."""

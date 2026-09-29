@@ -51,7 +51,9 @@ the new one holds.
 The commands raise EngineError as the engine does; play() starts a down engine first when the
 account is signed in (a toast says so) and raises EngineError('not-signed-in') when it is not,
 which the window turns into the sign-in flow. `error(message)` is emitted for MusicKit's
-mediaPlaybackError. GObject only, no GTK: tests feed it synthetic events.
+mediaPlaybackError, with the sentence playback_error_text() gives its code (the app toasts
+it as it is; the code and MusicKit's text go to the log). GObject only, no GTK: tests feed
+it synthetic events.
 """
 
 import asyncio
@@ -358,9 +360,10 @@ class Player(GObject.Object):
             index = data.get('index')
             self._set_queue_index(index if isinstance(index, int) else -1)
         elif name == 'mediaPlaybackError':
-            message = _text(data.get('message')) or _('Playback failed')
-            log.warning('playback error: %s', message)
-            self.emit('error', message)
+            code = _text(data.get('code'))
+            log.warning('playback error %s: %s', code or '(no code)',
+                        _text(data.get('message')) or '(no message)')
+            self.emit('error', playback_error_text(code))
 
     def _take_position(self, data):
         """An event's position and duration, unless the position is the previous item's,
@@ -693,6 +696,21 @@ class Player(GObject.Object):
         """The repeat mode after this one in the cycle none → one → all → none."""
         position = REPEAT_MODES.index(self.repeat) if self.repeat in REPEAT_MODES else 0
         return REPEAT_MODES[(position + 1) % len(REPEAT_MODES)]
+
+
+def playback_error_text(code):
+    """The sentence the user sees for a MusicKit playback error code (a
+    mediaPlaybackError's, or EngineError.musickit_code of a refused play): what it means
+    for them, never the code or MusicKit's own text, which go to the log."""
+    if code in ('CONTENT_UNAVAILABLE', 'GEO_BLOCK'):
+        return _("This isn't available in your country or region")
+    if code == 'CONTENT_RESTRICTED':
+        return _('This content is restricted')
+    if code == 'SUBSCRIPTION_ERROR':
+        return _('An Apple Music subscription is needed to play this')
+    if code in ('DEVICE_LIMIT', 'NETWORK_ERROR', 'MEDIA_LICENSE', 'MEDIA_KEY'):
+        return _('The engine could not play protected content')
+    return _('This could not be played')
 
 
 def format_time(seconds, remaining=False):
