@@ -15,9 +15,12 @@ the exit status is 1 when a step fails. Use --size 360x640 for the narrow layout
 Keys cannot be sent to a window on this Wayland desktop, so each press is dispatched through
 GTK's own handlers as a key event would be (press()): the capture-phase key and shortcut
 controllers from the window down to the focus widget (the window's playback keys, the
-application's accelerators), then the shortcut controllers from the focus widget up to the
-window (the widgets' own keys: Tab, the arrows, Enter, Escape, the context-menu keys) and a
-popover's own key handler. Typing into an entry is not emulated (the text is set).
+application's accelerators, the mnemonics a dialog's shortcut manager runs on its labels),
+then the shortcut controllers from the focus widget up to the window (the widgets' own keys:
+Tab, the arrows, Enter, Escape, the context-menu keys) and a popover's own key handler.
+Typing into an entry is not emulated (the text is set). Step 8 of the walkthrough (a dialog
+over the window) runs with the window maximized, where a dialog is inside it, and the
+window is made its --size again afterwards.
 
 --names also starts a private accessibility bus (a dbus-daemon with at-spi's configuration on
 an abstract socket, and at-spi2-registryd, stopped when the script exits, however it exits;
@@ -183,7 +186,9 @@ if args.names:
 # The program name is how the lister finds the app on the accessibility bus.
 app = harness.make_app('A11yCheck', light=args.light, size=(width, height), name='a11y_check')
 
-from gi.repository import Gdk, Gio, Gtk  # noqa: E402  (after make_app)
+from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402  (after make_app)
+
+from applemusic import shortcuts  # noqa: E402  (the installed build's, after make_app)
 
 failures = []
 
@@ -200,18 +205,56 @@ def _controllers(widget):
     return [model.get_item(i) for i in range(model.get_n_items())]
 
 
+def descendants(widget):
+    """The widgets under widget, depth first."""
+    child = widget.get_first_child()
+    while child is not None:
+        yield child
+        yield from descendants(child)
+        child = child.get_next_sibling()
+
+
+def _mnemonic_owner(manager, shortcut):
+    """The widget under manager whose own (managed) shortcut controller holds shortcut: the
+    label a mnemonic belongs to, which GTK activates. None when there is none."""
+    for widget in (manager, *descendants(manager)):
+        for controller in _controllers(widget):
+            if (isinstance(controller, Gtk.ShortcutController)
+                    and controller.get_scope() == Gtk.ShortcutScope.MANAGED
+                    and shortcut in [controller.get_item(i)
+                                     for i in range(controller.get_n_items())]):
+                return widget
+    return None
+
+
 def _shortcut(controller, key, mods, phase):
-    """Activate controller's shortcut for (key, mods) in phase: what ran, or None."""
+    """Activate controller's shortcut for (key, mods) in phase, as GTK does: what ran, or
+    None. A mnemonic (a label's underlined letter, which the shortcut manager above the
+    label runs) matches its letter with the controller's mnemonic modifier (Alt) and runs on
+    its label while that is mapped and sensitive. As in GTK, a key that matches one shortcut
+    only runs it exclusively: a mnemonic then activates its widget (several with the same
+    letter only take the focus in turn)."""
     if controller.get_propagation_phase() != phase:
         return None
+    matches = []
     for i in range(controller.get_n_items()):
         shortcut = controller.get_item(i)
         trigger = shortcut.get_trigger()
-        if trigger is None or (key, mods) not in [
+        widget = controller.get_widget()
+        if isinstance(trigger, Gtk.MnemonicTrigger):
+            if (mods != int(controller.get_mnemonics_modifiers())
+                    or Gdk.keyval_to_lower(key) != Gdk.keyval_to_lower(trigger.get_keyval())):
+                continue
+            widget = _mnemonic_owner(widget, shortcut)
+            if widget is None or not (widget.get_mapped() and widget.is_sensitive()):
+                continue
+        elif trigger is None or (key, mods) not in [
                 _parse(alt) for alt in trigger.to_string().split('|')]:
             continue
-        if shortcut.get_action().activate(Gtk.ShortcutActionFlags(0), controller.get_widget(),
-                                          shortcut.get_arguments()):
+        matches.append((shortcut, widget))
+    flags = Gtk.ShortcutActionFlags.EXCLUSIVE if len(matches) == 1 else Gtk.ShortcutActionFlags(0)
+    for shortcut, widget in matches:
+        if shortcut.get_action().activate(flags, widget, shortcut.get_arguments()):
             return shortcut.get_action().to_string()
     return None
 
@@ -291,6 +334,31 @@ async def until(condition, timeout=2.0):
     return condition()
 
 
+def dialog_shown(window, kind):
+    """The dialog of kind shown over window, inside it or as a window of its own (an
+    Adw.Dialog over a window that is neither maximized nor tiled), or None."""
+    shown = window.get_visible_dialog()
+    if isinstance(shown, kind):
+        return shown
+    for toplevel in Gtk.Window.list_toplevels():
+        if toplevel is not window and toplevel.get_visible():
+            found = next((widget for widget in descendants(toplevel)
+                          if isinstance(widget, kind)), None)
+            if found is not None:
+                return found
+    return None
+
+
+def watch(name, calls):
+    """Replace app.player's command `name` with one that records its argument in calls and
+    does nothing (the demo has no engine). Returns the function that puts it back."""
+    def command(argument):
+        calls.append(argument)
+        return asyncio.sleep(0)
+    setattr(app.player, name, command)
+    return lambda: delattr(app.player, name)
+
+
 async def walkthrough(window):
     narrow = window.split_view.get_collapsed()
     print('-- sidebar')
@@ -308,6 +376,9 @@ async def walkthrough(window):
             await key(window, 'Down', 0.15)
         check('Down moves to Radio', row_title(window.get_focus()) == 'Radio',
               row_title(window.get_focus()))
+        await key(window, 'Up', 0.15)
+        check('Up moves back to New', row_title(window.get_focus()) == 'New',
+              row_title(window.get_focus()))
         rows = window._sidebar.rows()
         next((row for row in rows if row_title(row) == 'Recently Added'), rows[0]).grab_focus()
         for _ in range(2):  # Recently Added → Artists, Albums
@@ -318,6 +389,10 @@ async def walkthrough(window):
         for _ in range(5):  # Home → New, Radio, Recently Added, Artists, Albums
             await key(window, 'Down', 0.15)
         check('Down selects Albums and shows it', window.shown == 'albums', window.shown)
+        await key(window, 'Up', 0.15)
+        check('Up selects Artists and shows it', window.shown == 'artists', window.shown)
+        await key(window, 'Down', 0.15)
+        check('Down selects Albums again', window.shown == 'albums', window.shown)
     await key(window, 'Return', 0.6)
     check('Enter shows Albums', window.shown == 'albums' and (
         not narrow or window.split_view.get_show_content()))
@@ -355,7 +430,20 @@ async def walkthrough(window):
     await key(window, 'Return')
     window.play_request = play_request
     check('Down, Enter plays the second track', requests == [1], requests)
-    app.player.apply(harness.invented_playing_state(app))
+    print('-- the idle player bar')
+    await key(window, '<primary>3')
+    bar = window.get_focus()
+    check('Ctrl+3 with nothing playing puts the focus on the bar',
+          isinstance(bar, Gtk.Button) and window.player_bar.is_ancestor(bar), describe(bar))
+    await key(window, 'Return')
+    await until(window.bottom_sheet.get_open)
+    check('Enter on it opens Now Playing', window.bottom_sheet.get_open())
+    await key(window, 'Escape')
+    await until(lambda: not window.bottom_sheet.get_open() and window.get_focus() is bar)
+    check('Escape closes it, the focus back on the bar',
+          not window.bottom_sheet.get_open() and window.get_focus() is bar,
+          describe(window.get_focus()))
+    app.player.apply(harness.invented_playing_state(app, lyrics=True))
     await asyncio.sleep(0.4)
     print('-- player bar')
     await key(window, '<primary>3')
@@ -378,12 +466,53 @@ async def walkthrough(window):
     check('Space, Ctrl+Right, Ctrl+Left: play-pause, next, previous',
           actions == ['play-pause', 'next', 'previous'], actions)
     print('-- Now Playing')
+    sheet = window.now_playing
+    tabs = sheet.tab_stack.get_prev_sibling()  # the Lyrics / Up Next switcher
     await key(window, '<primary><shift>n', 0.8)
     check('Ctrl+Shift+N opens the sheet with the focus on its play button',
-          window.bottom_sheet.get_open() and window.get_focus() is window.now_playing.play_button)
-    for _ in range(4):  # Next, Repeat, the tabs, a lyric line
+          window.bottom_sheet.get_open() and window.get_focus() is sheet.play_button)
+    for _ in range(3):  # Next, Repeat, the tabs
         await key(window, 'Tab', 0.1)
-    check('Tab reaches the lyrics', inside(window.get_focus(), window.now_playing.lyrics_view))
+    check('Tab reaches the Lyrics and Up Next tabs', inside(window.get_focus(), tabs),
+          describe(window.get_focus()))
+    await key(window, 'Right')
+    await key(window, 'space')  # the toggle clicks once its pressed state has shown
+    await until(lambda: sheet.tab_stack.get_visible_child_name() == 'queue')
+    check('Right, Space: Up Next', sheet.tab_stack.get_visible_child_name() == 'queue')
+    await key(window, 'Left')
+    await key(window, 'Return')
+    await until(lambda: sheet.tab_stack.get_visible_child_name() == 'lyrics')
+    check('Left, Enter: Lyrics', sheet.tab_stack.get_visible_child_name() == 'lyrics')
+    await key(window, 'Tab', 0.1)
+    check('Tab reaches the lyrics', inside(window.get_focus(), sheet.lyrics_view.list_view),
+          describe(window.get_focus()))
+    seeks = []
+    undo = watch('seek', seeks)
+    await key(window, 'Down')
+    await key(window, 'Return')
+    undo()
+    check('Down, Enter seeks to a line', len(seeks) == 1, seeks)
+    await key(window, 'Tab', 0.1)
+    check('Tab: the close button', window.get_focus() is sheet.close_button,
+          describe(window.get_focus()))
+    await key(window, 'Return')
+    await until(lambda: not window.bottom_sheet.get_open())
+    check('Enter on it closes the sheet', not window.bottom_sheet.get_open())
+    await key(window, '<primary><shift>n', 0.8)
+    for _ in range(3):  # Next, Repeat, the tabs
+        await key(window, 'Tab', 0.1)
+    await key(window, 'Right')
+    await key(window, 'space')
+    await until(lambda: sheet.tab_stack.get_visible_child_name() == 'queue')
+    await key(window, 'Tab', 0.1)
+    check('Tab reaches Up Next', inside(window.get_focus(), sheet.queue_view.list_view),
+          describe(window.get_focus()))
+    jumps = []
+    undo = watch('queue_jump', jumps)
+    await key(window, 'Down')
+    await key(window, 'Return')
+    undo()
+    check('Down, Enter plays the next entry', jumps == [1], jumps)
     await key(window, 'Escape', 0.8)
     check('Escape closes the sheet', not window.bottom_sheet.get_open())
     print('-- back')
@@ -432,9 +561,10 @@ async def walkthrough(window):
     await key(window, 'Menu', 0.6)
     popover = harness.popovers(grid)
     check("Menu opens the focused tile's context menu", bool(popover))
-    for each in popover:
-        each.popdown()
-    await asyncio.sleep(0.3)
+    await key(window, 'Escape', 0.4)
+    check('Escape closes it, the focus back on the tile',
+          not any(each.get_visible() for each in popover)
+          and inside(window.get_focus(), grid.grid_view), describe(window.get_focus()))
     actions = []
     handler = app.lookup_action('play-pause').connect(
         'activate', lambda action, _parameter: actions.append(action.get_name()))
@@ -475,9 +605,73 @@ async def walkthrough(window):
     check('Ctrl+, opens Preferences', dialog is not None)
     if dialog is not None:
         toplevel = dialog.get_root()
+        # Tab from a row stays on it in a window without the keyboard (GtkListBoxRow's
+        # focus handler reads has-focus), which a headless one never has: not walked.
+        buttons = [widget for widget in descendants(dialog)
+                   if isinstance(widget, Adw.ButtonRow)
+                   or (isinstance(widget, Gtk.Button) and widget.get_label())]
+        check('every labelled button in it has a mnemonic',
+              buttons and all(button.get_use_underline() for button in buttons),
+              [describe(button) for button in buttons if not button.get_use_underline()])
+        # Clear refuses in the demo, here without the toast, which would take the next
+        # Escape (a toast overlay's Escape dismisses its toast).
+        clicks = []
+        handler = dialog.clear_button.connect('clicked', lambda _button: clicks.append(True))
+        app.refuse_in_demo = lambda: True
+        handled = press(toplevel, '<alt>l')
+        await until(lambda: clicks)  # the button clicks once its pressed state has shown
+        del app.refuse_in_demo
+        dialog.clear_button.disconnect(handler)
+        check('Alt+L presses Clear', clicks == [True], (handled, clicks))
         press(toplevel, 'Escape')
         await asyncio.sleep(0.8)
         check('Escape closes it', app._preferences is None)
+    print('-- Keyboard Shortcuts')
+    await key(window, '<primary>question', 1.0)
+    shown = dialog_shown(window, Adw.ShortcutsDialog)
+    check('Ctrl+? opens Keyboard Shortcuts', shown is not None)
+    if shown is not None:
+        titles = {row.get_title() for row in descendants(shown)
+                  if isinstance(row, Gtk.ListBoxRow) and hasattr(row, 'get_title')}
+        wanted = {title for _section, items in shortcuts.sections() for title, _key in items}
+        check('it lists every shortcut', titles == wanted, sorted(titles ^ wanted))
+        press(shown.get_root(), 'Escape')
+        await until(lambda: dialog_shown(window, Adw.ShortcutsDialog) is None)
+        check('Escape closes it', dialog_shown(window, Adw.ShortcutsDialog) is None)
+    print('-- a dialog over the window')
+    # A dialog is inside the window only when the window is maximized or tiled (else it is
+    # a window of its own, which the window's keys never reach).
+    window.set_resizable(True)
+    window.maximize()
+    await until(window.is_maximized)
+    await key(window, '<primary>comma', 1.0)
+    dialog = app._preferences
+    check('Preferences opens inside the maximized window',
+          dialog is not None and window.get_visible_dialog() is dialog)
+    if dialog is not None:
+        on = [name for name in ('back', 'search', 'focus-sidebar', 'focus-content',
+                                'focus-player') if window.lookup_action(name).get_enabled()]
+        check("the window's keyed actions are off", not on, on)
+        before = (window.shown, window.navigation_view.get_visible_page())
+        actions = []
+        handler = app.lookup_action('play-pause').connect(
+            'activate', lambda action, _parameter: actions.append(action.get_name()))
+        for accel in ('<alt>Left', '<primary>f', '<primary>1', '<primary>2', '<primary>3',
+                      '<primary><shift>n', 'space'):
+            await key(window, accel, 0.3)
+        app.lookup_action('play-pause').disconnect(handler)
+        after = (window.shown, window.navigation_view.get_visible_page())
+        check('Alt+Left, Ctrl+F, Ctrl+1 to 3, Ctrl+Shift+N and Space leave the page alone',
+              after == before and not window.bottom_sheet.get_open() and not actions
+              and inside(window.get_focus(), dialog),
+              (after[0], window.bottom_sheet.get_open(), actions, describe(window.get_focus())))
+        press(window, 'Escape')
+        await until(lambda: app._preferences is None)
+        check('Escape closes it', app._preferences is None)
+    window.unmaximize()
+    await until(lambda: not window.is_maximized()
+                and (window.get_width(), window.get_height()) == (width, height))
+    window.set_resizable(False)
 
 
 # -- names ---------------------------------------------------------------------------------

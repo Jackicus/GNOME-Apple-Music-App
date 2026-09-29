@@ -33,8 +33,9 @@ paths:
   `--help` lists the rest. It shoots once no artwork decode has been in flight for a few polls
   (5 s at most), so a new step that shows artwork needs no delay of its own for it.
 - `a11y_check.py` cannot send real key presses here: `press()` runs the controllers a real event
-  would reach. `--names` runs a private AT-SPI bus (a dbus-daemon and at-spi2-registryd) and
-  stops it however the script exits.
+  would reach, a label's mnemonic included. A dialog is inside the window only while that is
+  maximized (or tiled), so the dialog step maximizes it and puts it back. `--names` runs a private
+  AT-SPI bus (a dbus-daemon and at-spi2-registryd) and stops it however the script exits.
 - `am.py` drives the real engine: `status`, `eval`, `now-playing`, `events`. By default each
   command starts a Chrome of its own on the release build's profile (`--devel` for the .Devel
   build's, `APPLE_MUSIC_PROFILE` over both) through the app's Engine, over the pipe, headless
