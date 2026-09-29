@@ -484,8 +484,11 @@ class PortraitTest(WidgetTestCase):
         item = Item({'id': 'l.r1', 'kind': 'artist', 'title': 'Invented Artist',
                      'art': '/a/cover', 'thumb': '/a/thumb', 'groups': []})
         view = Adw.NavigationView()
-        with mock.patch.object(ArtistPage, '_fetch'):  # an artist without albums asks for them
-            page = ArtistPage(Library(), item)
+        # An artist without albums asks for them, when made and when shown.
+        patcher = mock.patch.object(ArtistPage, '_fetch')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        page = ArtistPage(Library(), item)
         view.add(page)
         self.show(view)
         self.assertTrue(wait_for(page.avatar.get_mapped))

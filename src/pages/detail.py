@@ -23,6 +23,7 @@ from ..remote import fetch_cover
 from ..widgets import context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.engine_status import EngineStatus
+from ..widgets.labels import track_label
 from ..widgets.track_row import TrackRow
 from ..widgets.util import MappedHandlers, connect_weak
 from . import app
@@ -31,6 +32,15 @@ log = logging.getLogger(__name__)
 
 # The kinds whose tracks the engine's item() fetches when an Item came without them.
 FETCHED_KINDS = ('album', 'playlist')
+
+
+def should_fetch(item, fetched):
+    """Whether a page showing `item` asks the engine for its tracks: it came without them (a
+    shelf's, a search's, an artist's album the library lacks), it is of a kind the engine
+    fetches, and this page has not asked for this Item already (`fetched`): an answer
+    without tracks (an empty album or playlist) is shown as such, not asked for again."""
+    return (item is not None and not item.groups and item.kind in FETCHED_KINDS
+            and fetched is not item)
 
 
 class _Hero(GObject.Object):
@@ -74,6 +84,12 @@ class DetailPage(Adw.NavigationPage):
     find=function, root=True, title=…) shows whatever find() returns, asked again whenever the
     library changes: a spinner while it loads, an empty state (icon_name, empty_title,
     empty_description) when find() has nothing, and no title in the header bar.
+
+    Either way the page follows the Item it shows while it is shown: a reload keeps the Item
+    and tells what changed, through `notify` (the hero's labels and cover) and
+    `groups-changed` (the tracks), and do_map catches up with what changed while it was
+    hidden. An Item that came without its tracks has them fetched once (should_fetch());
+    the fetch is cancelled when the page is hidden, and asked again when it shows.
     """
 
     __gtype_name__ = 'AppleMusicDetailPage'
@@ -107,7 +123,9 @@ class DetailPage(Adw.NavigationPage):
         self._album_artist = None  # an album's artist, whose name its rows leave out
         self._starts = []  # the list position of each section of tracks
         self._headings = []  # and its heading
-        self._fetching = None  # the Item whose tracks the engine is fetching
+        self._fetched = None  # the Item this page asked the engine for (once: should_fetch)
+        self._fetch_task = None
+        self._shown_groups = None  # item.groups when the tracks were shown: a new list is new
         # What the status box says when the engine cannot answer, and what its button does.
         self._engine_status = EngineStatus(app(), self._show_status, self._refetch, {
             'engine-down': _('Start the engine to load the songs'),
@@ -135,20 +153,15 @@ class DetailPage(Adw.NavigationPage):
         connect_weak(self.play_button, 'clicked', self._on_play_clicked)
         connect_weak(self.shuffle_button, 'clicked', self._on_shuffle_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
-        # What a track's row reads to assistive technology (looked up once: rows bind often).
-        self._label_formats = {
-            'artist': _('{title}, {artist}'),
-            'explicit': _('{label}, explicit'),
-        }
         # Tab from Shuffle goes on into the tracks (see _on_list_key_pressed).
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         connect_weak(keys, 'key-pressed', self._on_list_key_pressed)
         self.list_view.add_controller(keys)
 
+        # The library, and the Item shown (_watch), followed while the page is shown.
         self._handlers = MappedHandlers(self)
-        if find is not None:
-            self._handlers.add(library, 'notify::state', self._follow)
-            self._handlers.add(library, 'changed', self._follow)
+        self._handlers.add(library, 'notify::state', self._follow)
+        self._handlers.add(library, 'changed', self._follow)
 
         self._hero_section = Gio.ListStore(item_type=GObject.Object)
         self._hero_section.append(_Hero())
@@ -158,22 +171,24 @@ class DetailPage(Adw.NavigationPage):
 
         self._show(item)
 
-    # A root page follows the library, but only while it is shown: the library outlives the
-    # window.
-
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        if self._find is not None:
-            self._follow()
+        self._follow()  # what a reload changed while the page was hidden
         self._engine_status.watch()
+        if should_fetch(self.item, self._fetched):
+            self._fetch(self.item)  # a fetch cancelled when the page was hidden
 
     def do_unmap(self):
         self._engine_status.unwatch()
+        if self._fetch_task is not None and not self._fetch_task.done():
+            self._fetch_task.cancel()
+            self._fetched = None  # asked again when the page shows again
+            self._engine_status.clear()
         Adw.NavigationPage.do_unmap(self)
 
     def _follow(self, *_args):
-        item = self._find()
-        if item is not self.item:
+        item = self._find() if self._find is not None else self.item
+        if item is not self.item or (item is not None and item.groups is not self._shown_groups):
             self._show(item)
         self._update_state()
 
@@ -186,16 +201,63 @@ class DetailPage(Adw.NavigationPage):
             name = 'empty'
         self.stack.set_visible_child_name(name)
 
+    def _watch(self, old, item):
+        """Follow the Item shown (and no longer the one shown before)."""
+        if old is not None:
+            self._handlers.remove(old)
+        if item is not None:
+            self._handlers.add(item, 'groups-changed', self._on_groups_changed)
+            self._handlers.add(item, 'notify', self._on_item_notify)
+
+    def _on_groups_changed(self, item):
+        if item is self.item:
+            self._show(item)
+
+    def _on_item_notify(self, item, _pspec):
+        if item is self.item:
+            self._show_hero(item)
+
     def _show(self, item):
-        self.item = item
+        if item is not self.item:
+            self._watch(self.item, item)
+            self.item = item
         if item is None:
+            self._shown_groups = None
             self._sections.remove_all()
             self._update_state()
             return
+        self._album_artist = item.subtitle if item.kind == 'album' else None
+        self._show_hero(item)
+
+        self._shown_groups = item.groups
+        groups = [group for group in item.groups if group.entries.get_n_items()]
+        self._starts = []
+        self._headings = []
+        position = 1  # after the hero
+        for number, group in enumerate(groups, 1):
+            self._starts.append(position)
+            self._headings.append(self._heading(item, group, number))
+            position += group.entries.get_n_items()
+
+        # An item that came without its tracks (a shelf's) gets them from the engine, once.
+        if should_fetch(item, self._fetched):
+            self._fetch(item)
+        elif groups:
+            self._engine_status.clear()
+        elif self._engine_status.status is None:
+            self._show_empty()  # no tracks: none came, or an answer brought none
+        self.status_box.set_visible(not groups)
+        self._update_buttons()
+
+        self.list_view.set_header_factory(self._header_factory if len(groups) > 1 else None)
+        self._sections.splice(0, self._sections.get_n_items(),
+                              [self._hero_section] + [group.entries for group in groups])
+        self._update_state()
+
+    def _show_hero(self, item):
+        """The hero's cover, labels and buttons for item."""
         if not self._root:
             self.set_title(item.title)
-        self._album_artist = item.subtitle if item.kind == 'album' else None
-
         self.cover.set_paths(item.art, item.thumb)  # the 640 px cover, else the thumbnail
         if item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the cover comes now, if it is not on disk yet.
@@ -208,31 +270,17 @@ class DetailPage(Adw.NavigationPage):
         self.caption_label.set_visible(any(details))
         self.summary_label.set_label(item.summary or '')
         self.summary_label.set_visible(bool(item.summary))
-        self.play_button.set_sensitive(bool(item.play))
-        self.shuffle_button.set_sensitive(bool(item.play))
+        self._update_buttons()
 
-        groups = [group for group in item.groups if group.entries.get_n_items()]
-        self._starts = []
-        self._headings = []
-        position = 1  # after the hero
-        for number, group in enumerate(groups, 1):
-            self._starts.append(position)
-            self._headings.append(self._heading(item, group, number))
-            position += group.entries.get_n_items()
-
-        # An item that came without its tracks (a shelf's) gets them from the engine.
-        if not item.groups and item.kind in FETCHED_KINDS and self._fetching is not item:
-            self._fetch(item)
-        elif not item.groups and self._fetching is not item:
-            self._show_empty()
-        elif item.groups:
-            self._show_empty()
-        self.status_box.set_visible(not groups)
-
-        self.list_view.set_header_factory(self._header_factory if len(groups) > 1 else None)
-        self._sections.splice(0, self._sections.get_n_items(),
-                              [self._hero_section] + [group.entries for group in groups])
-        self._update_state()
+    def _update_buttons(self):
+        """Play and Shuffle: with something to play, and tracks to play (or on their way: the
+        engine plays an item by its id)."""
+        item = self.item
+        playable = item is not None and bool(item.play) and (
+            any(group.entries.get_n_items() for group in item.groups)
+            or self._engine_status.status == 'loading')
+        self.play_button.set_sensitive(playable)
+        self.shuffle_button.set_sensitive(playable)
 
     async def _fetch_cover(self, item):
         if await fetch_cover(item) and self.item is item:
@@ -241,12 +289,15 @@ class DetailPage(Adw.NavigationPage):
     # Fetching the tracks of an item that came without them.
 
     def _fetch(self, item):
-        self._fetching = item
+        self._fetched = item
+        if self._fetch_task is not None and not self._fetch_task.done():
+            self._fetch_task.cancel()
         self._engine_status.loading()
-        app().spawn(self._fetch_groups(item))
+        self._fetch_task = app().spawn(self._fetch_groups(item))
 
     def _refetch(self):
-        """EngineStatus's retry: fetch the tracks again."""
+        """EngineStatus's retry (Try Again, the engine up, signed in): ask again."""
+        self._fetched = None
         if self.item is not None:
             self._fetch(self.item)
 
@@ -255,15 +306,14 @@ class DetailPage(Adw.NavigationPage):
             answer = await app().engine.item(item.kind, item.id)
         except EngineError as error:
             log.info('tracks of %s %s: %s', item.kind, item.id, error)
-            if self._fetching is item:
-                self._fetching = None
-                if self.item is item:
-                    self._engine_status.fail(error)
+            if self.item is item:
+                self._engine_status.fail(error)
             return
-        if self._fetching is item:
-            self._fetching = None
-        item.merge(answer)
-        if self.item is item:
+        if self.item is not item:
+            return  # the page shows something else now
+        self._engine_status.clear()
+        item.merge(answer)  # new groups emit groups-changed, which shows them while mapped
+        if item.groups is not self._shown_groups or not item.groups:
             self._show(item)
 
     def _show_empty(self):
@@ -283,6 +333,7 @@ class DetailPage(Adw.NavigationPage):
         self.status_description.set_visible(bool(description))
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
+        self._update_buttons()
 
     def _on_status_clicked(self, _button):
         self._engine_status.activate()
@@ -308,22 +359,14 @@ class DetailPage(Adw.NavigationPage):
         list_item.set_focusable(is_track)  # the hero's buttons take the focus, not its row
         if is_track:
             row.show_track(entry, self._album_artist)
-            list_item.set_accessible_label(self._track_label(entry))
+            # The artist when the row shows one (not an album's own): TrackRow's rule.
+            show_artist = self._album_artist is None or entry.artist != self._album_artist
+            list_item.set_accessible_label(track_label(entry, show_artist, show_album=False))
             list_item.set_accessible_description(entry.duration_label or '')
         else:
             row.show_hero(self.hero)
             list_item.set_accessible_label('')
             list_item.set_accessible_description('')
-
-    def _track_label(self, track):
-        """A track row's accessible name: the title, the artist when the row shows one, and
-        whether it is explicit (the badge's)."""
-        label = track.title
-        if track.artist and (self._album_artist is None or track.artist != self._album_artist):
-            label = self._label_formats['artist'].format(title=label, artist=track.artist)
-        if track.explicit:
-            label = self._label_formats['explicit'].format(label=label)
-        return label
 
     def _on_list_key_pressed(self, _controller, keyval, _keycode, state):
         """Tab from the hero's last button (Shuffle) into the tracks. The list's Tab leaves
@@ -363,7 +406,7 @@ class DetailPage(Adw.NavigationPage):
             self.get_root().play_request(track.play, start_with=track.index)
 
     def _on_play_clicked(self, _button):
-        self.get_root().play_request(self.item.play)
+        self.get_root().play_request(self.item.play, shuffle=False)
 
     def _on_shuffle_clicked(self, _button):
         self.get_root().play_request(self.item.play, shuffle=True)

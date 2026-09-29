@@ -54,6 +54,10 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   which connects them (weakly) on map and disconnects them on unmap; `do_map` catches up with
   what changed while hidden. A page that must follow while hidden says why in a comment
   (SongsPage does). Pages reach the Application through `pages.app()`.
+- The album, playlist and artist pages follow the Item they show (`notify` for the hero,
+  `groups-changed` for the tracks), pushed pages too. An Item that came without tracks is
+  fetched once per page (`detail.should_fetch()`: an answer without tracks shows "No Songs",
+  never a second request), and the fetch is cancelled when the page unmaps.
 - New, Made for You and a search category are `ShelvesPage`s over the engine's answers. They,
   Search and the album and artist pages show what the engine's failure means through one
   `widgets.engine_status.EngineStatus` (no widget; tests/test_engine_status.py): the spinner

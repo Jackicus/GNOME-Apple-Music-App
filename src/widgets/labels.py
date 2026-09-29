@@ -2,6 +2,7 @@
 looked up once (a list binds its rows by the thousand, and gettext is slow when hot).
 
     list_item.set_accessible_label(accessible_label(item, artist=tile_is_an_artist))
+    bind_label(list_item, item, artist)   # the same, following a renamed Item (unbind_label)
     list_item.set_accessible_label(track_label(track, show_artist=True, show_album=True))
     child = flow_child(tile, accessible_label(item))   # a Gtk.FlowBox's create function
 
@@ -60,3 +61,27 @@ def flow_child(widget, label):
     child = Gtk.FlowBoxChild(child=widget)
     child.update_property([Gtk.AccessibleProperty.LABEL], [label])
     return child
+
+
+def bind_label(list_item, item, artist=False):
+    """Name a recycled tile's list item accessible_label(item, artist), and name it again
+    whenever the Item's title or subtitle changes while it is bound: a reload merges new
+    values into the Item and a list does not rebind it (the tile follows its Item the same
+    way). unbind_label() in the factory's unbind stops it."""
+    unbind_label(list_item)
+    list_item.set_accessible_label(accessible_label(item, artist))
+
+    def on_notify(notified, pspec):
+        if pspec.name in ('title', 'subtitle'):
+            list_item.set_accessible_label(accessible_label(notified, artist))
+
+    list_item.label_handler = (item, item.connect('notify', on_notify))
+
+
+def unbind_label(list_item):
+    """Stop following what bind_label() followed."""
+    followed = getattr(list_item, 'label_handler', None)
+    if followed is not None:
+        item, handler = followed
+        item.disconnect(handler)
+        list_item.label_handler = None
