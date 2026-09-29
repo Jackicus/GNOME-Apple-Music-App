@@ -38,7 +38,7 @@ import time
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from . import sections
-from .actions import TrackRef
+from .library import TrackRef
 from .sections import FAVOURITE_SONGS, HOME, PLAYLISTS_SECTION
 from .sidebar import (SidebarEntry, SidebarItem, is_shown, plan_update, playlist_entries,
                       reveal)
