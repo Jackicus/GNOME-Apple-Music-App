@@ -181,7 +181,7 @@ install_data(
 
 # Byte-compile the modules once they are installed (after every install_data above): they live
 # outside site-packages, so Meson's python.bytecompile never reaches them, and a system install
-# without bytecode imports twice as slowly (phase 19: 144 ms against 77 for applemusic.main).
+# without bytecode imports twice as slowly (144 ms against 77 for applemusic.main, measured).
 bytecompile = get_option('python.bytecompile')
 if bytecompile >= 0
   meson.add_install_script(

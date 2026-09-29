@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
-"""Widget lifetimes (C012): a page pushed and popped, a Shelf removed and a dialog closed are
+"""Widget lifetimes: a page pushed and popped, a Shelf removed and a dialog closed are
 freed, with the rows they bound; the handlers connected weakly still run; and connect_weak()
 itself.
 

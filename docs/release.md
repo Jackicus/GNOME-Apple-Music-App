@@ -2,7 +2,9 @@
 
 Releases are native: `meson install` with the release profile, and the AUR package
 `gnome-apple-music`, whose PKGBUILD lives in `build-aux/aur/`. The Flatpak manifest is for
-development only, and Flathub is out of scope (`docs/decisions.md`).
+development only, and Flathub is out of scope (`docs/decisions.md`). Tagging a release,
+publishing it on GitHub and uploading the package to the AUR are the owner's steps: an agent
+prepares everything up to them and stops there.
 
 ## Checklist
 
@@ -15,9 +17,12 @@ development only, and Flathub is out of scope (`docs/decisions.md`).
    revision by itself.
 5. Add a `<release version="…" date="…">` at the top of the metainfo's `<releases>`, with a
    short description: a `<p>` and a `<ul>`.
-6. Commit, then tag `v<version>` (annotated) and push the tag. The PKGBUILD downloads
+6. Pin the metainfo's screenshot URLs to the tag: `/main/` becomes `/v<version>/` in each
+   `<image>`, so an installed copy keeps showing the shots it was released with whatever
+   later happens to the files on `main`.
+7. Commit, then tag `v<version>` (annotated) and push the tag. The PKGBUILD downloads
    GitHub's archive of that tag.
-7. Update the PKGBUILD: `pkgver`, `pkgrel=1`, then `updpkgsums` (it fills in the checksum once
+8. Update the PKGBUILD: `pkgver`, `pkgrel=1`, then `updpkgsums` (it fills in the checksum once
    the tag exists) and `makepkg --printsrcinfo > .SRCINFO`. Test it as below, then publish to
    the AUR.
 
@@ -63,12 +68,14 @@ skipped at -1. Only stale files are compiled again, so development installs stay
 ## Screenshots
 
 `data/screenshots/{home,albums,album,now-playing}-{light,dark}.png`, 1100×760 at scale 1, taken
-with `scripts/screenshot.py --demo` from the invented library only. The metainfo lists the light
-ones first (`environment="gnome"`, Home as `type="default"`), then the dark ones
-(`environment="gnome:dark"`), by `raw.githubusercontent.com/…/main/data/screenshots/…` URLs:
-renaming or removing a file breaks every metainfo already installed. Shrink them losslessly
-(oxipng through `uv run --no-project --with pyoxipng` saved about 15 %), and check that none
-carries a text chunk before committing.
+with `scripts/screenshot.py --demo` from the invented library only (the `screenshots` skill has
+the exact options). The metainfo lists the light ones first (`environment="gnome"`, Home as
+`type="default"`), then the dark ones (`environment="gnome:dark"`), by
+`raw.githubusercontent.com/…/data/screenshots/…` URLs: on `main` between releases, pinned to
+the tag at a release (step 6). Renaming or removing a file still breaks the metainfo of any
+build from `main` that names it. Shrink them losslessly (oxipng through `uv run --no-project
+--with pyoxipng` saved about 15 %), and check that none carries a text chunk before
+committing.
 
 ## The Flatpak manifest
 

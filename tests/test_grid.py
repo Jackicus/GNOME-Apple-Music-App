@@ -30,7 +30,7 @@ class GridTest(PageTestCase):
     def test_columns_for(self):
         from applemusic.pages.grid import columns_for
 
-        # Phase 19's figures: the content pane at 700, 1100 and 1920 px wide.
+        # The content pane at 700, 1100 and 1920 px wide.
         self.assertEqual(columns_for(700), 4)
         self.assertEqual(columns_for(1100), 6)
         self.assertEqual(columns_for(1920), 11)

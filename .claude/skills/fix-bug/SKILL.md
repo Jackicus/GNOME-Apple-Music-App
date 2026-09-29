@@ -13,7 +13,8 @@ Bug report: $ARGUMENTS
    - a unit test with stand-ins (the model, backend, sync, Player, MPRIS, actions and shortcuts
      all have one to copy from in `tests/`);
    - a widget test through `tests/gtk.py`'s `@requires_gtk`;
-   - the demo library: `scripts/demo.sh --debug`, or `scripts/screenshot.py --demo …` to see a
+   - the demo library: `scripts/headless.sh scripts/demo.sh --debug`, or the `screenshots`
+     skill (`scripts/headless.sh scripts/screenshot.py --demo …`) to see a
      state;
    - the real engine only when the bug needs Apple's answers or playback, and only after asking:
      follow the `live-engine-check` skill.
@@ -22,5 +23,5 @@ Bug report: $ARGUMENTS
    command-runner code paths).
 4. Write the failing test, fix the code, watch the test pass. A visible fix gets screenshots
    before and after (dark and `--light`; `--size 360x640` if the layout adapts).
-5. Run `scripts/check.sh`, fix any line in CLAUDE.md, `.claude/rules/` or `docs/` the fix made
-   wrong, and commit with a message that names the cause.
+5. Run `scripts/headless.sh scripts/check.sh`, fix any line in CLAUDE.md, `.claude/rules/` or
+   `docs/` the fix made wrong, and commit with a message that names the cause.

@@ -5,7 +5,7 @@
 
 Before i18n.setup(), the launcher bound only C's domain (GtkBuilder) and installed a builtin
 `_` nothing used, so every `from gettext import gettext as _` in the modules looked up
-Python's default domain and stayed English (P01-2)."""
+Python's default domain and stayed English."""
 
 import gettext
 import locale
