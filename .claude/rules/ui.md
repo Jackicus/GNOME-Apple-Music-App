@@ -77,7 +77,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   shown again keeps its widget (moved into place), new ones are bound a frame apart after
   `FIRST_SHELVES`, and leftover widgets are hidden for later. A row shows at most `ROW_LIMIT`
   tiles; See All (the whole shelf, as a grid) and the paging arrows show only when the row does
-  not show everything. Anything unbounded gets a page of its own (See All), since a
+  not show everything, the arrows only on a shelf wider than `ARROWS_MIN_WIDTH` (400sp, which
+  the shelf measures itself: shelves are made at run time, out of a page breakpoint's reach),
+  so the title has their room at 360 px. Anything unbounded gets a page of its own (See All), since a
   `Gtk.GridView` cannot sit under a shelf in the same scrolled window.
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).

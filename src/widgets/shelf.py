@@ -20,14 +20,28 @@ ROW_LIMIT = 30
 # How long a click on a paging arrow takes to scroll the row, in milliseconds.
 PAGE_DURATION = 250
 
+# The paging arrows show only on a shelf wider than this, in sp (the unit of the pages'
+# `max-width: 400sp` breakpoints: pixels times the text scale). In a narrower window, a
+# phone's, which scrolls the row by touch, the title keeps their room: at 360 px they
+# truncated it.
+ARROWS_MIN_WIDTH = 400
+
+
+def text_scale(settings):
+    """The text scale factor that sp follows: the Xft DPI GTK is given, over 96 (1 when it is
+    not set)."""
+    dpi = settings.props.gtk_xft_dpi if settings is not None else 0
+    return dpi / (96 * 1024) if dpi > 0 else 1.0
+
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/shelf.ui')
 class Shelf(Gtk.Box):
     """A shelf of Items (a library.ShelfModel, or any object with `key`, `title` and `items`,
     bound with bind_shelf()) as a row of tiles under its title, with paging arrows while the
-    row overflows and a "See All" button (`see-all`: offered, and shown when the row does not
-    show everything: more items than ROW_LIMIT, or wider than the window), which opens the
-    shelf as a grid (window.open_shelf). Activating a tile opens its item (window.open_item);
+    row overflows (on a shelf wider than ARROWS_MIN_WIDTH) and a "See All" button
+    (`see-all`: offered, and shown when the row does not show everything: more items than
+    ROW_LIMIT, or wider than the window), which opens the shelf as a grid
+    (window.open_shelf). Activating a tile opens its item (window.open_item);
     a right click, a long press or the Menu key opens its context menu (context_menu.py).
 
     The row is a horizontal Gtk.ListView of the first ROW_LIMIT items, the scrolled window's
@@ -150,7 +164,8 @@ class Shelf(Gtk.Box):
 
     def _update_controls(self):
         """See All while the row does not show everything (and the shelf offers it); the
-        arrows while the row overflows, each sensitive while there is more that way."""
+        arrows while the row overflows on a shelf wider than ARROWS_MIN_WIDTH, each sensitive
+        while there is more that way."""
         adjustment = self.scrolled_window.get_hadjustment()
         value, upper = adjustment.get_value(), adjustment.get_upper()
         page = adjustment.get_page_size()
@@ -158,8 +173,13 @@ class Shelf(Gtk.Box):
         truncated = self.shelf is not None and (
             self.shelf.items.get_n_items() > ROW_LIMIT or overflows)
         self.see_all_button.set_visible(self._see_all and truncated)
-        self.previous_button.set_visible(overflows)
-        self.next_button.set_visible(overflows)
+        # The shelf's own width (already allocated while its row is): the page's, as a page
+        # breakpoint would measure it. Not the adjustment's page, which leaves out the list's
+        # CSS padding.
+        arrows = overflows and self.get_width() > ARROWS_MIN_WIDTH * text_scale(
+            self.get_settings())
+        self.previous_button.set_visible(arrows)
+        self.next_button.set_visible(arrows)
         self.previous_button.set_sensitive(value > 1)
         self.next_button.set_sensitive(value < upper - page - 1)
 

@@ -30,7 +30,8 @@ template $AppleMusicShelf: Box {
     }
 
     // Page the row sideways, for a pointer without a sideways wheel: shown while the row
-    // overflows, each sensitive while there is more that way (shelf.py).
+    // overflows, except in a narrow window, where the title needs the room; each sensitive
+    // while there is more that way (shelf.py).
     Button previous_button {
       icon-name: "go-previous-symbolic";
       tooltip-text: _("Scroll Left");
