@@ -20,7 +20,7 @@ from unittest import mock
 from gi.repository import Gio, GLib, GObject
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
-from tests.gtk import wait_for
+from tests.gtk import iterate, wait_for
 from tests.test_player import patched_clocks
 
 from applemusic import mpris
@@ -579,7 +579,7 @@ class ServiceTest(unittest.TestCase):
             self.engine.emit('event', 'nowPlayingItemDidChange', {'track': other, 'index': 0})
             self.engine.emit('event', 'playbackStateDidChange', {'state': 'playing'})
             await asyncio.sleep(0.06)
-            GLib.MainContext.default().iteration(False)  # the grace timer, had it fired
+            iterate()  # the grace timer, had it fired
             await self.app.settle()
             metadata_sent = [parameters[1]['Metadata'] for _i, _s, parameters
                              in self.connection.signals if 'Metadata' in parameters[1]]
@@ -992,7 +992,7 @@ class SequenceTest(ServiceTest):
                     time.sleep(0.05)  # real time: the grace is a GLib timeout
                     context = GLib.MainContext.default()
                     while context.pending():
-                        context.iteration(False)
+                        iterate(context)
                 else:
                     self.engine.emit('event', event, data)
                 player = self.player

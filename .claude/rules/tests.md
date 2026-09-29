@@ -17,8 +17,9 @@ paths:
   test_mpris.py, test_player.py and test_actions.py do). A test that must build widgets uses
   `tests/gtk.py`: `@requires_gtk` on the class or method (it skips without a display or a
   compiled gresource from build/src or build/install), template modules imported inside the
-  test, `pump()`/`wait_for()` for the main loop, and under a second per test. They must pass on
-  CI's Xvfb with the cairo renderer and no accessibility bus. A page test subclasses
+  test, `pump()`/`wait_for()` for the main loop (`iterate()` in a test that pumps it itself:
+  it silences PyGObject's warning about asyncio's deprecated policy, which the unittest runner
+  would print), and under a second per test. They must pass on CI's Xvfb with the cairo renderer and no accessibility bus. A page test subclasses
   `tests/page_harness.py`'s `PageTestCase`: a presented stand-in window (the seams, recorded),
   a stand-in application (`pages.app()`) and an engine that answers each request from
   `engine.answers`.
