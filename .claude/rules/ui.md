@@ -57,7 +57,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 - The album, playlist and artist pages follow the Item they show (`notify` for the hero,
   `groups-changed` for the tracks), pushed pages too. An Item that came without tracks is
   fetched once per page (`detail.should_fetch()`: an answer without tracks shows "No Songs",
-  never a second request), and the fetch is cancelled when the page unmaps.
+  never a second request), and the fetch is cancelled when the page is hidden (`do_hidden`).
+- A page's header bar shows its title exactly when the page's own `title-1` is out of view
+  (a spinner or status page instead, or scrolled away): `widgets.util.HeaderTitle`.
 - New, Made for You and a search category are `ShelvesPage`s over the engine's answers. They,
   Search and the album and artist pages show what the engine's failure means through one
   `widgets.engine_status.EngineStatus` (no widget; tests/test_engine_status.py): the spinner

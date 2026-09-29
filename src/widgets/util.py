@@ -1,7 +1,8 @@
 """connect_weak(): a signal connection that does not keep the handler's widget alive (and
 weak_method(), the same for any other callback a child holds); MappedHandlers: a widget's
 handlers on objects that outlive it (the library, the engine), connected only while it is
-mapped; next_frame(): wait for a widget's next frame.
+mapped; next_frame(): wait for a widget's next frame; HeaderTitle: a page's title in its
+header bar only while its big title is out of view.
 
 A widget that connects one of its children's signals (or an owned object's: a list factory,
 an adjustment, a sort model, an event controller) to one of its own bound methods makes a
@@ -32,7 +33,7 @@ GObject vfuncs (`do_map`) need nothing: PyGObject sees those.
 import asyncio
 import weakref
 
-from gi.repository import GLib, GObject
+from gi.repository import GLib, GObject, Gtk
 
 
 def _weak_target(method):
@@ -166,3 +167,70 @@ def next_frame(widget):
     else:
         GLib.idle_add(done)
     return future
+
+
+class HeaderTitle:
+    """A page's title in its header bar exactly when the page's own big title (a `title-1`
+    label in its content) is not in view: while the content shows a spinner or a status page
+    instead, or once the title has scrolled away. The header then always names the page, and
+    never twice.
+
+        self._header_title = HeaderTitle(self.header_bar, self.title_label, scrolled_window)
+
+    update() looks again (the page calls it when its content changes: a stack switched, the
+    title moved); scrolling `scrolled_window` (any of them, for a page with several) and the
+    title mapping and unmapping look again by themselves. The header bar is changed only
+    when the answer flips.
+    """
+
+    def __init__(self, header_bar, title_label, *scrolled_windows):
+        self._header_bar = header_bar
+        self._title_label = title_label
+        self._shown = None
+        self._tick = None
+        for scrolled_window in scrolled_windows:
+            connect_weak(scrolled_window.get_vadjustment(), 'value-changed', self._on_moved)
+        connect_weak(title_label, 'map', self._on_moved)
+        connect_weak(title_label, 'unmap', self._on_moved)
+        self.update()
+
+    def _on_moved(self, *_args):
+        self.update()
+        label = self._title_label
+        if not label.get_mapped():
+            if self._tick is not None:
+                label.remove_tick_callback(self._tick)
+                self._tick = None
+        elif self._tick is None:
+            # Again at the next frame, once laid out: a title just mapped has no size yet,
+            # and the grid's moves only as it is allocated.
+            self._tick = label.add_tick_callback(weak_method(self._next_frame))
+
+    def _next_frame(self, _widget, _clock):
+        if not self.update():
+            return GLib.SOURCE_CONTINUE  # not laid out yet (a frame's ticks come before)
+        self._tick = None
+        return GLib.SOURCE_REMOVE
+
+    def update(self):
+        """Show the title in the header bar or not; False when the title is not laid out
+        yet, and nothing was changed."""
+        label = self._title_label
+        in_view = label.get_mapped() and label.get_label() != ''
+        if in_view:
+            if label.get_height() <= 0:
+                return False
+            root = label.get_native()
+            found, bounds = label.compute_bounds(root) if root is not None else (False, None)
+            # What clips it: the scrolled window it scrolls in, or the parent it is laid
+            # over (the grid's title, an overlay moved up as the grid scrolls).
+            clip = label.get_ancestor(Gtk.ScrolledWindow) or label.get_parent()
+            if found and clip is not None:
+                found_top, top = clip.compute_bounds(root)
+                if found_top:
+                    in_view = bounds.get_y() + bounds.get_height() > top.get_y()
+        show = not in_view
+        if show != self._shown:
+            self._shown = show
+            self._header_bar.set_show_title(show)
+        return True

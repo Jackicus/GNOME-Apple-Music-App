@@ -11,29 +11,53 @@ asks Apple again past the day-long cache.
 """
 
 import logging
+from datetime import UTC, datetime
 from gettext import gettext as _
 
 from gi.repository import Adw, Gtk
 
 from ..backend.errors import EngineError
+from ..backend.normalize import ANSWER_MAX_AGE
 from ..remote import fetch_shelf_art, remote_shelves
 from ..widgets.engine_status import EngineStatus
 from ..widgets.shelf import ShelfColumn
-from ..widgets.util import connect_weak
+from ..widgets.util import HeaderTitle, connect_weak
 from . import app
 
 log = logging.getLogger(__name__)
 
 
+def expired(answer, now=None):
+    """Whether an answer the page shows was fetched longer than a day ago (its `cached`
+    stamp, normalize.ANSWER_MAX_AGE): the page asks again as it is shown. An answer without
+    a stamp never expires."""
+    stamp = answer.get('cached') if isinstance(answer, dict) else None
+    if not isinstance(stamp, str):
+        return False
+    try:
+        when = datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=UTC)
+    except ValueError:
+        return False
+    now = now or datetime.now(UTC)
+    return (now - when).total_seconds() > ANSWER_MAX_AGE
+
+
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/shelves.ui')
 class ShelvesPage(Adw.NavigationPage):
     """ShelvesPage(title, fetch, …): `fetch(refresh)` is a coroutine function answering
-    {shelves: [{key, title, items}]} (an Engine method), called when the page is first
-    shown and by the refresh button (with refresh=True). `root` false for a page pushed over
-    another (a category), which shows its title in the header bar too. `hero` makes the
-    first shelf large cards, as Home's. `icon_name` and the empty texts are the status
-    page's. The page watches the engine while mapped: an engine-down or signed-out state
-    loads itself once the engine is up or signed in.
+    {shelves: [{key, title, items}], cached} (an Engine method), called when the page is first
+    shown, when it is shown again with an answer more than a day old (the app runs for days),
+    and by the refresh button (with refresh=True). An answer Apple could not refresh
+    (`stale`) is shown as it is. `root` false for a page pushed over another (a category),
+    whose requests are cancelled when it is hidden. `hero` makes the first shelf large cards,
+    as Home's. `icon_name` and the empty texts are the status page's. The header bar shows
+    the title while the big one is out of view (widgets.util.HeaderTitle). The page watches
+    the engine while mapped: an engine-down or signed-out state loads itself once the engine
+    is up or signed in.
+
+    Refresh is never made insensitive (the focus would be lost): it does nothing while a
+    request is under way, and what the status page's button does while the engine is down or
+    the account signed out. The demo has no engine: no Refresh.
     """
 
     __gtype_name__ = 'AppleMusicShelvesPage'
@@ -43,6 +67,7 @@ class ShelvesPage(Adw.NavigationPage):
     stack = Gtk.Template.Child()
     status_page = Gtk.Template.Child()
     status_button = Gtk.Template.Child()
+    scrolled_window = Gtk.Template.Child()
     shelves_box = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
 
@@ -51,10 +76,11 @@ class ShelvesPage(Adw.NavigationPage):
         super().__init__(title=title)
         self.item = None  # a category page's category, for the window's double-push guard
         self._fetch = fetch
+        self._root = root
         self._hero = hero
         self._icon_name = icon_name or 'view-grid-symbolic'
         self._empty = (empty_title or _('Nothing Here'), empty_description or '')
-        self._loaded = False
+        self._answer = None  # the answer shown
         self._task = None  # the fetch running
         self._art_task = None  # the thumbnails being fetched for the shelves shown
         self._shelves = []  # the ShelfModel objects shown
@@ -65,34 +91,53 @@ class ShelvesPage(Adw.NavigationPage):
             'failed': _('Could Not Load This Page'),
         })
         self._column = ShelfColumn(self.shelves_box, anchor=self.title_label)
-        self.header_bar.set_show_title(not root)
         self.title_label.set_label(title)
+        self._header_title = HeaderTitle(self.header_bar, self.title_label, self.scrolled_window)
+        self.refresh_button.set_visible(not app().demo)
         # Connected weakly (widgets/util.py): a bound method would keep a popped page alive.
         connect_weak(self.refresh_button, 'clicked', self._on_refresh_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
+        connect_weak(self.stack, 'notify::visible-child', self._on_stack_changed)
 
     # The engine outlives the page: it is watched only while the page is shown.
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
         self._engine_status.watch()  # may load again: the engine came up meanwhile
-        if not self._loaded and (self._task is None or self._task.done()):
+        if not self._loading() and (self._answer is None or expired(self._answer)):
             self.load()
+        elif self._shelves and self._art_task is None:
+            self._art_task = app().spawn(fetch_shelf_art(self._shelves))
 
     def do_unmap(self):
         self._engine_status.unwatch()
         Adw.NavigationPage.do_unmap(self)
 
+    def do_hidden(self):
+        # A category page left (popped or covered; not just unmapped: a push maps, unmaps
+        # and maps a page again): its requests stop, asked again if it is shown again.
+        if not self._root:
+            if self._loading():
+                self._task.cancel()
+                self._task = None
+                self._engine_status.clear()
+            if self._art_task is not None and not self._art_task.done():
+                self._art_task.cancel()
+                self._art_task = None
+        Adw.NavigationPage.do_hidden(self)
+
+    def _loading(self):
+        return self._task is not None and not self._task.done()
+
     def load(self, refresh=False):
         """Ask for the shelves (again, past the cache, with `refresh`)."""
-        if self._task is not None and not self._task.done():
+        if self._loading():
             self._task.cancel()
         self._task = app().spawn(self._load(refresh))
 
     async def _load(self, refresh):
         if not self._shelves:
             self._engine_status.loading()
-        self.refresh_button.set_sensitive(False)
         try:
             answer = await self._fetch(refresh)
         except EngineError as error:
@@ -102,10 +147,8 @@ class ShelvesPage(Adw.NavigationPage):
             else:
                 self._engine_status.fail(error)
             return
-        finally:
-            self.refresh_button.set_sensitive(True)
-        self._loaded = True
-        self._show(answer.get('shelves') if isinstance(answer, dict) else [])
+        self._answer = answer if isinstance(answer, dict) else {}
+        self._show(self._answer.get('shelves'))
 
     def _show(self, dicts):
         shelves = remote_shelves(dicts)
@@ -133,8 +176,14 @@ class ShelvesPage(Adw.NavigationPage):
         self.status_button.set_visible(bool(button))
         self.stack.set_visible_child_name('status')
 
+    def _on_stack_changed(self, _stack, _pspec):
+        self._header_title.update()
+
     def _on_refresh_clicked(self, _button):
-        self.load(refresh=True)
+        if self._engine_status.status in ('engine-down', 'not-signed-in'):
+            self._engine_status.activate()  # Start Engine, or Sign In
+        elif not self._loading():
+            self.load(refresh=True)
 
     def _on_status_clicked(self, _button):
         self._engine_status.activate()

@@ -51,7 +51,8 @@ Each of these was checked against the toolkit (or found the hard way). The sideb
   adjustment's `changed`. Opening focuses its first focusable widget; closing restores focus.
 - `Adw.NavigationView` pops on Escape, Back, Alt+Left (local shortcuts: only with the focus
   inside it) and the mouse back button; a push moves the focus into the new page. `win.back`
-  covers the rest.
+  covers the rest. A push maps, unmaps and maps the pushed page again: stop a page's requests
+  in `do_hidden` (after it has really gone), not in `do_unmap`.
 - An `Adw.Dialog` over a window that is neither maximized nor tiled is a separate
   `Gtk.Window` transient for it: its widgets find no `app.*` actions (Preferences inserts the
   `app` group itself), `get_active_window()` stays the main window, `get_visible_dialog()` does

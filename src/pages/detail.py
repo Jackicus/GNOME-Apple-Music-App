@@ -89,7 +89,8 @@ class DetailPage(Adw.NavigationPage):
     and tells what changed, through `notify` (the hero's labels and cover) and
     `groups-changed` (the tracks), and do_map catches up with what changed while it was
     hidden. An Item that came without its tracks has them fetched once (should_fetch());
-    the fetch is cancelled when the page is hidden, and asked again when it shows.
+    the fetch is cancelled when the page is hidden (do_hidden), and asked again when it
+    shows.
     """
 
     __gtype_name__ = 'AppleMusicDetailPage'
@@ -180,11 +181,17 @@ class DetailPage(Adw.NavigationPage):
 
     def do_unmap(self):
         self._engine_status.unwatch()
+        Adw.NavigationPage.do_unmap(self)
+
+    def do_hidden(self):
+        # Left (popped, covered, or another destination shown), not just unmapped (a push
+        # maps, unmaps and maps a page again): the fetch stops, asked again when shown.
         if self._fetch_task is not None and not self._fetch_task.done():
             self._fetch_task.cancel()
-            self._fetched = None  # asked again when the page shows again
+            self._fetch_task = None
+            self._fetched = None
             self._engine_status.clear()
-        Adw.NavigationPage.do_unmap(self)
+        Adw.NavigationPage.do_hidden(self)
 
     def _follow(self, *_args):
         item = self._find() if self._find is not None else self.item
