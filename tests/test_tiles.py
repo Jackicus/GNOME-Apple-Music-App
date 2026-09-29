@@ -433,6 +433,24 @@ class TileLabelTest(WidgetTestCase):
         self.assertEqual(self.attributes(tile), [])
         self.assertEqual(tile.label.get_text(), 'Invented Artist Name')
 
+    def test_an_artist_name_wraps_to_two_lines_as_a_title_does(self):
+        from gi.repository import Gtk
+
+        from applemusic.widgets.tile import Tile
+
+        album = Tile()
+        album.bind(Item(dict(ALBUM)))
+        artist = Tile(artist=True)
+        artist.bind(Item({'id': 'l.r1', 'kind': 'artist',
+                          'title': 'The Invented Orchestra of Long Artist Names'}))
+        line = album.label.measure(Gtk.Orientation.VERTICAL, -1)[0] / 3  # three lines
+        self.assertGreater(line, 0)
+        self.assertAlmostEqual(artist.label.measure(Gtk.Orientation.VERTICAL, -1)[0],
+                               2 * line, delta=1)
+        self.assertEqual(artist.label.get_xalign(), 0.5)  # centred under the portrait
+        artist.set_artist(False)  # a shelf's tile rebound to an album
+        self.assertEqual(artist.label.get_min_lines(), 3)
+
 
 class CategoryTileArtTest(WidgetTestCase):
     CATEGORY = {'id': 'c1', 'kind': 'category', 'title': 'Invented Category',

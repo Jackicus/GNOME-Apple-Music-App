@@ -51,7 +51,8 @@ template $AppleMusicTile: Box {
   // size comes from its line count, not its text, so rebinding a tile to another item redraws
   // it without laying the grid out again, which is what keeps scrolling smooth (a Gtk.GridView
   // rebinds an item many times as it scrolls past). Three lines: the title wraps to a second
-  // line and the subtitle follows it; only a title too long for two lines pushes it out.
+  // line and the subtitle follows it; only a title too long for two lines pushes it out. An
+  // artist's name has two (tile.py).
   Inscription label {
     xalign: 0;
     yalign: 0;
