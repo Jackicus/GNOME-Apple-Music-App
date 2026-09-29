@@ -35,6 +35,14 @@ class SectionsTest(unittest.TestCase):
         self.assertIn(sections.ALL_PLAYLISTS, keys)
         self.assertIn(sections.FAVOURITE_SONGS, keys)
 
+    def test_favourite_is_a_heart_everywhere(self):
+        """One symbol for Favourite: the heart of the player bar's and the sheet's button,
+        on the Favourite Songs destination (its sidebar row and its page's empty state)."""
+        icons = {d.key: d.icon_name for d in all_destinations()}
+        self.assertEqual(icons[sections.FAVOURITE_SONGS], 'heart-filled-symbolic')
+        self.assertNotIn('starred-symbolic', icons.values())
+        self.assertNotIn('non-starred-symbolic', icons.values())
+
     def test_every_destination_has_a_page(self):
         from applemusic import pages
 

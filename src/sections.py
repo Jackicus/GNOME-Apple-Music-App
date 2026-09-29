@@ -56,6 +56,7 @@ def sidebar_sections():
         )),
         Section(PLAYLISTS_SECTION, _('Playlists'), (
             Destination(ALL_PLAYLISTS, _('All Playlists'), 'view-app-grid-symbolic'),
-            Destination(FAVOURITE_SONGS, _('Favourite Songs'), 'starred-symbolic'),
+            # The heart the player bar and Now Playing use for Favourite (bundled).
+            Destination(FAVOURITE_SONGS, _('Favourite Songs'), 'heart-filled-symbolic'),
         )),
     ]
