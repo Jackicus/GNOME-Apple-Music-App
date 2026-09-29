@@ -14,10 +14,11 @@ Widgets hold a texture only while they are on screen (the grid tiles let go of t
 unmapped), so the cache's budget bounds what the artwork costs. A widget asks for the size it
 draws (a tile 160 px, a Songs row 32 px, times the scale factor): a file bigger than that is
 decoded scaled down to it, so a tile's texture is a quarter of the 320 px thumbnail's memory
-at 1× and is drawn without scaling; the cache is keyed by path and size, and holds CACHE_BYTES
-of pixels (a screen of tiles and a page ahead in a maximized 1920×1080 window at 2×), least
-recently used first out. The renderer keeps a copy of each texture it draws on the GPU, about
-the same again while the texture lives.
+at 1× and is drawn without scaling; the cache is keyed by path and size, and holds budget_for()
+bytes of pixels for the largest scale factor of the display's monitors (a screen of tiles and a
+page ahead in a maximized 1920×1080 window: 8 MB at 1×, 32 MB at 2×; the loader follows the
+monitors), least recently used first out. The renderer keeps a copy of each texture it draws on
+the GPU, about the same again while the texture lives.
 
 The files come from the library's sync (thumbnails) and from src/remote.py, which fetches
 the covers and the artwork the library does not hold; nothing here downloads or needs the
@@ -42,17 +43,26 @@ from .util import weak_method  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-# The decoded pixels the cache keeps, at 4 bytes a pixel: 32 MB is 80 tiles' 320 px textures at
-# 2× (a maximized 1920×1080 window shows 36 tiles: a screen and a page ahead), 320 at 1×, 20
-# covers at 640 px, thousands of 32 px row thumbnails. It fills only as far as tiles are seen.
-CACHE_BYTES = 32 * 1024 * 1024
+# The decoded pixels the cache keeps, at 4 bytes a pixel, at a scale factor of 1: 8 MB is 80
+# tiles' 160 px textures (a maximized 1920×1080 window shows 36 tiles: a screen and a page
+# ahead), 5 covers at 640 px, thousands of 32 px row thumbnails. The same tiles at 2× weigh four
+# times as much: budget_for() scales it, up to MAX_BYTES. It fills only as far as tiles are
+# seen.
+CACHE_BYTES = 8 * 1024 * 1024
+MAX_BYTES = 32 * 1024 * 1024
+
+
+def budget_for(scale):
+    """The cache's budget for the largest scale factor the widgets draw at: CACHE_BYTES times
+    its square, between CACHE_BYTES and MAX_BYTES."""
+    return min(MAX_BYTES, CACHE_BYTES * max(1, scale) ** 2)
 
 
 class Artwork:
     """An LRU of decoded textures by (path, size), and the decodes in flight.
 
-    `budget` is the pixel bytes kept (CACHE_BYTES); `max_entries`, when given, caps the number
-    of textures too (tests)."""
+    `budget` is the pixel bytes kept (CACHE_BYTES, and set_budget()'s later); `max_entries`,
+    when given, caps the number of textures too (tests)."""
 
     def __init__(self, max_entries=None, budget=CACHE_BYTES):
         self.max_entries = max_entries
@@ -129,6 +139,24 @@ class Artwork:
         """(textures cached, their pixel bytes): for tests and debugging."""
         return len(self._textures), self._bytes
 
+    def set_budget(self, budget):
+        """Keep `budget` bytes of pixels from now on, the least recently used let go of when
+        that is less than the cache holds."""
+        self.budget = budget
+        self._evict()
+
+    def _evict(self):
+        while self._textures and (
+                self._bytes > self.budget
+                or (self.max_entries is not None and len(self._textures) > self.max_entries)):
+            (dropped_path, dropped_size), dropped = self._textures.popitem(last=False)
+            self._bytes -= _weight(dropped)
+            sizes = self._sizes.get(dropped_path)
+            if sizes is not None:
+                sizes.discard(dropped_size)
+                if not sizes:
+                    del self._sizes[dropped_path]
+
     async def _decode(self, key):
         path, size = key
         try:
@@ -142,17 +170,7 @@ class Artwork:
             self._textures[key] = texture
             self._sizes.setdefault(path, set()).add(size)
             self._bytes += _weight(texture)
-            while self._textures and (
-                    self._bytes > self.budget
-                    or (self.max_entries is not None
-                        and len(self._textures) > self.max_entries)):
-                (dropped_path, dropped_size), dropped = self._textures.popitem(last=False)
-                self._bytes -= _weight(dropped)
-                sizes = self._sizes.get(dropped_path)
-                if sizes is not None:
-                    sizes.discard(dropped_size)
-                    if not sizes:
-                        del self._sizes[dropped_path]
+            self._evict()
         _task, waiters = self._decodes.pop(key, (None, {}))
         for token, callback in waiters.items():
             self._keys.pop(token, None)
@@ -456,12 +474,55 @@ def band_colour(rgba, text_opacity=1.0):
     return band, dark
 
 
+def display_scale(display):
+    """The largest scale factor of the display's monitors (1 without a display or monitors)."""
+    if display is None:
+        return 1
+    monitors = display.get_monitors()
+    scales = [monitors.get_item(position).get_scale_factor()
+              for position in range(monitors.get_n_items())]
+    return max(scales, default=1)
+
+
+class _MonitorWatch:
+    """The loader's budget kept to the display's largest scale factor: set now, and again when
+    a monitor comes or goes or changes its scale."""
+
+    def __init__(self, loader, display):
+        self._loader = loader
+        self._display = display
+        self._handlers = {}  # monitor -> its notify::scale-factor handler
+        monitors = display.get_monitors()
+        monitors.connect('items-changed', self._on_monitors_changed)
+        self._on_monitors_changed(monitors)
+
+    def _on_monitors_changed(self, monitors, *_args):
+        current = [monitors.get_item(position) for position in range(monitors.get_n_items())]
+        for monitor in list(self._handlers):
+            if monitor not in current:
+                monitor.disconnect(self._handlers.pop(monitor))
+        for monitor in current:
+            if monitor not in self._handlers:
+                self._handlers[monitor] = monitor.connect('notify::scale-factor', self._update)
+        self._update()
+
+    def _update(self, *_args):
+        budget = budget_for(display_scale(self._display))
+        if budget != self._loader.budget:
+            log.debug('artwork: a budget of %d MB', budget // (1024 * 1024))
+            self._loader.set_budget(budget)
+
+
 _default = None
+_watch = None
 
 
 def get_default():
-    """The process-wide loader."""
-    global _default
+    """The process-wide loader, its budget following the default display's monitors."""
+    global _default, _watch
     if _default is None:
         _default = Artwork()
+        display = Gdk.Display.get_default()
+        if display is not None:
+            _watch = _MonitorWatch(_default, display)
     return _default
