@@ -12,18 +12,19 @@ paths:
 # Performance: lists, artwork, startup
 
 Targets, on a 3,000-album, 40,000-song invented library: content within about a second of
-launch, page switches under 100 ms, no dropped frames while scrolling Albums and Songs, and no
-memory kept by pages that were opened and closed. The numbers behind these rules are in
-docs/notes.md.
+launch, page switches under 100 ms, no dropped frames while scrolling Albums and Songs,
+anonymous memory under 250 MB after every page has been browsed twice, and pages opened and
+closed (20 albums, 5 artists, 5 See All, after a warm-up round) leaving at most 5 MB behind.
+bench.py checks all but scrolling. The numbers behind these rules are in docs/notes.md.
 
 ## Measure
 
 - Before and after a change on the startup path, a page's first build or a list's bind:
-  `scripts/bench.py` (build/demo-big by default; medians of several runs; keep its window
-  visible, a hidden window gets no frames) and, for lists,
-  `APPLE_MUSIC_CACHE=build/demo-big scripts/scroll_test.py --page albums` (or `--page songs
-  --distance 40000`, or `--sidebar`). `python3 -X importtime` for imports. Put the numbers in
-  the commit message.
+  `scripts/headless.sh scripts/bench.py` (build/demo-big by default; medians of several runs)
+  and, for lists, `APPLE_MUSIC_CACHE=build/demo-big scripts/headless.sh scripts/scroll_test.py
+  --page albums` (or `--page songs --distance 40000`, or `--sidebar`). The headless display's
+  virtual monitor shows the window (a hidden one gets no frames); compare only headless runs.
+  `python3 -X importtime` for imports. Put the numbers in the commit message.
 - `Application.mark(name)` notes a startup moment (logged with `--debug`); the grid and Songs
   pages call `pages.mark_bound(self)` at their first bind.
 

@@ -19,8 +19,9 @@ Each run is a process of its own (this script again, with --child), --runs of th
 (default 3), and a bare Adw.ApplicationWindow is timed the same way for comparison:
 the platform's own cost, which no change to the app can remove (GTK's start, the
 icon theme, the compositor's first configure, the GL driver's memory). The report
-gives each run and the median, against phase 19's targets (content under 1 s,
-switches under 100 ms, RSS under 250 MB):
+gives each run and the median, against the targets (.claude/rules/performance.md:
+content under 1 s, switches under 100 ms, anonymous memory under 250 MB after every
+page has been browsed twice, and pages opened and closed leaving at most 5 MB behind):
 
 - startup: from the process start (/proc/self/stat, so the interpreter's own start
   counts) to the window mapped, its first frame painted, the library ready, and the
@@ -40,14 +41,17 @@ switches under 100 ms, RSS under 250 MB):
   twice, and the peak (VmHWM).
 - pages: 20 albums, 5 artists and 5 See All grids opened (window.open_item and
   open_shelf, as a tile or See All does) and popped one after the other, --settle ms
-  each: the RSS and anonymous RSS they left behind, after gc.collect() and
-  malloc_trim(0), and how many of the pages pushed are still alive (GObject weak
+  each, twice: a first round that warms the caches (the artwork's LRU fills once, the
+  page modules load), then the measured one: the RSS and anonymous RSS it left behind,
+  after gc.collect() and malloc_trim(0), and how many of the pages pushed in either
+  round are still alive (GObject weak
   references: a Python weakref dies with the wrapper, which PyGObject lets go whether or
   not the widget lives; see widgets/util.py), by class. A page that is freed once popped
   leaves 0 alive.
 
 A frame that does not come (the compositor sends none to a window it does not show:
-keep the bench's window visible) is reported as missing after 3 s rather than waited
+run the bench through scripts/headless.sh, whose virtual monitor shows it, and compare
+only with other headless runs) is reported as missing after 3 s rather than waited
 for. Scrolling is measured by scripts/scroll_test.py.
 """
 
@@ -69,7 +73,10 @@ root = harness.ROOT
 
 CONTENT_TARGET = 1000  # ms from launch
 SWITCH_TARGET = 100  # ms
-RSS_TARGET = 250  # MB
+# MB of anonymous memory (RssAnon: the app's own, where RSS adds the files the libraries and
+# the GL driver map, which the app cannot shrink) after every page has been browsed twice.
+ANON_TARGET = 250
+PAGES_TARGET = 5  # MB the pages step's measured round may leave behind
 FRAME_TIMEOUT = 3000  # ms to wait for a frame before calling it missing
 PAGES = (('album', 20), ('artist', 5), ('shelf', 5))  # what the pages step opens and pops
 
@@ -214,21 +221,23 @@ def parent():
         rss = median(run['rss'][name] for run in runs)
         anon = median(run['rss'].get(name + '_anon') for run in runs)
         print(f'  RSS {label}: {fmt(rss, "MB")}' + (f' (anon {fmt(anon, "MB")})' if anon else ''))
-    browsed = median(run['rss']['browsed'] for run in runs)
+    browsed_anon = median(run['rss']['browsed_anon'] for run in runs)
     bare_rss = median(bare['rss'] for bare in bares)
     bare_anon = median(bare['anon'] for bare in bares)
-    print(f'  RSS after browsing {verdict(browsed, RSS_TARGET)} the {RSS_TARGET} MB target; '
-          f'a bare Adw window: {fmt(bare_rss, "MB")} (anon {fmt(bare_anon, "MB")})')
+    print(f'  anon after browsing {verdict(browsed_anon, ANON_TARGET)} the {ANON_TARGET} MB '
+          f'target; a bare Adw window: {fmt(bare_rss, "MB")} (anon {fmt(bare_anon, "MB")})')
     print(f'  RSS added by each first visit (run 1): {first["page_rss"]}')
     pages = [run['pages'] for run in runs if run.get('pages')]
     if pages:
         opened = ', '.join(f'{count} {kind}' for kind, count in pages[0]['opened'].items())
         alive = ', '.join(f'{name} {alive} of {pushed}'
                           for name, (alive, pushed) in pages[0]['alive'].items())
-        print(f'  pages ({opened} opened and popped): RSS '
-              f'{median(page["rss"] for page in pages):+.1f} MB (anon '
+        grown = median(page['rss'] for page in pages)
+        print(f'  pages ({opened} opened and popped, after a warm-up round): RSS '
+              f'{grown:+.1f} MB (anon '
               f'{median(page["anon"] for page in pages):+.1f} MB) after gc.collect() and '
-              f'malloc_trim(0); still alive (run 1): {alive}')
+              f'malloc_trim(0), {verdict(grown, PAGES_TARGET)} the {PAGES_TARGET} MB '
+              f'target; still alive (run 1): {alive}')
     else:
         print('  pages: no run finished the step')
     print(f'  garbage collections (run 1): {first["gc"]}')
@@ -570,21 +579,26 @@ def child():
                 store = stores[kind]
                 plan += [(kind, store.get_item(i))
                          for i in range(min(count, store.get_n_items()))]
-        rss_before, anon_before = memory()
         pushed = {}  # page class -> GObject weak references to the pages pushed
-        for kind, target in plan:
-            if kind == 'shelf':
-                window.open_shelf(target)
-            else:
-                window.open_item(target)
-            page = window.navigation_view.get_visible_page()
-            pushed.setdefault(type(page).__name__, []).append(page.weak_ref())
-            del page
-            await next_paint(window)
-            await asyncio.sleep(args.settle / 1000)  # rows bound, artwork decoded
-            window.navigation_view.pop()
-            await next_paint(window)
-        await asyncio.sleep(0.2)
+
+        async def tour():
+            for kind, target in plan:
+                if kind == 'shelf':
+                    window.open_shelf(target)
+                else:
+                    window.open_item(target)
+                page = window.navigation_view.get_visible_page()
+                pushed.setdefault(type(page).__name__, []).append(page.weak_ref())
+                del page
+                await next_paint(window)
+                await asyncio.sleep(args.settle / 1000)  # rows bound, artwork decoded
+                window.navigation_view.pop()
+                await next_paint(window)
+            await asyncio.sleep(0.2)
+
+        await tour()  # the warm-up: what the first visits fill once (the artwork's LRU)
+        rss_before, anon_before = memory()
+        await tour()
         rss_after, anon_after = memory()
         opened = {}
         for kind, _target in plan:
