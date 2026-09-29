@@ -76,6 +76,16 @@ class ShelvesPageTest(PageTestCase):
         self.assertEqual(self.app.engine.calls, ['browse', 'start', 'browse'])
         self.assertEqual(page.stack.get_visible_child_name(), 'items')
 
+    async def test_signed_out_it_asks_to_sign_in_not_to_start_the_engine(self):
+        self.app.settings.set_boolean('signed-in', False)  # first run, or after Sign Out
+        page = await self.show_root(self.page(self.app.engine.browse))  # engine-down
+        await self.settle()
+        self.assertEqual(page.status_page.get_title(), 'Sign In to Apple Music')
+        self.assertEqual(page.status_button.get_label(), 'Sign In')
+        page.status_button.emit('clicked')
+        self.assertEqual(self.app.actions, ['sign-in'])
+        self.assertNotIn('start', self.app.engine.calls)
+
     async def test_the_demo_has_no_refresh(self):
         self.app.demo = True
         page = await self.show_root(self.page(self.app.engine.browse))

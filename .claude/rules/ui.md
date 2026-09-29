@@ -104,8 +104,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 
 - An icon-only button has `tooltip-text` (its accessible name).
 - A recycled tile or row sets `list_item.set_accessible_label()` in bind (a description where
-  it helps), with the format looked up once; a `Gtk.ColumnView` row through a `row-factory`; a
-  `Gtk.FlowBoxChild` with `update_property([LABEL])`.
+  it helps) with `widgets/labels.py`'s words: `bind_label()` (and `unbind_label()`) for a tile,
+  which follows a renamed Item, `track_label()` for a track; a `Gtk.ColumnView` row through a
+  `row-factory`; a `Gtk.FlowBoxChild` through `flow_child()`.
 - Decorative images (`Gtk.Image`, `Gtk.Picture`, `$AppleMusicCover`, an `Adw.Avatar` beside a
   name) are `accessible-role: presentation`. A slider has a name and a `VALUE_TEXT`
   ("1:05 of 3:40"). State a widget does not expose itself goes through `update_state`

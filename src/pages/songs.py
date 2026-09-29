@@ -40,7 +40,7 @@ from ..library import SongOrder, Track, apply_diff, fold
 from ..widgets import context_menu
 from ..widgets.labels import track_label
 from ..widgets.song_title import SongTitle
-from ..widgets.util import MappedHandlers, connect_weak
+from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak
 from . import app, mark_bound
 
 # The columns' names in the Sort By menu's targets and SongOrder's keys.
@@ -71,6 +71,7 @@ class SongsPage(Adw.NavigationPage):
 
     __gtype_name__ = 'AppleMusicSongsPage'
 
+    header_bar = Gtk.Template.Child()
     filter_entry = Gtk.Template.Child()
     sort_button = Gtk.Template.Child()
     stack = Gtk.Template.Child()
@@ -99,6 +100,7 @@ class SongsPage(Adw.NavigationPage):
         self._bound = False  # a row has been bound (the startup timing's mark)
 
         self.title_label.set_label(title)
+        self._header_title = HeaderTitle(self.header_bar, self.title_label)  # while loading
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(_('No Songs'))
         self.empty_page.set_description(_('Songs in your library appear here'))
