@@ -5,8 +5,10 @@ test_player fakes. No GTK widgets are built (importing the module needs the type
 import asyncio
 import unittest
 
+from gi.repository import GObject
+
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
-from tests.test_player import make_player
+from tests.test_player import TRACK, make_player
 
 from applemusic.backend.errors import EngineError
 from applemusic.widgets.transport import Coalescer, SeekGuard
@@ -99,6 +101,153 @@ class Button:
 
     def set_sensitive(self, sensitive):
         self.sensitive = sensitive
+
+
+class RatingEngine(GObject.Object):
+    """An engine whose rating commands are recorded and gated: `rating` answers through
+    `rated` what `ratings` holds (1 loved, 0 not), `love`/`unlove` wait for `gate` and then
+    raise when `fail` says so."""
+
+    __gsignals__ = {
+        'event': (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
+        'rated': (GObject.SignalFlags.RUN_FIRST, None, (str, str, int)),
+    }
+
+    state = GObject.Property(type=str, default='up')
+    authorized = GObject.Property(type=bool, default=True)
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+        self.ratings = {}
+        self.gate = asyncio.Event()
+        self.read_gate = None  # an Event a rating() read waits for, when set
+        self.fail = None
+
+    async def rating(self, kind, item_id):
+        self.calls.append(('rating', kind, item_id))
+        if self.read_gate is not None:
+            await self.read_gate.wait()
+        value = self.ratings.get(item_id, 0)
+        self.emit('rated', kind, item_id, value)
+        return value
+
+    async def love(self, kind, item_id):
+        return await self._write('love', kind, item_id, 1)
+
+    async def unlove(self, kind, item_id):
+        return await self._write('unlove', kind, item_id, 0)
+
+    async def _write(self, name, kind, item_id, value):
+        self.calls.append((name, kind, item_id))
+        await self.gate.wait()
+        if self.fail is not None:
+            raise self.fail
+        self.ratings[item_id] = value
+        self.emit('rated', kind, item_id, value)
+
+
+def make_heart():
+    """A HeartControl over a stand-in button, a Player over the test_player fake engine
+    (the events) and a RatingEngine (the ratings), the app reporting nothing."""
+    from applemusic.widgets.transport import HeartControl
+
+    player, events, app = make_player(state='up')
+    engine = RatingEngine()
+    app.engine = engine
+    app.report = lambda error: app.toasts.append(error)
+    button = Button()
+    heart = HeartControl(button)
+    heart.attach(player, app)
+    return heart, button, player, events, engine, app
+
+
+class HeartTest(unittest.TestCase):
+    def test_a_failed_write_reverts_only_the_item_it_was_for(self):
+        """Unlove A, skip to B, then A's unlove fails: B's heart is left alone."""
+        async def go():
+            heart, button, player, events, engine, app = make_heart()
+            await app.settle()
+            engine.ratings['1000000001'] = 1
+            events.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            await app.settle()
+            self.assertTrue(button.active)  # A is loved
+            button.set_active(False)  # the user unloves A: the write waits at the gate
+            await asyncio.sleep(0)
+            self.assertEqual(engine.calls[-1], ('unlove', 'song', '1000000001'))
+            other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=3)
+            events.event('nowPlayingItemDidChange', {'track': other, 'index': 3})
+            for _turn in range(5):  # B's rating read answers; A's write still waits
+                await asyncio.sleep(0)
+            self.assertFalse(button.active)  # B is not loved
+            engine.fail = EngineError('timeout', 'slow')
+            engine.gate.set()
+            await app.settle()
+            self.assertFalse(button.active)  # A's failure does not turn B's heart on
+            self.assertEqual(len(app.toasts), 1)  # but is reported
+        asyncio.run(go())
+
+    def test_a_click_outranks_the_read_started_with_the_item(self):
+        """The rating read when the item began answers after the click: the click's value
+        stays."""
+        async def go():
+            heart, button, player, events, engine, app = make_heart()
+            await app.settle()
+            engine.read_gate = asyncio.Event()
+            engine.gate.set()
+            events.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            await asyncio.sleep(0)
+            button.set_active(True)  # loved by the user before the read answered
+            await app.settle()
+            self.assertTrue(button.active)
+            self.assertIn(('love', 'song', '1000000001'), engine.calls)
+            engine.ratings['1000000001'] = 0  # what the read would have said
+            engine.read_gate.set()
+            await app.settle()
+            self.assertTrue(button.active)  # the read was cancelled: nothing flipped
+        asyncio.run(go())
+
+    def test_the_same_song_again_is_not_read_again(self):
+        async def go():
+            heart, button, player, events, engine, app = make_heart()
+            await app.settle()
+            engine.ratings['1000000001'] = 1
+            events.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            await app.settle()
+            reads = engine.calls.count(('rating', 'song', '1000000001'))
+            self.assertEqual(reads, 1)
+            # The same song re-created (its queue index changed): no reset, no read.
+            events.event('nowPlayingItemDidChange', {'track': dict(TRACK, index=5), 'index': 5})
+            await app.settle()
+            self.assertTrue(button.active)
+            self.assertEqual(engine.calls.count(('rating', 'song', '1000000001')), 1)
+            # A fresh engine: read again.
+            engine.state = 'down'
+            engine.state = 'up'
+            await app.settle()
+            self.assertEqual(engine.calls.count(('rating', 'song', '1000000001')), 2)
+        asyncio.run(go())
+
+    def test_targets_by_kind(self):
+        heart, button, player, events, engine, app = make_heart()
+        self.assertIsNone(heart.target())
+        events.event('nowPlayingItemDidChange',
+                     {'track': dict(TRACK, type='library-songs'), 'index': 2})
+        self.assertEqual(heart.target(), ('song', '1000000001'))
+        events.event('nowPlayingItemDidChange',
+                     {'track': dict(TRACK, id='i.v1', catalogId='555', type='music-videos',
+                                    index=3), 'index': 3})
+        self.assertEqual(heart.target(), ('video', '555'))
+        self.assertTrue(button.sensitive)
+        events.event('nowPlayingItemDidChange',
+                     {'track': dict(TRACK, id='ra.1', catalogId=None, type='stations',
+                                    index=0), 'index': 0})
+        self.assertIsNone(heart.target())  # a station cannot be loved
+        self.assertFalse(button.sensitive)
+        events.event('nowPlayingItemDidChange',
+                     {'track': dict(TRACK, id='i.x', catalogId=None, type='', index=1),
+                      'index': 1})
+        self.assertIsNone(heart.target())  # nor an item of no known kind
 
 
 class ModeControlTest(unittest.TestCase):

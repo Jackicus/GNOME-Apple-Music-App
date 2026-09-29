@@ -412,7 +412,8 @@ def find_descendant(widget, cls):
 
 
 class HeartControl:
-    """A Gtk.ToggleButton that loves the item playing: see the module."""
+    """A Gtk.ToggleButton that loves the item playing: see the module. Its accessible name
+    is the template's ("Favourite"); the tooltip says what a click does."""
 
     def __init__(self, button):
         self.button = button
@@ -420,6 +421,7 @@ class HeartControl:
         self._app = None
         self._syncing = False
         self._reading = None  # the task reading the item's rating
+        self._shown = None    # the target the heart shows, read once per item
         button.connect('toggled', self._on_toggled)
 
     def attach(self, player, app):
@@ -427,28 +429,43 @@ class HeartControl:
         self._app = app
         player.connect('notify::track', lambda *_: self._on_track())
         app.engine.connect('rated', self._on_rated)
-        app.engine.connect('notify::state', lambda *_: self._on_track())
+        app.engine.connect('notify::state', lambda *_: self._on_engine_state())
         self._on_track()
 
     def target(self):
-        """('song', id) for the item playing (its catalog id, else its own), or None."""
+        """(kind, id) for the item playing, `kind` 'song' or 'video' (NowPlaying.kind) and
+        the id its catalog id, else its own; None for an item that cannot be loved (a
+        station's segment, an ad), which leaves the heart insensitive."""
         track = self._player.track if self._player is not None else None
-        if track is None:
+        if track is None or track.kind not in ('song', 'video'):
             return None
-        song_id = track.catalog_id or track.id
-        return ('song', song_id) if song_id else None
+        item_id = track.catalog_id or track.id
+        return (track.kind, item_id) if item_id else None
+
+    def _on_engine_state(self):
+        self._shown = None  # a fresh engine: read the rating again
+        self._on_track()
 
     def _on_track(self):
+        """A new item: unloved until the engine's rating() answers (one read per item);
+        the same item again (re-created at another queue index, or after the gap between
+        queues) keeps what the heart shows."""
         target = self.target()
+        if target is not None and target == self._shown:
+            return
+        self._shown = target
         self.show(False)
         self.button.set_sensitive(target is not None)
-        if self._reading is not None and not self._reading.done():
-            self._reading.cancel()
-        self._reading = None
+        self._cancel_read()
         engine = self._app.engine if self._app is not None else None
         if (target is not None and engine is not None and not self._app.demo
                 and engine.state == 'up' and engine.authorized):
             self._reading = self._app.spawn(self._read(target))
+
+    def _cancel_read(self):
+        if self._reading is not None and not self._reading.done():
+            self._reading.cancel()
+        self._reading = None
 
     async def _read(self, target):
         try:
@@ -470,16 +487,25 @@ class HeartControl:
         self.button.set_tooltip_text(_('Remove from Favourites') if loved else _('Favourite'))
 
     def _on_toggled(self, button):
+        """A click loves or unloves the item playing. The click is what counts: a rating
+        read still out for the item is dropped, and a failure puts the heart back only
+        while the item is still the one clicked."""
         if self._syncing:
             return
         target = self.target()
         if target is None or self._app is None:
             return
+        self._cancel_read()
         loved = button.get_active()
         self.show(loved)
         engine = self._app.engine
         coro = engine.love(*target) if loved else engine.unlove(*target)
-        run_command(self._app, coro, lambda: self.show(not loved))
+
+        def put_back():
+            if self.target() == target:
+                self.show(not loved)
+
+        run_command(self._app, coro, put_back)
 
 
 class RemoteCover:
