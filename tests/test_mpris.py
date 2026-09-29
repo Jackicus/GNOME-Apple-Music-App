@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -834,6 +835,185 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(parameters[2], [])
             await self.app.settle()
         asyncio.run(go())
+
+
+TRACK_B = dict(TRACK, id='i.demo0002', catalogId='1000000002', title='Pilot Light',
+               durationMs=180000, index=3)
+B_PATH = '/io/github/jackicus/AppleMusic/track/3/i_2edemo0002'
+ALL_CANS = ['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay', 'CanSeek']
+
+# The event sequences seen live (docs/history/build-plan.md, phases 9, 12, 13 and 17),
+# each a list of steps: (event, data, what holds after it). `advance` moves the patched
+# clock, `grace` lets a null item's grace run out. What holds: the Player's `track` (an id or
+# None), `state`, `active`, `position`, `duration`, `queue_index`, the PropertiesChanged key
+# lists since the step before (`changed`) and the Seeked positions (`seeked`); a key left
+# out means unchanged, and `changed` and `seeked` left out mean nothing was sent.
+SEQUENCES = {
+    'a new queue while A plays (a play() from a page)': [
+        ('advance', 90, {}),
+        ('playbackStateDidChange', {'state': 'paused', 'position': 100, 'duration': 214},
+         {'state': 'paused', 'active': False, 'position': 100.0,
+          'changed': [['PlaybackStatus']]}),
+        ('playbackStateDidChange', {'state': 'seeking', 'position': 100, 'duration': 214},
+         {'state': 'seeking', 'active': False}),
+        ('playbackStateDidChange', {'state': 'paused', 'position': 100, 'duration': 214},
+         {'state': 'paused'}),
+        ('nowPlayingItemDidChange', {'track': None, 'index': -1},
+         {'track': 'i.demo0001', 'queue_index': 2}),  # the grace: still A
+        ('playbackStateDidChange', {'state': 'stopped', 'position': 0, 'duration': 0},
+         {'state': 'stopped', 'position': 100.0, 'duration': 214.0,  # A on its way out
+          'changed': [['PlaybackStatus']]}),
+        ('nowPlayingItemDidChange', {'track': TRACK_B, 'index': 3},
+         {'track': 'i.demo0002', 'position': 0.0, 'duration': 180.0, 'queue_index': 3,
+          'changed': [['Metadata']]}),
+        ('playbackDurationDidChange', {'duration': 180}, {'duration': 180.0}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180},
+         {'state': 'playing', 'active': True, 'changed': [['PlaybackStatus']]}),
+        ('playbackStateDidChange', {'state': 'waiting', 'position': 0, 'duration': 180},
+         {'state': 'waiting', 'active': True}),
+        ('playbackStateDidChange', {'state': 'loading', 'position': 0, 'duration': 180},
+         {'state': 'loading', 'active': True}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180},
+         {'state': 'playing', 'active': True}),
+        ('playbackTimeDidChange', {'position': 1, 'duration': 180}, {'position': 1.0}),
+    ],
+    'the item boundary: A ends, B follows': [
+        ('advance', 100, {}),
+        ('playbackTimeDidChange', {'position': 213, 'duration': 214},
+         {'position': 213.0, 'seeked': [213_000_000]}),  # far from the 100 s + 100 s noted
+        ('playbackStateDidChange', {'state': 'ended', 'position': 214, 'duration': 214},
+         {'state': 'ended', 'active': False, 'changed': [['PlaybackStatus']]}),
+        ('playbackStateDidChange', {'state': 'stopped', 'position': 214, 'duration': 214},
+         {'state': 'stopped'}),
+        ('nowPlayingItemDidChange', {'track': TRACK_B, 'index': 3},
+         {'track': 'i.demo0002', 'position': 0.0, 'duration': 180.0,
+          'changed': [['Metadata']]}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 214, 'duration': 214},
+         {'state': 'playing', 'active': True, 'position': 0.0, 'duration': 180.0,
+          'changed': [['PlaybackStatus']]}),  # A's position once more: dropped
+        ('playbackTimeDidChange', {'position': 0, 'duration': 180}, {'position': 0.0}),
+        ('playbackTimeDidChange', {'position': 1, 'duration': 180}, {'position': 1.0}),
+    ],
+    'a skip at 200 s of A': [
+        ('advance', 100, {}),
+        ('playbackTimeDidChange', {'position': 200, 'duration': 214},
+         {'position': 200.0, 'seeked': [200_000_000]}),
+        ('queuePositionDidChange', {'index': 3, 'oldIndex': 2}, {'queue_index': 3}),
+        ('nowPlayingItemDidChange', {'track': TRACK_B, 'index': 3},
+         {'track': 'i.demo0002', 'position': 0.0, 'duration': 180.0,
+          'changed': [['Metadata']]}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 200, 'duration': 214},
+         {'position': 0.0, 'duration': 180.0}),  # A's, once more: dropped
+        ('playbackStateDidChange', {'state': 'waiting', 'position': 0, 'duration': 180},
+         {'state': 'waiting', 'active': True}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180},
+         {'state': 'playing'}),
+        ('playbackTimeDidChange', {'position': 1, 'duration': 180}, {'position': 1.0}),
+    ],
+    'the end of the queue (repeat none)': [
+        ('playbackStateDidChange', {'state': 'paused', 'position': 214, 'duration': 214},
+         {'state': 'paused', 'active': False, 'position': 214.0,
+          'changed': [['PlaybackStatus']], 'seeked': [214_000_000]}),
+        ('playbackStateDidChange', {'state': 'seeking', 'position': 0, 'duration': 214},
+         {'state': 'seeking', 'position': 0.0, 'seeked': [0]}),  # the moment at 0, seen live
+        ('nowPlayingItemDidChange', {'track': None, 'index': -1}, {'track': 'i.demo0001'}),
+        ('playbackStateDidChange', {'state': 'stopped', 'position': 0, 'duration': 0},
+         {'state': 'stopped', 'changed': [['PlaybackStatus']]}),
+        ('playbackStateDidChange', {'state': 'completed', 'position': 0, 'duration': 0},
+         {'state': 'completed', 'stopped': True}),
+        ('grace', None, {'track': None, 'queue_index': -1, 'position': 0.0, 'duration': 0.0,
+                         'changed': [sorted(ALL_CANS + ['Metadata'])]}),
+    ],
+    "stop (MusicKit's own)": [
+        ('playbackStateDidChange', {'state': 'stopped', 'position': 0, 'duration': 214},
+         {'state': 'stopped', 'active': False, 'position': 0.0,
+          'changed': [['PlaybackStatus']], 'seeked': [0]}),
+        ('playbackStateDidChange', {'state': 'seeking', 'position': 0, 'duration': 214},
+         {'state': 'seeking'}),
+        ('playbackStateDidChange', {'state': 'stopped', 'position': 0, 'duration': 214},
+         {'state': 'stopped', 'stopped': True}),
+        ('nowPlayingItemDidChange', {'track': None, 'index': -1}, {'track': 'i.demo0001'}),
+        ('grace', None, {'track': None, 'changed': [sorted(ALL_CANS + ['Metadata'])]}),
+    ],
+    'a seek from the bar while playing': [
+        ('playbackStateDidChange', {'state': 'seeking', 'position': 10, 'duration': 214},
+         {'state': 'seeking', 'active': True}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 60, 'duration': 214},
+         {'state': 'playing', 'position': 60.0, 'seeked': [60_000_000]}),
+        ('playbackTimeDidChange', {'position': 60, 'duration': 214}, {}),
+        ('advance', 1, {}),
+        ('playbackTimeDidChange', {'position': 61, 'duration': 214}, {'position': 61.0}),
+    ],
+    'pause and resume': [
+        ('advance', 5, {}),
+        ('playbackStateDidChange', {'state': 'paused', 'position': 15, 'duration': 214},
+         {'state': 'paused', 'active': False, 'position': 15.0,
+          'changed': [['PlaybackStatus']]}),
+        ('advance', 60, {}),
+        ('playbackStateDidChange', {'state': 'playing', 'position': 15, 'duration': 214},
+         {'state': 'playing', 'active': True, 'changed': [['PlaybackStatus']]}),
+        ('advance', 1, {}),
+        ('playbackTimeDidChange', {'position': 16, 'duration': 214}, {'position': 16.0}),
+    ],
+}
+
+
+class SequenceTest(ServiceTest):
+    """The sequences MusicKit was seen to send (SEQUENCES), replayed through the engine's
+    events into a Player and the MPRIS service together: A playing at 10 s, with a queue of
+    three, at the start of each."""
+
+    def replay(self, name, steps):
+        with patched_clocks() as clock:
+            self.make()
+            self.player.track_grace_ms = 30
+            self.engine.emit('event', 'queueItemsDidChange', {'index': 2, 'items': [
+                dict(TRACK, id='i.demo0003', catalogId='1000000003', index=0),
+                dict(TRACK, id='i.demo0004', catalogId='1000000004', index=1), TRACK, TRACK_B]})
+            self.engine.emit('event', 'nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            self.engine.emit('event', 'playbackStateDidChange',
+                             {'state': 'playing', 'position': 0, 'duration': 214})
+            clock.advance(10)
+            self.engine.emit('event', 'playbackTimeDidChange', {'position': 10, 'duration': 214})
+            self.assertEqual((self.player.track.id, self.player.state, self.player.position,
+                              self.player.queue_index), ('i.demo0001', 'playing', 10.0, 2))
+            self.connection.changed()
+            self.connection.seeked()
+            for number, (event, data, expect) in enumerate(steps, 1):
+                where = f'{name}, step {number} ({event})'
+                if event == 'advance':
+                    clock.advance(data)
+                elif event == 'grace':
+                    time.sleep(0.05)  # real time: the grace is a GLib timeout
+                    context = GLib.MainContext.default()
+                    while context.pending():
+                        context.iteration(False)
+                else:
+                    self.engine.emit('event', event, data)
+                player = self.player
+                self.assertEqual(self.connection.seeked(), expect.get('seeked', []), where)
+                self.assertEqual(self.connection.changed(), expect.get('changed', []), where)
+                for key in ('state', 'active', 'position', 'duration', 'queue_index',
+                            'stopped'):
+                    if key in expect:
+                        self.assertEqual(getattr(player, key), expect[key], f'{where}: {key}')
+                if 'track' in expect:
+                    track = player.track.id if player.track is not None else None
+                    self.assertEqual(track, expect['track'], f'{where}: track')
+                if player.track is not None:  # what a client reads is never off the track
+                    self.assertLessEqual(self.connection.get(PLAYER_INTERFACE, 'Position')
+                                         .unpack(), self.connection.get(
+                        PLAYER_INTERFACE, 'Metadata').unpack().get(
+                        'mpris:length', 10**12), where)
+
+    async def replay_and_settle(self, name, steps):
+        self.replay(name, steps)
+        await self.app.settle()
+
+    def test_sequences(self):
+        for name, steps in SEQUENCES.items():
+            with self.subTest(sequence=name):
+                asyncio.run(self.replay_and_settle(name, steps))
 
 
 def private_bus(test):

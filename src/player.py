@@ -161,8 +161,9 @@ class NowPlaying(GObject.Object):
         self.raw = data
 
     def same_as(self, other):
-        """Whether `other` is this item at the same queue position (a repeat of one song is
-        a new play of the same item)."""
+        """Whether `other` is this item at the same queue position: the same song at
+        another queue entry (queued twice, or Play Next of the song playing) is another
+        item; repeat one replays this one, at the same index."""
         return (other is not None and other.id == self.id and other.index == self.index)
 
 
@@ -367,7 +368,10 @@ class Player(GObject.Object):
 
     def _take_position(self, data):
         """An event's position and duration, unless the position is the previous item's,
-        reported once more after a track change (TRACK_HOLD, SEEK_JUMP)."""
+        reported once more after a track change (TRACK_HOLD, SEEK_JUMP), or the item is on
+        its way out (a null item's grace: the 0 MusicKit reports as it clears a queue)."""
+        if self._clear_source:
+            return
         position = _number(data.get('position'))
         if not self._plausible(position):
             log.debug('position %.1f dropped: the item started %.1f s ago', position,

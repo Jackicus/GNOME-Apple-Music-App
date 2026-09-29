@@ -274,8 +274,12 @@ class EventTest(unittest.TestCase):
         player.connect('notify::track', lambda p, _pspec: tracks.append(
             p.track.id if p.track is not None else None))
         engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        engine.event('playbackTimeDidChange', {'position': 1, 'duration': 214})
         engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
         self.assertIsNotNone(player.track)  # not yet
+        # The 0 MusicKit reports as it clears the queue: the item is on its way out.
+        engine.event('playbackStateDidChange', {'state': 'stopped', 'position': 0})
+        self.assertEqual((player.state, player.position), ('stopped', 1.0))
         other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=0)
         engine.event('nowPlayingItemDidChange', {'track': other, 'index': 0})
         self.assertFalse(pump_until(lambda: player.track is None, timeout=0.12))
@@ -962,6 +966,77 @@ class LyricsTest(unittest.TestCase):
             await app.settle()
             self.assertEqual(player.lyrics.catalog_id, '1000000002')
             self.assertFalse(player.lyrics_loading)
+        asyncio.run(go())
+
+    def test_a_late_answer_for_the_song_before_is_dropped(self):
+        """A → B while A's read is still out: A's task is cancelled and B's answer is what
+        shows; A → B → A: A's lyrics end up shown once, with one read out at a time."""
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            gate = engine.gate('lyrics')
+            engine.answers['lyrics'] = LYRICS
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            await asyncio.sleep(0)
+            first = player._lyrics_task
+            other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=0)
+            engine.event('nowPlayingItemDidChange', {'track': other, 'index': 0})
+            await asyncio.sleep(0)
+            self.assertTrue(first.cancelled() or first.done())
+            gate.set()
+            await app.settle()
+            self.assertEqual(player.lyrics.catalog_id, '1000000002')
+            self.assertFalse(player.lyrics_loading)
+            # Back to A while B's read is out, then A's answer: shown once.
+            gate.clear()
+            shown = []
+            player.connect('notify::lyrics', lambda p, _pspec: shown.append(
+                p.lyrics.catalog_id if p.lyrics is not None else None))
+            engine.event('nowPlayingItemDidChange', {'track': other, 'index': 0})
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            await asyncio.sleep(0)
+            gate.set()
+            await app.settle()
+            self.assertEqual(player.lyrics.catalog_id, '1000000001')
+            self.assertEqual(shown, [None, '1000000001'])  # cleared once, then A's once
+            self.assertFalse(player.lyrics_loading)
+        asyncio.run(go())
+
+    def test_a_null_item_or_the_engine_going_clears_the_lyrics(self):
+        """Lyrics shown, or being read: a null item (and the engine going down) clears the
+        lyrics, the loading flag and the read under way."""
+        async def go():
+            for how in ('null', 'down'):
+                player, engine, app = make_player(state='up')
+                await app.settle()
+                gate = engine.gate('lyrics')
+                engine.answers['lyrics'] = LYRICS
+                engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+                await asyncio.sleep(0)
+                task = player._lyrics_task
+                self.assertTrue(player.lyrics_loading)
+                if how == 'null':
+                    engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+                else:
+                    engine.state = 'down'
+                self.assertIsNone(player.lyrics, how)
+                self.assertFalse(player.lyrics_loading, how)
+                gate.set()
+                await app.settle()
+                self.assertTrue(task.cancelled(), how)
+                self.assertIsNone(player.lyrics, how)
+                # Shown, then gone the same way.
+                engine.state = 'up'
+                await app.settle()
+                engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+                await app.settle()
+                self.assertIsNotNone(player.lyrics, how)
+                if how == 'null':
+                    engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+                else:
+                    engine.state = 'down'
+                self.assertIsNone(player.lyrics, how)
+                self.assertFalse(player.lyrics_loading, how)
         asyncio.run(go())
 
     def test_engine_failure_means_no_lyrics(self):
