@@ -65,8 +65,9 @@ class Artwork:
         self._tokens = itertools.count(1)
 
     def get(self, path, size=None):
-        """The texture for path at `size` (the longest edge in pixels the widget draws;
-        None: the file's own) if it is decoded and cached, else None. Counts as a use."""
+        """The texture for path at `size` (the edge in pixels the widget draws, which the
+        image's shorter edge is decoded to; None: the file's own) if it is decoded and cached,
+        else None. Counts as a use."""
         key = (path, size)
         texture = self._textures.get(key)
         if texture is not None:
@@ -356,16 +357,20 @@ def _load(path, size=None):
     """Decode an image file into a texture, in a worker thread (a Gdk.Texture is immutable, and
     creating one off the main thread is safe). None when the file is missing or unreadable.
 
-    With `size`, a file whose longest edge is bigger is decoded scaled down to it by
-    GdkPixbuf, whose loader takes four times as long as GTK's (2.3 ms against 0.55 for a
-    320 px JPEG) but gives a texture a quarter the size for a tile at 1×; a file no bigger,
-    or no size, is decoded as it is by GTK's loader.
+    With `size`, a file whose shorter edge is bigger is decoded scaled down until that edge is
+    `size`, by GdkPixbuf, whose loader takes four times as long as GTK's (2.3 ms against 0.55
+    for a 320 px JPEG) but gives a texture a quarter the size for a tile at 1×; a file no
+    bigger, or no size, is decoded as it is by GTK's loader. The shorter edge, because the
+    widgets fill a square with `content-fit: cover`, which scales by it: a 16:9 video still
+    decoded by its longer edge would be drawn blown up by 1.8.
     """
     try:
         if size:
             _format, width, height = GdkPixbuf.Pixbuf.get_file_info(path)
-            if max(width, height) > size:
-                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+            if _format is not None and min(width, height) > size:
+                scale = size / min(width, height)
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    path, max(1, round(width * scale)), max(1, round(height * scale)), False)
                 return texture_from_pixbuf(pixbuf)
         return Gdk.Texture.new_from_filename(path)
     except GLib.Error as error:

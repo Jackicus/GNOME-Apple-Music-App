@@ -202,6 +202,18 @@ class TestArtwork(unittest.TestCase):
         self.assertIsNone(loader.get(self.paths[2], 4))
         self.assertEqual(loader.cached(), (3, (9 + 36 + 36) * 4))
 
+    def test_a_wide_image_is_decoded_by_its_shorter_edge(self):
+        # A 16:9 video still fills a square tile by its height (content-fit: cover): decoded
+        # to fit its width, it would be drawn blown up.
+        wide = os.path.join(self.temp_dir.name, 'wide.png')
+        pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 12, 6)
+        pixbuf.fill(0x336699ff)
+        pixbuf.savev(wide, 'png', [], [])
+        texture = artwork._load(wide, 3)
+        self.assertEqual((texture.get_width(), texture.get_height()), (6, 3))
+        tall = artwork._load(wide, 6)  # its shorter edge is no bigger: as it is
+        self.assertEqual((tall.get_width(), tall.get_height()), (12, 6))
+
     def test_get_any_is_the_biggest_size_cached(self):
         # A stand-in while another size decodes: the biggest there is, the file's own size
         # counting as the biggest; eviction and clear() forget the sizes.
