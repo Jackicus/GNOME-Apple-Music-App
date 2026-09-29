@@ -12,6 +12,8 @@ from gi.repository import GLib, GObject
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
+from tests.test_player import patched_clocks
+
 from applemusic import mpris
 from applemusic.backend.errors import EngineError
 from applemusic.mpris import (OBJECT_PATH, PLAYER_INTERFACE, PROPERTIES_INTERFACE,
@@ -458,37 +460,68 @@ class ServiceTest(unittest.TestCase):
 
     def test_seeked_on_a_jump_only(self):
         async def go():
-            self.make()
-            self.play(position=10)
-            await self.app.settle()
-            self.connection.signals = []
-            self.service._hold_until = 0.0  # TRACK_HOLD after the first track has passed
-            self.player.apply({'position': 10.25})  # the next time event
-            self.player.apply({'position': 10.5})
-            self.assertEqual(self.connection.seeked(), [])
-            self.player.apply({'position': 60})  # the bar, or Apple's page, seeks
-            self.assertEqual(self.connection.seeked(), [60_000_000])
-            self.player.apply({'position': 60.25})
-            self.assertEqual(self.connection.seeked(), [])
-            # A new item: the reset to 0 and the previous item's position reported once more
-            # are not seeks (TRACK_HOLD), and its Metadata goes out once, with its own
-            # length (the Player resets the duration after the track's notify).
-            self.connection.signals = []
-            self.play(position=0, track=dict(TRACK, id='i.demo0002', index=3,
-                                             durationMs=180000))
-            self.player.apply({'position': 60.25})  # stale, from the item before
-            self.player.apply({'position': 0.25})
-            self.assertEqual(self.connection.seeked(), [])
-            self.service._hold_until = 0.0  # later: a real jump is a seek again
-            self.player.apply({'position': 90})
-            self.assertEqual(self.connection.seeked(), [90_000_000])
-            metadata_changes = [parameters[1]['Metadata'] for _i, _s, parameters
-                                in self.connection.signals if 'Metadata' in parameters[1]]
-            self.assertEqual(len(metadata_changes), 1)
-            self.assertEqual(metadata_changes[0]['mpris:length'], 180_000_000)
-            self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
-                'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/i_2edemo0002')
-            await self.app.settle()
+            with patched_clocks() as clock:
+                self.make()
+                self.play(position=10)
+                await self.app.settle()
+                self.connection.signals = []
+                clock.advance(5)  # well past a track change
+                self.player.apply({'position': 15.25})  # the next time event
+                clock.advance(0.25)
+                self.player.apply({'position': 15.5})
+                self.assertEqual(self.connection.seeked(), [])
+                self.player.apply({'position': 60})  # the bar, or Apple's page, seeks
+                self.assertEqual(self.connection.seeked(), [60_000_000])
+                clock.advance(0.25)
+                self.player.apply({'position': 60.25})
+                self.assertEqual(self.connection.seeked(), [])
+                # A new item, through the events: the reset to 0, and the previous item's
+                # position reported once more (which the Player drops), are not seeks, and
+                # its Metadata goes out once, with its own length.
+                self.connection.signals = []
+                emit = self.engine.emit
+                emit('event', 'nowPlayingItemDidChange', {
+                    'track': dict(TRACK, id='i.demo0002', index=3, durationMs=180000),
+                    'index': 3})
+                emit('event', 'playbackStateDidChange',
+                     {'state': 'playing', 'position': 60.25, 'duration': 214})  # stale
+                emit('event', 'playbackTimeDidChange', {'position': 0.25, 'duration': 180})
+                self.assertEqual(self.connection.seeked(), [])
+                clock.advance(3)  # later: a real jump is a seek again
+                emit('event', 'playbackTimeDidChange', {'position': 90, 'duration': 180})
+                self.assertEqual(self.connection.seeked(), [90_000_000])
+                metadata_changes = [parameters[1]['Metadata'] for _i, _s, parameters
+                                    in self.connection.signals if 'Metadata' in parameters[1]]
+                self.assertEqual(len(metadata_changes), 1)
+                self.assertEqual(metadata_changes[0]['mpris:length'], 180_000_000)
+                self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
+                    'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/i_2edemo0002')
+                await self.app.settle()
+        asyncio.run(go())
+
+    def test_the_previous_items_position_never_reaches_the_bus(self):
+        """A skip at 200 s of A (214 s) to B (180 s): MusicKit's stale 200 for B is not
+        published as Position, and a client's Seek +10 s lands at 10 s, not past B's end."""
+        async def go():
+            with patched_clocks() as clock:
+                self.make()
+                self.play(position=200)
+                await self.app.settle()
+                clock.advance(5)
+                emit = self.engine.emit
+                emit('event', 'nowPlayingItemDidChange', {
+                    'track': dict(TRACK, id='i.b', index=3, durationMs=180000), 'index': 3})
+                emit('event', 'playbackStateDidChange',
+                     {'state': 'playing', 'position': 200, 'duration': 214})
+                position = self.connection.get(PLAYER_INTERFACE, 'Position').unpack()
+                self.assertLess(position, 2_000_000)
+                self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
+                    'mpris:length'], 180_000_000)
+                self.connection.call(PLAYER_INTERFACE, 'Seek', GLib.Variant('(x)', (10_000_000,)))
+                await self.app.settle()
+                seeks = [call for call in self.engine.calls if call[0] == 'seek']
+                self.assertEqual(len(seeks), 1)
+                self.assertAlmostEqual(seeks[0][1], 10.0, places=3)
         asyncio.run(go())
 
     def test_a_new_queue_keeps_the_player_on_the_bus(self):
@@ -540,6 +573,7 @@ class ServiceTest(unittest.TestCase):
                 ('control', 'pause'), ('control', 'stop'), ('control', 'play')])
             self.engine.calls.clear()
             self.player.apply({'state': 'paused', 'position': 10})
+            self.connection.seeked()  # the answer's position, told as a jump from 0
             call(PLAYER_INTERFACE, 'PlayPause')  # paused: play
             call(PLAYER_INTERFACE, 'Seek', GLib.Variant('(x)', (5_000_000,)))
             call(PLAYER_INTERFACE, 'Seek', GLib.Variant('(x)', (-30_000_000,)))  # to 0

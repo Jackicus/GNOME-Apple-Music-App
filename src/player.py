@@ -33,7 +33,9 @@ shuffleModeDidChange, repeatModeDidChange, playbackVolumeDidChange, queueItemsDi
 queuePositionDidChange), plus one now_playing() (and queue()) read when the engine comes up,
 so the bar follows what MusicKit does rather than what was asked; nothing here polls. A
 null item clears the track only after TRACK_GRACE_MS without a new one (`track_grace_ms`;
-MusicKit sends a null between queues, right before the next item). The queue is read again
+MusicKit sends a null between queues, right before the next item), and the previous item's
+position, which MusicKit reports once more after a track change, is dropped here
+(TRACK_HOLD), so every view sees the same cleaned position. The queue is read again
 (queue()) when an item arrives that the queue held does not hold at its index; the lyrics
 are asked of the engine (lyrics(), cached on disk) once per catalog song as it starts,
 never on a timer. When the engine goes down everything resets to nothing playing, at once.
@@ -60,6 +62,15 @@ log = logging.getLogger(__name__)
 # bar, the actions, the heart, the lyrics and the Shell's media controls would all flash
 # "Not Playing" in between.
 TRACK_GRACE_MS = 800
+
+# After a track change, MusicKit reports the previous item's position (and duration) once
+# more with the state transitions of the skip, before the new item's 0. For TRACK_HOLD
+# seconds after a new item, a position further than SEEK_JUMP seconds past where the item
+# can be is that stale report, and is dropped (with its duration), so the bar, the sheet,
+# the lyrics and MPRIS never show it. SEEK_JUMP is also how far a position may land from
+# where the last one led before MPRIS calls it a seek.
+TRACK_HOLD = 2.0
+SEEK_JUMP = 2.0
 
 PLAYBACK_STATES = ('none', 'loading', 'playing', 'paused', 'stopped', 'ended', 'seeking',
                    'waiting', 'stalled', 'completed')
@@ -168,6 +179,7 @@ class Player(GObject.Object):
         self._resting = 'none'  # the last state that was not 'seeking'
         self.track_grace_ms = TRACK_GRACE_MS  # 0: a null item clears the track at once
         self._clear_source = 0  # the GLib source waiting out the grace, while one does
+        self._track_since = float('-inf')  # when the item playing started (_plausible)
         self.position_updated_at = time.monotonic()
         self.queue = Gio.ListStore(item_type=NowPlaying)
         self._lyrics_task = None  # the task reading the track's lyrics, while one runs
@@ -285,14 +297,14 @@ class Player(GObject.Object):
         if name == 'playbackStateDidChange':
             self._set_state(data.get('state'))
             if 'position' in data:
-                self._set_position(_number(data.get('position')), _duration_of(data))
+                self._take_position(data)
         elif name == 'nowPlayingItemDidChange':
             if isinstance(data.get('track'), dict):
                 self._set_track(data['track'])
             else:
                 self._clear_track_soon()
         elif name == 'playbackTimeDidChange':
-            self._set_position(_number(data.get('position')), _duration_of(data))
+            self._take_position(data)
         elif name == 'playbackDurationDidChange':
             self._set_duration(_number(data.get('duration')))
         elif name == 'shuffleModeDidChange':
@@ -310,6 +322,24 @@ class Player(GObject.Object):
             message = _text(data.get('message')) or _('Playback failed')
             log.warning('playback error: %s', message)
             self.emit('error', message)
+
+    def _take_position(self, data):
+        """An event's position and duration, unless the position is the previous item's,
+        reported once more after a track change (TRACK_HOLD, SEEK_JUMP)."""
+        position = _number(data.get('position'))
+        if not self._plausible(position):
+            log.debug('position %.1f dropped: the item started %.1f s ago', position,
+                      time.monotonic() - self._track_since)
+            return
+        self._set_position(position, _duration_of(data))
+
+    def _plausible(self, position):
+        """Whether `position` can be the item playing's: any position once TRACK_HOLD has
+        passed since it started, else one within SEEK_JUMP of how far it can have got (from
+        0, or from where an answer put it)."""
+        elapsed = time.monotonic() - self._track_since
+        return (elapsed >= TRACK_HOLD or position <= elapsed + SEEK_JUMP
+                or abs(position - self.estimated_position()) <= SEEK_JUMP)
 
     def _set_state(self, state):
         state = state if isinstance(state, str) and state else 'none'
@@ -334,6 +364,7 @@ class Player(GObject.Object):
                 return
             with self.freeze_notify():
                 if current is None or current.id != track.id:
+                    self._track_since = time.monotonic()
                     self._reset_times(track.duration_ms / 1000)
                 self.track = track
             self._track_queued(track)
@@ -571,6 +602,7 @@ class Player(GObject.Object):
         await self._engine.queue_jump(int(index))
 
     async def seek(self, seconds):
+        self._track_since = float('-inf')  # the positions that follow are the seek's
         await self._engine.seek(seconds)
 
     async def set_volume(self, level):
