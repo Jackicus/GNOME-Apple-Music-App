@@ -6,15 +6,30 @@ from gettext import gettext as _
 from gi.repository import Adw, Gio, Gtk
 
 from ..backend.errors import EngineError
-from ..library import Item
+from ..library import Item, apply_diff
 from ..remote import fetch_cover
 from ..widgets import artwork, context_menu
 from ..widgets.engine_status import EngineStatus
+from ..widgets.labels import accessible_label, flow_child
 from ..widgets.tile import Tile
-from ..widgets.util import connect_weak, weak_method
+from ..widgets.util import MappedHandlers, connect_weak, weak_method
 from . import app
 
 log = logging.getLogger(__name__)
+
+
+def stand_in(artist, group):
+    """An Item for an artist's album the library does not have: its name, the artist, the
+    first track's thumbnail and no groups, so that its page fetches the whole album (discs,
+    year, notes and cover), as a shelf's album's does."""
+    entry = group.entries.get_item(0) if group.entries.get_n_items() else None
+    data = {'id': group.play.get('id'), 'kind': 'album', 'title': group.name,
+            'subtitle': artist.title, 'thumb': entry.thumb if entry else None,
+            'play': group.play, 'groups': []}
+    art_url = entry.raw.get('artUrl') if entry is not None else None
+    if art_url:
+        data['artUrl'] = art_url
+    return Item(data)
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/artist.ui')
@@ -24,9 +39,11 @@ class ArtistPage(Adw.NavigationPage):
 
     Each group of an artist Item is one of their albums (the backend README), named after it
     and playing it: {kind: album, id}. The album comes from the library by that id; one the
-    library does not have is made up from the group, so its page still lists the tracks. An
-    artist that came without groups (a shelf's) gets them from the engine, the status page
-    saying so meanwhile, or why not (as the detail page's status box does).
+    library does not have (a catalog artist's) is a stand-in Item without groups, so its page
+    fetches the whole album (discs, year, notes, cover) as a shelf's album does. An artist
+    that came without groups (a shelf's) has them fetched once, the status page saying so
+    meanwhile, or why not (EngineStatus), or that there are none. The page follows the
+    artist Item and the library while it is shown, as the detail page does.
     """
 
     __gtype_name__ = 'AppleMusicArtistPage'
@@ -44,10 +61,11 @@ class ArtistPage(Adw.NavigationPage):
         super().__init__(title=item.title)
         self.item = item
         self._library = library
-        self._accessible_format = _('{title}, {subtitle}')
-        self._fetching = False
+        self._fetched = None  # the Item this page asked the engine for (once)
+        self._fetch_task = None
+        self._stand_ins = {}  # album id -> the stand-in Item made for an album not in the library
         # What the status page says when the engine cannot answer, and what its button does.
-        self._engine_status = EngineStatus(app(), self._show_status, self._fetch, {
+        self._engine_status = EngineStatus(app(), self._show_status, self._refetch, {
             'engine-down': _('Start the engine to load the albums'),
             'not-signed-in': _('The albums appear once you sign in to Apple Music'),
             'failed': _('Could Not Load the Albums'),
@@ -63,9 +81,17 @@ class ArtistPage(Adw.NavigationPage):
         # and the thumbnail meanwhile, or for good when the cover cannot be had.
         self._portrait = artwork.ArtworkSlot(self._set_portrait, self.avatar.get_size())
         self._portrait.attach(self.avatar)
+        # The library (its albums) and the artist, followed while the page is shown.
+        self._handlers = MappedHandlers(self)
+        self._handlers.add(library, 'changed', self._show)
+        self._handlers.add(item, 'groups-changed', self._show)
+        self._handlers.add(item, 'notify', self._on_item_notify)
         self._show()
 
-    def _show(self):
+    def _on_item_notify(self, _item, _pspec):
+        self._show_hero()
+
+    def _show_hero(self):
         item = self.item
         self._portrait.set_paths(item.art, item.thumb)
         self.avatar.set_text(item.title)
@@ -76,36 +102,48 @@ class ArtistPage(Adw.NavigationPage):
         self.summary_label.set_label(item.summary or '')
         self.summary_label.set_visible(bool(item.summary))
 
-        self._albums.splice(0, self._albums.get_n_items(), self._resolve_albums(item))
+    def _show(self, *_args):
+        item = self.item
+        self._show_hero()
+        apply_diff(self._albums, self._resolve_albums(item))
         has_albums = self._albums.get_n_items() > 0
         self.albums_label.set_visible(has_albums)
         self.flow_box.set_visible(has_albums)
-        if not item.groups and not self._fetching:
+        if not item.groups and self._fetched is not item:
             self._fetch()
+        elif not item.groups and self._engine_status.status is None:
+            self._engine_status.clear()
+            self._show_status('empty', _('No Albums'), '', None)
         self.status_page.set_visible(not item.groups)
 
-    # Fetching the albums of an artist that came without them.
+    # Fetching the albums of an artist that came without them, once.
 
     def _fetch(self):
-        self._fetching = True
+        self._fetched = self.item
+        if self._fetch_task is not None and not self._fetch_task.done():
+            self._fetch_task.cancel()
         self._engine_status.loading()
-        app().spawn(self._fetch_groups())
+        self._fetch_task = app().spawn(self._fetch_groups(self.item))
 
-    async def _fetch_groups(self):
-        item = self.item
+    def _refetch(self):
+        """EngineStatus's retry (Try Again, the engine up, signed in): ask again."""
+        self._fetched = None
+        self._fetch()
+
+    async def _fetch_groups(self, item):
         try:
             answer = await app().engine.item(item.kind, item.id)
         except EngineError as error:
             log.info('albums of artist %s: %s', item.id, error)
-            self._fetching = False
             self._engine_status.fail(error)
             return
-        self._fetching = False
-        item.merge(answer)
+        self._engine_status.clear()
+        item.merge(answer)  # new groups emit groups-changed, which shows them while mapped
         self._show()
 
     def _show_status(self, status, title, description, button):
-        """The status page: the spinner ('loading'), or EngineStatus's states."""
+        """The status page: the spinner ('loading'), EngineStatus's states, or 'empty' (the
+        artist has no albums)."""
         if status == 'loading':
             self.status_page.set_paintable(Adw.SpinnerPaintable.new(self.status_page))
             title, description, button = _('Loading…'), '', None
@@ -120,15 +158,16 @@ class ArtistPage(Adw.NavigationPage):
         self._engine_status.activate()
 
     def _resolve_albums(self, item):
+        """The artist's albums, newest first: the library's Items, or stand-ins (kept, so a
+        reload keeps their tiles)."""
         albums = []
         for group in item.groups:
             play = group.play
             album = self._library.by_id(play.get('kind'), play.get('id'))
             if album is None:
-                entry = group.entries.get_item(0) if group.entries.get_n_items() else None
-                album = Item({'id': play.get('id'), 'kind': 'album', 'title': group.name,
-                              'subtitle': item.title, 'thumb': entry.thumb if entry else None,
-                              'play': play, 'groups': [group.raw]})
+                album = self._stand_ins.get(play.get('id'))
+                if album is None:
+                    album = self._stand_ins[play.get('id')] = stand_in(item, group)
             albums.append(album)
         albums.sort(key=lambda album: album.year, reverse=True)  # stable: ties keep their order
         return albums
@@ -136,11 +175,7 @@ class ArtistPage(Adw.NavigationPage):
     def _create_tile(self, album):
         tile = Tile()
         tile.bind(album)
-        child = Gtk.FlowBoxChild(child=tile)
-        label = (self._accessible_format.format(title=album.title, subtitle=album.subtitle)
-                 if album.subtitle else album.title)
-        child.update_property([Gtk.AccessibleProperty.LABEL], [label])
-        return child
+        return flow_child(tile, accessible_label(album))
 
     def _on_album_activated(self, _flow_box, child):
         album = self._albums.get_item(child.get_index())
@@ -151,6 +186,7 @@ class ArtistPage(Adw.NavigationPage):
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
+        self._show()  # what a reload changed while the page was hidden
         self._engine_status.watch()
         if self.item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the portrait's full size comes now.
@@ -158,6 +194,10 @@ class ArtistPage(Adw.NavigationPage):
 
     def do_unmap(self):
         self._engine_status.unwatch()
+        if self._fetch_task is not None and not self._fetch_task.done():
+            self._fetch_task.cancel()
+            self._fetched = None  # asked again when the page shows again
+            self._engine_status.clear()
         Adw.NavigationPage.do_unmap(self)
 
     async def _fetch_cover(self, item):
