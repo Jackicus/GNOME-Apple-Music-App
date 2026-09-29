@@ -31,11 +31,12 @@ The properties change only from the engine's events (playbackStateDidChange,
 nowPlayingItemDidChange, playbackTimeDidChange, playbackDurationDidChange,
 shuffleModeDidChange, repeatModeDidChange, playbackVolumeDidChange, queueItemsDidChange,
 queuePositionDidChange), plus one now_playing() (and queue()) read when the engine comes up,
-so the bar follows what MusicKit does rather than what was asked; nothing here polls. The
-queue is read again (queue()) when an item arrives that the queue held does not hold at its
-index; the lyrics are asked of the engine (lyrics(), cached on disk) once per catalog song
-as it starts, never on a timer. When the engine goes down everything resets to nothing
-playing.
+so the bar follows what MusicKit does rather than what was asked; nothing here polls. A
+null item clears the track only after TRACK_GRACE_MS without a new one (`track_grace_ms`;
+MusicKit sends a null between queues, right before the next item). The queue is read again
+(queue()) when an item arrives that the queue held does not hold at its index; the lyrics
+are asked of the engine (lyrics(), cached on disk) once per catalog song as it starts,
+never on a timer. When the engine goes down everything resets to nothing playing, at once.
 The commands raise EngineError as the engine does; play() starts a down engine first when the
 account is signed in (a toast says so) and raises EngineError('not-signed-in') when it is not,
 which the window turns into the sign-in flow. `error(message)` is emitted for MusicKit's
@@ -47,12 +48,18 @@ import logging
 import time
 from gettext import gettext as _
 
-from gi.repository import Gio, GObject
+from gi.repository import Gio, GLib, GObject
 
 from .backend.errors import EngineError
 from .lyrics import Lyrics
 
 log = logging.getLogger(__name__)
+
+# How long a null item (nowPlayingItemDidChange with no track) waits before the track is
+# cleared: MusicKit sends one between queues, half a second before the next item, and the
+# bar, the actions, the heart, the lyrics and the Shell's media controls would all flash
+# "Not Playing" in between.
+TRACK_GRACE_MS = 800
 
 PLAYBACK_STATES = ('none', 'loading', 'playing', 'paused', 'stopped', 'ended', 'seeking',
                    'waiting', 'stalled', 'completed')
@@ -159,6 +166,8 @@ class Player(GObject.Object):
         self._app = app
         self._engine = app.engine
         self._resting = 'none'  # the last state that was not 'seeking'
+        self.track_grace_ms = TRACK_GRACE_MS  # 0: a null item clears the track at once
+        self._clear_source = 0  # the GLib source waiting out the grace, while one does
         self.position_updated_at = time.monotonic()
         self.queue = Gio.ListStore(item_type=NowPlaying)
         self._lyrics_task = None  # the task reading the track's lyrics, while one runs
@@ -205,6 +214,7 @@ class Player(GObject.Object):
         repeat and the volume are Apple's page's, kept across engine restarts, and the
         next refresh() reads them)."""
         if not isinstance(now_playing, dict):
+            self._cancel_clear()
             self._set_track(None)
             self._set_state('none')
             self._set_position(0.0, 0.0)
@@ -277,7 +287,10 @@ class Player(GObject.Object):
             if 'position' in data:
                 self._set_position(_number(data.get('position')), _duration_of(data))
         elif name == 'nowPlayingItemDidChange':
-            self._set_track(data.get('track'))
+            if isinstance(data.get('track'), dict):
+                self._set_track(data['track'])
+            else:
+                self._clear_track_soon()
         elif name == 'playbackTimeDidChange':
             self._set_position(_number(data.get('position')), _duration_of(data))
         elif name == 'playbackDurationDidChange':
@@ -314,6 +327,7 @@ class Player(GObject.Object):
         (0 without one; MusicKit's duration follows). The same song at another queue
         position (the queue reordered under it: a shuffle toggle) keeps its times."""
         if isinstance(data, dict):
+            self._cancel_clear()
             track = NowPlaying(data)
             current = self.track
             if current is not None and current.same_as(track) and current.raw == data:
@@ -332,6 +346,27 @@ class Player(GObject.Object):
             self._set_queue_index(-1)
             self._cancel_lyrics()
             self._set_lyrics(None)
+
+    def _clear_track_soon(self):
+        """A null item: the track is cleared once track_grace_ms have passed without a new
+        item (MusicKit's null between queues is followed by one), or at once without a
+        grace. The engine going down (apply(None)) clears at once."""
+        if self.track is None or self._clear_source:
+            return
+        if not self.track_grace_ms:
+            self._set_track(None)
+            return
+        self._clear_source = GLib.timeout_add(self.track_grace_ms, self._on_grace_over)
+
+    def _on_grace_over(self):
+        self._clear_source = 0
+        self._set_track(None)
+        return GLib.SOURCE_REMOVE
+
+    def _cancel_clear(self):
+        if self._clear_source:
+            GLib.source_remove(self._clear_source)
+            self._clear_source = 0
 
     def _reset_times(self, duration):
         """Position 0 and `duration` for an item that starts (or none), as they are."""

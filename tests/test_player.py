@@ -161,11 +161,33 @@ class FakeApp:
             await asyncio.gather(*self.tasks, return_exceptions=True)
 
 
-def make_player(signed_in=True, demo=False, state='down'):
+def make_player(signed_in=True, demo=False, state='down', grace_ms=0):
+    """A Player over a FakeEngine; a null item clears the track at once unless `grace_ms`
+    says otherwise (the synchronous tests want no timer)."""
     engine = FakeEngine()
     engine.state = state
     app = FakeApp(engine, signed_in, demo)
-    return Player(app), engine, app
+    player = Player(app)
+    player.track_grace_ms = grace_ms
+    return player, engine, app
+
+
+def pump_until(predicate, timeout=1.0):
+    """Run the default main context until predicate() holds (True) or `timeout` seconds
+    pass (False): what a GLib timeout of the Player's needs."""
+    from gi.repository import GLib
+
+    context = GLib.MainContext.default()
+    deadline = time.monotonic() + timeout
+    wake = GLib.timeout_add(5, lambda: GLib.SOURCE_CONTINUE)
+    try:
+        while not predicate():
+            if time.monotonic() >= deadline:
+                return False
+            context.iteration(True)
+        return True
+    finally:
+        GLib.source_remove(wake)
 
 
 class EventTest(unittest.TestCase):
@@ -215,6 +237,35 @@ class EventTest(unittest.TestCase):
         self.engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
         self.assertIsNone(self.player.track)
         self.assertEqual((self.player.position, self.player.duration), (0.0, 0.0))
+
+    def test_a_null_item_waits_for_the_next_one(self):
+        """MusicKit sends a null item between queues, right before the next item: the
+        track is cleared only after the grace passes with no new item."""
+        player, engine, _app = make_player(grace_ms=40)
+        tracks = []
+        player.connect('notify::track', lambda p, _pspec: tracks.append(
+            p.track.id if p.track is not None else None))
+        engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+        self.assertIsNotNone(player.track)  # not yet
+        other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=0)
+        engine.event('nowPlayingItemDidChange', {'track': other, 'index': 0})
+        self.assertFalse(pump_until(lambda: player.track is None, timeout=0.12))
+        self.assertEqual(tracks, ['i.demo0001', 'i.demo0002'])  # never None in between
+        # A null alone: cleared once the grace is over.
+        engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+        engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})  # one timer
+        self.assertTrue(pump_until(lambda: player.track is None))
+        self.assertEqual(tracks[-1], None)
+        self.assertEqual(player.queue_index, -1)
+        # The engine going down clears at once, and cancels a grace under way.
+        engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        engine.event('nowPlayingItemDidChange', {'track': None, 'index': -1})
+        player.apply(None)
+        self.assertIsNone(player.track)
+        self.assertEqual(player._clear_source, 0)
+        engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.assertFalse(pump_until(lambda: player.track is None, timeout=0.1))
 
     def test_a_track_without_artwork(self):
         self.engine.event('nowPlayingItemDidChange',
