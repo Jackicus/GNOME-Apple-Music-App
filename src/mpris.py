@@ -220,6 +220,40 @@ def microseconds(seconds):
     return int(round(max(0.0, float(seconds)) * 1_000_000))
 
 
+# The properties of each interface, name → a function of the service answering its Variant
+# (Get builds only the one asked for, PropertiesChanged only the names given; module tables,
+# so a service holds no closure over itself).
+ROOT_GETTERS = {
+    'CanQuit': lambda service: GLib.Variant('b', True),
+    'Fullscreen': lambda service: GLib.Variant('b', False),
+    'CanSetFullscreen': lambda service: GLib.Variant('b', False),
+    'CanRaise': lambda service: GLib.Variant('b', True),
+    'HasTrackList': lambda service: GLib.Variant('b', False),
+    'Identity': lambda service: GLib.Variant('s', _('Apple Music')),
+    'DesktopEntry': lambda service: GLib.Variant('s', service._app.get_application_id()),
+    'SupportedUriSchemes': lambda service: GLib.Variant('as', []),
+    'SupportedMimeTypes': lambda service: GLib.Variant('as', []),
+}
+PLAYER_GETTERS = {
+    'PlaybackStatus': lambda service: GLib.Variant('s', service._status),
+    'LoopStatus': lambda service: GLib.Variant('s', loop_status(service._player.repeat)),
+    'Rate': lambda service: GLib.Variant('d', 1.0),
+    'Shuffle': lambda service: GLib.Variant('b', bool(service._player.shuffle)),
+    'Metadata': lambda service: GLib.Variant('a{sv}', service._metadata()),
+    'Volume': lambda service: GLib.Variant('d', float(service._player.volume)),
+    'Position': lambda service: GLib.Variant('x', service._position()),
+    'MinimumRate': lambda service: GLib.Variant('d', 1.0),
+    'MaximumRate': lambda service: GLib.Variant('d', 1.0),
+    'CanGoNext': lambda service: GLib.Variant('b', service._can()),
+    'CanGoPrevious': lambda service: GLib.Variant('b', service._can()),
+    'CanPlay': lambda service: GLib.Variant('b', service._can()),
+    'CanPause': lambda service: GLib.Variant('b', service._can()),
+    'CanSeek': lambda service: GLib.Variant('b', service._can()),
+    'CanControl': lambda service: GLib.Variant('b', True),
+}
+GETTERS = {ROOT_INTERFACE: ROOT_GETTERS, PLAYER_INTERFACE: PLAYER_GETTERS}
+
+
 class Mpris:
     """The MPRIS service over the app's Player. See the module."""
 
@@ -243,36 +277,6 @@ class Mpris:
         self._art_task = None
         self._hold_until = 0.0   # until when positions are not looked at for a seek
         self._noted = (0.0, time.monotonic(), False)  # position, when, running: for Seeked
-        self._getters = {
-            ROOT_INTERFACE: {
-                'CanQuit': lambda: GLib.Variant('b', True),
-                'Fullscreen': lambda: GLib.Variant('b', False),
-                'CanSetFullscreen': lambda: GLib.Variant('b', False),
-                'CanRaise': lambda: GLib.Variant('b', True),
-                'HasTrackList': lambda: GLib.Variant('b', False),
-                'Identity': lambda: GLib.Variant('s', _('Apple Music')),
-                'DesktopEntry': lambda: GLib.Variant('s', self._app.get_application_id()),
-                'SupportedUriSchemes': lambda: GLib.Variant('as', []),
-                'SupportedMimeTypes': lambda: GLib.Variant('as', []),
-            },
-            PLAYER_INTERFACE: {
-                'PlaybackStatus': lambda: GLib.Variant('s', self._status),
-                'LoopStatus': lambda: GLib.Variant('s', loop_status(self._player.repeat)),
-                'Rate': lambda: GLib.Variant('d', 1.0),
-                'Shuffle': lambda: GLib.Variant('b', bool(self._player.shuffle)),
-                'Metadata': lambda: GLib.Variant('a{sv}', self._metadata()),
-                'Volume': lambda: GLib.Variant('d', float(self._player.volume)),
-                'Position': lambda: GLib.Variant('x', self._position()),
-                'MinimumRate': lambda: GLib.Variant('d', 1.0),
-                'MaximumRate': lambda: GLib.Variant('d', 1.0),
-                'CanGoNext': lambda: GLib.Variant('b', self._can()),
-                'CanGoPrevious': lambda: GLib.Variant('b', self._can()),
-                'CanPlay': lambda: GLib.Variant('b', self._can()),
-                'CanPause': lambda: GLib.Variant('b', self._can()),
-                'CanSeek': lambda: GLib.Variant('b', self._can()),
-                'CanControl': lambda: GLib.Variant('b', True),
-            },
-        }
 
     # -- lifecycle -----------------------------------------------------------------------
 
@@ -375,17 +379,16 @@ class Mpris:
 
     def properties(self, interface):
         """Every property of an interface, name → Variant (what GetAll answers)."""
-        return {name: get() for name, get in self._getters.get(interface, {}).items()}
+        return {name: get(self) for name, get in GETTERS.get(interface, {}).items()}
 
     # -- following the Player ------------------------------------------------------------
 
     def _changed(self, *names):
         """PropertiesChanged for the Player properties named, those whose value differs from
         what was last put on the bus (Position never: the spec says it does not signal)."""
-        getters = self._getters[PLAYER_INTERFACE]
         changed = {}
         for name in names:
-            value = getters[name]()
+            value = PLAYER_GETTERS[name](self)
             sent = self._sent.get(name)
             if sent is None or not sent.equal(value):
                 changed[name] = value
@@ -507,11 +510,11 @@ class Mpris:
     # -- D-Bus ---------------------------------------------------------------------------
 
     def _on_get_property(self, _connection, _sender, _path, interface, name):
-        get = self._getters.get(interface, {}).get(name)
+        get = GETTERS.get(interface, {}).get(name)
         if get is None:
             log.warning('mpris: %s.%s asked for', interface, name)
             return None
-        return get()
+        return get(self)
 
     def _on_set_property(self, _connection, _sender, _path, interface, name, value):
         """LoopStatus, Shuffle and Volume ask the Player (its events then change the
