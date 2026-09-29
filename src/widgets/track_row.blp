@@ -7,10 +7,11 @@ using Gtk 4.0;
 template $AppleMusicTrackRow: Box {
   spacing: 12;
 
-  // Albums: the track number, in a column as wide as two digits.
+  // Albums: the track number, in a column as wide as two digits, and three when there is
+  // room (a box set's hundredth track).
   Inscription number_label {
     min-chars: 2;
-    nat-chars: 2;
+    nat-chars: 3;
     xalign: 1;
     valign: center;
     visible: false;
@@ -77,9 +78,10 @@ template $AppleMusicTrackRow: Box {
     }
   }
 
+  // "3:41", and room for an hour or more ("1:02:03") when the row has it.
   Inscription duration_label {
     min-chars: 5;
-    nat-chars: 5;
+    nat-chars: 7;
     xalign: 1;
     valign: center;
 
