@@ -2,7 +2,7 @@
 
 A Gtk.Stack of four pages: synced lyrics as a Gtk.ListView over the Lyrics object's store
 of LyricLine (one wrapping label a row; the line current at the Player's position carries
-the `current` CSS class, the others `dim-label`; a click seeks to the line's start),
+the `current` CSS class, the others `dimmed`; a click seeks to the line's start),
 unsynced lyrics as one wrapping label in a scrolled window, a spinner while the engine
 reads them, and a compact status page otherwise: "Lyrics" with nothing playing, "No
 Lyrics" for a song without them.
@@ -393,7 +393,7 @@ class LyricsView(Gtk.Stack):
 def _set_current(label, current):
     if current:
         label.add_css_class('current')
-        label.remove_css_class('dim-label')
+        label.remove_css_class('dimmed')
     else:
         label.remove_css_class('current')
-        label.add_css_class('dim-label')
+        label.add_css_class('dimmed')

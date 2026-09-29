@@ -36,7 +36,7 @@ class QueueRow(Gtk.Box):
         self.number_label = Gtk.Inscription(min_chars=2, nat_chars=2, xalign=1,
                                             valign=Gtk.Align.CENTER)
         self.number_label.add_css_class('numeric')
-        self.number_label.add_css_class('dim-label')
+        self.number_label.add_css_class('dimmed')
         self.playing_icon = Gtk.Image(icon_name='media-playback-start-symbolic',
                                       valign=Gtk.Align.CENTER, visible=False,
                                       accessible_role=Gtk.AccessibleRole.PRESENTATION)
@@ -67,7 +67,7 @@ class QueueRow(Gtk.Box):
                                             text_overflow=Gtk.InscriptionOverflow.ELLIPSIZE_END,
                                             visible=False)
         self.artist_label.add_css_class('caption')
-        self.artist_label.add_css_class('dim-label')
+        self.artist_label.add_css_class('dimmed')
         titles.append(title_line)
         titles.append(self.artist_label)
         self.append(titles)
@@ -75,7 +75,7 @@ class QueueRow(Gtk.Box):
         self.duration_label = Gtk.Inscription(min_chars=5, nat_chars=5, xalign=1,
                                               valign=Gtk.Align.CENTER)
         self.duration_label.add_css_class('numeric')
-        self.duration_label.add_css_class('dim-label')
+        self.duration_label.add_css_class('dimmed')
         self.append(self.duration_label)
 
     def bind(self, entry, position, current):

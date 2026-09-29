@@ -92,8 +92,8 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 
 - libadwaita widgets and style classes first (`AdwStatusPage`, `AdwSpinner`, `AdwToast`,
   `AdwDialog`, `AdwPreferencesDialog`; `card`, `flat`, `circular`, `heading`, `title-1` to
-  `title-4`, `caption`, `boxed-list`, and `dimmed`, which the code still spells by its older
-  alias `dim-label`). CSS only in `src/style.css`, with no per-widget CSS providers.
+  `title-4`, `caption`, `boxed-list`, `dimmed`; not the older alias `dim-label`). CSS only in
+  `src/style.css`, with no per-widget CSS providers.
 - No hard-coded colours except the accent and text drawn on an item's own colour.
 - Every page fits a 360 px wide window (a `max-width: 400sp` breakpoint narrows margins where
   two tiles would not fit).

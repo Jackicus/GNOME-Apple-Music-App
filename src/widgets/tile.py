@@ -6,7 +6,7 @@ from . import artwork
 from .util import connect_weak
 
 # The subtitle's look inside the tile's markup: about the caption size, at libadwaita's
-# dim-label opacity (its --dim-opacity: 55%, and 90% with the system's high-contrast setting,
+# .dimmed opacity (its --dim-opacity: 55%, and 90% with the system's high-contrast setting,
 # which markup cannot follow by itself; subtitle_markup() does, for tiles bound after a change).
 SUBTITLE = '<span size="smaller" alpha="{alpha}%">{{}}</span>'
 DIM_OPACITY = 55
