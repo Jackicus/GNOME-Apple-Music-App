@@ -435,6 +435,20 @@ class CategoryTileArtTest(WidgetTestCase):
     CATEGORY = {'id': 'c1', 'kind': 'category', 'title': 'Invented Category',
                 'thumb': '/a/category', 'artColor': '#1b4965'}
 
+    def test_without_a_colour_the_theme_colours_the_text(self):
+        from applemusic.widgets.category_tile import CategoryTile
+
+        item = Item(dict(self.CATEGORY, artColor=None))
+        tile = CategoryTile()
+        tile.bind(item)
+        self.assertFalse(tile.has_css_class('dark-art'))
+        self.assertFalse(tile.has_css_class('light-art'))
+        # A colour that arrives later, and goes again.
+        item.merge(dict(self.CATEGORY, artColor='#ffd166'), replace=True)
+        self.assertTrue(tile.has_css_class('light-art'))
+        item.merge(dict(self.CATEGORY, artColor=None), replace=True)
+        self.assertFalse(tile.has_css_class('dark-art') or tile.has_css_class('light-art'))
+
     def test_decoded_at_its_size_and_never_none(self):
         from applemusic.widgets.category_tile import ART_SIZE, CategoryTile
 
