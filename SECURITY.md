@@ -53,9 +53,10 @@ deletes the cache only.
 
 ## What the app never does
 
-- It sends nothing to anyone but Apple: the only network traffic is the music.apple.com page in
+- The app itself sends nothing to anyone but Apple: its traffic is the music.apple.com page in
   its own Chrome (and the Apple services that page uses) and artwork downloaded directly from
-  Apple's servers.
+  Apple's servers. Chrome, as the engine, also talks to Google as any Chrome does (component
+  updates, the Widevine module among them, and Safe Browsing); the app does not turn that off.
 - No telemetry, analytics, crash reporting or update checks.
 - It never sees or stores your Apple Account password: you sign in on Apple's own page in
   Chrome, and the session lives in Chrome's profile.
