@@ -318,6 +318,87 @@ class FollowTest(WidgetTestCase):
         self.assertGreater(len(self.loader.requests), count)
 
 
+class HeroCoverTest(WidgetTestCase):
+    """A hero card fetches its 640 px cover when the thumbnail is too small for it."""
+
+    def setUp(self):
+        super().setUp()
+        from applemusic.widgets import hero_tile
+
+        self.fetched = []
+        self.spawned = []
+
+        async def fetch_cover(item):
+            self.fetched.append(item.id)
+            return True
+
+        app = mock.Mock(spawn=self.spawned.append)
+        for target, name, value in ((hero_tile, 'fetch_cover', fetch_cover),
+                                    (hero_tile.Gio.Application, 'get_default', lambda: app)):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def run_spawned(self):
+        import asyncio
+
+        async def run_all():
+            for coroutine in self.spawned:
+                await coroutine
+
+        asyncio.run(run_all())
+        self.spawned.clear()
+
+    def card(self, scale):
+        from applemusic.widgets.hero_tile import HeroTile
+
+        patcher = mock.patch.object(HeroTile, 'get_scale_factor', lambda _self: scale)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return self.show(HeroTile())
+
+    def test_a_mapped_card_fetches_its_cover_once_bound(self):
+        card = self.card(scale=2)
+        card.bind(Item(dict(ALBUM, artUrl='https://x.invalid/a1/640x640bb.jpg')))
+        self.assertEqual(len(self.spawned), 1)
+        pump()
+        count = len(self.loader.requests)
+        self.run_spawned()
+        self.assertEqual(self.fetched, [ALBUM['id']])
+        pump()
+        self.assertGreater(len(self.loader.requests), count)  # the cover looked for again
+        self.assertEqual(self.loader.requests[-1][0], ALBUM['art'])
+
+    def test_no_fetch_without_a_url_or_at_one_times(self):
+        card = self.card(scale=2)
+        card.bind(Item(dict(ALBUM)))  # no artUrl: a library item the sync did not name
+        card.unbind()
+        self.assertEqual(self.spawned, [])
+        card = self.card(scale=1)  # 260 px: the 320 px thumbnail is enough
+        card.bind(Item(dict(ALBUM, artUrl='https://x.invalid/a1/640x640bb.jpg')))
+        self.assertEqual(self.spawned, [])
+
+    def test_freed(self):
+        card = self.card(scale=2)
+        card.bind(Item(dict(ALBUM)))
+        pump()
+        ref = self.drop(card)
+        del card
+        self.assert_freed(ref)
+
+    def test_a_card_rebound_meanwhile_is_left_alone(self):
+        card = self.card(scale=2)
+        card.bind(Item(dict(ALBUM, artUrl='https://x.invalid/a1/640x640bb.jpg')))
+        card.unbind()
+        card.bind(Item(dict(ALBUM, id='l.a2', art='/cache/art/a2.jpg',
+                            thumb='/cache/thumb/a2.jpg')))
+        pump()
+        count = len(self.loader.requests)
+        self.run_spawned()
+        pump()
+        self.assertEqual(len(self.loader.requests), count)
+
+
 class TileLabelTest(WidgetTestCase):
     """The title and subtitle, one Gtk.Inscription: markup for a subtitle, text without."""
 
