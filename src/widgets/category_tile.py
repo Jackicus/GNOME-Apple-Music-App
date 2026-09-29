@@ -51,15 +51,17 @@ class CategoryTile(Gtk.Overlay):
 
     def _show_colour(self, item):
         colour = artwork.art_colour(item.art_color)
-        # Made deeper (or lighter) where the name would not read on it (band_colour).
-        self._colour, dark = (artwork.band_colour(colour) if colour is not None
-                              else (None, True))
-        if dark:
-            self.add_css_class('dark-art')
+        if colour is None:
+            # No colour of its own: style.css's tint of the text colour, and the theme's text
+            # (white text would vanish on the light theme's page).
+            self._colour = None
+            self.remove_css_class('dark-art')
             self.remove_css_class('light-art')
         else:
-            self.add_css_class('light-art')
-            self.remove_css_class('dark-art')
+            # Made deeper (or lighter) where the name would not read on it (band_colour).
+            self._colour, dark = artwork.band_colour(colour)
+            self.add_css_class('dark-art' if dark else 'light-art')
+            self.remove_css_class('light-art' if dark else 'dark-art')
         self.queue_draw()
 
     def _on_item_notify(self, item, pspec):
