@@ -5,7 +5,7 @@
   <project_license>GPL-2.0-or-later</project_license>
 
   <name>Apple Music</name>
-  <summary>Listen to your Apple Music library</summary>
+  <summary>Play your library, playlists and radio</summary>
   <description>
     <p>
       A GNOME app for Apple Music: your library, playlists, radio and
@@ -16,6 +16,11 @@
       background: Apple's streams are protected with Widevine, which Google
       Chrome includes and Chromium does not. It needs Google Chrome and an
       Apple Music subscription.
+    </p>
+    <p>
+      The app talks only to Apple, and controls its Chrome through a private
+      pipe rather than a network port. Chrome keeps its own connections to
+      Google, as any Chrome does, for example to update the Widevine module.
     </p>
     <p>
       Not affiliated with Apple. Apple Music is a trademark of Apple Inc.
@@ -30,8 +35,20 @@
   <url type="homepage">https://github.com/Jackicus/GNOME-Apple-Music-App</url>
   <url type="bugtracker">https://github.com/Jackicus/GNOME-Apple-Music-App/issues</url>
   <url type="vcs-browser">https://github.com/Jackicus/GNOME-Apple-Music-App</url>
+  <url type="contribute">https://github.com/Jackicus/GNOME-Apple-Music-App/blob/main/CONTRIBUTING.md</url>
+  <url type="translate">https://github.com/Jackicus/GNOME-Apple-Music-App#translating</url>
 
-  <content_rating type="oars-1.1" />
+  <translation type="gettext">apple-music</translation>
+
+  <provides>
+    <binary>apple-music</binary>
+  </provides>
+
+  <!-- Songs and lyrics marked explicit are played and shown as they are. -->
+  <content_rating type="oars-1.1">
+    <content_attribute id="language-profanity">intense</content_attribute>
+    <content_attribute id="social-info">none</content_attribute>
+  </content_rating>
 
   <requires>
     <display_length compare="ge">360</display_length>
@@ -45,42 +62,42 @@
 
   <screenshots>
     <screenshot type="default" environment="gnome">
-      <caption>Home, with your heavy rotation and what you added recently</caption>
+      <caption>Home: your heavy rotation and what you added recently, a song playing below</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/home-light.png</image>
     </screenshot>
     <screenshot environment="gnome">
-      <caption>Your albums</caption>
+      <caption>Your albums in a grid, sorted the way you choose</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/albums-light.png</image>
     </screenshot>
     <screenshot environment="gnome">
-      <caption>An album</caption>
+      <caption>An album's page, with its first song playing</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/album-light.png</image>
     </screenshot>
     <screenshot environment="gnome">
-      <caption>Now Playing, with synced lyrics</caption>
+      <caption>Now Playing, with the lyrics following the song</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/now-playing-light.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
-      <caption>Home, with your heavy rotation and what you added recently</caption>
+      <caption>Home: your heavy rotation and what you added recently, a song playing below</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/home-dark.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
-      <caption>Your albums</caption>
+      <caption>Your albums in a grid, sorted the way you choose</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/albums-dark.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
-      <caption>An album</caption>
+      <caption>An album's page, with its first song playing</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/album-dark.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
-      <caption>Now Playing, with synced lyrics</caption>
+      <caption>Now Playing, with the lyrics following the song</caption>
       <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Apple-Music-App/main/data/screenshots/now-playing-dark.png</image>
     </screenshot>
   </screenshots>
 
   <branding>
     <color type="primary" scheme_preference="light">#ffc2cb</color>
-    <color type="primary" scheme_preference="dark">#7a1325</color>
+    <color type="primary" scheme_preference="dark">#3d0b17</color>
   </branding>
 
   <releases>
@@ -97,6 +114,7 @@
           <li>GNOME's media controls and the keyboard's media keys</li>
           <li>Favourites, Play Next and Play Later, and adding to your library and playlists from context menus or by dragging songs</li>
           <li>Playback in the background with the window closed, keyboard navigation throughout, and screen reader labels</li>
+          <li>Keys as elsewhere in GNOME: Space presses a focused button and otherwise plays or pauses, and Ctrl+Shift+N opens Now Playing</li>
         </ul>
       </description>
     </release>
