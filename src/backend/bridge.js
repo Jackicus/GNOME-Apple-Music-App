@@ -116,7 +116,8 @@
         return {
             id: id,
             // The API type ('songs', 'library-songs', 'music-videos',
-            // 'library-music-videos', 'stations'…): what the heart rates it as.
+            // 'library-music-videos', 'stations'…), or MusicKit's own name for an
+            // item it made ('song', 'musicVideo'): what the heart rates it as.
             type: item.type || '',
             catalogId: catalogId,
             title: item.title || attrs.name || '',

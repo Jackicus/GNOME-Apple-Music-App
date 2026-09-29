@@ -119,6 +119,8 @@ Track = {"id": "i.…", "catalogId": "…" /* or null */, "title": "…", "artis
          "index": 0,                     // its place in its group's `play` queue
          "thumb": "…" /* or null */,     // a playlist's rows
          "type": "library-songs"}        // the API's: songs, music-videos, library-…, or ''
+                                         // (the item playing may carry MusicKit's own
+                                         // 'song' or 'musicVideo' instead)
 ```
 
 The app shows none of the data's own words: a missing name is '', the app names shelves by

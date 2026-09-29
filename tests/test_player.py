@@ -267,6 +267,21 @@ class EventTest(unittest.TestCase):
         self.assertEqual((self.player.position, self.player.duration), (0.0, 214.0))
         self.assertIn('track', self.notified)
 
+    def test_kind_takes_musickits_own_item_types_too(self):
+        """MusicKit types an item it made from a catalog queue 'song' or 'musicVideo',
+        not the API's 'songs' or 'music-videos': the heart must rate those too."""
+        for number, (resource, kind) in enumerate((
+                ('songs', 'song'), ('library-songs', 'song'), ('song', 'song'),
+                ('music-videos', 'video'), ('library-music-videos', 'video'),
+                ('musicVideo', 'video'), ('music-video', 'video'), ('stations', ''), ('', ''))):
+            track = dict(TRACK, id=f'i.kind{number}', type=resource)
+            self.engine.event('nowPlayingItemDidChange', {'track': track, 'index': number})
+            self.assertEqual(self.player.track.kind, kind, resource)
+        track = dict(TRACK, id='i.kind-none')
+        track.pop('type', None)
+        self.engine.event('nowPlayingItemDidChange', {'track': track, 'index': 99})
+        self.assertEqual(self.player.track.kind, 'song')  # a Track without one is a song
+
     def test_the_same_item_again_is_not_a_change(self):
         with patched_clocks() as clock:
             self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
