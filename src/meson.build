@@ -67,8 +67,8 @@ gnome.compile_resources(
 
 # Where --demo reads its invented library when APPLE_MUSIC_CACHE is unset. The development
 # profile points at the source tree's build/demo (scripts/demo_library.py's default output,
-# which scripts/demo.sh fills); a release build names no source path, and --demo there reads
-# build/demo under the directory it is started from.
+# which scripts/demo.sh fills); a release build names no source path, and --demo there needs
+# APPLE_MUSIC_CACHE.
 demo_dir = ''
 if get_option('profile') == 'development'
   demo_dir = meson.project_source_root() / 'build' / 'demo'

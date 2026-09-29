@@ -64,7 +64,8 @@ EVENT_PREFIX = 'am:'    # bridge events are dispatched as 'am:<MusicKit event na
 GLOBAL = 'window.__appleMusicLibrary'
 BRIDGE_TIMEOUT = 15.0   # how long the page gets to load MusicKit
 PAGE_WAIT = 15.0        # how long a new Chrome gets to show music.apple.com
-REINJECT_ATTEMPTS = 4   # tries at the bridge after a navigation (the last after reloading)
+REINJECT_ATTEMPTS = 4   # tries at the bridge after a navigation (the last after navigating
+                        # the page to music.apple.com again)
 BIG_MESSAGE = 512 * 1024  # answers at least this long are parsed in a thread
 READ_CHUNK = 1 << 20
 

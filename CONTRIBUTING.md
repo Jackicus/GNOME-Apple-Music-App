@@ -14,10 +14,11 @@ it.
 ```bash
 scripts/demo.sh          # build the development profile into ./build and run it on an
                          # invented library: no Chrome, no Apple Account
-scripts/run.sh           # the same with the real engine (starts Chrome on your profile)
+scripts/run.sh           # the same with the real engine (Chrome on the app's own profile)
 scripts/check.sh         # byte-compile, ruff, build, unit tests, desktop/metainfo/schema checks
 python3 -m unittest discover -s tests -v                        # the unit tests alone
-scripts/screenshot.py --demo build/shot.png --page albums [--light] [--size 360x640]
+scripts/headless.sh scripts/screenshot.py --demo build/shot.png --page albums [--light]
+scripts/headless.sh COMMAND   # any of these on an invisible display, off your desktop
 ```
 
 `scripts/check.sh` is what CI runs (in an Arch Linux container, with widget tests on Xvfb). It
@@ -36,7 +37,8 @@ logging, settings, actions) are in [CLAUDE.md](CLAUDE.md), with the rules for ea
 - Every user-visible string goes through `_()`; a new file with strings goes in
   `po/POTFILES.in`. Source strings use en-GB spelling.
 - New Python modules go in `src/meson.build`'s install list, new `.blp` files in its blueprint
-  list and in `src/applemusic.gresource.xml` (a test checks these lists).
+  list and their `.ui` (by bare name) in `src/applemusic.gresource.xml` (a test checks these
+  lists).
 - Backend and model changes come with a unit test (stdlib `unittest`) in `tests/`.
 - 4-space Python, single quotes; `ruff check .` must be clean.
 

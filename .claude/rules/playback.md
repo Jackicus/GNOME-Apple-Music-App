@@ -53,8 +53,8 @@ paths:
   over a `Coalescer`, `HeartControl`, `RemoteCover`): change them there, and test their
   decisions in tests/test_transport.py with stand-in buttons. The bar announces each new
   item through the window, once per item, and with nothing playing hides its seek slider
-  and heart. The sheet's layout follows three window properties set by breakpoints in
-  window.blp: `wide` (900sp and up: the item beside the tabs), `compact` (600sp and under:
+  and heart. The sheet's layout follows three of its own properties, set by window.blp's
+  breakpoints: `wide` (900sp and up: the item beside the tabs), `compact` (600sp and under:
   a smaller cover) and `short` (a window too low for the cover over the titles: a 96 px
   cover beside them). Only the last matching breakpoint applies, so each width band has a
   short variant repeating its setters; check every size with

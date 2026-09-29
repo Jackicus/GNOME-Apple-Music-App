@@ -28,7 +28,8 @@ changes, change it here, with the date. The plan they came from is in
   header bar for titles and back buttons, which is what GNOME users expect.
 - **Playlist folders in the sidebar** (2026-09-27). Folders are sidebar items with a folder icon
   and a disclosure arrow; activating one shows or hides its playlists and opens the folder's
-  page. `AdwSidebar` cannot indent, so nesting shows through order and the arrow.
+  page (in the narrow layout's page mode it only opens the page). `AdwSidebar` cannot indent,
+  so nesting shows through order, the arrow and a nested item's subtitle naming its folder.
 - **Keys as GNOME has them** (2026-09-28). Space presses a focused button, switch, check box or
   list row, as everywhere in GTK; it plays or pauses only on a tile, a list item, the seek
   slider or nothing. Now Playing is Ctrl+Shift+N, leaving Ctrl+N to the HIG's "New". Bare keys
@@ -83,7 +84,8 @@ changes, change it here, with the date. The plan they came from is in
   running until the next start.
 - **State from events, not polling** (2026-09-27). What is playing comes from MusicKit's events,
   forwarded through a CDP binding (`Runtime.addBinding`), plus one read when the engine comes
-  up. The only polling is while waiting for sign-in.
+  up. The only polling is while waiting for sign-in, and briefly after it for the account's
+  name.
 - **The backend is a fork** (2026-09-28). `src/backend/` began as a copy of the extension's
   backend, and this app has since rewritten large parts of it. It is maintained here, for this
   app, in the app's own style (its provenance is at the end of `src/backend/README.md`).
@@ -98,7 +100,8 @@ changes, change it here, with the date. The plan they came from is in
 - **One navigation view** (2026-09-27). The content pane is one `AdwNavigationView`. A sidebar
   item replaces its stack with the destination's root page, made on first visit and kept (a
   playlist's or folder's page only while it is among the last few shown); tiles push detail
-  pages; root pages show a large in-content title and hide the header bar's.
+  pages; root pages show a large in-content title and show the header bar's only while that
+  one is out of view.
 - **The cache as the library** (2026-09-27). `$XDG_CACHE_HOME/apple-music/library.json` is the
   one library snapshot, parsed off the main thread from the start of the process and wrapped
   into GObjects a section at a time. Thumbnails (320 px) are fetched for every item at sync;
@@ -126,8 +129,10 @@ changes, change it here, with the date. The plan they came from is in
   kept every popped page alive. `tests/test_page_lifetime.py` holds the line.
 - **Errors as sentences** (2026-09-28). Everything that fails in the engine is an
   `EngineError` with a code; the user sees one plain-text toast per failure, whose sentence
-  and button (`src/errors.py`) depend only on the code, and the detail goes to the log. A page
-  that shows a state for the failure (Sign In, Start Engine, Try Again) does not toast it too.
+  and button (`src/errors.py`) follow the code, and the detail goes to the log. A play MusicKit
+  refused is worded from MusicKit's own code; sign-in and a failed sync have sentences of their
+  own. A page that shows a state for the failure (Sign In, Start Engine, Try Again) does not
+  toast it too.
 - **The memory target** (2026-09-29). Anonymous memory, not RSS, which adds what the libraries
   and the GL driver map: under 250 MB after every page is browsed twice on the big invented
   library, and pages opened and closed leave at most 5 MB behind (`docs/notes.md`).
