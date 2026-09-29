@@ -5,13 +5,13 @@
 entry playing on.
 
 A Gtk.ListView over a Gtk.SliceListModel of player.queue (a Gio.ListStore of NowPlaying)
-that starts at the entry playing (slice_offset), so the list shows what its name says: the
-entry playing first, marked with a play icon in place of its number and a bold title, then
-what comes next. Rows are like a playlist's track rows (a number, the title with its
-explicit badge, the artist, the duration). Activating a row (a double click, or Enter) plays
-that entry (player.queue_jump, with the slice's offset put back). An empty queue shows a
-compact status page. The list is named "Up Next" for assistive technology and each row by
-labels.track_label.
+that starts at the entry playing (slice_offset) and runs to the queue's end (slice_size), so
+the list shows what its name says: the entry playing first, marked with a play icon in place
+of its number and a bold title, then what comes next. Rows are like a playlist's track rows
+(a number, the title with its explicit badge, the artist, the duration). Activating a row (a
+double click, or Enter) plays that entry (player.queue_jump, with the slice's offset put
+back). An empty queue shows a compact status page. The list is named "Up Next" for assistive
+technology and each row by labels.track_label.
 """
 
 from gettext import gettext as _
@@ -27,6 +27,13 @@ def slice_offset(queue_index):
     """Where the Up Next slice of the queue starts: the entry playing, or the top when
     nothing is (queue_index -1)."""
     return max(queue_index, 0)
+
+
+def slice_size(offset):
+    """The Up Next slice's size from `offset`: the rest of the queue, however long it gets.
+    Not GLib.MAXUINT: a Gtk.SliceListModel whose offset plus size passes G_MAXUINT wraps its
+    end and ignores the queue's changes after it (a new queue, entries added at its end)."""
+    return GLib.MAXUINT32 - offset
 
 
 class QueueRow(Gtk.Box):
@@ -137,7 +144,7 @@ class QueueView(Gtk.Stack):
     def set_player(self, player, app):
         self._player = player
         self._app = app
-        self._slice = Gtk.SliceListModel(model=player.queue, offset=0, size=GLib.MAXUINT)
+        self._slice = Gtk.SliceListModel(model=player.queue, offset=0, size=slice_size(0))
         self.list_view.set_model(Gtk.NoSelection(model=self._slice))
         player.queue.connect('items-changed', lambda *_: self._on_items_changed())
         player.connect('notify::queue-index', lambda *_: self._on_index())
@@ -163,7 +170,9 @@ class QueueView(Gtk.Stack):
     def _on_index(self):
         """The entry playing changed: the slice starts there, and the rows show it."""
         index = self._player.queue_index
-        self._slice.set_offset(slice_offset(index))
+        offset = slice_offset(index)
+        self._slice.set_size(slice_size(offset))  # first: only the offset changes the items
+        self._slice.set_offset(offset)
         for position, row in self._rows.items():
             current = position == 0 and index >= 0
             row.set_current(current)
