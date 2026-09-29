@@ -6,20 +6,22 @@ template $AppleMusicRadioPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow (a phone): two station tiles a row need narrower sides, or they would make the
-    // page wider than the window.
+    // Narrow (a phone): two station tiles a row, centred as a pair (the margins would make
+    // the page wider than the window).
     Adw.Breakpoint {
       condition ("max-width: 400sp")
 
       setters {
         flow_box.margin-start: 6;
         flow_box.margin-end: 6;
+        flow_box.max-children-per-line: 2;
+        flow_box.halign: center;
       }
     }
 
     child: Adw.ToolbarView {
       [top]
-      Adw.HeaderBar {
+      Adw.HeaderBar header_bar {
         show-title: false;
       }
 
@@ -47,7 +49,7 @@ template $AppleMusicRadioPage: Adw.NavigationPage {
         StackPage {
           name: "items";
 
-          child: ScrolledWindow {
+          child: ScrolledWindow scrolled_window {
             hscrollbar-policy: never;
 
             styles [
@@ -82,7 +84,7 @@ template $AppleMusicRadioPage: Adw.NavigationPage {
                 orientation: vertical;
                 spacing: 6;
 
-                Label {
+                Label more_label {
                   label: _("More Stations");
                   xalign: 0;
                   ellipsize: end;
@@ -107,6 +109,12 @@ template $AppleMusicRadioPage: Adw.NavigationPage {
                   margin-start: 21;
                   margin-end: 21;
                   child-activated => $on_station_activated();
+
+                  accessibility {
+                    labelled-by: [
+                      more_label,
+                    ];
+                  }
                 }
               }
             };
