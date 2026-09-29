@@ -112,5 +112,27 @@ class GridTest(PageTestCase):
         self.assertEqual(page.empty_page.get_title(), 'Folder Not Found')
 
 
+
+class FirstSyncTest(PageTestCase):
+    """While the first sync fills an empty library, the pages are on their way, not empty."""
+
+    async def test_home_albums_and_songs_show_loading_during_the_first_sync(self):
+        from applemusic import pages
+        from applemusic.sections import sidebar_sections
+
+        destinations = {destination.key: destination
+                        for _title, section in sidebar_sections() for destination in section}
+        self.library.syncing = True  # an empty library ('empty'), the first sync running
+        shown = {}
+        for key in ('home', 'albums', 'songs', 'radio'):
+            page = await self.show_root(pages.create(destinations[key], self.library))
+            await self.turn()
+            shown[key] = page.stack.get_visible_child_name()
+        self.assertEqual(shown, dict.fromkeys(shown, 'loading'))
+
+        self.library.syncing = False  # it ended with nothing: empty
+        self.assertEqual(page.stack.get_visible_child_name(), 'empty')
+
+
 if __name__ == '__main__':
     unittest.main()
