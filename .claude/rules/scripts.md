@@ -28,7 +28,10 @@ paths:
 - `screenshot.py` without `--demo` reads the release build's real cache (`APPLE_MUSIC_CACHE`
   names the .Devel build's): never for a shot that is committed or shared. `--now-playing
   [lyrics|queue]` opens the sheet on an invented item; `--playing` puts the item on the Player
-  with the sheet closed (the bar's playing state); both need `--demo`.
+  with the sheet closed (the bar's playing state); both need `--demo`. `--signed-in [NAME]`,
+  `--banner sign-in|expired` and `--sidebar` (the narrow layout's sidebar) show those states;
+  `--help` lists the rest. It shoots once no artwork decode has been in flight for a few polls
+  (5 s at most), so a new step that shows artwork needs no delay of its own for it.
 - `a11y_check.py` cannot send real key presses here: `press()` runs the controllers a real event
   would reach. `--names` runs a private AT-SPI bus (a dbus-daemon and at-spi2-registryd) and
   stops it however the script exits.

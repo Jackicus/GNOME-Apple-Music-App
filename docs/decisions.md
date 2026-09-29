@@ -29,6 +29,28 @@ changes, change it here, with the date. The plan they came from is in
 - **Playlist folders in the sidebar** (2026-09-27). Folders are sidebar items with a folder icon
   and a disclosure arrow; activating one shows or hides its playlists and opens the folder's
   page. `AdwSidebar` cannot indent, so nesting shows through order and the arrow.
+- **Keys as GNOME has them** (2026-09-28). Space presses a focused button, switch, check box or
+  list row, as everywhere in GTK; it plays or pauses only on a tile, a list item, the seek
+  slider or nothing. Now Playing is Ctrl+Shift+N, leaving Ctrl+N to the HIG's "New". Bare keys
+  and editing chords are never application accelerators (`src/keyboard.py` decides them).
+- **Music videos play as audio** (2026-09-28). The engine is headless, so a video tile plays
+  the video's sound, as the context menu's Play does, rather than refusing or opening a
+  browser. Easy to change to a toast with Open in Browser.
+- **MPRIS Stop pauses** (2026-09-28). Stop pauses and seeks to the start, keeping the item, as
+  the spec allows; the Shell then keeps showing the player, where ending the session would
+  drop it.
+- **Favourite is a heart** (2026-09-28), everywhere: the sidebar's Favourite Songs and its
+  page as well as the player bar and Now Playing, with the bundled heart icons.
+- **A refresh on a schedule** (2026-09-28). The library is synced when the last sync is older
+  than the chosen interval, or when library.json is missing, unreadable or of an older
+  version, checked by a timer, when the engine comes up and when the library has been read;
+  only with the engine up and signed in, so a timer never starts Chrome.
+- **Sign-out revokes the session** (2026-09-28). Signing out calls MusicKit's `unauthorize()`
+  before anything is deleted, so the token stops working at Apple's end too; when the engine
+  is down, it starts Chrome headless for up to 20 seconds to do so, then wipes whatever
+  happens. The alternative, skipping the revocation when the engine is down, is quicker but
+  leaves the token valid until Apple expires it. Every job that writes the cache is stopped
+  first (the cache's generation), so nothing is written after the wipe.
 
 ## Engine
 
@@ -64,7 +86,7 @@ changes, change it here, with the date. The plan they came from is in
   up. The only polling is while waiting for sign-in.
 - **The backend is a fork** (2026-09-28). `src/backend/` began as a copy of the extension's
   backend, and this app has since rewritten large parts of it. It is maintained here, for this
-  app; the old files keep the extension's code style until they are reformatted.
+  app, in the app's own style (its provenance is at the end of `src/backend/README.md`).
 
 ## Code
 
@@ -102,6 +124,15 @@ changes, change it here, with the date. The plan they came from is in
   be dropped connects its children's signals through `widgets.util.connect_weak()` and has no
   Blueprint handlers, because a connection to its own bound method forms a cycle through C that
   kept every popped page alive. `tests/test_page_lifetime.py` holds the line.
+- **Errors as sentences** (2026-09-28). Everything that fails in the engine is an
+  `EngineError` with a code; the user sees one plain-text toast per failure, whose sentence
+  and button (`src/errors.py`) depend only on the code, and the detail goes to the log. A page
+  that shows a state for the failure (Sign In, Start Engine, Try Again) does not toast it too.
+- **The memory target** (2026-09-29). Anonymous memory, not RSS, which adds what the libraries
+  and the GL driver map: under 250 MB after every page is browsed twice on the big invented
+  library, and pages opened and closed leave at most 5 MB behind (`docs/notes.md`).
+- **Comments describe the code** (2026-09-28), as it is and why: no phase numbers, review IDs,
+  plans or history, which belong in commit messages.
 
 ## Open
 

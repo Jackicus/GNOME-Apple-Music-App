@@ -41,7 +41,8 @@ Each of these was checked against the toolkit (or found the hard way). The sideb
 - A `Gtk.Stack` will not switch to a child that is not visible. `Gtk.Inscription`'s CSS name is
   `label`.
 - Several `Adw.Breakpoint`s: only the last matching one applies, so the window's narrower one
-  (600sp) repeats the wider one's (640sp) setters; the `min-width: 900sp` one is separate. A
+  (600sp) repeats the wider one's (640sp) setters, and each width band's short variant
+  (`max-height: 880sp`, 640sp for the wide one) repeats its band's (playback.md). A
   navigation page takes no breakpoints: put an `Adw.BreakpointBin` inside it.
 - libadwaita's `.card` sets its own `color`, so a card placeholder on a coloured background
   needs `color: inherit`; `--card-bg-color` is white in the light theme.

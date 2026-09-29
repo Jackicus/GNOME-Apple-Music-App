@@ -10,7 +10,7 @@ rebuilding), `pages/grid.py` (expression sorters against a custom sorter), `libr
 (`raw_property`'s and `TrackRecord`'s memory, `SongOrder`'s keys, `apply_diff`, `paused_gc`,
 `yield_to_frames`), and `widgets/artwork.py` (texture sizes, the cache budget). The
 performance pass that produced most of them is written up in `docs/history/build-plan.md`, in
-its "Performance pass" phase.
+its "Performance pass" section.
 
 ## The development machine
 
@@ -64,11 +64,35 @@ its "Performance pass" phase.
   160 px (headless, 40,000 songs, 2026-09-29): 3.1-3.5 ms of work a frame against 2.9 ms
   without stand-ins, the longest frame the same (5.2-5.6 ms). Kept: the rows show the cover at
   once instead of the placeholder.
-- Hidden root pages keep their list and grid widgets (the window keeps each visited root page).
+- Hidden root pages keep their list and grid widgets (the window keeps each fixed
+  destination's root page once visited, and the last eight playlist and folder pages).
   Letting the six hidden views' item widgets go while they are hidden, and rebuilding them on a
   revisit, would free about 6.3 MB on the 3,000-album, 40,000-song library (headless,
   2026-09-29): under the 10 MB it had to save to be worth a rebuild on every revisit, so it is
   not done.
+
+## Memory
+
+The target (`.claude/rules/performance.md`, checked by `scripts/bench.py`): anonymous memory
+under 250 MB after every page has been browsed twice on the 3,000-album, 40,000-song library,
+and pages opened and closed leaving at most 5 MB behind. RSS is not the target: it adds what
+the libraries and the GL driver map, which the app cannot shrink (a bare `Adw.ApplicationWindow`
+is 158 MB on the desktop, 105 of it file-backed; 192 MB headless, 64 of it anonymous).
+
+- Measured headless, 2026-09-29: anonymous memory 212-215 MB after every page browsed twice
+  (RSS about 367 MB); the pages step (20 albums, 5 artists, 5 See All opened and popped)
+  leaves -1 to +1 MB after a warm-up round, and frees every page. Its first round grows RSS by
+  about 6 MB once: the artwork's texture cache filling to its budget.
+- What brought it there (2026-09-28/29): each track of library.json kept as a tuple
+  (`TrackRecord`), the parsed library 47.5 MB to 32.4; the Songs orders keeping ranks in
+  arrays instead of collation keys, 22.3 MB to 3.1; a reload keeping one copy of each
+  unchanged dict, not two, 30 MB less after a sync; the texture cache sized by the scale factor
+  (8 MB at 1x, not 32), anonymous memory after scrolling all of Albums 156 MB to 137; pages,
+  shelves and dialogs freed once dropped (weak connections).
+- Not done, about 21 MB more: a lazy Songs model, a `Gio.ListModel` over the track records
+  that wraps a `Track` only for the rows GTK asks for, instead of 40,000 Tracks and three
+  stores. It changes the type of `library.songs` and moves Search's library song filter into
+  Python; with it, the per-Track `search_key` could go too.
 
 ## Chrome and the page
 
@@ -77,8 +101,9 @@ its "Performance pass" phase.
 - `Gio.InputStream.read_line_async` returns an empty line at the end of the stream, which cannot
   be told from a blank line; the stderr relay reads bytes instead.
 - Apple's page is Svelte with hashed class names. Signed out, the sidebar footer holds
-  `div.auth-content > button.signin`; the signed-in markup that `account_name()` reads is not
-  verified.
+  `div.auth-content > button.signin`. Signed in, the account menu names the user in
+  `.account-menu .user__name` (seen live on 2026-09-28), which `account_name()` reads first,
+  once the page has drawn the menu, some seconds after authorization.
 - The web player's own addresses (read from its router, 2026-09-28): a library playlist is
   `https://music.apple.com/library/playlist/<p. id>`, a library album
   `https://music.apple.com/library/albums/<l. id>` (only the owner can open either; a library

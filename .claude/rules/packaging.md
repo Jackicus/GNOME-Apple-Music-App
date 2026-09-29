@@ -36,8 +36,9 @@ paths:
   runs; each is skipped when its tool is missing. A new settings key has a summary.
 - The minimum versions live in `meson.build` (with the reason next to the GLib one). Raising
   one also means README.md, CONTRIBUTING.md, the PKGBUILD's depends and CI's package list.
-- The metainfo lists its screenshots by `raw.githubusercontent.com/…/main/data/screenshots/…`
-  URLs: renaming or removing a screenshot breaks every metainfo already installed. Screenshots
+- The metainfo lists its screenshots by `raw.githubusercontent.com/…/data/screenshots/…`
+  URLs, on `main` between releases and pinned to the tag at a release (docs/release.md):
+  renaming or removing a screenshot breaks the metainfo of any build that names it. Screenshots
   come from the demo library only (the `screenshots` skill).
 - `build-aux/aur/PKGBUILD` is the AUR package's source. After any change to it:
   `updpkgsums && makepkg --printsrcinfo > .SRCINFO`. Test it without installing the package.

@@ -9,8 +9,8 @@ Target: $ARGUMENTS
 1. Read CLAUDE.md, `.claude/rules/ui.md` and `.claude/rules/gtk-notes.md`.
 2. Shoot the target with the `screenshots` skill: the default size in dark and `--light`, then
    `--size 400x700` and `--size 360x640`, plus the states that matter for it (empty, loading,
-   signed out, `--signed-in`, `--now-playing`, `--search`, `--context-menu`, `--preferences`,
-   `--dialog`).
+   signed out, `--signed-in`, `--banner`, `--playing`, `--now-playing`, `--search`,
+   `--context-menu`, `--sidebar`, `--preferences`, `--dialog`).
 3. Look at every PNG and compare it with the GNOME HIG (https://developer.gnome.org/hig/) and
    with how GNOME's own apps (Music, Nautilus, Settings) handle the same thing:
    - header bars: root pages carry a `title-1` in the content and no header title; pushed
@@ -24,6 +24,7 @@ Target: $ARGUMENTS
    - the Apple Music web player's arrangement of the same page (shelves, hero cards, grids;
      "Reference layout" in `docs/history/build-plan.md`), where it does not fight the HIG.
 4. Prefer libadwaita widgets and style classes; remove CSS that a style class covers.
-5. Fix, shoot again and look again. If focus or keys changed, run `scripts/a11y_check.py`
-   (also `--size 360x640`). Run `scripts/check.sh` and commit; describe the before and after in
-   the message (the shots stay in build/).
+5. Fix, shoot again and look again. If focus or keys changed, run
+   `scripts/headless.sh scripts/a11y_check.py` (also `--size 360x640`). Run
+   `scripts/headless.sh scripts/check.sh` and commit; describe the before and after in the
+   message (the shots stay in build/).

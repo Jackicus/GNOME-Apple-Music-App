@@ -17,14 +17,18 @@ Ground rules:
 1. Ask which build holds the sign-in if the user has not said. The release build uses the
    Chrome profile `$XDG_DATA_HOME/apple-music/chrome` and the cache
    `$XDG_CACHE_HOME/apple-music`; the .Devel build (what `scripts/run.sh` runs) `chrome-devel`
-   and `apple-music-devel`. Both read one `signed-in` setting, so it can say yes for a profile
-   that is not signed in. Before the app runs, `scripts/am.py status` (release) or
+   and `apple-music-devel`, and its own sign-in keys (`signed-in-devel` and the other `-devel`
+   account keys), so a .Devel build can start signed out, with an empty library, while its
+   profile is still authorised with Apple. Before the app runs, `scripts/am.py status` (release) or
    `scripts/am.py --devel status` (.Devel) says whether a Chrome holds that profile and, when
    none does, starts a headless Chrome of its own on it for the command, reports whether
    MusicKit is authorized, and stops it.
 2. Start the app with a DevTools port for this check only and its log in the scratch directory:
    `APPLE_MUSIC_DEBUG_PORT=<free port> scripts/run.sh --debug 2> <scratch>/app.log` (the .Devel
-   build; a release install is `apple-music --debug`). It starts the engine itself when signed
+   build; a release install is `apple-music --debug`). Its window opens on the desktop: say so
+   first, or run the app and every command below inside one `scripts/headless.sh bash -c '…'`,
+   so that they share its private display and session bus (the session-bus checks in step 4
+   then see that bus, not the desktop's). It starts the engine itself when signed
    in and `engine-autostart` is on. The engine has no port otherwise; while this one is open
    any local program can drive the signed-in session, so set it on that command line alone,
    never in a shell profile. The log warns about it at every engine start.
@@ -35,7 +39,8 @@ Ground rules:
      `scripts/am.py --attach <port> events` (bridge events until Ctrl+C),
      `scripts/am.py --attach <port> eval '<read-only JS>'`. Without `--attach`, am.py refuses
      while the app's Chrome holds the profile;
-   - screenshots of the real window: `scripts/screenshot.py <scratch>/shot.png` without
+   - screenshots of the real window: `scripts/headless.sh scripts/screenshot.py
+     <scratch>/shot.png` without
      `--demo`, into the scratch directory only. It reads the release build's cache; for the
      .Devel build's, prefix `APPLE_MUSIC_CACHE=$XDG_CACHE_HOME/apple-music-devel`.
 4. MPRIS on the session bus (the .Devel name shown; drop `.Devel` for a release build):

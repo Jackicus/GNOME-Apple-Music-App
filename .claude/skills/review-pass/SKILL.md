@@ -32,7 +32,8 @@ Review pass over: $ARGUMENTS
    - real account data anywhere: code, fixtures, docs, logs, screenshots;
    - comments or docs (CLAUDE.md, `.claude/rules/`, `docs/`) that the change made untrue, and
      comments that narrate history instead of describing the code.
-3. Fix what is clear-cut, one logical fix per commit, each with `scripts/check.sh` green. For
-   anything visible, check it with the `screenshots` skill.
+3. Fix what is clear-cut, one logical fix per commit, each with
+   `scripts/headless.sh scripts/check.sh` green. For anything visible, check it with the
+   `screenshots` skill.
 4. Report: what you fixed (commits), what needs a decision (file:line, the options and their
    cost), and what you could not verify.
