@@ -21,13 +21,66 @@ import asyncio
 import logging
 from gettext import gettext as _
 
-from gi.repository import Adw, Gio, GLib, GObject, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango
 
 from ..backend import config
 from ..backend.errors import EngineError
 from ..cache import cache_size
 from ..sync import INTERVALS, interval_index, last_sync_text
 from ..widgets.util import connect_weak
+
+
+def named_list_factory(row, popup):
+    """A factory for a combo row's list items, as libadwaita's own (a label; in the popup,
+    a check mark on the item selected) but naming each item for assistive technology: the
+    default leaves them unnamed, both in the popup and in the row's own display of the
+    value, which is a list of one item too (the row itself is named by its title). The row
+    is held weakly: the factory is the row's own, and a closure holding the row would keep a
+    closed dialog alive."""
+    row_ref = row.weak_ref()
+
+    def setup(_factory, item):
+        box = Gtk.Box()
+        label = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=20,
+                          width_chars=1, valign=Gtk.Align.CENTER)
+        box.append(label)
+        if popup:
+            box.append(Gtk.Image(icon_name='object-select-symbolic',
+                                 accessible_role=Gtk.AccessibleRole.PRESENTATION))
+        item.set_child(box)
+
+    def bind(_factory, item):
+        row = row_ref()
+        if row is None:
+            return
+        text = item.get_item().get_string()
+        box = item.get_child()
+        box.get_first_child().set_label(text)
+        item.set_accessible_label(text)
+        if not popup:
+            return
+        check = box.get_last_child()
+
+        def follow(*_args):
+            current = row_ref()
+            selected = current.get_selected_item() if current is not None else None
+            check.set_opacity(1.0 if selected == item.get_item() else 0.0)
+
+        item.follow_handler = row.connect('notify::selected-item', follow)
+        follow()
+
+    def unbind(_factory, item):
+        row = row_ref()
+        handler = getattr(item, 'follow_handler', None)
+        if row is not None and handler is not None:
+            row.disconnect(handler)
+        item.follow_handler = None
+
+    factory = Gtk.SignalListItemFactory()
+    factory.connect('setup', setup)
+    factory.connect('bind', bind)
+    factory.connect('unbind', unbind)
+    return factory
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +153,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
         ]
         # The dialog's own rows and buttons are connected weakly (widgets/util.py): a bound
         # method would keep every closed dialog alive.
+        self.interval_row.set_factory(named_list_factory(self.interval_row, popup=False))
+        self.interval_row.set_list_factory(named_list_factory(self.interval_row, popup=True))
         connect_weak(self.interval_row, 'notify::selected', self._on_interval_selected)
         connect_weak(self.clear_button, 'clicked', self._on_clear_clicked)
         connect_weak(self.engine_button, 'clicked', self._on_engine_clicked)
