@@ -37,6 +37,7 @@ src/pages/new.py
 src/pages/made_for_you.py
 src/pages/songs.py
 src/pages/songs.blp
+src/widgets/engine_status.py
 src/widgets/shelf.py
 src/widgets/shelf.blp
 src/widgets/song_title.blp

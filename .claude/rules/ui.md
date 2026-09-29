@@ -54,9 +54,12 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   which connects them (weakly) on map and disconnects them on unmap; `do_map` catches up with
   what changed while hidden. A page that must follow while hidden says why in a comment
   (SongsPage does). Pages reach the Application through `pages.app()`.
-- New, Made for You and a search category are `ShelvesPage`s over the engine's answers: a
-  spinner, then Start Engine / Sign In / Try Again states when the engine cannot answer (in demo
-  mode it always answers `engine-down`).
+- New, Made for You and a search category are `ShelvesPage`s over the engine's answers. They,
+  Search and the album and artist pages show what the engine's failure means through one
+  `widgets.engine_status.EngineStatus` (no widget; tests/test_engine_status.py): the spinner
+  while it starts, Sign In when signed out, Start Engine (through `app.start_engine()`, whose
+  failure the app reports), Try Again, and "Not Available in the Demo" with no button (the
+  demo engine always answers `engine-down`). A state the page shows is not toasted too.
 - A page of shelves is a vertical `Gtk.Box` of a handful of `AppleMusicShelf`, each a horizontal
   `Gtk.ListView` in its own scrolled window. Keep the shelf widgets on a reload and
   `bind_shelf()` the new `library.ShelfModel` objects into them. Anything unbounded gets a page of its own (See

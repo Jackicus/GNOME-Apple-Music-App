@@ -133,6 +133,7 @@ def _classes():
 
         async def start(self, visible=None):
             self.calls.append('start')
+            self.state = 'up'
 
         async def stop(self):
             self.calls.append('stop')
@@ -331,6 +332,7 @@ class WidgetTestCase(unittest.IsolatedAsyncioTestCase):
         self.window.shelves_opened.clear()
         self.window.played.clear()
         self.app.engine.calls.clear()
+        self.app.engine.state = 'down'
         self.app.actions.clear()
         self.app.reported.clear()
         self.app.demo = False
@@ -594,9 +596,16 @@ class HandlerTest(WidgetTestCase):
         page = _again(page)
         self.assertTrue(keys.emit('key-pressed', Gdk.KEY_Tab, 0, Gdk.ModifierType(0)))
 
+    def signed_in(self):
+        """The account signed in (the engine-down pages offer Start Engine, not Sign In)."""
+        self.app.settings.set_boolean('signed-in', True)
+        self.addCleanup(self.app.settings.reset, 'signed-in')
+
     async def test_detail_page_status_button(self):
         from applemusic.library import Item
         from applemusic.pages.detail import DetailPage
+
+        self.signed_in()
 
         # Fetched, with the engine down: Start Engine, then fetch again.
         page = await self.shown(DetailPage(self.library, Item(_album(3, tracks=0))))
@@ -609,6 +618,8 @@ class HandlerTest(WidgetTestCase):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage
         from applemusic.widgets.tile import Tile
+
+        self.signed_in()
 
         page = await self.shown(
             ArtistPage(self.library, Item(_artist([_album(n) for n in range(3)]))), Tile)
@@ -641,6 +652,8 @@ class HandlerTest(WidgetTestCase):
 
     async def test_shelves_page_refresh_and_status(self):
         from applemusic.pages.shelves import ShelvesPage
+
+        self.signed_in()
 
         asked = []
 

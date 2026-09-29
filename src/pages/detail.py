@@ -22,6 +22,7 @@ from ..library import Track
 from ..remote import fetch_cover
 from ..widgets import context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
+from ..widgets.engine_status import EngineStatus
 from ..widgets.track_row import TrackRow
 from ..widgets.util import MappedHandlers, connect_weak
 from . import app
@@ -107,7 +108,12 @@ class DetailPage(Adw.NavigationPage):
         self._starts = []  # the list position of each section of tracks
         self._headings = []  # and its heading
         self._fetching = None  # the Item whose tracks the engine is fetching
-        self._status = None  # what the status box says: 'loading', an error code, or 'empty'
+        # What the status box says when the engine cannot answer, and what its button does.
+        self._engine_status = EngineStatus(app(), self._show_status, self._refetch, {
+            'engine-down': _('Start the engine to load the songs'),
+            'not-signed-in': _('The songs appear once you sign in to Apple Music'),
+            'failed': _('Could Not Load the Songs'),
+        })
 
         self.header_bar.set_show_title(not root)
         self.empty_page.set_icon_name(icon_name)
@@ -159,6 +165,11 @@ class DetailPage(Adw.NavigationPage):
         Adw.NavigationPage.do_map(self)
         if self._find is not None:
             self._follow()
+        self._engine_status.watch()
+
+    def do_unmap(self):
+        self._engine_status.unwatch()
+        Adw.NavigationPage.do_unmap(self)
 
     def _follow(self, *_args):
         item = self._find()
@@ -213,9 +224,9 @@ class DetailPage(Adw.NavigationPage):
         if not item.groups and item.kind in FETCHED_KINDS and self._fetching is not item:
             self._fetch(item)
         elif not item.groups and self._fetching is not item:
-            self._set_status('empty')
+            self._show_empty()
         elif item.groups:
-            self._set_status('empty')
+            self._show_empty()
         self.status_box.set_visible(not groups)
 
         self.list_view.set_header_factory(self._header_factory if len(groups) > 1 else None)
@@ -231,8 +242,13 @@ class DetailPage(Adw.NavigationPage):
 
     def _fetch(self, item):
         self._fetching = item
-        self._set_status('loading')
+        self._engine_status.loading()
         app().spawn(self._fetch_groups(item))
+
+    def _refetch(self):
+        """EngineStatus's retry: fetch the tracks again."""
+        if self.item is not None:
+            self._fetch(self.item)
 
     async def _fetch_groups(self, item):
         try:
@@ -242,7 +258,7 @@ class DetailPage(Adw.NavigationPage):
             if self._fetching is item:
                 self._fetching = None
                 if self.item is item:
-                    self._set_status(error.code, error.message)
+                    self._engine_status.fail(error)
             return
         if self._fetching is item:
             self._fetching = None
@@ -250,29 +266,18 @@ class DetailPage(Adw.NavigationPage):
         if self.item is item:
             self._show(item)
 
-    def _set_status(self, status, message=''):
-        """The status box for `status`: 'loading' (a spinner), an EngineError code with a
-        button that helps ('engine-down': Start Engine; 'not-signed-in': Sign In; anything
-        else: Try Again), or 'empty' (no tracks at all)."""
-        self._status = status
-        self.status_spinner.set_visible(status == 'loading')
-        self.status_icon.set_visible(status != 'loading')
-        if status == 'loading':
+    def _show_empty(self):
+        self._engine_status.clear()
+        self._show_status('empty', _('No Songs'), '', None)
+
+    def _show_status(self, status, title, description, button):
+        """The status box: the spinner ('loading'), EngineStatus's states, or 'empty' (no
+        tracks at all)."""
+        loading = status == 'loading'
+        if loading:
             title, description, button = _('Loading…'), '', None
-        elif status == 'engine-down':
-            title = _('Engine Not Running')
-            description = _('Start the engine to load the songs')
-            button = _('Start Engine')
-        elif status == 'not-signed-in':
-            title = _('Sign In to Load This')
-            description = _('The songs appear once you sign in to Apple Music')
-            button = _('Sign In')
-        elif status == 'empty':
-            title, description, button = _('No Songs'), '', None
-        else:
-            title = _('Could Not Load the Songs')
-            description = message
-            button = _('Try Again')
+        self.status_spinner.set_visible(loading)
+        self.status_icon.set_visible(not loading)
         self.status_title.set_label(title)
         self.status_description.set_label(description)
         self.status_description.set_visible(bool(description))
@@ -280,26 +285,7 @@ class DetailPage(Adw.NavigationPage):
         self.status_button.set_visible(bool(button))
 
     def _on_status_clicked(self, _button):
-        if self._status == 'not-signed-in':
-            app().activate_action('sign-in')
-        elif self._status == 'engine-down':
-            self._fetching = self.item
-            self._set_status('loading')
-            app().spawn(self._start_and_fetch(self.item))
-        elif self.item is not None:
-            self._fetch(self.item)
-
-    async def _start_and_fetch(self, item):
-        try:
-            await app().engine.start()
-        except EngineError as error:
-            app().report(error)
-            if self._fetching is item:
-                self._fetching = None
-                if self.item is item:
-                    self._set_status(error.code, error.message)
-            return
-        await self._fetch_groups(item)
+        self._engine_status.activate()
 
     def _heading(self, item, group, number):
         """An album's discs are numbered, whatever their groups are called; anything else's
