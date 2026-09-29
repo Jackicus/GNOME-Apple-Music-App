@@ -11,7 +11,6 @@ import os
 import tempfile
 import threading
 import unittest
-import warnings
 from unittest import mock
 
 import gi
@@ -21,12 +20,9 @@ from tests.gtk import pump
 
 from applemusic.widgets import artwork
 
+gi.require_version('Gdk', '4.0')
 gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import GdkPixbuf, Gio, GObject  # noqa: E402
-
-# PyGObject 3.56 looks the asyncio loop up through asyncio's policy when a GLib source runs
-# (the slots' idles, run by pump()), which Python 3.14 deprecates; the app filters it too.
-warnings.filterwarnings('ignore', r"'asyncio\.\w*policy\w*' is deprecated", DeprecationWarning)
+from gi.repository import Gdk, GdkPixbuf, Gio, GObject  # noqa: E402
 
 
 def run(coroutine):
@@ -201,6 +197,20 @@ class TestArtwork(unittest.TestCase):
         self.assertIs(loader.get(self.paths[2]), native[0])
         self.assertIsNone(loader.get(self.paths[2], 4))
         self.assertEqual(loader.cached(), (3, (9 + 36 + 36) * 4))
+
+    def test_an_image_with_alpha_keeps_it_when_scaled(self):
+        # texture_from_pixbuf's R8G8B8A8 branch: a scaled PNG with transparency.
+        path = os.path.join(self.temp_dir.name, 'alpha.png')
+        pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 8, 8)
+        pixbuf.fill(0x33669980)  # half transparent
+        pixbuf.savev(path, 'png', [], [])
+        texture = artwork._load(path, 4)
+        self.assertEqual((texture.get_width(), texture.get_height()), (4, 4))
+        self.assertEqual(texture.get_format(), Gdk.MemoryFormat.R8G8B8A8)
+        downloader = Gdk.TextureDownloader.new(texture)
+        downloader.set_format(Gdk.MemoryFormat.R8G8B8A8)
+        data, _stride = downloader.download_bytes()
+        self.assertEqual(tuple(data.get_data()[:4]), (0x33, 0x66, 0x99, 0x80))
 
     def test_a_wide_image_is_decoded_by_its_shorter_edge(self):
         # A 16:9 video still fills a square tile by its height (content-fit: cover): decoded
