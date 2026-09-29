@@ -68,6 +68,14 @@ columnview.songs-table > listview > row > cell:last-child:dir(rtl) {
   padding-right: 6px;
 }
 
+/* An album page's artist, a link to their page (pages/detail.blp): its text on the title's
+   edge, as the plain subtitle's is. */
+button.artist-link {
+  padding: 0 2px;
+  margin-left: -2px;
+  min-height: 0;
+}
+
 /* The "E" after an explicit song's title: small and bold on a faint wash of the text colour. */
 .explicit-badge {
   padding: 0 4px;

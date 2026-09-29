@@ -1,10 +1,11 @@
-"""AppleMusicArtistPage: an artist's portrait and name over their albums."""
+"""AppleMusicArtistPage: an artist's portrait and name over their albums and biography."""
 
 import logging
 from gettext import gettext as _
 
 from gi.repository import Adw, Gio, Gtk
 
+from ..actions import can_play
 from ..backend.errors import EngineError
 from ..library import Item, apply_diff
 from ..remote import fetch_cover
@@ -12,8 +13,8 @@ from ..widgets import artwork, context_menu
 from ..widgets.engine_status import EngineStatus
 from ..widgets.labels import accessible_label, flow_child
 from ..widgets.tile import Tile
-from ..widgets.util import MappedHandlers, connect_weak, weak_method
-from . import app
+from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
+from . import app, show_notes
 
 log = logging.getLogger(__name__)
 
@@ -34,8 +35,10 @@ def stand_in(artist, group):
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/artist.ui')
 class ArtistPage(Adw.NavigationPage):
-    """An artist Item's page: a round portrait, the name and details, the biography, then the
-    albums as tiles, newest first, each opening its album's page.
+    """An artist Item's page: a round portrait, the name and details, Play (a catalog
+    artist's top songs, actions.can_play()) and the artist's menu, then the albums as tiles,
+    newest first, each opening its album's page, and the biography under About (three lines,
+    More for the whole). The header bar shows the name once the big one has scrolled away.
 
     Each group of an artist Item is one of their albums (the backend README), named after it
     and playing it: {kind: album, id}. The album comes from the library by that id; one the
@@ -48,10 +51,16 @@ class ArtistPage(Adw.NavigationPage):
 
     __gtype_name__ = 'AppleMusicArtistPage'
 
+    header_bar = Gtk.Template.Child()
+    scrolled_window = Gtk.Template.Child()
     avatar = Gtk.Template.Child()
     name_label = Gtk.Template.Child()
     caption_label = Gtk.Template.Child()
+    play_button = Gtk.Template.Child()
+    more_button = Gtk.Template.Child()
+    summary_box = Gtk.Template.Child()
     summary_label = Gtk.Template.Child()
+    more_notes_button = Gtk.Template.Child()
     albums_label = Gtk.Template.Child()
     flow_box = Gtk.Template.Child()
     status_page = Gtk.Template.Child()
@@ -76,6 +85,11 @@ class ArtistPage(Adw.NavigationPage):
         self.flow_box.bind_model(self._albums, weak_method(self._create_tile))
         connect_weak(self.flow_box, 'child-activated', self._on_album_activated)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
+        connect_weak(self.play_button, 'clicked', self._on_play_clicked)
+        connect_weak(self.more_notes_button, 'clicked', self._on_more_notes_clicked)
+        self.more_button.set_create_popup_func(weak_method(self._on_more_popup))
+        self._header_title = HeaderTitle(self.header_bar, self.name_label, self.scrolled_window)
+        self._painted = None  # (frame clock, handler): the biography's More follows each paint
         context_menu.attach(self.flow_box)
         # The portrait is decoded while the page is shown, like any artwork: the 640 px cover,
         # and the thumbnail meanwhile, or for good when the cover cannot be had.
@@ -100,7 +114,8 @@ class ArtistPage(Adw.NavigationPage):
         self.caption_label.set_label(' · '.join(detail for detail in details if detail))
         self.caption_label.set_visible(any(details))
         self.summary_label.set_label(item.summary or '')
-        self.summary_label.set_visible(bool(item.summary))
+        self.summary_box.set_visible(bool(item.summary))
+        self.play_button.set_visible(can_play(item))
 
     def _show(self, *_args):
         item = self.item
@@ -173,7 +188,7 @@ class ArtistPage(Adw.NavigationPage):
         return albums
 
     def _create_tile(self, album):
-        tile = Tile()
+        tile = Tile(halign=Gtk.Align.START)
         tile.bind(album)
         return flow_child(tile, accessible_label(album))
 
@@ -188,13 +203,40 @@ class ArtistPage(Adw.NavigationPage):
         Adw.NavigationPage.do_map(self)
         self._show()  # what a reload changed while the page was hidden
         self._engine_status.watch()
+        clock = self.get_frame_clock()
+        if clock is not None and self._painted is None:
+            self._painted = (clock, connect_weak(clock, 'after-paint', self._on_painted))
         if self.item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the portrait's full size comes now.
             app().spawn(self._fetch_cover(self.item))
 
     def do_unmap(self):
         self._engine_status.unwatch()
+        if self._painted is not None:
+            clock, handler = self._painted
+            clock.disconnect(handler)
+            self._painted = None
         Adw.NavigationPage.do_unmap(self)
+
+    # Play, the menu and the biography.
+
+    def _on_play_clicked(self, _button):
+        self.get_root().play_request(self.item.play, shuffle=False)
+
+    def _on_more_popup(self, button):
+        """The artist's menu, made as it opens."""
+        actions = getattr(self.get_root(), 'item_actions', None)
+        button.set_menu_model(actions.menu_for(self.item) if actions is not None else None)
+
+    def _on_more_notes_clicked(self, _button):
+        show_notes(self, self.item.title, self.item.summary or '')
+
+    def _on_painted(self, _clock):
+        """More under the biography, while it is cut to its three lines."""
+        layout = self.summary_label.get_layout()
+        cut = self.summary_label.get_mapped() and layout is not None and layout.is_ellipsized()
+        if cut != self.more_notes_button.get_visible():
+            self.more_notes_button.set_visible(cut)
 
     def do_hidden(self):
         # Left (popped, covered, or another destination shown), not just unmapped (a push

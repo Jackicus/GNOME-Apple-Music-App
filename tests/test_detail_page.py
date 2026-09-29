@@ -109,6 +109,54 @@ class DetailPageTest(PageTestCase):
         page.play_button.emit('clicked')
         self.assertEqual(self.window.played, [(self.item.play, None, False)])
 
+    def test_resolve_artist(self):
+        from applemusic.library import Item
+        from applemusic.pages.detail import resolve_artist
+
+        artist_item = Item(artist([]))
+
+        class Library:
+            artists = [artist_item]
+
+            def by_id(self, kind, item_id):
+                return artist_item if (kind, item_id) == ('artist', 'l.artist001') else None
+
+        library = Library()
+        by_name = Item(dict(album(1), subtitle='INVENTED ARTIST'))
+        self.assertIs(resolve_artist(library, by_name), artist_item)  # case folded
+        by_id = Item(dict(album(2), subtitle='Another Name', artistId='l.artist001'))
+        self.assertIs(resolve_artist(library, by_id), artist_item)
+        self.assertIsNone(resolve_artist(library, Item(dict(album(3), subtitle='Nobody'))))
+        playlist = Item(album(4, kind='playlist'))  # its subtitle is its curator
+        self.assertIsNone(resolve_artist(library, playlist))
+
+    async def test_the_more_options_menu_is_the_items(self):
+        page = await self.push(self.page(album(1)))
+        page.more_button.popup()
+        self.assertTrue(await self.until(lambda: self.window.item_actions.asked))
+        self.assertIs(self.window.item_actions.asked[-1], self.item)
+        page.more_button.popdown()
+
+    async def test_shift_tab_from_the_first_track_goes_back_to_the_hero(self):
+        from gi.repository import Gdk, Gtk
+
+        page = await self.push(self.page(album(1, tracks=3)))
+        page.more_button.grab_focus()
+        keys = next(controller for controller in _controllers(page.list_view)
+                    if isinstance(controller, Gtk.EventControllerKey))
+        self.assertTrue(keys.emit('key-pressed', Gdk.KEY_Tab, 0, Gdk.ModifierType(0)))
+        self.assertTrue(await self.until(
+            lambda: self.window.get_focus() is not None
+            and self.window.get_focus().is_ancestor(page.list_view)))
+        self.assertTrue(keys.emit('key-pressed', Gdk.KEY_ISO_Left_Tab, 0,
+                                  Gdk.ModifierType.SHIFT_MASK))
+        self.assertTrue(self.window.get_focus().is_ancestor(page.more_button))  # its toggle
+
+
+def _controllers(widget):
+    model = widget.observe_controllers()
+    return [model.get_item(position) for position in range(model.get_n_items())]
+
 
 class ArtistPageTest(PageTestCase):
     async def test_an_artist_without_albums_is_asked_for_once(self):

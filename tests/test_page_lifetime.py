@@ -590,8 +590,9 @@ class HandlerTest(WidgetTestCase):
         self.assertEqual(self.window.played, [(item.play, None, False), (item.play, None, True),
                                               (track.play, track.index, False)])
 
-        # Tab from Shuffle goes on into the tracks (the list's capture key controller).
-        page.shuffle_button.grab_focus()
+        # Tab from the hero's last button (More Options) goes on into the tracks (the list's
+        # capture key controller).
+        page.more_button.grab_focus()
         keys = next(controller for controller in _controllers(page.list_view)
                     if isinstance(controller, Gtk.EventControllerKey))
         page = page.weak_ref()

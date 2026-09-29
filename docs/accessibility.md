@@ -17,8 +17,9 @@ When a key or a page changes, change this list and the script together.
    entry, an album's Play. Arrows move between tiles and rows, Tab leaves a grid, shelf or list
    after one item, Enter opens a tile or plays a row, Menu or Shift+F10 opens the focused item's
    context menu and Escape closes it.
-3. On an album or playlist: Play, Tab to Shuffle, Tab to the first track, Down, and Enter plays
-   from that track. Alt+Left (or Escape inside the page) goes back.
+3. On an album or playlist: Play, Tab to Shuffle and to More Options (the item's menu), Tab to
+   the first track (Shift+Tab goes back to More Options), Down, and Enter plays from that
+   track. Alt+Left (or Escape inside the page) goes back.
 4. Ctrl+3 puts the focus on the player bar's play button (with nothing playing, on the bar,
    which Enter opens as Now Playing). Space plays or pauses except in an entry, on a toggle, in a
    menu or in a dialog; Ctrl+Right and Ctrl+Left skip.
