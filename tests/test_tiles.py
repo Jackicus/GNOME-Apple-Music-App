@@ -216,6 +216,38 @@ class TileArtTest(WidgetTestCase):
         self.assert_freed(ref)
 
 
+class TileLabelTest(WidgetTestCase):
+    """The title and subtitle, one Gtk.Inscription: markup for a subtitle, text without."""
+
+    def attributes(self, tile):
+        attributes = tile.label.get_attributes()
+        return [] if attributes is None else attributes.get_attributes()
+
+    def test_a_plain_title_after_a_subtitled_one_has_no_attributes(self):
+        from applemusic.widgets.tile import Tile
+
+        tile = Tile()
+        tile.bind(Item({'id': 'l.p1', 'kind': 'playlist', 'title': 'Mix',
+                        'subtitle': 'Invented Curator'}))
+        self.assertNotEqual(self.attributes(tile), [])  # the subtitle's size and dimming
+        tile.unbind()
+        tile.bind(Item({'id': 'l.f1', 'kind': 'folder', 'title': 'Weekend Roadtrip Folder'}))
+        self.assertEqual(self.attributes(tile), [])
+        self.assertEqual(tile.label.get_text(), 'Weekend Roadtrip Folder')
+
+    def test_an_artist_after_a_subtitled_tile_has_no_attributes(self):
+        from applemusic.widgets.tile import Tile
+
+        tile = Tile()
+        tile.bind(Item(dict(ALBUM)))
+        tile.unbind()
+        tile.set_artist(True)
+        tile.bind(Item({'id': 'l.r1', 'kind': 'artist', 'title': 'Invented Artist Name',
+                        'subtitle': '3 albums'}))
+        self.assertEqual(self.attributes(tile), [])
+        self.assertEqual(tile.label.get_text(), 'Invented Artist Name')
+
+
 class CategoryTileArtTest(WidgetTestCase):
     CATEGORY = {'id': 'c1', 'kind': 'category', 'title': 'Invented Category',
                 'thumb': '/a/category', 'artColor': '#1b4965'}

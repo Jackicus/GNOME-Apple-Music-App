@@ -65,6 +65,7 @@ class Tile(Gtk.Box):
         super().__init__(**kwargs)
         self._artist = False
         self._folder = False
+        self._marked = False  # the label holds markup's attributes (a subtitle's)
         self._item = None
         self.avatar = None  # the artist variant's portrait, made when first wanted
         self._slot = artwork.ArtworkSlot(self._set_art, ART_SIZE)
@@ -106,13 +107,22 @@ class Tile(Gtk.Box):
             icon_name, size = FOLDER if folder else PLACEHOLDER
             self.placeholder_icon.set_from_icon_name(icon_name)
             self.placeholder_icon.set_pixel_size(size)
+        self._show_label(item)
+        self._slot.set_paths(item.thumb or item.art)
+
+    def _show_label(self, item):
         if self._artist or not item.subtitle:
+            if self._marked:
+                # set_text() keeps the attributes set_markup() gave the subtitle's bytes: the
+                # new title would be drawn small and dim from where the old one ended.
+                self.label.set_attributes(None)
+                self._marked = False
             self.label.set_text(item.title)
         else:
             self.label.set_markup(GLib.markup_escape_text(item.title) + '\n'
                                   + subtitle_markup().format(
                                       GLib.markup_escape_text(item.subtitle)))
-        self._slot.set_paths(item.thumb or item.art)
+            self._marked = True
 
     def unbind(self):
         self._item = None
