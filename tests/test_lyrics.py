@@ -92,7 +92,12 @@ class LyricsObjectTest(unittest.TestCase):
         self.assertEqual(lyrics.index_at(500), 23)
         self.assertEqual(lyrics.start_of(5), 23.1)
         self.assertEqual(lyrics.start_of(99), 0.0)
-        self.assertEqual(lyrics.text.splitlines()[4], 'Low tide warning on the radio')
+        self.assertEqual([index for index in range(len(lyrics))
+                          if lyrics.lines.get_item(index).stanza], [0, 4, 8, 12, 16, 20])
+        # A blank line before each stanza but the first.
+        self.assertEqual(lyrics.text.splitlines()[3:6],
+                         ['And nobody answers the call', '', 'Low tide warning on the radio'])
+        self.assertEqual(len(lyrics.text.splitlines()), 24 + 5)
 
     def test_unsynced_lyrics_have_text_and_no_current_line(self):
         lyrics = Lyrics({'synced': False, 'lines': [{'text': 'One'}, {'text': 'Two'}]})
