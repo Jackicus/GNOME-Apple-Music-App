@@ -6,12 +6,14 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow: the album column goes, title, artist and time stay.
+    // Narrow: the album column goes, title, artist and time stay, and the filter narrows to
+    // leave the header room for Sort By and the window's buttons.
     Adw.Breakpoint {
       condition ("max-width: 560sp")
 
       setters {
         album_column.visible: false;
+        filter_entry.width-chars: 6;
       }
     }
 
@@ -19,6 +21,18 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
       [top]
       Adw.HeaderBar {
         show-title: false;
+
+        [end]
+        MenuButton sort_button {
+          icon-name: "view-sort-descending-symbolic";
+          tooltip-text: _("Sort By");
+          menu-model: sort_menu;
+          visible: false;
+
+          accessibility {
+            label: _("Sort By");
+          }
+        }
 
         [end]
         SearchEntry filter_entry {
@@ -160,4 +174,48 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
       };
     };
   };
+}
+
+// The Sort By menu (songs.py's songs.* actions): the keyboard's way to sort, as the column
+// headers take no focus.
+menu sort_menu {
+  section {
+    item {
+      label: _("Title");
+      action: "songs.sort-column";
+      target: "title";
+    }
+
+    item {
+      label: _("Artist");
+      action: "songs.sort-column";
+      target: "artist";
+    }
+
+    item {
+      label: _("Album");
+      action: "songs.sort-column";
+      target: "album";
+    }
+
+    item {
+      label: _("Time");
+      action: "songs.sort-column";
+      target: "time";
+    }
+  }
+
+  section {
+    item {
+      label: _("Ascending");
+      action: "songs.sort-order";
+      target: "ascending";
+    }
+
+    item {
+      label: _("Descending");
+      action: "songs.sort-order";
+      target: "descending";
+    }
+  }
 }

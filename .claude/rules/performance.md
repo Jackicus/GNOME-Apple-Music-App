@@ -50,6 +50,8 @@ docs/notes.md.
 - A model change that removes the items a `Gtk.ListView` or `ColumnView` shows destroys those
   rows and builds new ones. To replace a list's contents, insert the new items first,
   `scroll_to(0)`, then remove the old ones (`SongsPage._show()`): the rows are only rebound.
+  A sync's change to what a list shows goes through `library.apply_diff` instead (the fewest
+  splices), so the list keeps its scroll position.
 - A `Gtk.GridView` keeps about 30 rows of `max-columns` tiles alive however few it shows: set
   `max-columns` to what fits (`grid.columns_for()`; `COLUMN_WIDTH` is a tile plus Adwaita's
   padding, so change them together).
