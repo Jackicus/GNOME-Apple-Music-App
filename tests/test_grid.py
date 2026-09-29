@@ -121,7 +121,7 @@ class FirstSyncTest(PageTestCase):
         from applemusic.sections import sidebar_sections
 
         destinations = {destination.key: destination
-                        for _title, section in sidebar_sections() for destination in section}
+                        for section in sidebar_sections() for destination in section.destinations}
         self.library.syncing = True  # an empty library ('empty'), the first sync running
         shown = {}
         for key in ('home', 'albums', 'songs', 'radio'):

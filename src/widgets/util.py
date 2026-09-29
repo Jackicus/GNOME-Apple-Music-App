@@ -2,7 +2,8 @@
 weak_method(), the same for any other callback a child holds); MappedHandlers: a widget's
 handlers on objects that outlive it (the library, the engine), connected only while it is
 mapped; next_frame(): wait for a widget's next frame; HeaderTitle: a page's title in its
-header bar only while its big title is out of view.
+header bar only while its big title is out of view; descendants(), first_descendant() and
+has_ancestor(): the widget tree by class.
 
 A widget that connects one of its children's signals (or an owned object's: a list factory,
 an adjustment, a sort model, an event controller) to one of its own bound methods makes a
@@ -238,3 +239,40 @@ class HeaderTitle:
             self._shown = show
             self._header_bar.set_show_title(show)
         return True
+
+
+# The widget tree by class, for the few places that need a widget the toolkit does not hand
+# out (a sidebar's rows, a page's toolbar view, the popover the focus is in).
+
+def descendants(widget, cls):
+    """The descendants of widget that are a cls, depth first (not looking inside them)."""
+    child = widget.get_first_child()
+    while child is not None:
+        if isinstance(child, cls):
+            yield child
+        else:
+            yield from descendants(child, cls)
+        child = child.get_next_sibling()
+
+
+def first_descendant(widget, cls):
+    """The first descendant of widget (depth first, itself included) that is a cls, or
+    None."""
+    if isinstance(widget, cls):
+        return widget
+    child = widget.get_first_child()
+    while child is not None:
+        found = first_descendant(child, cls)
+        if found is not None:
+            return found
+        child = child.get_next_sibling()
+    return None
+
+
+def has_ancestor(widget, cls):
+    """Whether widget is, or is inside, a cls (a popover: its keys are the menu's)."""
+    while widget is not None:
+        if isinstance(widget, cls):
+            return True
+        widget = widget.get_parent()
+    return False

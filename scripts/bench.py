@@ -392,8 +392,8 @@ def child():
             watch.clear()
 
     def page_keys():
-        keys = [destination.key for _title, destinations in sections.sidebar_sections()
-                for destination in destinations]
+        keys = [destination.key for section in sections.sidebar_sections()
+                for destination in section.destinations]
         tree = app.library.playlist_tree()
         folder = next((node for node in tree.flat if node.kind == 'folder'), None)
         playlist = next((node for node in tree.flat if node.kind == 'playlist'), None)
@@ -422,7 +422,7 @@ def child():
                 profile = cProfile.Profile()
                 profile.enable()
             started = time.perf_counter()
-            window._select(key)
+            window.select_page(key)
             clock = window.get_frame_clock()
             state = {}
 
@@ -554,7 +554,7 @@ def child():
         tile or See All would; what they left behind (see the module)."""
         window = app.get_active_window()
         library = app.library
-        window._select('albums')
+        window.select_page('albums')
         await next_paint(window)
         await asyncio.sleep(args.settle / 1000)
         shelves = [shelf for shelf in library.shelves if shelf.items.get_n_items()]

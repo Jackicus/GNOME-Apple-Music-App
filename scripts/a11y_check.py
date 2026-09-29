@@ -282,9 +282,9 @@ async def walkthrough(window):
         focus = window.get_focus()
         check('Down moves to Albums', getattr(focus, 'get_title', lambda: '')() == 'Albums')
     else:
-        check('Down selects Albums and shows it', window._shown == 'albums', window._shown)
+        check('Down selects Albums and shows it', window.shown == 'albums', window.shown)
     await key(window, 'Return', 0.6)
-    check('Enter shows Albums', window._shown == 'albums' and (
+    check('Enter shows Albums', window.shown == 'albums' and (
         not narrow or window.split_view.get_show_content()))
     print('-- grid')
     await key(window, '<primary>2', 0.6)
@@ -351,7 +351,7 @@ async def walkthrough(window):
     await key(window, '<primary>f', 0.8)
     search = window.navigation_view.get_visible_page()
     check('Ctrl+F shows Search with the focus in its entry',
-          window._shown == 'search' and inside(window.get_focus(), search.search_entry))
+          window.shown == 'search' and inside(window.get_focus(), search.search_entry))
     search.search_entry.set_text('tide')  # typed
     await asyncio.sleep(0.4)
     await key(window, 'Tab')
@@ -367,7 +367,7 @@ async def walkthrough(window):
     check('F10 opens the main menu', menu is not None and menu.get_visible())
     await key(window, 'Escape', 0.4)
     check('Escape closes it', not menu.get_visible())
-    window._select('albums')
+    window.select_page('albums')
     await asyncio.sleep(0.4)
     await key(window, '<primary>2', 0.6)
     await key(window, 'Menu', 0.6)
@@ -404,7 +404,7 @@ async def names(window):
     total = 0
     for page in ('home', 'albums', 'artists', 'songs', 'radio', 'all-playlists',
                  'favourite-songs'):
-        window._select(page)
+        window.select_page(page)
         window.split_view.set_show_content(True)
         await asyncio.sleep(1.0)
         total += await unnamed(page)
@@ -413,7 +413,7 @@ async def names(window):
         window.open_item(store.get_item(0))
         await asyncio.sleep(1.0)
         total += await unnamed(kind)
-    window._select('search')
+    window.select_page('search')
     await asyncio.sleep(0.5)
     search = window.navigation_view.get_visible_page()
     search.set_mode('library')
