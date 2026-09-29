@@ -606,6 +606,47 @@ class EngineLifecycleTest(unittest.TestCase):
             self.assertIsNone(player.track)
         asyncio.run(go())
 
+    def test_events_during_the_read_are_newer_than_its_answer(self):
+        """A state and a track arrive while now_playing() is on its way: the answer, older,
+        sets only the modes and the volume."""
+        async def go():
+            player, engine, app = make_player(state='down')
+            gate = engine.gate('now_playing')
+            engine.answers['now_playing'] = {
+                'state': 'paused', 'track': dict(TRACK, id='i.old', index=0), 'position': 90,
+                'duration': 214, 'shuffle': 'on', 'repeat': 'all', 'volume': 0.4}
+            engine.state = 'up'
+            await asyncio.sleep(0)
+            engine.event('playbackStateDidChange', {'state': 'loading'})
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            gate.set()
+            await app.settle()
+            self.assertEqual(player.state, 'loading')
+            self.assertEqual(player.track.id, 'i.demo0001')
+            self.assertEqual(player.position, 0.0)
+            self.assertTrue(player.shuffle)
+            self.assertEqual(player.repeat, 'all')
+            self.assertEqual(player.volume, 0.4)
+        asyncio.run(go())
+
+    def test_a_reloaded_page_resets_and_is_read_again(self):
+        """The engine's bridgeReset: the page loaded a new document, and nothing plays in
+        it until MusicKit there says so."""
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            engine.event('playbackStateDidChange', {'state': 'playing', 'position': 30})
+            await app.settle()
+            reads = engine.calls.count(('now_playing',))
+            engine.event('bridgeReset', None)
+            self.assertIsNone(player.track)
+            self.assertEqual(player.state, 'none')
+            self.assertEqual((player.position, player.duration), (0.0, 0.0))
+            await app.settle()
+            self.assertEqual(engine.calls.count(('now_playing',)), reads + 1)
+        asyncio.run(go())
+
 
 class CommandTest(unittest.TestCase):
     def test_play_starts_a_down_engine_when_signed_in(self):
@@ -782,6 +823,24 @@ class QueueTest(unittest.TestCase):
             await player.refresh_queue()  # logged, the queue kept
             self.assertEqual(player.queue.get_n_items(), 3)
         asyncio.run(go())
+
+    def test_a_queue_event_during_the_read_wins(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            gate = engine.gate('queue')
+            engine.answers['queue'] = {'index': 0, 'items': QUEUE['items'][:1]}
+            task = app.spawn(player.refresh_queue())
+            await asyncio.sleep(0)
+            engine.event('queueItemsDidChange', QUEUE)  # newer than the answer
+            gate.set()
+            await task
+            self.assertEqual(self.ids_of(player), ['i.demo0003', 'i.demo0002', 'i.demo0001'])
+        asyncio.run(go())
+
+    @staticmethod
+    def ids_of(player):
+        return [entry.id for entry in player.queue]
 
     def test_apply_takes_a_queue_and_bad_snapshots(self):
         self.player.apply({'track': TRACK, 'queue': QUEUE})

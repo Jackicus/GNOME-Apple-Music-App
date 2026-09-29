@@ -39,7 +39,11 @@ position, which MusicKit reports once more after a track change, is dropped here
 (TRACK_HOLD), so every view sees the same cleaned position. The queue is read again
 (queue()) when an item arrives that the queue held does not hold at its index; the lyrics
 are asked of the engine (lyrics(), cached on disk) once per catalog song as it starts,
-never on a timer. When the engine goes down everything resets to nothing playing, at once.
+never on a timer. A state or track event that arrives while a read is on its way is newer
+than the read's answer, which then sets only the modes and the volume. When the engine
+goes down everything resets to nothing playing, at once; so it does when the page loads a
+new document (the engine's `bridgeReset` event), and now_playing() is read again for what
+the new one holds.
 The commands raise EngineError as the engine does; play() starts a down engine first when the
 account is signed in (a toast says so) and raises EngineError('not-signed-in') when it is not,
 which the window turns into the sign-in flow. `error(message)` is emitted for MusicKit's
@@ -87,11 +91,12 @@ STOPPED_STATES = ('none', 'stopped', 'ended', 'completed')
 
 REPEAT_MODES = ('none', 'one', 'all')
 
-# The events the Player takes its state from, and the handler for each.
+# The events the Player takes its state from (MusicKit's, and the engine's own bridgeReset:
+# the page loaded a new document, and whatever played is gone with the old one).
 EVENTS = ('playbackStateDidChange', 'nowPlayingItemDidChange', 'playbackTimeDidChange',
           'playbackDurationDidChange', 'shuffleModeDidChange', 'repeatModeDidChange',
           'playbackVolumeDidChange', 'mediaPlaybackError', 'queueItemsDidChange',
-          'queuePositionDidChange')
+          'queuePositionDidChange', 'bridgeReset')
 
 
 def _text(value):
@@ -181,6 +186,8 @@ class Player(GObject.Object):
         self.track_grace_ms = TRACK_GRACE_MS  # 0: a null item clears the track at once
         self._clear_source = 0  # the GLib source waiting out the grace, while one does
         self._track_since = float('-inf')  # when the item playing started (_plausible)
+        self._events = 0  # state and track events so far: a refresh() answer older than one
+        self._queue_events = 0  # is not applied over it (the same for the queue's)
         self.position_updated_at = time.monotonic()
         self.queue = Gio.ListStore(item_type=NowPlaying)
         self._lyrics_task = None  # the task reading the track's lyrics, while one runs
@@ -201,21 +208,32 @@ class Player(GObject.Object):
     async def refresh(self):
         """Read the engine's now_playing() once (as the engine comes up: whatever it was
         doing before, or nothing) and apply it; an item playing then has the queue read too
-        (apply, through _track_queued) and its lyrics. Errors are logged: events will
-        tell."""
+        (apply, through _track_queued) and its lyrics. A state or track event that arrived
+        while the answer was on its way is newer than the answer, which then sets only the
+        modes and the volume. Errors are logged: events will tell."""
+        events = self._events
         try:
             answer = await self._engine.now_playing()
         except EngineError as error:
             log.debug('now playing: %s', error)
             return
+        if self._events != events and isinstance(answer, dict):
+            log.debug('now playing: events arrived meanwhile; the answer sets the modes only')
+            answer = {key: answer[key] for key in ('shuffle', 'repeat', 'volume')
+                      if key in answer}
         self.apply(answer)
 
     async def refresh_queue(self):
-        """Read the engine's queue() and apply it. Errors are logged."""
+        """Read the engine's queue() and apply it, unless a queueItemsDidChange arrived
+        meanwhile (the event is newer). Errors are logged."""
+        events = self._queue_events
         try:
             answer = await self._engine.queue()
         except EngineError as error:
             log.debug('queue: %s', error)
+            return
+        if self._queue_events != events:
+            log.debug('queue: an event arrived meanwhile; the answer is dropped')
             return
         self.apply_queue(answer)
 
@@ -296,14 +314,22 @@ class Player(GObject.Object):
         log.debug('event %s: %s', name, data if name != 'nowPlayingItemDidChange'
                   else {'index': data.get('index'), 'track': bool(data.get('track'))})
         if name == 'playbackStateDidChange':
+            self._events += 1
             self._set_state(data.get('state'))
             if 'position' in data:
                 self._take_position(data)
         elif name == 'nowPlayingItemDidChange':
+            self._events += 1
             if isinstance(data.get('track'), dict):
                 self._set_track(data['track'])
             else:
                 self._clear_track_soon()
+        elif name == 'bridgeReset':
+            # A new document in the page: nothing plays in it, and MusicKit there says
+            # nothing of what the old one was doing. Read what it holds.
+            self._events += 1
+            self.apply(None)
+            self._app.spawn(self.refresh())
         elif name == 'playbackTimeDidChange':
             self._take_position(data)
         elif name == 'playbackDurationDidChange':
@@ -315,6 +341,7 @@ class Player(GObject.Object):
         elif name == 'playbackVolumeDidChange':
             self._set_volume(data.get('volume'))
         elif name == 'queueItemsDidChange':
+            self._queue_events += 1
             self.apply_queue(data)
         elif name == 'queuePositionDidChange':
             index = data.get('index')
