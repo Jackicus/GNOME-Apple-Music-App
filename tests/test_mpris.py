@@ -1,24 +1,28 @@
 """MPRIS: the metadata and property variants for a track and for none, PropertiesChanged with
 only the changed keys, Seeked, the methods and the writable properties, over a stand-in bus
-connection and a Player fed by apply(). No bus, no GTK; the commands run under asyncio.run."""
+connection and a Player fed by apply() and by the engine's events. No GTK; the commands run
+under asyncio.run. One test puts the service on a private bus (Gio.TestDBus) and talks to it
+through GDBus, as a client would."""
 
 import asyncio
 import os
+import shutil
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
-from gi.repository import GLib, GObject
+from gi.repository import Gio, GLib, GObject
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
-
+from tests.gtk import wait_for
 from tests.test_player import patched_clocks
 
 from applemusic import mpris
 from applemusic.backend.errors import EngineError
-from applemusic.mpris import (OBJECT_PATH, PLAYER_INTERFACE, PROPERTIES_INTERFACE,
-                              ROOT_INTERFACE, Mpris, loop_status, metadata, playback_status,
-                              repeat_mode, track_path)
+from applemusic.mpris import (NOT_SUPPORTED_ERROR, OBJECT_PATH, PLAYER_INTERFACE,
+                              PROPERTIES_INTERFACE, ROOT_INTERFACE, Mpris, loop_status,
+                              metadata, playback_status, repeat_mode, track_path)
 from applemusic.player import NowPlaying, Player
 
 APP_ID = 'io.github.jackicus.AppleMusic.Test'
@@ -30,7 +34,7 @@ TRACK = {
     'discNumber': 1, 'durationMs': 214000, 'durationLabel': '3:34', 'explicit': False,
     'artUrl': 'https://example.invalid/art/256x256bb.jpg', 'index': 2,
 }
-TRACK_PATH = '/io/github/jackicus/AppleMusic/track/i_2edemo0001'
+TRACK_PATH = '/io/github/jackicus/AppleMusic/track/2/i_2edemo0001'
 
 
 class FakeEngine(GObject.Object):
@@ -108,6 +112,7 @@ class FakeApp:
         self.tasks = []
         self.actions = []
         self.errors = []
+        self.commands = []  # the names of commands asked with no loop running
         self.activated = 0
 
     def get_application_id(self):
@@ -126,11 +131,27 @@ class FakeApp:
         pass
 
     def spawn(self, coro):
-        task = asyncio.get_event_loop().create_task(coro)
+        """A task on the running loop; without one (the private-bus test) the coroutine
+        is only closed."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            coro.close()
+            return None
+        task = loop.create_task(coro)
         self.tasks.append(task)
         return task
 
     def player_command(self, coro):
+        """As the app's: a task whose EngineError is noted. Without a running loop (the
+        private-bus test) the coroutine is only noted by name and closed."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.commands.append(coro.__qualname__)
+            coro.close()
+            return None
+
         async def command():
             try:
                 await coro
@@ -228,9 +249,17 @@ class MetadataTest(unittest.TestCase):
     def test_a_track(self):
         data = metadata(NowPlaying(TRACK))
         self.assertEqual(sorted(data), ['mpris:length', 'mpris:trackid', 'xesam:album',
-                                        'xesam:artist', 'xesam:title'])
+                                        'xesam:artist', 'xesam:discNumber', 'xesam:title',
+                                        'xesam:trackNumber'])
         self.assertEqual(data['mpris:trackid'].get_type_string(), 'o')
         self.assertEqual(data['mpris:trackid'].get_string(), TRACK_PATH)
+        self.assertEqual(data['xesam:trackNumber'].get_type_string(), 'i')
+        self.assertEqual(data['xesam:trackNumber'].get_int32(), 3)
+        self.assertEqual(data['xesam:discNumber'].get_int32(), 1)
+        # No numbers for a track without positive ones.
+        odd = metadata(NowPlaying(dict(TRACK, trackNumber=0, discNumber='2')))
+        self.assertNotIn('xesam:trackNumber', odd)
+        self.assertNotIn('xesam:discNumber', odd)
         self.assertEqual(data['mpris:length'].get_type_string(), 'x')
         self.assertEqual(data['mpris:length'].get_int64(), 214_000_000)
         self.assertEqual(data['xesam:title'].get_type_string(), 's')
@@ -268,18 +297,22 @@ class MetadataTest(unittest.TestCase):
         data = metadata(bare)
         self.assertEqual(list(data), ['mpris:trackid'])
         self.assertEqual(data['mpris:trackid'].get_string(),
-                         '/io/github/jackicus/AppleMusic/track/x')
+                         '/io/github/jackicus/AppleMusic/track/0/x')
 
     def test_track_paths(self):
-        self.assertEqual(track_path('i.demo0001'), TRACK_PATH)
-        self.assertEqual(track_path('a_b'), '/io/github/jackicus/AppleMusic/track/a_5fb')
-        self.assertEqual(track_path('1000000001'),
-                         '/io/github/jackicus/AppleMusic/track/1000000001')
-        self.assertEqual(track_path(''), '/io/github/jackicus/AppleMusic/track/_')
-        self.assertEqual(track_path(None), '/io/github/jackicus/AppleMusic/track/_')
+        self.assertEqual(track_path('i.demo0001', 2), TRACK_PATH)
+        self.assertEqual(track_path('a_b'), '/io/github/jackicus/AppleMusic/track/0/a_5fb')
+        self.assertEqual(track_path('1000000001', 7),
+                         '/io/github/jackicus/AppleMusic/track/7/1000000001')
+        self.assertEqual(track_path(''), '/io/github/jackicus/AppleMusic/track/0/_')
+        self.assertEqual(track_path(None, -1), '/io/github/jackicus/AppleMusic/track/0/_')
         for track_id in ('i.demo0001', 'a b/c-d.é', '', 'ra.978194965'):
-            self.assertTrue(GLib.Variant.is_object_path(track_path(track_id)), track_id)
+            for index in (0, 3, -1):
+                self.assertTrue(GLib.Variant.is_object_path(track_path(track_id, index)),
+                                (track_id, index))
         self.assertNotEqual(track_path('a_b'), track_path('a.b'))
+        # The same song at two queue positions is two tracks.
+        self.assertNotEqual(track_path('i.demo0001', 2), track_path('i.demo0001', 3))
 
     def test_playback_status(self):
         for state in ('playing', 'loading', 'waiting', 'stalled'):
@@ -495,7 +528,7 @@ class ServiceTest(unittest.TestCase):
                 self.assertEqual(len(metadata_changes), 1)
                 self.assertEqual(metadata_changes[0]['mpris:length'], 180_000_000)
                 self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
-                    'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/i_2edemo0002')
+                    'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/3/i_2edemo0002')
                 await self.app.settle()
         asyncio.run(go())
 
@@ -545,9 +578,10 @@ class ServiceTest(unittest.TestCase):
                              in self.connection.signals if 'Metadata' in parameters[1]]
             changes = self.connection.changed()
             self.assertNotIn('CanPlay', [key for keys in changes for key in keys])
-            # B's Metadata, then B's again with its artwork: never an empty one.
+            # B's Metadata once, never an empty one (its artwork is A's, carried over).
             self.assertEqual([data['mpris:trackid'] for data in metadata_sent],
-                             [track_path('i.demo0002')] * 2)
+                             [track_path('i.demo0002', 0)])
+            self.assertIn('mpris:artUrl', metadata_sent[0])
             self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
                 'xesam:title'], 'Harbour Lights')
         asyncio.run(go())
@@ -556,21 +590,26 @@ class ServiceTest(unittest.TestCase):
         async def go():
             self.make()
             call = self.connection.call
-            # Nothing playing: the transport does nothing (CanPlay is false).
-            self.assertIsNone(call(PLAYER_INTERFACE, 'PlayPause').error)
+            # Nothing playing: the transport does nothing (CanPlay is false), and
+            # PlayPause, which the spec has raise, answers NotSupported.
+            self.assertEqual(call(PLAYER_INTERFACE, 'PlayPause').error[0], NOT_SUPPORTED_ERROR)
+            for method in ('Next', 'Previous', 'Pause', 'Stop', 'Play'):
+                self.assertIsNone(call(PLAYER_INTERFACE, method).error, method)
+            call(PLAYER_INTERFACE, 'Seek', GLib.Variant('(x)', (5_000_000,)))
+            call(PLAYER_INTERFACE, 'SetPosition', GLib.Variant('(ox)', (TRACK_PATH, 1)))
             await self.app.settle()
             self.assertEqual(self.engine.calls, [])
             self.play()
             await self.app.settle()
             self.engine.calls.clear()
-            for method in ('PlayPause', 'Next', 'Previous', 'Pause', 'Stop', 'Play'):
+            for method in ('PlayPause', 'Next', 'Previous', 'Pause', 'Play'):
                 invocation = call(PLAYER_INTERFACE, method)
                 self.assertIsNone(invocation.error, method)
                 self.assertIsNone(invocation.returned, method)
             await self.app.settle()
             self.assertEqual(self.engine.calls, [  # Previous at 10 s in: the top again
                 ('control', 'pause'), ('control', 'next'), ('seek', 0),
-                ('control', 'pause'), ('control', 'stop'), ('control', 'play')])
+                ('control', 'pause'), ('control', 'play')])
             self.engine.calls.clear()
             self.player.apply({'state': 'paused', 'position': 10})
             self.connection.seeked()  # the answer's position, told as a jump from 0
@@ -579,15 +618,22 @@ class ServiceTest(unittest.TestCase):
             call(PLAYER_INTERFACE, 'Seek', GLib.Variant('(x)', (-30_000_000,)))  # to 0
             call(PLAYER_INTERFACE, 'SetPosition',
                  GLib.Variant('(ox)', (TRACK_PATH, 30_000_000)))
-            call(PLAYER_INTERFACE, 'SetPosition',  # not the track playing: dropped
-                 GLib.Variant('(ox)', ('/io/github/jackicus/AppleMusic/track/other', 1)))
+            call(PLAYER_INTERFACE, 'SetPosition',  # not the entry playing: dropped
+                 GLib.Variant('(ox)', ('/io/github/jackicus/AppleMusic/track/3/i_2edemo0001',
+                                       1)))
+            call(PLAYER_INTERFACE, 'SetPosition',  # before the start: dropped, not clamped
+                 GLib.Variant('(ox)', (TRACK_PATH, -5_000_000)))
+            call(PLAYER_INTERFACE, 'SetPosition',  # past the end: dropped, not Next
+                 GLib.Variant('(ox)', (TRACK_PATH, 215_000_000)))
+            call(PLAYER_INTERFACE, 'SetPosition',  # the end itself is within the track
+                 GLib.Variant('(ox)', (TRACK_PATH, 214_000_000)))
             call(PLAYER_INTERFACE, 'Seek', GLib.Variant('(x)', (500_000_000,)))  # past the end
             call(PLAYER_INTERFACE, 'OpenUri', GLib.Variant('(s)', ('https://example.invalid',)))
             await self.app.settle()
             self.assertEqual(self.engine.calls, [
                 ('control', 'play'), ('seek', 15.0), ('seek', 0.0), ('seek', 30.0),
-                ('control', 'next')])
-            self.assertEqual(self.connection.seeked(), [15_000_000, 0, 30_000_000])
+                ('seek', 214.0), ('control', 'next')])
+            self.assertEqual(self.connection.seeked(), [15_000_000, 0, 30_000_000, 214_000_000])
             self.assertEqual(self.app.errors, [])
             # The root interface.
             call(ROOT_INTERFACE, 'Raise')
@@ -596,6 +642,111 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(self.app.actions, ['quit'])
             unknown = call(PLAYER_INTERFACE, 'Bogus')
             self.assertEqual(unknown.error[0], 'org.freedesktop.DBus.Error.UnknownMethod')
+        asyncio.run(go())
+
+    def test_stop_pauses_and_rewinds_and_keeps_the_player(self):
+        """Stop keeps the item: Stopped is published with CanPlay still true (the Shell
+        keeps the player), and Play starts it again from the top, as the spec asks."""
+        async def go():
+            self.make()
+            self.play()
+            await self.app.settle()
+            self.engine.calls.clear()
+            self.connection.changed()
+            self.assertIsNone(self.connection.call(PLAYER_INTERFACE, 'Stop').error)
+            self.assertEqual(self.connection.changed(), [['PlaybackStatus']])
+            values = {name: value.unpack()
+                      for name, value in self.connection.get_all(PLAYER_INTERFACE).items()}
+            self.assertEqual(values['PlaybackStatus'], 'Stopped')
+            self.assertTrue(values['CanPlay'])
+            self.assertEqual(values['Metadata']['xesam:title'], 'Harbour Lights')
+            await self.app.settle()
+            self.assertEqual(self.engine.calls, [('control', 'pause'), ('seek', 0.0)])
+            self.assertEqual(self.connection.seeked(), [0])
+            # MusicKit answers the pause, then the seek: paused, seeking, paused at 0.
+            # Still Stopped throughout.
+            self.engine.emit('event', 'playbackStateDidChange', {'state': 'paused'})
+            self.engine.emit('event', 'playbackStateDidChange', {'state': 'seeking'})
+            self.engine.emit('event', 'playbackStateDidChange',
+                             {'state': 'paused', 'position': 0})
+            self.assertEqual(self.connection.changed(), [])
+            self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'PlaybackStatus').unpack(),
+                             'Stopped')
+            # Play: from the top; Playing again once MusicKit plays.
+            self.engine.calls.clear()
+            self.connection.call(PLAYER_INTERFACE, 'Play')
+            await self.app.settle()
+            self.assertEqual(self.engine.calls, [('control', 'play')])
+            self.engine.emit('event', 'playbackStateDidChange',
+                             {'state': 'playing', 'position': 0})
+            self.assertEqual(self.connection.changed(), [['PlaybackStatus']])
+            self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'PlaybackStatus').unpack(),
+                             'Playing')
+            # Stop, then a new item (Next, say): the item's status, not Stopped.
+            self.connection.call(PLAYER_INTERFACE, 'Stop')
+            await self.app.settle()
+            self.engine.emit('event', 'playbackStateDidChange', {'state': 'paused'})
+            self.engine.emit('event', 'nowPlayingItemDidChange',
+                             {'track': dict(TRACK, id='i.demo0002', index=3), 'index': 3})
+            self.engine.emit('event', 'playbackStateDidChange', {'state': 'playing'})
+            self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'PlaybackStatus').unpack(),
+                             'Playing')
+        asyncio.run(go())
+
+    def test_the_same_song_again_is_another_track(self):
+        """A duplicate queue entry, or Play Next of the song playing: the trackid carries
+        the queue position, so clients see the change (and its Seeked to 0)."""
+        async def go():
+            with patched_clocks() as clock:
+                self.make()
+                self.play(position=200)
+                await self.app.settle()
+                clock.advance(5)
+                self.connection.signals = []
+                emit = self.engine.emit
+                emit('event', 'nowPlayingItemDidChange', {'track': dict(TRACK, index=3),
+                                                          'index': 3})
+                changes = self.connection.changed()
+                self.assertEqual([keys for keys in changes if 'Metadata' in keys],
+                                 [['Metadata']])
+                self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
+                    'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/3/i_2edemo0001')
+                self.assertEqual(self.artwork.urls, [TRACK['artUrl']])  # the same art: kept
+                # The new entry starts from 0, which the Metadata change told: no seek.
+                emit('event', 'playbackTimeDidChange', {'position': 0, 'duration': 214})
+                emit('event', 'playbackTimeDidChange', {'position': 1, 'duration': 214})
+                self.assertEqual(self.connection.seeked(), [])
+                await self.app.settle()
+        asyncio.run(go())
+
+    def test_a_stall_behind_a_playing_status_is_told_as_a_seek(self):
+        """The status stays Playing while MusicKit waits for data, so a client's
+        extrapolated position runs ahead: once the position moves again, a Seeked puts
+        the client right. A stall shorter than SEEK_JUMP tells nothing."""
+        async def go():
+            with patched_clocks() as clock:
+                self.make()
+                self.play(position=10)
+                await self.app.settle()
+                clock.advance(5)
+                self.player.apply({'position': 15})
+                self.connection.signals = []
+                self.player.apply({'state': 'waiting'})
+                self.assertEqual(self.connection.changed(), [])  # still Playing
+                clock.advance(6)  # the client thinks 21
+                self.player.apply({'state': 'playing', 'position': 15})  # 15 still: no change
+                clock.advance(1)
+                self.player.apply({'position': 16})  # the first position that moved
+                self.assertEqual(self.connection.seeked(), [16_000_000])
+                clock.advance(1)
+                self.player.apply({'position': 17})
+                self.assertEqual(self.connection.seeked(), [])
+                self.player.apply({'state': 'waiting'})
+                clock.advance(1)  # a short stall: within SEEK_JUMP
+                self.player.apply({'state': 'playing', 'position': 17})
+                clock.advance(1)
+                self.player.apply({'position': 18})
+                self.assertEqual(self.connection.seeked(), [])
         asyncio.run(go())
 
     def test_a_failed_command_is_reported_not_raised(self):
@@ -624,11 +775,13 @@ class ServiceTest(unittest.TestCase):
             self.assertTrue(set_property(PLAYER_INTERFACE, 'LoopStatus',
                                          GLib.Variant('s', 'Bogus')))
             self.assertTrue(set_property(PLAYER_INTERFACE, 'Rate', GLib.Variant('d', 2.0)))
+            self.assertTrue(set_property(PLAYER_INTERFACE, 'Rate', GLib.Variant('d', 0.0)))
             self.assertTrue(set_property(ROOT_INTERFACE, 'Fullscreen', GLib.Variant('b', True)))
             self.assertFalse(set_property(PLAYER_INTERFACE, 'Position', GLib.Variant('x', 1)))
             await self.app.settle()
             self.assertEqual(self.engine.calls, [
-                ('volume', 0.3), ('volume', 1.0), ('shuffle', 'on'), ('repeat', 'one')])
+                ('volume', 0.3), ('volume', 1.0), ('shuffle', 'on'), ('repeat', 'one'),
+                ('control', 'pause')])  # Rate 0 pauses
             # Nothing changed on the bus: only the events do that.
             self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Volume').unpack(), 1.0)
             self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Rate').unpack(), 1.0)
@@ -680,6 +833,92 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(parameters[2], [])
             await self.app.settle()
         asyncio.run(go())
+
+
+@unittest.skipUnless(shutil.which('dbus-daemon'), 'no dbus-daemon for a private bus')
+class PrivateBusTest(unittest.TestCase):
+    """The service on a private bus (Gio.TestDBus), reached through GDBus as a client would:
+    what GLib checks and answers itself from the node info (introspection, GetAll, a Set of
+    the wrong type), and a method call's round trip."""
+
+    def test_over_gdbus(self):
+        bus = Gio.TestDBus.new(Gio.TestDBusFlags.NONE)
+        bus.up()
+        self.addCleanup(bus.down)
+        flags = (Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+                 | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION)
+        server = Gio.DBusConnection.new_for_address_sync(bus.get_bus_address(), flags, None, None)
+        client = Gio.DBusConnection.new_for_address_sync(bus.get_bus_address(), flags, None, None)
+        engine = FakeEngine()
+        app = FakeApp(engine)
+        player = Player(app)
+        app.player = player
+        service = Mpris(app)
+        acquired = []
+
+        def own_on_the_private_bus(_bus_type, name, flags, bus_acquired, name_acquired,
+                                   name_lost):
+            bus_acquired(server, name)
+            return Gio.bus_own_name_on_connection(
+                server, name, flags, lambda *args: acquired.append(name_acquired(*args)),
+                name_lost)
+
+        with mock.patch.object(mpris.Gio, 'bus_own_name', own_on_the_private_bus):
+            service.start()
+        self.addCleanup(service.stop)
+        self.assertTrue(wait_for(lambda: acquired, timeout=5))
+        player.apply({'track': TRACK, 'state': 'playing', 'position': 10, 'duration': 214})
+        name = mpris.bus_name(APP_ID)
+        results = {}
+
+        def call(interface, method, parameters=None, reply=None):
+            return client.call_sync(name, OBJECT_PATH, interface, method, parameters,
+                                    GLib.VariantType(reply) if reply else None,
+                                    Gio.DBusCallFlags.NONE, 5000, None)
+
+        def talk():
+            try:
+                results['introspection'] = call('org.freedesktop.DBus.Introspectable',
+                                                'Introspect', None, '(s)').unpack()[0]
+                results['all'] = call(PROPERTIES_INTERFACE, 'GetAll',
+                                      GLib.Variant('(s)', (PLAYER_INTERFACE,)),
+                                      '(a{sv})').get_child_value(0)
+                try:
+                    call(PROPERTIES_INTERFACE, 'Set', GLib.Variant(
+                        '(ssv)', (PLAYER_INTERFACE, 'Volume', GLib.Variant('s', 'loud'))))
+                except GLib.Error as error:
+                    results['set_error'] = Gio.DBusError.get_remote_error(error)
+                call(ROOT_INTERFACE, 'Raise')
+                call(PLAYER_INTERFACE, 'PlayPause')
+            except Exception as error:  # noqa: BLE001  reported by the assertion below
+                results['failure'] = error
+            finally:
+                client.close_sync(None)
+
+        thread = threading.Thread(target=talk)
+        thread.start()
+        self.assertTrue(wait_for(lambda: not thread.is_alive(), timeout=10))
+        thread.join()
+        self.assertNotIn('failure', results, results.get('failure'))
+        self.assertIn('<interface name="org.mpris.MediaPlayer2.Player">',
+                      results['introspection'])
+        self.assertIn('<signal name="Seeked">', results['introspection'])
+        values = results['all']
+        types = {key: values.lookup_value(key, None).get_type_string()
+                 for key in values.keys()}
+        self.assertEqual(types, {
+            'PlaybackStatus': 's', 'LoopStatus': 's', 'Rate': 'd', 'Shuffle': 'b',
+            'Metadata': 'a{sv}', 'Volume': 'd', 'Position': 'x', 'MinimumRate': 'd',
+            'MaximumRate': 'd', 'CanGoNext': 'b', 'CanGoPrevious': 'b', 'CanPlay': 'b',
+            'CanPause': 'b', 'CanSeek': 'b', 'CanControl': 'b'})
+        self.assertEqual(values.lookup_value('PlaybackStatus', None).get_string(), 'Playing')
+        self.assertEqual(values.lookup_value('Metadata', None).unpack()['mpris:trackid'],
+                         TRACK_PATH)
+        self.assertEqual(results['set_error'], 'org.freedesktop.DBus.Error.InvalidArgs')
+        self.assertEqual(app.window.presented, 1)
+        self.assertEqual(app.commands, ['Player.toggle'])
+        service.stop()
+        server.close_sync(None)
 
 
 if __name__ == '__main__':
