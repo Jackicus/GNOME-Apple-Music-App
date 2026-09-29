@@ -8,8 +8,8 @@ is disabled by --disable-features=HardwareMediaKeyHandling).
 
 /org/mpris/MediaPlayer2 implements org.mpris.MediaPlayer2 (Identity, DesktopEntry, Raise →
 the window presented, Quit → app.quit) and org.mpris.MediaPlayer2.Player, all of it read from
-the Player: PlaybackStatus from `state` (the active states are Playing, paused is Paused,
-seeking keeps the status before it, the rest Stopped; no track is Stopped), LoopStatus and
+the Player: PlaybackStatus from `resting` (the active states are Playing, paused is Paused,
+the rest Stopped; no track is Stopped), LoopStatus and
 Shuffle from `repeat` and `shuffle`, Volume, Position as int64 microseconds from
 `estimated_position()` (the last position plus the time since while playing, so nothing polls),
 Metadata from `track` (mpris:trackid an object path made of the id, mpris:length, mpris:artUrl
@@ -131,17 +131,15 @@ def track_path(track_id):
     return TRACK_PATH_PREFIX + (escaped or '_')
 
 
-def playback_status(state, current='Stopped'):
-    """The MPRIS PlaybackStatus for a Player state: the active states (playing, loading,
-    waiting, stalled, what the bar shows Pause for) are Playing, paused is Paused, seeking
-    keeps `current` (it is a transient of either), and the rest (none, stopped, ended,
-    completed) Stopped."""
+def playback_status(state):
+    """The MPRIS PlaybackStatus for a Player state, given as `player.resting` (seeking seen
+    through): the active states (playing, loading, waiting, stalled, what the bar shows
+    Pause for) are Playing, paused is Paused, and the rest (none, stopped, ended, completed)
+    Stopped."""
     if state in ACTIVE_STATES:
         return 'Playing'
     if state == 'paused':
         return 'Paused'
-    if state == 'seeking':
-        return current
     return 'Stopped'
 
 
@@ -205,7 +203,7 @@ class Mpris:
         self._registrations = []
         self._handlers = []
         self._sent = {}          # property name → the Variant last put on the bus
-        self._status = 'Stopped'  # the PlaybackStatus last computed (seeking keeps it)
+        self._status = 'Stopped'  # the PlaybackStatus last computed
         self._shown = None       # the Player's track as last followed (_on_track)
         self._art_path = None    # the cached artwork file of the track shown, once on disk
         self._art_task = None
@@ -288,7 +286,7 @@ class Mpris:
     def _playback_status(self):
         if self._player.track is None:
             return 'Stopped'
-        return playback_status(self._player.state, self._status)
+        return playback_status(self._player.resting)
 
     def _metadata(self):
         """The Metadata now: the Player's duration stands in for a track without a length

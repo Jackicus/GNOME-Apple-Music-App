@@ -4,6 +4,9 @@ the playback commands as thin coroutines over the engine.
     player = Player(app)                       # made once, in Application.do_startup
     player.state       # a MusicKit.PlaybackStates name: 'none', 'loading', 'playing', 'paused',
                        # 'stopped', 'ended', 'seeking', 'waiting', 'stalled', 'completed'
+    player.resting     # the state with 'seeking' seen through (the one before the seek)
+    player.active, player.stopped              # playback under way (the bar shows Pause);
+                                               # nothing playing or paused (no item, or ended)
     player.track       # a NowPlaying (id, catalog_id, title, artist, album, duration_ms,
                        # artwork_url, index, explicit), or None
     player.position, player.duration           # seconds, floats
@@ -55,11 +58,12 @@ PLAYBACK_STATES = ('none', 'loading', 'playing', 'paused', 'stopped', 'ended', '
                    'waiting', 'stalled', 'completed')
 
 # The states in which playback is under way (the bar shows Pause): what MusicKit is doing on
-# the way to, or in, playing. 'seeking' is a transient of either playing or paused.
+# the way to, or in, playing. 'seeking' is a transient of whichever state came before it
+# (MusicKit passes through it on every seek and every new queue): `resting` sees through it.
 ACTIVE_STATES = ('playing', 'loading', 'waiting', 'stalled')
 
 # The states in which nothing plays or waits to resume: the item finished, the queue ended,
-# playback was stopped, or there never was any. Paused (and seeking) is not among them.
+# playback was stopped, or there never was any. Paused is not among them.
 STOPPED_STATES = ('none', 'stopped', 'ended', 'completed')
 
 REPEAT_MODES = ('none', 'one', 'all')
@@ -154,6 +158,7 @@ class Player(GObject.Object):
         super().__init__()
         self._app = app
         self._engine = app.engine
+        self._resting = 'none'  # the last state that was not 'seeking'
         self.position_updated_at = time.monotonic()
         self.queue = Gio.ListStore(item_type=NowPlaying)
         self._lyrics_task = None  # the task reading the track's lyrics, while one runs
@@ -297,6 +302,8 @@ class Player(GObject.Object):
         state = state if isinstance(state, str) and state else 'none'
         if state not in PLAYBACK_STATES:
             log.debug('unknown playback state %r', state)
+        if state != 'seeking':
+            self._resting = state
         if state != self.state:
             self.state = state
 
@@ -439,16 +446,23 @@ class Player(GObject.Object):
     # -- derived -------------------------------------------------------------------------
 
     @property
+    def resting(self):
+        """The state with 'seeking' seen through: the state before the seek while it lasts
+        (a seek while playing stays playing, one while paused stays paused)."""
+        return self._resting if self.state == 'seeking' else self.state
+
+    @property
     def active(self):
-        """Whether playback is under way (ACTIVE_STATES): the bar shows Pause."""
-        return self.state in ACTIVE_STATES
+        """Whether playback is under way (ACTIVE_STATES, a seek during it included): the
+        bar shows Pause."""
+        return self.resting in ACTIVE_STATES
 
     @property
     def stopped(self):
         """Whether nothing plays or is paused (no item, or STOPPED_STATES): what background
         playback waits for before the app quits. MusicKit passes through these between
         queues and at the end of each item, so a caller gives it a moment."""
-        return self.track is None or self.state in STOPPED_STATES
+        return self.track is None or self.resting in STOPPED_STATES
 
     def estimated_position(self):
         """The position now: the last one reported, plus the time since while playing
