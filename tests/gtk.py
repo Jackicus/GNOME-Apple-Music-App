@@ -18,7 +18,7 @@ tree's schema (data/*.gschema.xml, compiled into a temporary directory), and
 `Gio.Settings.new('io.github.jackicus.AppleMusic')` works in a test.
 
 pump() runs what is pending on the default main context; wait_for() runs it until a
-condition holds.
+condition holds; iterate() is one iteration of it, for a test that pumps the loop itself.
 """
 
 import atexit
@@ -30,6 +30,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import warnings
 
 from tests import ROOT
 
@@ -41,6 +42,12 @@ RESOURCES = (
 
 _schema_dir = None
 _unavailable = []  # [reason or None], once GTK has been tried
+
+# PyGObject 3.56's MainContext.iteration() asks asyncio's event loop policy for a loop when
+# none is running, which Python 3.14 deprecates (main.use_glib_event_loop() filters the same
+# warning in the app). The unittest runner puts its own filter in front of any a test module
+# sets, so iterate() silences it where it is raised.
+POLICY_WARNING = r"'asyncio\.\w*policy\w*' is deprecated"
 
 
 def use_test_settings():
@@ -131,6 +138,18 @@ def requires_gtk(target):
     return run
 
 
+def iterate(context=None, may_block=False):
+    """One iteration of `context` (the default main context when None), as
+    GLib.MainContext.iteration(may_block), without PyGObject's warning about asyncio's
+    deprecated policy."""
+    from gi.repository import GLib
+
+    context = context or GLib.MainContext.default()
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', POLICY_WARNING, DeprecationWarning)
+        return context.iteration(may_block)
+
+
 def pump(timeout_ms=200):
     """Dispatch what is pending on the default main context until it is idle, for at most
     timeout_ms."""
@@ -139,7 +158,7 @@ def pump(timeout_ms=200):
     context = GLib.MainContext.default()
     deadline = time.monotonic() + timeout_ms / 1000
     while context.pending() and time.monotonic() < deadline:
-        context.iteration(False)
+        iterate(context)
 
 
 def wait_for(predicate, timeout=1.0):
@@ -154,7 +173,7 @@ def wait_for(predicate, timeout=1.0):
         while not predicate():
             if time.monotonic() >= deadline:
                 return False
-            context.iteration(True)
+            iterate(context, True)
         return True
     finally:
         GLib.source_remove(wake)

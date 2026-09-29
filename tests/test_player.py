@@ -13,6 +13,7 @@ from unittest import mock
 from gi.repository import GObject
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
+from tests.gtk import iterate
 
 from applemusic.backend.errors import EngineError
 from applemusic.lyrics import Lyrics
@@ -227,7 +228,7 @@ def pump_until(predicate, timeout=1.0):
         while not predicate():
             if time.monotonic() >= deadline:
                 return False
-            context.iteration(True)
+            iterate(context, True)
         return True
     finally:
         GLib.source_remove(wake)
