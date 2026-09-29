@@ -21,9 +21,11 @@ When a key or a page changes, change this list and the script together.
    the first track (Shift+Tab goes back to More Options), Down, and Enter plays from that
    track. Alt+Left (or Escape inside the page) goes back.
 4. Ctrl+3 puts the focus on the player bar's play button (with nothing playing, on the bar,
-   which Enter opens as Now Playing). Space plays or pauses except in an entry, on a toggle, in a
-   menu or in a dialog; Ctrl+Right and Ctrl+Left skip.
-5. Ctrl+N opens Now Playing with the focus on its play button; Tab goes through the controls,
+   which Enter opens as Now Playing). Space presses the focused button, switch, check box or
+   boxed-list row, as anywhere in GNOME; on a tile, a list item, the seek slider or nothing, it
+   plays or pauses, but never in an entry, in a menu or in a dialog. Ctrl+Right and Ctrl+Left
+   skip.
+5. Ctrl+Shift+N opens Now Playing with the focus on its play button; Tab goes through the controls,
    the Lyrics and Up Next toggle (Left and Right switch) and into the list (arrows move, Enter
    seeks to a line or plays an entry), then the close button. Escape closes the sheet and the
    focus goes back to where it was.
@@ -32,8 +34,8 @@ When a key or a page changes, change this list and the script together.
 7. F10 opens the main menu, from a page in the narrow layout too (the sidebar comes back with
    it). Ctrl+, opens Preferences: Tab through the rows, Alt and the underlined letter for its
    buttons, Escape closes it. Ctrl+? lists every shortcut.
-8. With a dialog open over the window, Alt+Left, Ctrl+F, Ctrl+1 to 3, Ctrl+N and Space leave the
-   page behind it alone.
+8. With a dialog open over the window, Alt+Left, Ctrl+F, Ctrl+1 to 3, Ctrl+Shift+N and Space
+   leave the page behind it alone.
 
 ## The tools
 

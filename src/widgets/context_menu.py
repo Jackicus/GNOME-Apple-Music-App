@@ -21,12 +21,15 @@ activated after it closes, and looks the window's actions up through its parent)
 
 from gi.repository import Gdk, GLib, Graphene, Gtk
 
+from .. import shortcuts
 from ..actions import TrackRef
 
 # The containers whose children are rows or tiles.
 LIST_TYPES = (Gtk.ListBase, Gtk.FlowBox, Gtk.ListBox)
 
-MENU_KEYS = 'Menu|<Shift>F10'
+# The keys that open the focused item's menu, as a Gtk.ShortcutTrigger string: the
+# shortcuts table's alternatives, which the Keyboard Shortcuts dialog lists.
+MENU_KEYS = '|'.join(shortcuts.CONTEXT_MENU.split())
 
 
 def context_object(widget):

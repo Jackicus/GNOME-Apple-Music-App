@@ -2,14 +2,15 @@
 window handles itself, and the Keyboard Shortcuts dialog, which lists them all.
 
 main.py sets ACCELS with Gtk.Application.set_accels_for_action and builds the dialog from
-sections(); window.py parses PLAYBACK into its PLAYBACK_KEYS. tests/test_shortcuts.py checks
-that the dialog lists every accelerator and playback key. Keys that are neither are listed as
-they are: F10 (the primary menu: GTK's own, and the window's when the sidebar is hidden), the
-context-menu keys (widgets/context_menu.py) and Escape (the Now Playing sheet's, the dialogs').
+sections(); keyboard.py parses PLAYBACK into its PLAYBACK_KEYS and MAIN_MENU into the window's
+F10, and widgets/context_menu.py binds CONTEXT_MENU. tests/test_shortcuts.py checks that the
+dialog lists every accelerator and playback key. Keys that are none of these are listed as they
+are: Escape (the Now Playing sheet's, the dialogs').
 
 The playback keys are not accelerators: GTK 4 runs application accelerators in the window's
 capture phase, before the focus widget, so a bare Space would fire while typing in an entry
-and Ctrl+Left would skip a track instead of a word (see window.on_key_pressed).
+and Ctrl+Left would skip a track instead of a word (see keyboard.playback_action). The
+accelerators keep off the HIG's standard ones the app has no use for (Ctrl+N is "New").
 """
 
 from gettext import gettext as _
@@ -20,7 +21,7 @@ ACCELS = {
     'app.shortcuts': ('<primary>question',),
     'app.preferences': ('<primary>comma',),
     'app.sync': ('<primary>r',),
-    'app.now-playing': ('<primary>n',),
+    'app.now-playing': ('<primary><shift>n',),
     'window.close': ('<primary>w',),
     'win.back': ('<alt>Left',),
     'win.search': ('<primary>f',),

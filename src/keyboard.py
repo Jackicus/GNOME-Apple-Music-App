@@ -35,9 +35,12 @@ MAIN_MENU_KEY = Gtk.accelerator_parse(shortcuts.MAIN_MENU)[1:]
 
 # Where a key is the focused widget's own, whatever it is: an entry or a text view.
 TYPING = (Gtk.Editable, Gtk.TextView)
-# Where Space is the widget's own key: it toggles these, so it toggles them rather than
-# playback. (Enter presses a button; Space on a plain button, a tile or a row plays or pauses.)
-SPACE_OWNERS = (Gtk.ToggleButton, Gtk.Switch, Gtk.CheckButton)
+# Where Space is the widget's own key, as GTK and the HIG have it: Space presses a button
+# (a toggle button, a menu button's, a drop-down's or a scale button's inner button and a
+# toggle group's toggles are buttons too), flips a switch or a check box, and activates a
+# boxed list's row. Space plays or pauses only on what does nothing with it: a tile, a list
+# item, the seek slider, or no focus at all.
+SPACE_OWNERS = (Gtk.Button, Gtk.Switch, Gtk.CheckButton, Gtk.ListBoxRow)
 SPACE_KEYS = (Gdk.KEY_space, Gdk.KEY_KP_Space)
 
 

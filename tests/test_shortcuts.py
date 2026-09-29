@@ -51,6 +51,15 @@ class ShortcutsTest(unittest.TestCase):
         for accel in (shortcuts.MAIN_MENU, *shortcuts.CONTEXT_MENU.split(), shortcuts.CLOSE):
             self.assertNotIn(Gtk.accelerator_parse(accel)[1:], seen, accel)
 
+    def test_the_higs_standard_keys_stay_free(self):
+        """The HIG's standard shortcuts the app has no such action for are not taken by
+        another: Ctrl+N (New), Ctrl+O (Open), Ctrl+S (Save), Ctrl+P (Print), Ctrl+Z (Undo)."""
+        taken = {Gtk.accelerator_parse(accel)[1:]
+                 for accels in shortcuts.ACCELS.values() for accel in accels}
+        for accel in ('<primary>n', '<primary>o', '<primary>s', '<primary>p', '<primary>z'):
+            self.assertNotIn(Gtk.accelerator_parse(accel)[1:], taken, accel)
+        self.assertEqual(shortcuts.ACCELS['app.now-playing'], ('<primary><shift>n',))
+
 
 if __name__ == '__main__':
     unittest.main()

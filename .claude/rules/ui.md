@@ -121,7 +121,10 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 ## Actions and shortcuts
 
 - `src/shortcuts.py` holds `ACCELS` (the accelerators main.py sets), `PLAYBACK` (keys the
-  window's capture-phase key controller handles, leaving them to entries, toggles, popovers and
-  dialogs) and `sections()` (the Keyboard Shortcuts dialog); tests/test_shortcuts.py checks that
-  the dialog lists every key. The context-menu keys are bound from `context_menu.MENU_KEYS`,
-  which `shortcuts.CONTEXT_MENU` repeats: change both.
+  window's capture-phase key controller handles), `MAIN_MENU`, `CONTEXT_MENU` and
+  `sections()` (the Keyboard Shortcuts dialog); tests/test_shortcuts.py checks that the dialog
+  lists every key, and that no accelerator is a HIG standard one the app does not implement
+  (Ctrl+N is "New"). `src/keyboard.py` decides which playback action a key runs
+  (`playback_action()`, tests/test_keyboard.py): Space belongs to a focused button, switch,
+  check box or boxed-list row (GTK's own binding presses it), and every key to an entry, a
+  popover or a dialog; `context_menu.MENU_KEYS` is built from `shortcuts.CONTEXT_MENU`.
