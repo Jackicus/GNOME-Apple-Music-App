@@ -2,10 +2,12 @@ using Gtk 4.0;
 using Adw 1;
 
 // The transport bar at the bottom of the window (player_bar.py): the AdwBottomSheet's bottom
-// bar. Transport on the left; the item playing (artwork, title, artist) with the seek slider
-// under it in the middle; the heart, shuffle, repeat and the volume on the right. The window's
-// breakpoint sets `compact` below 600sp, which hides the volume, the heart, shuffle, repeat
-// (the Now Playing sheet has those two) and the times around the slider.
+// bar. Transport on the left; the item playing (artwork, title with its explicit badge,
+// artist) with the seek slider under it in the middle; the heart, shuffle, repeat and the
+// volume on the right. With nothing playing the seek slider and the heart are hidden and
+// "Not Playing" centres beside the cover. The window's breakpoint sets `compact` below
+// 600sp, which hides the volume, the heart, shuffle, repeat (the Now Playing sheet has
+// those two) and the times around the slider.
 template $AppleMusicPlayerBar: Adw.Bin {
   child: Box {
     spacing: 12;
@@ -19,10 +21,10 @@ template $AppleMusicPlayerBar: Adw.Bin {
     ]
 
     Box {
-      spacing: 4;
+      spacing: 6;
       valign: center;
 
-      Button previous_button {
+      Button {
         icon-name: "media-skip-backward-symbolic";
         tooltip-text: _("Previous");
         action-name: "app.previous";
@@ -47,7 +49,7 @@ template $AppleMusicPlayerBar: Adw.Bin {
         ]
       }
 
-      Button next_button {
+      Button {
         icon-name: "media-skip-forward-symbolic";
         tooltip-text: _("Next");
         action-name: "app.next";
@@ -61,7 +63,7 @@ template $AppleMusicPlayerBar: Adw.Bin {
     }
 
     Box {
-      spacing: 10;
+      spacing: 12;
       hexpand: true;
 
       $AppleMusicCover cover {
@@ -78,15 +80,36 @@ template $AppleMusicPlayerBar: Adw.Bin {
         valign: center;
         hexpand: true;
 
-        Label title_label {
-          label: _("Not Playing");
-          xalign: 0;
-          ellipsize: end;
-          single-line-mode: true;
+        Box {
+          spacing: 6;
 
-          styles [
-            "heading",
-          ]
+          Label title_label {
+            label: _("Not Playing");
+            xalign: 0;
+            ellipsize: end;
+            single-line-mode: true;
+
+            styles [
+              "heading",
+            ]
+          }
+
+          Label explicit_badge {
+            // Translators: the badge marking a song with explicit lyrics, as Apple Music shows it
+            label: C_("explicit badge", "E");
+            tooltip-text: _("Explicit");
+            valign: center;
+            visible: false;
+
+            accessibility {
+              label: _("Explicit");
+            }
+
+            styles [
+              "caption",
+              "explicit-badge",
+            ]
+          }
         }
 
         Label subtitle_label {
@@ -104,6 +127,7 @@ template $AppleMusicPlayerBar: Adw.Bin {
         Box seek_box {
           spacing: 6;
           sensitive: false;
+          visible: false;
 
           Label elapsed_label {
             label: "0:00";
@@ -128,7 +152,6 @@ template $AppleMusicPlayerBar: Adw.Bin {
               step-increment: 5;
               page-increment: 30;
             };
-            accessible-role: slider;
 
             accessibility {
               label: _("Position");
@@ -152,7 +175,7 @@ template $AppleMusicPlayerBar: Adw.Bin {
     }
 
     Box {
-      spacing: 4;
+      spacing: 6;
       valign: center;
 
       // Whether the item playing is loved: a click loves or unloves it (widgets/transport.py).
@@ -161,6 +184,7 @@ template $AppleMusicPlayerBar: Adw.Bin {
         icon-name: "heart-outline-symbolic";
         tooltip-text: _("Favourite");
         sensitive: false;
+        visible: false;
         valign: center;
 
         accessibility {

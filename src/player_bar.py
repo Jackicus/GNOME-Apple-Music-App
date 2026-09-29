@@ -35,11 +35,10 @@ class PlayerBar(Adw.Bin):
 
     __gtype_name__ = 'AppleMusicPlayerBar'
 
-    previous_button = Gtk.Template.Child()
     play_button = Gtk.Template.Child()
-    next_button = Gtk.Template.Child()
     cover = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
+    explicit_badge = Gtk.Template.Child()
     subtitle_label = Gtk.Template.Child()
     seek_box = Gtk.Template.Child()
     seek_scale = Gtk.Template.Child()
@@ -56,6 +55,7 @@ class PlayerBar(Adw.Bin):
         super().__init__(**kwargs)
         self._player = None
         self._app = None
+        self._compact = False
         self._announced = None      # the id of the item last announced
         self._play = PlayButton(self.play_button)
         self._titles = TrackTitles(self.title_label, self.subtitle_label,
@@ -69,14 +69,16 @@ class PlayerBar(Adw.Bin):
         self._volume = VolumeControl(self.volume_button, self.volume_adjustment)
 
     def _get_compact(self):
-        return not self.volume_button.get_visible()
+        return self._compact
 
     def _set_compact(self, compact):
         # The title keeps the room: at 360 px it showed "Not Play…" with them. Shuffle and
         # repeat stay in the Now Playing sheet, which the bar opens.
-        for widget in (self.volume_button, self.heart_button, self.shuffle_button,
-                       self.repeat_button, self.elapsed_label, self.remaining_label):
+        self._compact = compact
+        for widget in (self.volume_button, self.shuffle_button, self.repeat_button,
+                       self.elapsed_label, self.remaining_label):
             widget.set_visible(not compact)
+        self._show_playing_controls()
 
     compact = GObject.Property(type=bool, default=False, getter=_get_compact, setter=_set_compact,
                                nick='Compact',
@@ -121,18 +123,36 @@ class PlayerBar(Adw.Bin):
     # -- following the Player --------------------------------------------------------------
 
     def _update_track(self):
-        """What the bar adds to TrackTitles: the bar button's description, and the
-        announcement of a new item."""
+        """What the bar adds to TrackTitles: the explicit badge, the controls that show only
+        with an item, the bar button's description, and the announcement of a new item
+        (once per item; the same song after a stop is announced again)."""
         track = self._player.track if self._player is not None else None
         playing = track is not None
+        self.explicit_badge.set_visible(playing and track.explicit)
+        self._show_playing_controls()
         button = self._bar_button()
         if button is not None:
             description = (', '.join(part for part in (track.title, track_subtitle(track))
                                      if part) if playing else self._strings['not-playing'])
             button.update_property([Gtk.AccessibleProperty.DESCRIPTION], [description])
-        if playing and track.id != self._announced:
+        if not playing:
+            self._announced = None
+        elif track.id != self._announced:
             self._announced = track.id
             self._announce(track)
+
+    def _show_playing_controls(self):
+        """The seek slider and the heart only with an item (the idle bar shows no dead
+        slider); the focus, if it was on a control now hidden or insensitive, moves to
+        the bar itself (the Now Playing button), never off the window."""
+        playing = self._player is not None and self._player.track is not None
+        self.seek_box.set_visible(playing)
+        self.heart_button.set_visible(playing and not self._compact)
+        root = self.get_root()
+        focus = root.get_focus() if root is not None else None
+        if (focus is not None and focus.is_ancestor(self)
+                and not (focus.get_mapped() and focus.is_sensitive())):
+            self.grab_bar_focus()
 
     def _announce(self, track):
         """Tell assistive technology what plays now, as a screen reader user cannot see the
