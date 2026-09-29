@@ -54,11 +54,6 @@ columnview.songs-table > listview > row > cell:last-child {
   padding-right: 24px;
 }
 
-/* Its thumbnails (widgets/song_title.blp). */
-.song-art {
-  border-radius: 4px;
-}
-
 /* The "E" after an explicit song's title: small and bold on a faint wash of the text colour. */
 .explicit-badge {
   padding: 0 4px;

@@ -42,7 +42,6 @@ class ArtistPage(Adw.NavigationPage):
         super().__init__(title=item.title)
         self.item = item
         self._library = library
-        self._token = None
         self._accessible_format = _('{title}, {subtitle}')
         self._fetching = False
         self._status = None
@@ -53,10 +52,15 @@ class ArtistPage(Adw.NavigationPage):
         connect_weak(self.flow_box, 'child-activated', self._on_album_activated)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
         context_menu.attach(self.flow_box)
+        # The portrait is decoded while the page is shown, like any artwork: the 640 px cover,
+        # and the thumbnail meanwhile, or for good when the cover cannot be had.
+        self._portrait = artwork.ArtworkSlot(self._set_portrait, self.avatar.get_size())
+        self._portrait.attach(self.avatar)
         self._show()
 
     def _show(self):
         item = self.item
+        self._portrait.set_paths(item.art, item.thumb)
         self.avatar.set_text(item.title)
         self.name_label.set_label(item.title)
         details = [item.genre, item.count_label]
@@ -93,8 +97,6 @@ class ArtistPage(Adw.NavigationPage):
         self._fetching = False
         item.merge(answer)
         self._show()
-        if self.get_mapped():
-            self._load_portrait()
 
     def _set_status(self, status, message=''):
         self._status = status
@@ -170,37 +172,18 @@ class ArtistPage(Adw.NavigationPage):
         if album is not None:
             self.get_root().open_item(album)
 
-    # The portrait is decoded while the page is shown, like any artwork.
+    # The portrait: the slot decodes it while the avatar is mapped.
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        self._load_portrait()
         if self.item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the portrait's full size comes now.
             Gio.Application.get_default().spawn(self._fetch_cover(self.item))
 
     async def _fetch_cover(self, item):
-        if await fetch_cover(item) and self.get_mapped():
-            self._load_portrait()
+        if await fetch_cover(item) and self.item is item:
+            self._portrait.refresh()
 
-    def _load_portrait(self):
-        loader = artwork.get_default()
-        loader.cancel(self._token)
-        self._token = None
-        path = self.item.art or self.item.thumb
-        size = self.avatar.get_size() * self.get_scale_factor()
-        texture = loader.get(path, size) if path else None
-        if texture is not None:
-            self.avatar.set_custom_image(texture)
-        elif path:
-            self._token = loader.request(path, self._on_texture, size)
-
-    def do_unmap(self):
-        artwork.get_default().cancel(self._token)
-        self._token = None
-        self.avatar.set_custom_image(None)
-        Adw.NavigationPage.do_unmap(self)
-
-    def _on_texture(self, texture):
-        self._token = None
-        self.avatar.set_custom_image(texture)
+    def _set_portrait(self, paintable, found):
+        # Without a picture, the avatar shows the artist's initials.
+        self.avatar.set_custom_image(paintable if found else None)
