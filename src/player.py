@@ -128,9 +128,11 @@ def _duration_of(data):
     return _number(data['duration']) if 'duration' in data else None
 
 
-# The API resource types a Track's `type` names, by what they are to the ratings.
-SONG_TYPES = ('songs', 'library-songs')
-VIDEO_TYPES = ('music-videos', 'library-music-videos')
+# The types a Track's `type` names, by what they are to the ratings: the API's resource
+# types, and MusicKit's own singular names for an item it made itself (seen live: an album
+# queued from the catalog plays items typed 'song', not 'songs').
+SONG_TYPES = ('songs', 'library-songs', 'song')
+VIDEO_TYPES = ('music-videos', 'library-music-videos', 'musicVideo', 'music-video')
 
 
 def _kind_of(data):
@@ -151,8 +153,8 @@ class NowPlaying(GObject.Object):
     it), None without artwork. `duration_ms` is Apple's for the item; the Player's `duration`
     is what MusicKit reports while playing, which is what the seek bar follows. `kind` is
     what the item is to the account's ratings: 'song' or 'video' (from the Track's `type`,
-    the API's resource type; a Track without one is a song), else '' (a station's segment,
-    an ad: nothing to love).
+    the API's resource type or MusicKit's own name for it; a Track without one is a song),
+    else '' (a station's segment, an ad: nothing to love).
     """
 
     __gtype_name__ = 'AppleMusicNowPlaying'
