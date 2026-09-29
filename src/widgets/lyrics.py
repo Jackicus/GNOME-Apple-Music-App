@@ -4,13 +4,16 @@ A Gtk.Stack of four pages: synced lyrics as a Gtk.ListView over the Lyrics objec
 of LyricLine (one wrapping label a row; the line current at the Player's position carries
 the `current` CSS class, the others `dim-label`; a click seeks to the line's start),
 unsynced lyrics as one wrapping label in a scrolled window, a spinner while the engine
-reads them, and a compact "No Lyrics" status page otherwise (none, or no engine).
+reads them, and a compact status page otherwise: "Lyrics" with nothing playing, "No
+Lyrics" for a song without them.
 
 The list follows playback only while the sheet is open (set_active), and only when the
 current line changes: scroll_to brings the row on screen, and once the list's geometry has
 held still for a frame (a tick callback: the sheet's opening lays the list out over a few
-frames) the row glides to the middle of the view. Not while the user scrolled the list in
-the last USER_SCROLL_PAUSE seconds. The line current is found at the Player's
+frames) the row glides to the middle of the view; before the first line it glides back to
+the top. Not while the list is the user's: scrolled by wheel, touch or scrollbar in the
+last USER_SCROLL_PAUSE seconds, or with the focus on a line (a click or Enter on a line
+seeks there and hands the list back). The line current is found at the Player's
 estimated_position() (MusicKit reports whole seconds; the lines start at milliseconds), on
 each position event and, while shown and playing, from one GLib timeout armed for the next
 line's start, so the highlight moves as the line begins rather than up to a second after.
@@ -52,11 +55,11 @@ class LyricsView(Gtk.Stack):
         self._tick_frames = 0
         self._page_seen = None          # the page size the last scroll_to or centring saw
         self._user_scrolled_at = 0.0
+        self._keyboard_in_list = False  # the focus is on a line: the list is the user's
         self._animation = None
         self._next_line_source = 0      # the timeout for the next line's start, while armed
 
-        self.empty_page = Adw.StatusPage(icon_name='music-note-symbolic', title=_('No Lyrics'),
-                                         description=_('Apple Music has no lyrics for this'))
+        self.empty_page = Adw.StatusPage(icon_name='music-note-symbolic', title=_('Lyrics'))
         self.empty_page.add_css_class('compact')
         self.add_named(self.empty_page, 'empty')
 
@@ -74,13 +77,28 @@ class LyricsView(Gtk.Stack):
                                       model=Gtk.NoSelection(),
                                       tab_behavior=Gtk.ListTabBehavior.ITEM)
         self.list_view.add_css_class('lyrics-list')
+        self.list_view.update_property([Gtk.AccessibleProperty.LABEL], [_('Lyrics')])
         self.list_view.connect('activate', self._on_activate)
         self.scrolled = Gtk.ScrolledWindow(child=self.list_view,
                                            hscrollbar_policy=Gtk.PolicyType.NEVER)
+        # The user scrolling the list, by any means, pauses the following: the wheel or a
+        # touchpad, a finger dragging the list, the scrollbar dragged, and the keyboard
+        # moving between lines (while the focus is on one, the list is the user's).
         scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.VERTICAL,
                                            propagation_phase=Gtk.PropagationPhase.CAPTURE)
         scroll.connect('scroll', self._on_user_scroll)
         self.scrolled.add_controller(scroll)
+        touch = Gtk.GestureDrag(propagation_phase=Gtk.PropagationPhase.CAPTURE,
+                                touch_only=True)
+        touch.connect('drag-begin', self._on_user_drag)
+        self.scrolled.add_controller(touch)
+        scrollbar = Gtk.GestureDrag(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        scrollbar.connect('drag-begin', self._on_user_drag)
+        self.scrolled.get_vscrollbar().add_controller(scrollbar)
+        focus = Gtk.EventControllerFocus()
+        focus.connect('enter', self._on_focus_enter)
+        focus.connect('leave', self._on_focus_leave)
+        self.list_view.add_controller(focus)
         # The sheet is laid out at its closed size until a frame or two after it opens (and
         # the window may be resized): a line brought into view in the old page is brought
         # into view again when the page changes.
@@ -92,14 +110,17 @@ class LyricsView(Gtk.Stack):
                                     margin_start=12, margin_end=12, margin_top=6,
                                     margin_bottom=24)
         self.text_label.add_css_class('lyrics-text')
-        self.add_named(Gtk.ScrolledWindow(child=self.text_label,
-                                          hscrollbar_policy=Gtk.PolicyType.NEVER), 'text')
+        self.text_label.update_property([Gtk.AccessibleProperty.LABEL], [_('Lyrics')])
+        self.text_scrolled = Gtk.ScrolledWindow(child=self.text_label,
+                                                hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.add_named(self.text_scrolled, 'text')
 
     def set_player(self, player, app):
         self._player = player
         self._app = app
         player.connect('notify::lyrics', lambda *_: self._on_lyrics())
         player.connect('notify::lyrics-loading', lambda *_: self._update_page())
+        player.connect('notify::track', lambda *_: self._update_page())
         player.connect('notify::position', lambda *_: self._follow())
         player.connect('notify::state', lambda *_: self._follow())
         self._on_lyrics()
@@ -122,15 +143,20 @@ class LyricsView(Gtk.Stack):
             self._current = -1
             self._disarm_next_line()
             self._stop_centring()
+            self._stop_animation()  # a glide still running would scroll the new song's list
             self.list_view.set_model(
                 Gtk.NoSelection(model=lyrics.lines if lyrics is not None and lyrics.synced
                                 else None))
             self.text_label.set_label(lyrics.text if lyrics is not None else '')
             self.scrolled.get_vadjustment().set_value(0)
+            self.text_scrolled.get_vadjustment().set_value(0)
         self._update_page()
         self._follow(force=True)
 
     def _update_page(self):
+        """The page for what there is: the synced list, the text, the spinner while the
+        engine reads, else the status page, which says what it can: with nothing playing
+        that lyrics appear here, for a song without them that there are none."""
         lyrics = self._lyrics
         if lyrics is not None and lyrics.synced:
             self.set_visible_child_name('synced')
@@ -139,6 +165,12 @@ class LyricsView(Gtk.Stack):
         elif self._player is not None and self._player.lyrics_loading:
             self.set_visible_child_name('loading')
         else:
+            if self._player is None or self._player.track is None:
+                self.empty_page.set_title(_('Lyrics'))
+                self.empty_page.set_description(_('Lyrics for the song playing appear here'))
+            else:
+                self.empty_page.set_title(_('No Lyrics'))
+                self.empty_page.set_description(_('No lyrics are available for this song'))
             self.set_visible_child_name('empty')
 
     # -- the current line --------------------------------------------------------------
@@ -188,11 +220,22 @@ class LyricsView(Gtk.Stack):
         if label is not None:
             _set_current(label, position == self._current)
 
+    def _users_turn(self):
+        """Whether the list is the user's for now: scrolled in the last USER_SCROLL_PAUSE
+        seconds, or the focus on a line."""
+        return (self._keyboard_in_list
+                or time.monotonic() - self._user_scrolled_at < USER_SCROLL_PAUSE)
+
     def _bring_into_view(self, index):
         """scroll_to the line's row (a no-op when it is on screen), then centre it once
         its geometry holds still: the sheet's opening, and the list's own layout, take a
-        few frames, during which a row's bounds are what an earlier layout left."""
-        if index < 0 or time.monotonic() - self._user_scrolled_at < USER_SCROLL_PAUSE:
+        few frames, during which a row's bounds are what an earlier layout left. Before the
+        first line (an intro, the song restarted), the top."""
+        if self._users_turn():
+            return
+        if index < 0:
+            self._stop_centring()
+            self._glide_to(self.scrolled.get_vadjustment().get_lower())
             return
         self._page_seen = round(self.scrolled.get_vadjustment().get_page_size())
         self.list_view.scroll_to(index, Gtk.ListScrollFlags.NONE, None)
@@ -269,6 +312,12 @@ class LyricsView(Gtk.Stack):
                   'list %d, scrolled %d, stack %d high)', y, height, adjustment.get_value(),
                   target, page, upper, self.list_view.get_height(), self.scrolled.get_height(),
                   self.get_height())
+        self._glide_to(target)
+
+    def _glide_to(self, target):
+        """Glide the list's scrolled window to `target` (from wherever a glide under way
+        has got it)."""
+        adjustment = self.scrolled.get_vadjustment()
         self._stop_animation()
         if abs(target - adjustment.get_value()) < 1:
             return
@@ -280,15 +329,30 @@ class LyricsView(Gtk.Stack):
         animation.play()
 
     def _stop_animation(self):
+        """Leave the list where a glide has got it (skip() would jump to the glide's end)."""
         if self._animation is not None:
-            self._animation.skip()
+            self._animation.pause()
             self._animation = None
 
     def _on_user_scroll(self, _controller, _dx, _dy):
+        self._user_took_over()
+        return False
+
+    def _on_user_drag(self, _gesture, _x, _y):
+        self._user_took_over()
+
+    def _user_took_over(self):
         self._user_scrolled_at = time.monotonic()
         self._stop_animation()
         self._stop_centring()
-        return False
+
+    def _on_focus_enter(self, _controller):
+        self._keyboard_in_list = True
+        self._stop_animation()
+        self._stop_centring()
+
+    def _on_focus_leave(self, _controller):
+        self._keyboard_in_list = False
 
     # -- the list -----------------------------------------------------------------------
 
@@ -313,10 +377,12 @@ class LyricsView(Gtk.Stack):
             del self._rows[position]
 
     def _on_activate(self, _list_view, position):
-        """A click on a line seeks to where it starts."""
+        """A click on a line (or Enter on it) seeks to where it starts, and the list
+        follows again from there."""
         if self._lyrics is None or self._player is None or self._player.track is None:
             return
         self._user_scrolled_at = 0.0
+        self._keyboard_in_list = False  # until the focus leaves and comes back
         self._app.player_command(self._player.seek(self._lyrics.start_of(position)))
 
 
