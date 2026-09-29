@@ -22,8 +22,6 @@ from gettext import gettext as _
 
 from gi.repository import Adw, GLib, Gtk, Pango
 
-from .transport import run_command
-
 log = logging.getLogger(__name__)
 
 USER_SCROLL_PAUSE = 4.0    # seconds after the user scrolls before the list follows again
@@ -319,7 +317,7 @@ class LyricsView(Gtk.Stack):
         if self._lyrics is None or self._player is None or self._player.track is None:
             return
         self._user_scrolled_at = 0.0
-        run_command(self._app, self._player.seek(self._lyrics.start_of(position)))
+        self._app.player_command(self._player.seek(self._lyrics.start_of(position)))
 
 
 def _set_current(label, current):

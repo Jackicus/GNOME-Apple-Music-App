@@ -155,7 +155,6 @@ def make_heart():
     player, events, app = make_player(state='up')
     engine = RatingEngine()
     app.engine = engine
-    app.report = lambda error: app.toasts.append(error)
     button = Button()
     heart = HeartControl(button)
     heart.attach(player, app)
@@ -256,7 +255,6 @@ class ModeControlTest(unittest.TestCase):
 
         async def go():
             player, engine, app = make_player(state='up')
-            app.report = lambda error: app.toasts.append(error)
             await app.settle()
             shuffle, repeat = Button(), Button()
             modes = ModeControl(shuffle, repeat)

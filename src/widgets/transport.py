@@ -3,9 +3,9 @@ over widgets a template built: the play/pause button's icon (PlayButton), the se
 with its times (SeekControl), the shuffle and repeat toggles (ModeControl), the volume
 button (VolumeControl), a cover following the item's remote artwork (RemoteCover), and the
 heart (HeartControl, which talks to the engine rather than the Player). `attach(player,
-app)` makes one follow the Player's properties and send its commands through the Player; a
-command that fails is toasted by the app (run_command) and the widget put back to the
-Player's state.
+app)` makes one follow the Player's properties and send its commands through the Player,
+run by `app.player_command(coro, on_error)`: a command that fails is toasted by the app
+and the widget put back to the Player's state.
 
 The heart (HeartControl) shows whether the item playing is loved: unloved as each item
 starts, then what the engine's rating() answers (one read per item, nothing polled), and
@@ -112,19 +112,6 @@ REPEAT_ICONS = {
     'all': 'media-playlist-repeat-symbolic',
     'one': 'media-playlist-repeat-song-symbolic',
 }
-
-
-def run_command(app, coro, on_error=None):
-    """A Player command as a task; an EngineError is toasted, and on_error() puts the
-    widget back to the Player's state."""
-    async def command():
-        try:
-            await coro
-        except EngineError as error:
-            app.report(error)
-            if on_error is not None:
-                on_error()
-    return app.spawn(command())
 
 
 def track_subtitle(track):
@@ -250,7 +237,7 @@ class SeekControl:
             return GLib.SOURCE_REMOVE
         self._guard.sent(time.monotonic())
         log.debug('seek to %.1f s', target)
-        run_command(self._app, self._player.seek(target), self._on_seek_failed)
+        self._app.player_command(self._player.seek(target), self._on_seek_failed)
         return GLib.SOURCE_REMOVE
 
     def _on_seek_failed(self):
@@ -306,7 +293,7 @@ class ModeControl:
     def _on_shuffle_toggled(self, button):
         if self._syncing or self._player is None:
             return
-        run_command(self._app, self._player.set_shuffle(button.get_active()), self.update)
+        self._app.player_command(self._player.set_shuffle(button.get_active()), self.update)
 
     def _on_repeat_toggled(self, _button):
         """A click cycles none → one → all → none; the button shows the mode it asked for
@@ -319,7 +306,7 @@ class ModeControl:
             self._show_repeat(mode)
         finally:
             self._syncing = False
-        run_command(self._app, self._player.set_repeat(mode), self.update)
+        self._app.player_command(self._player.set_repeat(mode), self.update)
 
 
 class VolumeControl:
@@ -395,7 +382,7 @@ class VolumeControl:
                 following = self._coalescer.done()
                 if following is not None:
                     self._send(following)
-        run_command(self._app, command(), self.update)
+        self._app.player_command(command(), self.update)
 
 
 def find_descendant(widget, cls):
@@ -505,7 +492,7 @@ class HeartControl:
             if self.target() == target:
                 self.show(not loved)
 
-        run_command(self._app, coro, put_back)
+        self._app.player_command(coro, put_back)
 
 
 class RemoteCover:
