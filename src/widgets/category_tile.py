@@ -4,6 +4,7 @@ from gi.repository import Gio, Graphene, Gtk
 
 from ..remote import fetch_thumb, needs_thumb
 from . import artwork
+from .util import connect_weak
 
 # The picture's edge in logical pixels (category_tile.blp).
 ART_SIZE = 84
@@ -39,7 +40,16 @@ class CategoryTile(Gtk.Overlay):
 
     def bind(self, item):
         self.item = item
+        # The Item outlives the tile (the landing's store): it holds the tile weakly. A tile
+        # is bound once, and goes with its flow box child.
+        connect_weak(item, 'notify', self._on_item_notify)
         self.title_label.set_text(item.title)
+        self._show_colour(item)
+        self._slot.set_paths(item.thumb)
+        if self.get_mapped():
+            self._fetch_art()
+
+    def _show_colour(self, item):
         colour = artwork.art_colour(item.art_color)
         # Made deeper (or lighter) where the name would not read on it (band_colour).
         self._colour, dark = (artwork.band_colour(colour) if colour is not None
@@ -51,9 +61,15 @@ class CategoryTile(Gtk.Overlay):
             self.add_css_class('light-art')
             self.remove_css_class('dark-art')
         self.queue_draw()
-        self._slot.set_paths(item.thumb)
-        if self.get_mapped():
-            self._fetch_art()
+
+    def _on_item_notify(self, item, pspec):
+        name = pspec.name
+        if name == 'title':
+            self.title_label.set_text(item.title)
+        elif name == 'art-color':
+            self._show_colour(item)
+        elif name == 'thumb' and not self._slot.set_paths(item.thumb):
+            self._slot.refresh()
 
     def do_map(self):
         Gtk.Overlay.do_map(self)

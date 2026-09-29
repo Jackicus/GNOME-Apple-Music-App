@@ -17,7 +17,8 @@ THUMB_SIZE, `art` at COVER_SIZE, with `thumbUrl` and `artUrl` to fetch them by),
 shows the thumbnail once `await fetch_thumb(item)` has brought it and a detail page's
 fetch_cover() the cover. remote_shelves() makes the engine's shelf dicts into library.Shelf
 objects of such Items, titled in the app's words (shelf_title()), and fetch_shelf_art() brings
-their thumbnails a few at a time.
+their thumbnails a few at a time, each Item notifying `thumb` as its file arrives: the tiles
+showing it follow their Item (widgets/tile.py).
 
 Downloads run in a pool of their own (FETCH_WORKERS threads), not in asyncio's default
 executor, where the artwork is decoded: a page's thumbnails downloading on a slow connection
@@ -234,16 +235,15 @@ def remote_shelves(dicts):
 
 async def fetch_shelf_art(shelves):
     """Fetch the thumbnails of the shelves' items that are not on disk, ART_CONCURRENCY at a
-    time, and rebind each item's tile as its file arrives (the item spliced over itself in its
-    shelf's store)."""
+    time; each Item whose file arrives notifies `thumb` (its path unchanged), and the tiles
+    showing it look again. A store splicing the Item over itself would not do: GTK does not
+    rebind a row for that."""
     gate = asyncio.Semaphore(ART_CONCURRENCY)
 
-    async def fetch(store, item):
+    async def fetch(item):
         async with gate:
             if await fetch_thumb(item):
-                found, position = store.find(item)
-                if found:
-                    store.splice(position, 1, [item])
+                item.notify('thumb')
 
-    await asyncio.gather(*(fetch(shelf.items, item) for shelf in shelves
-                           for item in list(shelf.items) if needs_thumb(item)))
+    await asyncio.gather(*(fetch(item) for shelf in shelves for item in list(shelf.items)
+                           if needs_thumb(item)))

@@ -216,6 +216,108 @@ class TileArtTest(WidgetTestCase):
         self.assert_freed(ref)
 
 
+class FollowTest(WidgetTestCase):
+    """A bound tile or card follows its Item's notify signals: a list rebinds nothing for an
+    Item that changed in place (a reload's merge, a fetched thumbnail)."""
+
+    def test_a_tile_follows_a_merge(self):
+        from applemusic.widgets.tile import Tile
+
+        item = Item(dict(ALBUM))
+        tile = self.show(Tile())
+        tile.bind(item)
+        item.merge(dict(ALBUM, title='New Title', subtitle='New Artist'), replace=True)
+        self.assertEqual(tile.label.get_text(), 'New Title\nNew Artist')
+        item.merge(dict(ALBUM, title='Newer', subtitle=''), replace=True)
+        self.assertEqual(tile.label.get_text(), 'Newer')
+        # A new thumbnail path is shown (the old file is pruned by the sync).
+        pump()
+        item.merge(dict(ALBUM, title='Newer', subtitle='', thumb='/cache/thumb/new.jpg'),
+                   replace=True)
+        pump()
+        self.assertEqual(self.loader.requests[-1][0], '/cache/thumb/new.jpg')
+
+        tile.unbind()
+        item.merge(dict(ALBUM, title='After Unbind'), replace=True)
+        self.assertEqual(tile.label.get_text(), 'Newer')
+
+    def test_a_tile_looks_again_when_its_thumbnail_arrives(self):
+        from applemusic.widgets.tile import Tile
+
+        item = Item(dict(ALBUM))
+        tile = self.show(Tile())
+        tile.bind(item)
+        pump()
+        self.loader.answer(ALBUM['thumb'], None)  # not on disk yet
+        self.assertEqual(len(self.loader.requests), 1)
+        item.notify('thumb')  # remote.fetch_shelf_art: the file has arrived, same path
+        pump()
+        self.assertEqual(len(self.loader.requests), 2)
+        shown = texture()
+        self.loader.answer(ALBUM['thumb'], shown)
+        self.assertIs(tile.picture.get_paintable(), shown)
+
+    def test_a_tile_rebound_follows_only_its_new_item(self):
+        from applemusic.widgets.tile import Tile
+
+        first, second = Item(dict(ALBUM)), Item(dict(ALBUM, id='l.a2', title='Second'))
+        tile = self.show(Tile())
+        tile.bind(first)
+        tile.unbind()
+        tile.bind(second)
+        first.merge(dict(ALBUM, title='Not Shown'), replace=True)
+        self.assertTrue(tile.label.get_text().startswith('Second'))
+
+    def test_a_freed_tile_is_let_go_of(self):
+        from applemusic.widgets.tile import Tile
+
+        item = Item(dict(ALBUM))
+        tile = self.show(Tile())
+        tile.bind(item)  # and never unbound: dropped with its view
+        ref = self.drop(tile)
+        del tile
+        self.assert_freed(ref)
+        item.merge(dict(ALBUM, title='Later'), replace=True)  # the handler goes, quietly
+
+    def test_a_hero_card_follows_its_item(self):
+        from applemusic.widgets.hero_tile import HeroTile
+
+        item = Item(dict(ALBUM, artColor='#1b4965'))
+        card = self.show(HeroTile())
+        card.bind(item)
+        self.assertTrue(card.has_css_class('dark-art'))
+        item.merge(dict(ALBUM, title='New Title', subtitle='New Artist', artColor='#ffd166'),
+                   replace=True)
+        self.assertEqual(card.title_label.get_text(), 'New Title')
+        self.assertEqual(card.subtitle_label.get_text(), 'New Artist')
+        self.assertTrue(card.has_css_class('light-art'))
+        pump()
+        count = len(self.loader.requests)
+        item.notify('thumb')
+        pump()
+        self.assertGreater(len(self.loader.requests), count)
+        card.unbind()
+        item.merge(dict(ALBUM, title='After Unbind'), replace=True)
+        self.assertEqual(card.title_label.get_text(), 'New Title')
+
+    def test_a_category_tile_follows_its_item(self):
+        from applemusic.widgets.category_tile import CategoryTile
+
+        item = Item({'id': 'c1', 'kind': 'category', 'title': 'Invented Category',
+                     'thumb': '/a/category', 'artColor': '#1b4965'})
+        tile = CategoryTile()
+        tile.bind(item)
+        self.show(tile)
+        item.merge({'id': 'c1', 'kind': 'category', 'title': 'Renamed', 'thumb': '/a/category',
+                    'artColor': '#ffd166'}, replace=True)
+        self.assertEqual(tile.title_label.get_text(), 'Renamed')
+        self.assertTrue(tile.has_css_class('light-art'))
+        count = len(self.loader.requests)
+        item.notify('thumb')
+        pump()
+        self.assertGreater(len(self.loader.requests), count)
+
+
 class TileLabelTest(WidgetTestCase):
     """The title and subtitle, one Gtk.Inscription: markup for a subtitle, text without."""
 
