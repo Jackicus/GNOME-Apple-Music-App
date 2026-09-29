@@ -654,8 +654,40 @@ class CommandTest(unittest.TestCase):
             player, engine, app = make_player(state='down')
             await player.play({'kind': 'album', 'id': 'l.alb1'}, start_with=2)
             self.assertEqual(engine.calls[0], ('start', None))  # the preferred mode
-            self.assertEqual(engine.calls[-1], ('play', 'album', 'l.alb1', 2, False))
+            self.assertEqual(engine.calls[-1], ('play', 'album', 'l.alb1', 2, None))
             self.assertEqual(app.toasts, ['Starting playback engine…'])
+            await player.play({'kind': 'album', 'id': 'l.alb1'}, shuffle=False)
+            self.assertEqual(engine.calls[-1], ('play', 'album', 'l.alb1', None, False))
+        asyncio.run(go())
+
+    def test_play_requests_run_in_order_and_the_newest_wins(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            pending = []
+            player.connect('notify::pending', lambda p, _pspec: pending.append(p.pending))
+            gate = engine.gate('play')
+            first = asyncio.ensure_future(player.play({'kind': 'album', 'id': 'l.a'}))
+            await asyncio.sleep(0)
+            self.assertTrue(player.pending)
+            second = asyncio.ensure_future(player.play({'kind': 'album', 'id': 'l.b'}))
+            third = asyncio.ensure_future(player.play({'kind': 'album', 'id': 'l.c'}))
+            await asyncio.sleep(0)
+            plays = [call for call in engine.calls if call[0] == 'play']
+            self.assertEqual(len(plays), 1)  # the first is with the engine; the rest wait
+            gate.set()
+            await asyncio.gather(first, second, third)
+            plays = [call[2] for call in engine.calls if call[0] == 'play']
+            self.assertEqual(plays, ['l.a', 'l.c'])  # the second was superseded by the third
+            self.assertFalse(player.pending)
+            self.assertEqual(pending, [True, False])
+        asyncio.run(go())
+
+    def test_a_failed_request_is_no_longer_pending(self):
+        async def go():
+            player, engine, app = make_player(signed_in=False, state='down')
+            with self.assertRaises(EngineError):
+                await player.play({'kind': 'album', 'id': 'l.a'})
+            self.assertFalse(player.pending)
         asyncio.run(go())
 
     def test_play_with_the_engine_up_plays_at_once(self):
