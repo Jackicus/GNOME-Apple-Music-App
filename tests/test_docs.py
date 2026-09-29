@@ -35,6 +35,9 @@ DOCS = sorted(
 
 TOP = ('src/', 'scripts/', 'tests/', 'data/', 'docs/', 'build-aux/', 'po/', 'subprojects/',
        '.claude/', '.github/')
+# Paths that exist only after a build or a Meson download (git-ignored): named in the docs,
+# but absent from a fresh checkout or CI, which uses the system's blueprint-compiler.
+GENERATED = ('build/', '_build/', 'subprojects/blueprint-compiler/')
 ROOT_FILES = ('CLAUDE.md', 'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE',
               'meson.build', 'meson.options', 'pyproject.toml')
 # A path in text: a top directory, then path characters; placeholders (<…>, *, {…}) included.
@@ -103,6 +106,8 @@ class DocsTest(unittest.TestCase):
             for token in PATH_RE.findall(text):
                 token = clean(token)
                 if token.rstrip('/') in [top.rstrip('/') for top in TOP]:
+                    continue
+                if token.startswith(GENERATED):
                     continue
                 if not exists(token):
                     missing.append(f'{path.relative_to(ROOT)}: {token}')
