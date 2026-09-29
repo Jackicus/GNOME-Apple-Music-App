@@ -46,5 +46,6 @@ src/widgets/now_playing.blp
 src/widgets/now_playing.py
 src/widgets/queue.py
 src/widgets/transport.py
+src/widgets/labels.py
 src/library.py
 src/remote.py

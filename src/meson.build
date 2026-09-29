@@ -145,6 +145,7 @@ install_data(
   'widgets/context_menu.py',
   'widgets/cover.py',
   'widgets/hero_tile.py',
+  'widgets/labels.py',
   'widgets/lyrics.py',
   'widgets/now_playing.py',
   'widgets/queue.py',
