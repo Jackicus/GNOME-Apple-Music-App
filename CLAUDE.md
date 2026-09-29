@@ -155,6 +155,7 @@ sudo meson install -C _build --skip-subprojects
 - **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
   ruff: 4-space indents, no type annotations, a docstring where a module or function is not
   obvious, and comments that describe the code as it is (no phase numbers, review IDs or plans).
+  Every source file starts with the two SPDX lines (tests/test_spdx.py).
 - **Tests**: stdlib `unittest` in `tests/test_<module>.py`. Keep logic in non-widget classes and
   pure functions, tested with stand-ins; widget tests go through `tests/gtk.py`. Backend, model
   and service changes come with a test.

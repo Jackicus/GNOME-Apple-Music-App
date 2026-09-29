@@ -38,6 +38,7 @@ paths:
 - Some tests guard project rules rather than behaviour: test_build_lists (install, blueprint,
   gresource and POTFILES lists), test_shortcuts (the dialog lists every key), test_backend (no gi
   in the backend), test_i18n (gettext bound for Python and GtkBuilder), test_page_lifetime
-  (droppable widgets are freed). When one fails, fix the code or the list, not the test.
+  (droppable widgets are freed), test_spdx (every source file's licence header). When one
+  fails, fix the code or the list, not the test.
 - Keep the suite fast, since check.sh runs it on every change: patch clocks and timeouts
   rather than sleeping.
