@@ -5,9 +5,9 @@ Unlike Home, whose shelves are the library's, these pages own their Items: the e
 shelf dicts are wrapped (remote.remote_shelves), their artwork pointed at <cache>/remote-art/
 (remote.remote_item) and fetched in the background (remote.fetch_shelf_art), each tile
 following its Item as its thumbnail arrives. The page shows a spinner while the answer is on
-its way, a status page with the fitting button when the engine is down or signed out (or the
-answer failed), and the shelves otherwise; a refresh button in the header bar asks Apple
-again past the day-long cache.
+its way, a status page with the fitting button when the engine cannot answer
+(widgets/engine_status.py), and the shelves otherwise; a refresh button in the header bar
+asks Apple again past the day-long cache.
 """
 
 import logging
@@ -17,6 +17,7 @@ from gi.repository import Adw, Gtk
 
 from ..backend.errors import EngineError
 from ..remote import fetch_shelf_art, remote_shelves
+from ..widgets.engine_status import EngineStatus
 from ..widgets.shelf import Shelf
 from ..widgets.util import connect_weak
 from . import app
@@ -56,10 +57,14 @@ class ShelvesPage(Adw.NavigationPage):
         self._loaded = False
         self._task = None  # the fetch running
         self._art_task = None  # the thumbnails being fetched for the shelves shown
-        self._shelves = []  # the library.Shelf objects shown
+        self._shelves = []  # the ShelfModel objects shown
         self._widgets = []  # their AppleMusicShelf widgets, in order
-        self._status = None  # what the status page says, or None while shelves show
-        self._engine_handlers = []
+        # What the page says when the engine cannot answer, and what its button does.
+        self._engine_status = EngineStatus(app(), self._show_status, self.load, {
+            'engine-down': _('Start the engine to load this page'),
+            'not-signed-in': _('This page appears once you sign in to Apple Music'),
+            'failed': _('Could Not Load This Page'),
+        })
         self.header_bar.set_show_title(not root)
         self.title_label.set_label(title)
         # Connected weakly (widgets/util.py): a bound method would keep a popped page alive.
@@ -70,19 +75,12 @@ class ShelvesPage(Adw.NavigationPage):
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        engine = app().engine
-        self._engine_handlers = [
-            engine.connect('notify::state', self._on_engine_changed),
-            engine.connect('notify::authorized', self._on_engine_changed),
-        ]
+        self._engine_status.watch()  # may load again: the engine came up meanwhile
         if not self._loaded and (self._task is None or self._task.done()):
             self.load()
 
     def do_unmap(self):
-        engine = app().engine
-        for handler in self._engine_handlers:
-            engine.disconnect(handler)
-        self._engine_handlers = []
+        self._engine_status.unwatch()
         Adw.NavigationPage.do_unmap(self)
 
     def load(self, refresh=False):
@@ -93,7 +91,7 @@ class ShelvesPage(Adw.NavigationPage):
 
     async def _load(self, refresh):
         if not self._shelves:
-            self._set_status('loading')
+            self._engine_status.loading()
         self.refresh_button.set_sensitive(False)
         try:
             answer = await self._fetch(refresh)
@@ -102,7 +100,7 @@ class ShelvesPage(Adw.NavigationPage):
             if self._shelves:
                 app().report(error)  # a refresh that failed keeps what is shown
             else:
-                self._set_status(error.code, error.message)
+                self._engine_status.fail(error)
             return
         finally:
             self.refresh_button.set_sensitive(True)
@@ -125,72 +123,31 @@ class ShelvesPage(Adw.NavigationPage):
             self.shelves_box.remove(widget)
         del self._widgets[len(shelves):]
         self._shelves = shelves
+        self._engine_status.clear()
         if shelves:
-            self._status = None
             self.stack.set_visible_child_name('items')
             self._art_task = app().spawn(fetch_shelf_art(shelves))
         else:
-            self._set_status('empty')
+            title, description = self._empty
+            self._show_status('empty', title, description, None)
 
-    def _set_status(self, status, message=''):
-        """The status page for `status`: 'loading' (the spinner), an EngineError code with
-        a button that helps ('engine-down': Start Engine, unless the engine is starting
-        already, when the spinner stays; 'not-signed-in': Sign In; anything else: Try
-        Again), or 'empty'."""
-        self._status = status
-        if status == 'loading' or (status == 'engine-down' and app().engine.state == 'starting'):
+    def _show_status(self, status, title, description, button):
+        """The spinner ('loading'), or the status page: EngineStatus's states, or 'empty'."""
+        if status == 'loading':
             self.stack.set_visible_child_name('loading')
             return
         self.status_page.set_icon_name(self._icon_name)
-        if status == 'engine-down':
-            title = _('Engine Not Running')
-            if app().demo:
-                description, button = _('Not available with the demo library'), None
-            else:
-                description, button = _('Start the engine to load this page'), _('Start Engine')
-        elif status == 'not-signed-in':
-            title = _('Sign In to Load This')
-            description = _('This page appears once you sign in to Apple Music')
-            button = _('Sign In')
-        elif status == 'empty':
-            (title, description), button = self._empty, None
-        else:
-            title, description, button = _('Could Not Load This Page'), message, _('Try Again')
         self.status_page.set_title(title)
         self.status_page.set_description(description)
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
         self.stack.set_visible_child_name('status')
 
-    def _on_engine_changed(self, engine, _pspec):
-        if self._status == 'engine-down':
-            if engine.state == 'up':
-                self.load()
-            elif engine.state == 'down':
-                self._set_status('engine-down')  # a start that failed: the button is back
-        elif self._status == 'not-signed-in' and engine.authorized:
-            self.load()
-
     def _on_refresh_clicked(self, _button):
         self.load(refresh=True)
 
     def _on_status_clicked(self, _button):
-        if self._status == 'not-signed-in':
-            app().activate_action('sign-in')
-        elif self._status == 'engine-down':
-            self._set_status('loading')
-            app().spawn(self._start_and_load())
-        else:
-            self.load()
-
-    async def _start_and_load(self):
-        try:
-            await app().engine.start()
-        except EngineError as error:
-            app().report(error)
-            self._set_status(error.code, error.message)
-            return
-        self.load()
+        self._engine_status.activate()
 
 
 def category_page(item):

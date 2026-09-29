@@ -144,6 +144,7 @@ install_data(
   'widgets/category_tile.py',
   'widgets/context_menu.py',
   'widgets/cover.py',
+  'widgets/engine_status.py',
   'widgets/hero_tile.py',
   'widgets/labels.py',
   'widgets/lyrics.py',

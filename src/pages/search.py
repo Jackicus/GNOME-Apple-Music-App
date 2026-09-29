@@ -24,6 +24,7 @@ from ..remote import fetch_shelf_art, fetch_thumb, needs_thumb, remote_item, rem
 from ..widgets import context_menu
 from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
+from ..widgets.engine_status import EngineStatus
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.track_row import TrackRow
 from ..widgets.util import MappedHandlers
@@ -134,7 +135,16 @@ class SearchPage(Adw.NavigationPage):
         self._results = []  # the library.Shelf objects of the last search
         self._result_widgets = []
         self._art_task = None
-        self._engine_handlers = []
+        # What the page says when the engine cannot answer, and what its button does; its
+        # retry asks again for what failed, in Apple Music mode only.
+        texts = {
+            'engine-down': _('Start the engine to search Apple Music'),
+            'not-signed-in': (_('Sign In to Search Apple Music'),
+                              _('Apple Music’s catalogue is searched once you sign in')),
+            'failed': _('Search Failed'),
+        }
+        self._engine_status = EngineStatus(app(), self._show_engine_status,
+                                           self._retry_request, texts)
         self._accessible_format = _('{title}, {subtitle}')
         self.title_label.set_label(title)
 
@@ -196,19 +206,12 @@ class SearchPage(Adw.NavigationPage):
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        engine = app().engine
-        self._engine_handlers = [
-            engine.connect('notify::state', self._on_engine_changed),
-            engine.connect('notify::authorized', self._on_engine_changed),
-        ]
         if self._stale():
             self._refresh()
+        self._engine_status.watch()
 
     def do_unmap(self):
-        engine = app().engine
-        for handler in self._engine_handlers:
-            engine.disconnect(handler)
-        self._engine_handlers = []
+        self._engine_status.unwatch()
         Adw.NavigationPage.do_unmap(self)
 
     def _stale(self):
@@ -217,8 +220,8 @@ class SearchPage(Adw.NavigationPage):
         missed a library load. Results and suggestions on screen stay (coming back from
         an item's page must not replace them)."""
         shown = self.stack.get_visible_child_name()
-        if shown == 'loading' or self._status in ('engine-down', 'not-signed-in', 'api',
-                                                   'timeout', 'usage'):
+        if shown == 'loading' or self._engine_status.status in ('engine-down', 'not-signed-in',
+                                                                'failed'):
             return True
         if self.mode == 'library':
             return bool(self.text)
@@ -377,7 +380,12 @@ class SearchPage(Adw.NavigationPage):
     def _fail(self, error, retry):
         log.info('search: %s', error)
         self._retry = retry
-        self._show_status(error.code, getattr(error, 'message', ''))
+        self._engine_status.fail(error)
+
+    def _retry_request(self):
+        """EngineStatus's retry: ask again for what failed (Apple Music mode only)."""
+        if self.mode == 'music' and self._retry is not None:
+            self._retry()
 
     # Your Library: the filtered models.
 
@@ -423,30 +431,15 @@ class SearchPage(Adw.NavigationPage):
 
     def _show(self, name):
         self._status = None
+        self._engine_status.clear()
         self.stack.set_visible_child_name(name)
 
-    def _show_status(self, status, message=''):
-        """The status page for `status`: an EngineError code with the button that helps
-        ('engine-down': Start Engine, unless the engine is starting already; 'not-signed-in':
-        Sign In; another failure: Try Again), or one of the page's own: 'no-results',
-        'no-suggestions', 'empty-landing', 'library-empty' (Your Library before typing)."""
-        self._status = status
-        if status == 'engine-down' and app().engine.state == 'starting':
-            self.stack.set_visible_child_name('loading')
-            return
-        icon, button = self._icon_name, None
-        if status == 'engine-down':
-            title = _('Engine Not Running')
-            if app().demo:
-                description = _('Not available with the demo library')
-            else:
-                description = _('Start the engine to search Apple Music')
-                button = _('Start Engine')
-        elif status == 'not-signed-in':
-            title = _('Sign In to Search Apple Music')
-            description = _('Apple Music’s catalogue is searched once you sign in')
-            button = _('Sign In')
-        elif status == 'no-results':
+    def _show_status(self, status):
+        """The status page for one of the page's own states: 'no-results', 'no-suggestions',
+        'empty-landing', 'library-empty' (Your Library before typing)."""
+        self._engine_status.clear()
+        icon = self._icon_name
+        if status == 'no-results':
             icon = 'edit-find-symbolic'
             title, description = _('No Results Found'), _('Try a different search')
         elif status == 'no-suggestions':
@@ -454,11 +447,21 @@ class SearchPage(Adw.NavigationPage):
             title, description = _('No Suggestions'), _('Press Enter to search anyway')
         elif status == 'empty-landing':
             title, description = _('Search Apple Music'), _('Type to search the catalogue')
-        elif status == 'library-empty':
+        else:
             title = _('Search Your Library')
             description = _('Albums, artists, playlists and songs in your library')
-        else:
-            title, description, button = _('Search Failed'), message, _('Try Again')
+        self._draw_status(status, icon, title, description, None)
+
+    def _show_engine_status(self, status, title, description, button):
+        """EngineStatus's show: the spinner, or why Apple Music cannot answer."""
+        if status == 'loading':
+            self._status = None
+            self.stack.set_visible_child_name('loading')
+            return
+        self._draw_status(status, self._icon_name, title, description, button)
+
+    def _draw_status(self, status, icon, title, description, button):
+        self._status = status
         self.status_page.set_icon_name(icon)
         self.status_page.set_title(title)
         self.status_page.set_description(description)
@@ -466,36 +469,9 @@ class SearchPage(Adw.NavigationPage):
         self.status_button.set_visible(bool(button))
         self.stack.set_visible_child_name('status')
 
-    def _on_engine_changed(self, engine, _pspec):
-        if self.mode != 'music' or self._retry is None:
-            return
-        if self._status == 'engine-down':
-            if engine.state == 'up':
-                self._retry()
-            elif engine.state == 'down':
-                self._show_status('engine-down')  # a start that failed: the button is back
-        elif self._status == 'not-signed-in' and engine.authorized:
-            self._retry()
-
     @Gtk.Template.Callback()
     def on_status_clicked(self, _button):
-        if self._status == 'not-signed-in':
-            app().activate_action('sign-in')
-        elif self._status == 'engine-down':
-            self._show('loading')
-            app().spawn(self._start_engine())
-        elif self._retry is not None:
-            self._retry()
-
-    async def _start_engine(self):
-        try:
-            await app().engine.start()
-        except EngineError as error:
-            app().report(error)
-            self._show_status(error.code, error.message)
-            return
-        if self._retry is not None:
-            self._retry()
+        self._engine_status.activate()
 
     # The landing's tiles.
 

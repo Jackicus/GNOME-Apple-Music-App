@@ -9,6 +9,7 @@ from ..backend.errors import EngineError
 from ..library import Item
 from ..remote import fetch_cover
 from ..widgets import artwork, context_menu
+from ..widgets.engine_status import EngineStatus
 from ..widgets.tile import Tile
 from ..widgets.util import connect_weak, weak_method
 from . import app
@@ -45,7 +46,12 @@ class ArtistPage(Adw.NavigationPage):
         self._library = library
         self._accessible_format = _('{title}, {subtitle}')
         self._fetching = False
-        self._status = None
+        # What the status page says when the engine cannot answer, and what its button does.
+        self._engine_status = EngineStatus(app(), self._show_status, self._fetch, {
+            'engine-down': _('Start the engine to load the albums'),
+            'not-signed-in': _('The albums appear once you sign in to Apple Music'),
+            'failed': _('Could Not Load the Albums'),
+        })
         self._albums = Gio.ListStore(item_type=Item)
         # What a child holds calls the page weakly (widgets/util.py): a bound method would
         # keep the page alive once popped.
@@ -82,7 +88,7 @@ class ArtistPage(Adw.NavigationPage):
 
     def _fetch(self):
         self._fetching = True
-        self._set_status('loading')
+        self._engine_status.loading()
         app().spawn(self._fetch_groups())
 
     async def _fetch_groups(self):
@@ -92,55 +98,26 @@ class ArtistPage(Adw.NavigationPage):
         except EngineError as error:
             log.info('albums of artist %s: %s', item.id, error)
             self._fetching = False
-            self._set_status(error.code, error.message)
+            self._engine_status.fail(error)
             return
         self._fetching = False
         item.merge(answer)
         self._show()
 
-    def _set_status(self, status, message=''):
-        self._status = status
+    def _show_status(self, status, title, description, button):
+        """The status page: the spinner ('loading'), or EngineStatus's states."""
         if status == 'loading':
             self.status_page.set_paintable(Adw.SpinnerPaintable.new(self.status_page))
             title, description, button = _('Loading…'), '', None
         else:
             self.status_page.set_icon_name('media-optical-cd-audio-symbolic')
-            if status == 'engine-down':
-                title = _('Engine Not Running')
-                description = _('Start the engine to load the albums')
-                button = _('Start Engine')
-            elif status == 'not-signed-in':
-                title = _('Sign In to Load This')
-                description = _('The albums appear once you sign in to Apple Music')
-                button = _('Sign In')
-            else:
-                title = _('Could Not Load the Albums')
-                description = message
-                button = _('Try Again')
         self.status_page.set_title(title)
         self.status_page.set_description(description)
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
 
     def _on_status_clicked(self, _button):
-        if self._status == 'not-signed-in':
-            app().activate_action('sign-in')
-        elif self._status == 'engine-down':
-            self._fetching = True
-            self._set_status('loading')
-            app().spawn(self._start_and_fetch())
-        else:
-            self._fetch()
-
-    async def _start_and_fetch(self):
-        try:
-            await app().engine.start()
-        except EngineError as error:
-            app().report(error)
-            self._fetching = False
-            self._set_status(error.code, error.message)
-            return
-        await self._fetch_groups()
+        self._engine_status.activate()
 
     def _resolve_albums(self, item):
         albums = []
@@ -174,9 +151,14 @@ class ArtistPage(Adw.NavigationPage):
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
+        self._engine_status.watch()
         if self.item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the portrait's full size comes now.
             app().spawn(self._fetch_cover(self.item))
+
+    def do_unmap(self):
+        self._engine_status.unwatch()
+        Adw.NavigationPage.do_unmap(self)
 
     async def _fetch_cover(self, item):
         if await fetch_cover(item) and self.item is item:
