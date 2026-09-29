@@ -36,7 +36,7 @@ from gi.repository import Adw, Gio, Gtk
 from ..library import SongOrder, Track, fold
 from ..widgets import context_menu
 from ..widgets.song_title import SongTitle
-from . import mark_bound
+from . import app, mark_bound
 
 
 def _string_sorter(name):
@@ -139,7 +139,7 @@ class SongsPage(Adw.NavigationPage):
             self._library.connect('notify::songs-ready', self._update_state),
         ]
         if not self._library.songs_ready:
-            self.get_root().get_application().spawn(self._library.build_songs())
+            app().spawn(self._library.build_songs())
         self._update_state()
 
     def do_unmap(self):
@@ -168,7 +168,7 @@ class SongsPage(Adw.NavigationPage):
                 # time with frames between (SongOrder.prepare), then this runs again. Sorting
                 # by a column whose keys exist (a header click) is immediate.
                 self._order = SongOrder(self._library.songs)
-                Gio.Application.get_default().spawn(self._prepare(self._order, key))
+                app().spawn(self._prepare(self._order, key))
                 return
             descending = sorter.get_primary_sort_order() == Gtk.SortType.DESCENDING
             self._ordered = self._order.tracks(key, descending)

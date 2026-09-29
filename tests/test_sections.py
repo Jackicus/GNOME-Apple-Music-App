@@ -22,6 +22,12 @@ class SectionsTest(unittest.TestCase):
     def test_home_exists(self):
         self.assertIn('home', [d.key for d in all_destinations()])
 
+    def test_every_destination_has_a_page(self):
+        from applemusic import pages
+
+        keys = [d.key for d in all_destinations()]
+        self.assertEqual(sorted(keys), sorted(pages.PAGES))
+
     def test_titles_non_empty(self):
         for destination in all_destinations():
             self.assertTrue(destination.title, destination.key)

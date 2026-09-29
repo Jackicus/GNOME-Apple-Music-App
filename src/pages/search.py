@@ -26,6 +26,7 @@ from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.track_row import TrackRow
+from . import app
 
 log = logging.getLogger(__name__)
 
@@ -170,10 +171,6 @@ class SearchPage(Adw.NavigationPage):
         context_menu.attach(self.songs_list, drag=True)
         context_menu.attach(self.suggestions_list)  # the top hits' rows
 
-    @staticmethod
-    def _app():
-        return Gio.Application.get_default()
-
     @property
     def mode(self):
         return self.mode_toggle.get_active_name() or MODES[0]
@@ -195,7 +192,7 @@ class SearchPage(Adw.NavigationPage):
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        engine = self._app().engine
+        engine = app().engine
         self._engine_handlers = [
             engine.connect('notify::state', self._on_engine_changed),
             engine.connect('notify::authorized', self._on_engine_changed),
@@ -207,7 +204,7 @@ class SearchPage(Adw.NavigationPage):
             self._refresh()
 
     def do_unmap(self):
-        engine = self._app().engine
+        engine = app().engine
         for handler in self._engine_handlers:
             engine.disconnect(handler)
         self._engine_handlers = []
@@ -291,11 +288,11 @@ class SearchPage(Adw.NavigationPage):
         serial = self._next_serial()
         if self._categories.get_n_items() == 0:
             self._show('loading')
-        self._app().spawn(self._load_landing(serial))
+        app().spawn(self._load_landing(serial))
 
     async def _load_landing(self, serial):
         try:
-            answer = await self._app().engine.landing()
+            answer = await app().engine.landing()
         except EngineError as error:
             if serial == self._serial:
                 self._fail(error, self._show_landing)
@@ -315,13 +312,13 @@ class SearchPage(Adw.NavigationPage):
     def _suggest(self, text):
         self._retry = lambda: self._suggest(text)
         serial = self._next_serial()
-        self._app().spawn(self._load_suggestions(text, serial))
+        app().spawn(self._load_suggestions(text, serial))
         if self.stack.get_visible_child_name() not in ('suggestions', 'results'):
             self._show('suggestions' if self._suggestions.get_n_items() else 'loading')
 
     async def _load_suggestions(self, text, serial):
         try:
-            answer = await self._app().engine.suggest(text)
+            answer = await app().engine.suggest(text)
         except EngineError as error:
             if serial == self._serial:
                 self._fail(error, lambda: self._suggest(text))
@@ -343,11 +340,11 @@ class SearchPage(Adw.NavigationPage):
         self._retry = lambda: self._search(text)
         serial = self._next_serial()
         self._show('loading')
-        self._app().spawn(self._load_results(text, serial))
+        app().spawn(self._load_results(text, serial))
 
     async def _load_results(self, text, serial):
         try:
-            answer = await self._app().engine.search(text)
+            answer = await app().engine.search(text)
         except EngineError as error:
             if serial == self._serial:
                 self._fail(error, lambda: self._search(text))
@@ -375,7 +372,7 @@ class SearchPage(Adw.NavigationPage):
         self._results = shelves
         if shelves:
             self._show('results')
-            self._art_task = self._app().spawn(fetch_shelf_art(shelves))
+            self._art_task = app().spawn(fetch_shelf_art(shelves))
         else:
             self._show_status('no-results')
 
@@ -388,7 +385,7 @@ class SearchPage(Adw.NavigationPage):
 
     def _filter_library(self, text):
         if text and not self._library.songs_ready:
-            self._app().spawn(self._library.build_songs())
+            app().spawn(self._library.build_songs())
         for string_filter in self._item_filters:
             string_filter.set_search(text)
         self._song_filter.set_search(fold(text))
@@ -436,14 +433,13 @@ class SearchPage(Adw.NavigationPage):
         Sign In; another failure: Try Again), or one of the page's own: 'no-results',
         'no-suggestions', 'empty-landing', 'library-empty' (Your Library before typing)."""
         self._status = status
-        app = self._app()
-        if status == 'engine-down' and app.engine.state == 'starting':
+        if status == 'engine-down' and app().engine.state == 'starting':
             self.stack.set_visible_child_name('loading')
             return
         icon, button = self._icon_name, None
         if status == 'engine-down':
             title = _('Engine Not Running')
-            if app.demo:
+            if app().demo:
                 description = _('Not available with the demo library')
             else:
                 description = _('Start the engine to search Apple Music')
@@ -485,21 +481,19 @@ class SearchPage(Adw.NavigationPage):
 
     @Gtk.Template.Callback()
     def on_status_clicked(self, _button):
-        app = self._app()
         if self._status == 'not-signed-in':
-            app.activate_action('sign-in')
+            app().activate_action('sign-in')
         elif self._status == 'engine-down':
             self._show('loading')
-            app.spawn(self._start_engine())
+            app().spawn(self._start_engine())
         elif self._retry is not None:
             self._retry()
 
     async def _start_engine(self):
-        app = self._app()
         try:
-            await app.engine.start()
+            await app().engine.start()
         except EngineError as error:
-            app.report(error)
+            app().report(error)
             self._show_status(error.code, error.message)
             return
         if self._retry is not None:
@@ -542,7 +536,7 @@ class SearchPage(Adw.NavigationPage):
             row.add_prefix(cover)
             row.context_item = item  # its context menu (widgets/context_menu.py)
             if needs_thumb(item):
-                self._app().spawn(self._fetch_row_art(item, cover))
+                app().spawn(self._fetch_row_art(item, cover))
         return row
 
     async def _fetch_row_art(self, item, cover):

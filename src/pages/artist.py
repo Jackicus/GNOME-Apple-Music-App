@@ -11,6 +11,7 @@ from ..remote import fetch_cover
 from ..widgets import artwork, context_menu
 from ..widgets.tile import Tile
 from ..widgets.util import connect_weak, weak_method
+from . import app
 
 log = logging.getLogger(__name__)
 
@@ -82,13 +83,12 @@ class ArtistPage(Adw.NavigationPage):
     def _fetch(self):
         self._fetching = True
         self._set_status('loading')
-        Gio.Application.get_default().spawn(self._fetch_groups())
+        app().spawn(self._fetch_groups())
 
     async def _fetch_groups(self):
-        app = Gio.Application.get_default()
         item = self.item
         try:
-            answer = await app.engine.item(item.kind, item.id)
+            answer = await app().engine.item(item.kind, item.id)
         except EngineError as error:
             log.info('albums of artist %s: %s', item.id, error)
             self._fetching = False
@@ -123,22 +123,20 @@ class ArtistPage(Adw.NavigationPage):
         self.status_button.set_visible(bool(button))
 
     def _on_status_clicked(self, _button):
-        app = Gio.Application.get_default()
         if self._status == 'not-signed-in':
-            app.activate_action('sign-in')
+            app().activate_action('sign-in')
         elif self._status == 'engine-down':
             self._fetching = True
             self._set_status('loading')
-            app.spawn(self._start_and_fetch())
+            app().spawn(self._start_and_fetch())
         else:
             self._fetch()
 
     async def _start_and_fetch(self):
-        app = Gio.Application.get_default()
         try:
-            await app.engine.start()
+            await app().engine.start()
         except EngineError as error:
-            app.report(error)
+            app().report(error)
             self._fetching = False
             self._set_status(error.code, error.message)
             return
@@ -178,7 +176,7 @@ class ArtistPage(Adw.NavigationPage):
         Adw.NavigationPage.do_map(self)
         if self.item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the portrait's full size comes now.
-            Gio.Application.get_default().spawn(self._fetch_cover(self.item))
+            app().spawn(self._fetch_cover(self.item))
 
     async def _fetch_cover(self, item):
         if await fetch_cover(item) and self.item is item:

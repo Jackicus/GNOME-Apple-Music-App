@@ -15,7 +15,7 @@ from ..library import Item
 from ..widgets import context_menu
 from ..widgets.tile import Tile
 from ..widgets.util import connect_weak
-from . import mark_bound
+from . import app, mark_bound
 
 
 def _string(name):
@@ -56,7 +56,7 @@ def estimate_columns():
     few columns it shows: 385 tiles with the default 12, which made opening Artists or All
     Playlists take 200 ms. Told the columns that fit, it makes 30 rows of those: 129 tiles
     at 1100×760, and those pages open in 70 ms."""
-    window = Gio.Application.get_default().get_active_window()
+    window = app().get_active_window()
     view = getattr(window, 'navigation_view', None)
     if view is None:
         return None
