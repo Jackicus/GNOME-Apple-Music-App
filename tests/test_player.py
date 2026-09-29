@@ -36,7 +36,10 @@ LYRICS = {'synced': True, 'lines': [
 
 class FakeEngine(GObject.Object):
     """The Engine's surface the Player uses: the event signal, state, and the commands,
-    which are recorded and answer what the test put in `answers`."""
+    which are recorded and answer what the test put in `answers`. A command named in
+    `gates` (an asyncio.Event each) waits for its gate before answering, so a test can
+    release an answer late; `now_playing` raises EngineError('api') without an answer, as
+    the real engine does when the page gives none."""
 
     __gsignals__ = {
         'event': (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
@@ -49,13 +52,22 @@ class FakeEngine(GObject.Object):
         super().__init__()
         self.calls = []
         self.answers = {}
+        self.gates = {}
         self.fail = None  # an EngineError every command raises
 
     def event(self, name, data):
         self.emit('event', name, data)
 
+    def gate(self, name):
+        """Hold the next `name` command until the returned event is set."""
+        self.gates[name] = asyncio.Event()
+        return self.gates[name]
+
     async def _command(self, name, *args):
         self.calls.append((name, *args))
+        gate = self.gates.get(name)
+        if gate is not None:
+            await gate.wait()
         if self.fail is not None:
             raise self.fail
         return self.answers.get(name)
@@ -65,9 +77,12 @@ class FakeEngine(GObject.Object):
         self.state = 'up'
 
     async def now_playing(self):
-        return await self._command('now_playing')
+        answer = await self._command('now_playing')
+        if not isinstance(answer, dict):
+            raise EngineError('api', 'the page gave no now-playing answer')
+        return answer
 
-    async def play(self, kind, item_id, start_with=None, shuffle=False):
+    async def play(self, kind, item_id, start_with=None, shuffle=None):
         return await self._command('play', kind, item_id, start_with, shuffle)
 
     async def play_next(self, kind, item_id):
@@ -208,6 +223,41 @@ class EventTest(unittest.TestCase):
         self.assertEqual(self.player.track.duration_ms, 0)
         self.assertEqual(self.player.duration, 0.0)
 
+    def test_a_track_change_notifies_with_its_own_times(self):
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.engine.event('playbackTimeDidChange', {'position': 200, 'duration': 214})
+        seen = []
+        self.player.connect('notify::track', lambda p, _pspec: seen.append(
+            (p.track.id, p.position, p.duration)))
+        other = dict(TRACK, id='i.demo0002', catalogId='1000000002', durationMs=180000,
+                     index=3)
+        self.engine.event('nowPlayingItemDidChange', {'track': other, 'index': 3})
+        # The handler read the new item's times, not the previous one's.
+        self.assertEqual(seen, [('i.demo0002', 0.0, 180.0)])
+        # An item without a length after one with it: 0, not the previous item's.
+        unknown = dict(TRACK, id='i.demo0003', catalogId='1000000003', durationMs=None, index=4)
+        self.engine.event('nowPlayingItemDidChange', {'track': unknown, 'index': 4})
+        self.assertEqual((self.player.position, self.player.duration), (0.0, 0.0))
+        self.engine.event('playbackDurationDidChange', {'duration': 190})
+        self.assertEqual(self.player.duration, 190.0)
+
+    def test_a_zero_duration_keeps_the_items_length(self):
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.engine.event('playbackStateDidChange',
+                          {'state': 'loading', 'position': 0, 'duration': 0})
+        self.assertEqual(self.player.duration, 214.0)
+        self.engine.event('playbackTimeDidChange', {'position': 1, 'duration': 213.5})
+        self.assertEqual(self.player.duration, 213.5)
+
+    def test_the_same_song_at_another_queue_position_keeps_its_times(self):
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.engine.event('playbackTimeDidChange', {'position': 40, 'duration': 214})
+        self.notified.clear()
+        self.engine.event('nowPlayingItemDidChange', {'track': dict(TRACK, index=5), 'index': 5})
+        self.assertEqual(self.notified, ['track'])  # the queue was reordered under it
+        self.assertEqual(self.player.track.index, 5)
+        self.assertEqual((self.player.position, self.player.duration), (40.0, 214.0))
+
     def test_playback_state_and_times(self):
         self.engine.event('playbackStateDidChange',
                           {'state': 'playing', 'position': 12.5, 'duration': 214})
@@ -218,6 +268,7 @@ class EventTest(unittest.TestCase):
         self.assertEqual(self.player.state, 'paused')
         self.assertFalse(self.player.active)
         self.assertEqual(self.player.position, 13.0)
+        self.assertEqual(self.player.duration, 214.0)  # no duration in the event: kept
         for state in ACTIVE_STATES:
             self.engine.event('playbackStateDidChange', {'state': state})
             self.assertTrue(self.player.active, state)

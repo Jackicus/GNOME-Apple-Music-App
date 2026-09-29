@@ -82,6 +82,11 @@ def _number(value, default=0.0):
     return float(value) if value == value else default
 
 
+def _duration_of(data):
+    """An event's duration, or None when it carries none (the one held is kept)."""
+    return _number(data['duration']) if 'duration' in data else None
+
+
 class NowPlaying(GObject.Object):
     """The item playing: the bridge's Track shape (formatTrack in bridge.js), as properties.
 
@@ -265,11 +270,11 @@ class Player(GObject.Object):
         if name == 'playbackStateDidChange':
             self._set_state(data.get('state'))
             if 'position' in data:
-                self._set_position(_number(data.get('position')), _number(data.get('duration')))
+                self._set_position(_number(data.get('position')), _duration_of(data))
         elif name == 'nowPlayingItemDidChange':
             self._set_track(data.get('track'))
         elif name == 'playbackTimeDidChange':
-            self._set_position(_number(data.get('position')), _number(data.get('duration')))
+            self._set_position(_number(data.get('position')), _duration_of(data))
         elif name == 'playbackDurationDidChange':
             self._set_duration(_number(data.get('duration')))
         elif name == 'shuffleModeDidChange':
@@ -296,23 +301,38 @@ class Player(GObject.Object):
             self.state = state
 
     def _set_track(self, data, fetch_lyrics=True):
+        """The item playing from an event's or an answer's Track (or None: nothing). The
+        track, its position and its duration change together, under one freeze, so a
+        `notify::track` handler reads the new item's times: 0 and Apple's length for it
+        (0 without one; MusicKit's duration follows). The same song at another queue
+        position (the queue reordered under it: a shuffle toggle) keeps its times."""
         if isinstance(data, dict):
             track = NowPlaying(data)
             current = self.track
             if current is not None and current.same_as(track) and current.raw == data:
                 return
-            # A new item starts from the top; the time events correct this at once.
-            self.track = track
-            self._set_position(0.0, track.duration_ms / 1000 if track.duration_ms else None)
+            with self.freeze_notify():
+                if current is None or current.id != track.id:
+                    self._reset_times(track.duration_ms / 1000)
+                self.track = track
             self._track_queued(track)
             if fetch_lyrics:
                 self._want_lyrics(track)
         elif self.track is not None:
-            self.track = None
-            self._set_position(0.0, 0.0)
+            with self.freeze_notify():
+                self._reset_times(0.0)
+                self.track = None
             self._set_queue_index(-1)
             self._cancel_lyrics()
             self._set_lyrics(None)
+
+    def _reset_times(self, duration):
+        """Position 0 and `duration` for an item that starts (or none), as they are."""
+        self.position_updated_at = time.monotonic()
+        if self.position != 0.0:
+            self.position = 0.0
+        if duration != self.duration:
+            self.duration = duration
 
     def _track_queued(self, track):
         """The item playing has changed: point the queue index at it, or read the queue
@@ -393,7 +413,11 @@ class Player(GObject.Object):
             self._set_duration(duration)
 
     def _set_duration(self, duration):
+        """MusicKit's duration for the item; nothing (0, while an item loads) keeps Apple's
+        length for it, when the item has one."""
         duration = max(0.0, duration)
+        if duration <= 0 and self.track is not None:
+            duration = self.track.duration_ms / 1000
         if duration != self.duration:
             self.duration = duration
 
