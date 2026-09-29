@@ -36,6 +36,7 @@ from gi.repository import Adw, Gio, Gtk
 from ..library import SongOrder, Track, fold
 from ..widgets import context_menu
 from ..widgets.song_title import SongTitle
+from ..widgets.util import MappedHandlers
 from . import app, mark_bound
 
 
@@ -65,7 +66,6 @@ class SongsPage(Adw.NavigationPage):
     def __init__(self, library, title, icon_name=None):
         super().__init__(title=title)
         self._library = library
-        self._library_handlers = []
         self._songs_handler = None
         self._order = None  # a SongOrder over the songs as they are, made when first needed
         self._ordered = []  # every song, in the chosen order
@@ -115,11 +115,14 @@ class SongsPage(Adw.NavigationPage):
         # The songs are put in this order when the page is realized.
         self.column_view.sort_by_column(self.title_column, Gtk.SortType.ASCENDING)
         self.column_view.get_sorter().connect('changed', self._on_sort_changed)
+        self._handlers = MappedHandlers(self)
+        self._handlers.add(library, 'notify::state', self._update_state)
+        self._handlers.add(library, 'notify::songs-ready', self._update_state)
         self._update_state()
 
-    # The library outlives the window, so the page listens to it only while it is shown, and
-    # to the songs store, which the rows must follow even while the page is hidden, while it
-    # is realized.
+    # The library outlives the window, so the page listens to it only while it is shown
+    # (self._handlers), and to the songs store, which the rows must follow even while the page
+    # is hidden, while it is realized.
 
     def do_realize(self):
         Adw.NavigationPage.do_realize(self)
@@ -134,19 +137,9 @@ class SongsPage(Adw.NavigationPage):
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        self._library_handlers = [
-            self._library.connect('notify::state', self._update_state),
-            self._library.connect('notify::songs-ready', self._update_state),
-        ]
         if not self._library.songs_ready:
             app().spawn(self._library.build_songs())
         self._update_state()
-
-    def do_unmap(self):
-        for handler in self._library_handlers:
-            self._library.disconnect(handler)
-        self._library_handlers = []
-        Adw.NavigationPage.do_unmap(self)
 
     # Order and filter.
 

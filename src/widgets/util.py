@@ -1,5 +1,7 @@
 """connect_weak(): a signal connection that does not keep the handler's widget alive (and
-weak_method(), the same for any other callback a child holds).
+weak_method(), the same for any other callback a child holds); MappedHandlers: a widget's
+handlers on objects that outlive it (the library, the engine), connected only while it is
+mapped.
 
 A widget that connects one of its children's signals (or an owned object's: a list factory,
 an adjustment, a sort model, an event controller) to one of its own bound methods makes a
@@ -76,3 +78,66 @@ def weak_method(method):
         return None if instance is None else function(instance, *args)
 
     return call
+
+
+class MappedHandlers:
+    """The handlers a widget holds on objects that outlive it (the library, the engine),
+    connected while the widget is mapped: declared once, in __init__,
+
+        self._handlers = MappedHandlers(self)
+        self._handlers.add(library, 'notify::state', self._update)
+
+    each is connected when the widget maps (and at once if it is mapped), weakly, as
+    connect_weak() does, and disconnected when it unmaps, so a hidden page does no work for a
+    library that changes and a dropped one leaves nothing connected. The widget's do_map runs
+    before the handlers are connected: it catches up with what changed while it was hidden.
+    remove(obj) forgets an object's handlers (an item the page no longer shows).
+    """
+
+    def __init__(self, widget):
+        self._widget = widget.weak_ref()
+        self._entries = []  # [obj, signal, the callback's target (weak), function, handler id]
+        # The closures hold this object, which holds the widget weakly: no cycle.
+        widget.connect('map', self._on_map)
+        widget.connect('unmap', self._on_unmap)
+
+    def add(self, obj, signal, callback):
+        """Call callback (a bound method of the widget, or of an object it holds) with the
+        signal's arguments whenever obj emits signal while the widget is mapped."""
+        target, function = _weak_target(callback)
+        entry = [obj, signal, target, function, None]
+        self._entries.append(entry)
+        widget = self._widget()
+        if widget is not None and widget.get_mapped():
+            self._connect(entry)
+
+    def remove(self, obj):
+        """Disconnect and forget every handler on obj."""
+        for entry in [entry for entry in self._entries if entry[0] is obj]:
+            self._disconnect(entry)
+            self._entries.remove(entry)
+
+    def _connect(self, entry):
+        if entry[4] is not None:
+            return
+        obj, signal, target, function, _handler = entry
+
+        def handler(emitter, *args):
+            instance = target()
+            return None if instance is None else function(instance, emitter, *args)
+
+        entry[4] = obj.connect(signal, handler)
+
+    @staticmethod
+    def _disconnect(entry):
+        if entry[4] is not None:
+            entry[0].disconnect(entry[4])
+            entry[4] = None
+
+    def _on_map(self, _widget):
+        for entry in self._entries:
+            self._connect(entry)
+
+    def _on_unmap(self, _widget):
+        for entry in self._entries:
+            self._disconnect(entry)

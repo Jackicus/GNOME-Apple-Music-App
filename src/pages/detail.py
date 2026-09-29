@@ -23,7 +23,7 @@ from ..remote import fetch_cover
 from ..widgets import context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
-from ..widgets.util import connect_weak
+from ..widgets.util import MappedHandlers, connect_weak
 from . import app
 
 log = logging.getLogger(__name__)
@@ -103,7 +103,6 @@ class DetailPage(Adw.NavigationPage):
         self._library = library
         self._find = find
         self._root = root
-        self._library_handlers = []
         self._album_artist = None  # an album's artist, whose name its rows leave out
         self._starts = []  # the list position of each section of tracks
         self._headings = []  # and its heading
@@ -140,6 +139,11 @@ class DetailPage(Adw.NavigationPage):
         connect_weak(keys, 'key-pressed', self._on_list_key_pressed)
         self.list_view.add_controller(keys)
 
+        self._handlers = MappedHandlers(self)
+        if find is not None:
+            self._handlers.add(library, 'notify::state', self._follow)
+            self._handlers.add(library, 'changed', self._follow)
+
         self._hero_section = Gio.ListStore(item_type=GObject.Object)
         self._hero_section.append(_Hero())
         self._sections = Gio.ListStore(item_type=Gio.ListModel)
@@ -154,17 +158,7 @@ class DetailPage(Adw.NavigationPage):
     def do_map(self):
         Adw.NavigationPage.do_map(self)
         if self._find is not None:
-            self._library_handlers = [
-                self._library.connect('notify::state', self._follow),
-                self._library.connect('changed', self._follow),
-            ]
             self._follow()
-
-    def do_unmap(self):
-        for handler in self._library_handlers:
-            self._library.disconnect(handler)
-        self._library_handlers = []
-        Adw.NavigationPage.do_unmap(self)
 
     def _follow(self, *_args):
         item = self._find()
