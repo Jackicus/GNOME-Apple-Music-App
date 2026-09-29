@@ -25,8 +25,9 @@ paths:
 - The backend is a fork this app owns, in the app's style like the rest of the code.
   `normalize.py` turns Apple's answers into the library's shapes; `api.py` is what the app
   knows of the API apart from any connection (library ids, endpoints, resource types, Apple's
-  `{errors}` answers as an EngineError, through `api_error()` only); `cdp.py` is only the
-  WebSocket codec, for the developer attach.
+  `{errors}` answers as an EngineError, through `api_error()` only); `cdp.py` is the
+  WebSocket codec, for the developer attach, and `exception_message()`, which words a page's
+  JavaScript exception for both transports.
 - API reads (`Engine._api`) are tried again, after a growing pause, only when they may pass
   another time (a 5xx, a 429, an `{errors}` answer without a status, a rejected promise); a
   4xx or a timeout raises at once (`api.is_final`), with Apple's HTTP status as
@@ -59,7 +60,8 @@ paths:
 - States: `down`, `starting`, `up`, `signing-in` (plus `authorized` and `headless`). While
   `refuse_starts` holds a reason, a start that would spawn Chrome raises `engine-down` instead
   (sign-out sets it while it stops Chrome and deletes the profile). Every
-  command begins `await self._ready()`: a start in progress is waited for (its failure is the
+  command that needs the page begins `await self._ready()` (lyrics and the kept answers read
+  the cache first): a start in progress is waited for (its failure is the
   command's), `down` is `engine-down`. Commands never start Chrome; `Player.ensure_engine()`
   starts a `down` engine and returns at once in any other state, so a play during a start
   waits in `_ready()`. A `start()` while one is under way joins it (no mode, or the same mode):
@@ -82,7 +84,8 @@ paths:
 - Losses: the connection goes when the pipe closes, the page crashes (`Inspector.targetCrashed`,
   `Target.targetCrashed`), detaches or closes. A call that times out while up has the engine
   probe the page (`0`, 5 s, one at a time) and close a silent one. After a navigation the
-  client puts the bridge back (four tries, the last after reloading the page) and emits
+  client puts the bridge back (four tries, the last after navigating the page to
+  music.apple.com again) and emits
   `am:bridgeReset`, or gives the connection up. `lost(reason)` (`client.lost_reason`) is
   emitted before the engine goes down, only when nobody asked: never for stop, restart,
   sign-in's restarts, quitting or `kill()`. The app answers it with a toast offering Restart

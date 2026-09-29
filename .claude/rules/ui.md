@@ -82,8 +82,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
   The item actions take their object as a `(ss)` target (kind, id), not as state.
-- Window actions are disabled while a dialog is open over the window
-  (`Window._update_actions`); add new window actions there.
+- The window's keyed actions (`win.back`, `win.search`, `win.focus-*`) are disabled while a
+  dialog is open over the window (`Window._update_actions`); add a new keyed window action
+  there.
 - Per-item colours (a hero card's band) are drawn in the widget's own `do_snapshot`
   (`append_color`, then chain up) inside its rounded clip: CSS cannot take a value per item.
   Keep Python snapshots off the grid tiles (the hero card is a class of its own).

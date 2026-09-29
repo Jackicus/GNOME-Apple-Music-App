@@ -19,9 +19,9 @@ of Chrome, and Chrome ends when the app does.
 
 GTK's main loop is also the asyncio loop (`main.use_glib_event_loop()` sets PyGObject's
 `GLibEventLoopPolicy`). UI code awaits the engine in place, with no locks and no hops between
-threads. Work that would block (parsing library.json, decoding images, downloading artwork,
-reading files) runs in threads through `asyncio.to_thread`, and only the main thread touches
-widgets.
+threads. Work that would block runs in threads (`asyncio.to_thread`, the library's own reader
+thread for library.json, `remote.py`'s pool for artwork downloads), and only the main thread
+touches widgets.
 
 ## The parts
 
@@ -77,7 +77,8 @@ widgets.
   in: the last one older than the chosen interval, or no current library on disk (missing,
   unreadable, or of an older version), looked at by a timer, when the engine comes up and when
   the library has been read. A timer never starts Chrome. Progress shows in a banner; the end
-  is a toast with the counts, a failure a toast with Retry. Pages keep their scroll positions,
+  is a toast with the counts, a failure a toast with Retry (or, for a missing or stopped engine
+  or a lost sign-in, that error's own toast and button). Pages keep their scroll positions,
   because the reload keeps every object that is still in the library.
 - **Losing the engine.** Chrome crashing or being killed, the page crashing or closing, and a
   page that no longer answers after a call timed out (the engine probes it) all end the
@@ -99,16 +100,17 @@ widgets.
 - **Quitting.** Every way out (Ctrl+Q, closing the window, MPRIS Quit, SIGINT or SIGTERM)
   activates `app.quit`: the windows save their state, close their dialogs and hide, a start of
   the engine the app asked for is cancelled, and the sync (its thread included) and Chrome are
-  stopped, 6 seconds at most for both, Chrome then killed if it still runs, before the app
-  exits. If the app dies any other way,
-  the kernel sends Chrome SIGTERM (`setpriv --pdeathsig`), and the next start ends a Chrome that
-  still holds the profile. With background playback on (it is off by default), closing the
+  stopped, 6 seconds at most for both (a sign-out under way gets up to 10 more to finish its
+  wipe), Chrome then killed if it still runs, before the app exits. If the app dies any other
+  way, the kernel sends Chrome SIGTERM (`setpriv --pdeathsig`), and the next start ends a Chrome
+  that still holds the profile. With background playback on (it is off by default), closing the
   window while music plays hides it instead (`background.py`): what the app has to say
   meanwhile comes as a notification, and the app quits once playback has stayed stopped for 10
   seconds.
 - **Demo mode.** `--demo` reads an invented library from build/demo (a release build lists no
-  `--demo` and needs `APPLE_MUSIC_CACHE` for it) and has no engine at all, so every page and
-  screenshot works without Chrome or an account. Its settings are its own (settings.ini beside
+  `--demo` and needs `APPLE_MUSIC_CACHE` for it), and its engine is inert (starting it does
+  nothing, every command answers `engine-down`), so every page and screenshot works without
+  Chrome or an account. Its settings are its own (settings.ini beside
   the library) and it takes no MPRIS name, so it runs beside the real app.
 
 ## Data

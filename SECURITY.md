@@ -21,7 +21,8 @@ Apple Music streams are protected with Widevine DRM, so the app cannot play them
 playback engine is a local **Google Chrome** that the app starts with a private profile, showing
 music.apple.com. The app drives Apple's own MusicKit player in that page over Chrome's DevTools
 protocol, through a small script it injects (`src/backend/bridge.js`). Chrome's window opens once
-for sign-in; afterwards it runs headless.
+for sign-in; afterwards it runs headless (unless Preferences' option to run it hidden is
+off).
 
 In scope, for example:
 

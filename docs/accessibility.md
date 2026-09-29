@@ -2,13 +2,17 @@
 
 The keyboard walkthrough every release should pass, and how to check it. The rules for new
 widgets (names, roles, tooltips, focus) are in `.claude/rules/ui.md`; the keys themselves are in
-`src/shortcuts.py`, which also feeds the Keyboard Shortcuts dialog (Ctrl+?).
+`src/shortcuts.py`, which also feeds the Keyboard Shortcuts dialog (Ctrl+?), except the
+sidebar's Left and Right on folders (`src/sidebar_view.py`).
 
 ## Keyboard walkthrough
 
-`scripts/a11y_check.py` walks these steps on the demo library (add `--size 360x640` for the
-narrow layout, `--names` for the accessible names). With a real keyboard, do the same by hand.
-When a key or a page changes, change this list and the script together.
+`scripts/headless.sh scripts/a11y_check.py` walks most of these steps on the demo library (add
+`--size 360x640` for the narrow layout, `--names` for the accessible names). It leaves out step
+8, Up in the sidebar, Ctrl+?, Tab and the mnemonics in Preferences, Escape closing a context
+menu, Left, Right, Enter and the close button in Now Playing, and Enter on the idle bar: walk
+those with a real keyboard. When a key or a page changes, change this list and the script
+together.
 
 1. Ctrl+1 puts the focus on the selected sidebar row. Down and Up move through every
    destination: in the wide layout they select, which shows the page; in the narrow one they
@@ -63,7 +67,7 @@ When a key or a page changes, change this list and the script together.
 ## Known gaps
 
 - libadwaita's own, worked around here: `AdwSidebar` names none of its rows in sidebar mode
-  and does not expose a folder's state or level (the window sets them itself);
+  and does not expose a folder's state or level (`sidebar_view.py` sets them);
   `AdwShortcutsDialog`'s rows are unnamed (dialogs/shortcuts.py names them); `AdwComboRow`'s
   default factories leave its list items unnamed, in the popup and in the row's own display
   of the value (dialogs/preferences.py gives the row factories that name them); an open
