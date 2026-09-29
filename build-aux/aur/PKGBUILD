@@ -1,8 +1,13 @@
-# Maintainer: Jack Tully <https://github.com/Jackicus>
+# Maintainer: Jack Tully <jacktully97 at gmail dot com>
 #
 # The AUR package's source, kept in the app's repository (build-aux/aur/). After any change:
 #   updpkgsums && makepkg --printsrcinfo > .SRCINFO
 # The checksum is SKIP until the tag v$pkgver exists on GitHub: updpkgsums fills it in then.
+#
+# The app's modules install under /usr/share/apple-music, outside site-packages, byte-compiled
+# for the Python that built the package; Arch's rebuilds for a new Python leave them alone.
+# After each Python minor release (3.14 to 3.15, say), bump pkgrel and rebuild, or every start
+# compiles the modules again in memory.
 
 pkgname=gnome-apple-music
 pkgver=0.9.0
@@ -15,6 +20,7 @@ depends=(
   'gdk-pixbuf2'
   'glib2'
   'gtk4'
+  'hicolor-icon-theme'
   'libadwaita'
   'python'
   'python-gobject'
@@ -39,10 +45,9 @@ build() {
 }
 
 check() {
-  # The desktop file, metainfo and schema validate, and the unit tests (no display needed).
+  # The unit tests (Meson's `unit` suite; the widget tests skip without a display) and the
+  # desktop file, metainfo and schema validation.
   meson test -C build --print-errorlogs
-  cd "$_srcname"
-  python -m unittest discover -s tests
 }
 
 package() {

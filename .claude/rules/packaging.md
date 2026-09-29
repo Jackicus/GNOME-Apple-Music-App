@@ -42,6 +42,8 @@ paths:
   come from the demo library only (the `screenshots` skill).
 - `build-aux/aur/PKGBUILD` is the AUR package's source. After any change to it:
   `updpkgsums && makepkg --printsrcinfo > .SRCINFO`. Test it without installing the package.
+  Its modules are byte-compiled for the Python that built it (outside site-packages, which
+  Arch's Python rebuilds cover), so each Python minor release needs a pkgrel bump.
 - `build-aux/flatpak/*.Devel.json` is for development only (why in its `x-comment`) and has
   not been built here: there is no GNOME 50 runtime or flatpak-builder on the development
   machine. Say so when you change it.

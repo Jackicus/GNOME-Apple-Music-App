@@ -12,6 +12,7 @@ pkgbase = gnome-apple-music
 	depends = gdk-pixbuf2
 	depends = glib2
 	depends = gtk4
+	depends = hicolor-icon-theme
 	depends = libadwaita
 	depends = python
 	depends = python-gobject
