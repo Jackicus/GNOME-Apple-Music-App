@@ -22,26 +22,46 @@ Gtk.FilterListModel because GTK's are slow over Python objects; measured on 30,0
 In all, a click re-sorts the table in 30 to 50 ms and a keystroke refilters it in 10 to 50 ms,
 rebinding included.
 
-Clicking a column header re-sorts; typing in the header's entry refilters (after the entry's
-own short delay). Activating a row (Enter, double-click) asks the window to play it; a right
-click, a long press or the Menu key opens its context menu, and a row drags onto a sidebar
-playlist (widgets/context_menu.py).
+Clicking a column header, or choosing in the header's Sort By menu (the keyboard's way: the
+headers take no focus), re-sorts; typing in the header's entry refilters (after the entry's own
+short delay), and the new count is announced. A sync that changes the songs brings the rows up
+to date with the fewest splices (library.apply_diff), so the table keeps its scroll position;
+only a new sort or filter starts it again from the top. Activating a row (Enter, double-click)
+asks the window to play it; a right click, a long press or the Menu key opens its context
+menu, and a row drags onto a sidebar playlist (widgets/context_menu.py).
 """
 
 from gettext import gettext as _
 from gettext import ngettext
 
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 
-from ..library import SongOrder, Track, fold
+from ..library import SongOrder, Track, apply_diff, fold
 from ..widgets import context_menu
+from ..widgets.labels import track_label
 from ..widgets.song_title import SongTitle
-from ..widgets.util import MappedHandlers
+from ..widgets.util import MappedHandlers, connect_weak
 from . import app, mark_bound
+
+# The columns' names in the Sort By menu's targets and SongOrder's keys.
+COLUMNS = ('title', 'artist', 'album', 'time')
 
 
 def _string_sorter(name):
     return Gtk.StringSorter(expression=Gtk.PropertyExpression.new(Track, None, name))
+
+
+def songs_state(total, library_state, songs_ready, song_count, syncing=False):
+    """What the Songs page shows: 'items' once it has ordered songs (`total`); 'loading' while
+    the library loads, before the songs are built, while songs exist that are not ordered yet
+    (`song_count`: SongOrder.prepare() runs over frames), and while the first sync fills an
+    empty library (`syncing`); 'empty' when there are no songs at all."""
+    if total:
+        return 'items'
+    if (library_state == 'loading' or not songs_ready or song_count
+            or (library_state == 'empty' and syncing)):
+        return 'loading'
+    return 'empty'
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/songs.ui')
@@ -52,6 +72,7 @@ class SongsPage(Adw.NavigationPage):
     __gtype_name__ = 'AppleMusicSongsPage'
 
     filter_entry = Gtk.Template.Child()
+    sort_button = Gtk.Template.Child()
     stack = Gtk.Template.Child()
     empty_page = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
@@ -72,6 +93,9 @@ class SongsPage(Adw.NavigationPage):
         self._search = ''  # the filter's text, folded
         self._matches = []  # the ordered songs that match it
         self._shown = []  # what the table's rows hold (the last matches that were any)
+        self._follow = False  # the songs changed: the rows follow, keeping their place
+        self._prepare_task = None  # the SongOrder being prepared
+        self._quiet = False  # the page is changing the sort itself
         self._bound = False  # a row has been bound (the startup timing's mark)
 
         self.title_label.set_label(title)
@@ -99,9 +123,8 @@ class SongsPage(Adw.NavigationPage):
         self.album_column.set_factory(self._text_factory('album'))
         self.time_column.set_factory(self._text_factory('duration_label', numeric=True))
 
-        # Each row reads "title, artist, album" to assistive technology, the time as its
-        # description (the format looked up once: rows are rebound all the time).
-        self._row_format = _('{title}, {artist}, {album}')
+        # Each row reads its title, artist and album to assistive technology (labels.py),
+        # the time as its description.
         row_factory = Gtk.SignalListItemFactory()
         row_factory.connect('bind', self._bind_row)
         self.column_view.set_row_factory(row_factory)
@@ -112,12 +135,23 @@ class SongsPage(Adw.NavigationPage):
         # Every cell of a row finds the row's Track in its title cell (SongTitle.context_item).
         context_menu.attach(self.column_view, drag=True)
 
-        # The songs are put in this order when the page is realized.
+        # The Sort By menu's actions (songs.sort-column, songs.sort-order), following the
+        # headers too; the songs are put in this order when the page is realized.
+        self._sort_column = Gio.SimpleAction.new_stateful(
+            'sort-column', GLib.VariantType.new('s'), GLib.Variant('s', 'title'))
+        self._sort_order = Gio.SimpleAction.new_stateful(
+            'sort-order', GLib.VariantType.new('s'), GLib.Variant('s', 'ascending'))
+        actions = Gio.SimpleActionGroup()
+        for action in (self._sort_column, self._sort_order):
+            connect_weak(action, 'change-state', self._on_sort_chosen)
+            actions.add_action(action)
+        self.insert_action_group('songs', actions)
         self.column_view.sort_by_column(self.title_column, Gtk.SortType.ASCENDING)
         self.column_view.get_sorter().connect('changed', self._on_sort_changed)
         self._handlers = MappedHandlers(self)
         self._handlers.add(library, 'notify::state', self._update_state)
         self._handlers.add(library, 'notify::songs-ready', self._update_state)
+        self._handlers.add(library, 'notify::syncing', self._update_state)
         self._update_state()
 
     # The library outlives the window, so the page listens to it only while it is shown
@@ -133,6 +167,7 @@ class SongsPage(Adw.NavigationPage):
     def do_unrealize(self):
         self._library.songs.disconnect(self._songs_handler)
         self._songs_handler = None
+        self._cancel_prepare()
         Adw.NavigationPage.do_unrealize(self)
 
     def do_map(self):
@@ -145,10 +180,41 @@ class SongsPage(Adw.NavigationPage):
 
     def _on_songs_changed(self, *_args):
         self._order = None
+        self._cancel_prepare()
+        self._follow = True  # a sync's change: the rows keep their place
         self._sort()
 
-    def _on_sort_changed(self, _sorter, _change):
+    def _cancel_prepare(self):
+        if self._prepare_task is not None and not self._prepare_task.done():
+            self._prepare_task.cancel()
+        self._prepare_task = None
+
+    def _on_sort_changed(self, sorter, _change):
+        if self._quiet:
+            return
+        column = self._columns.get(sorter.get_primary_sort_column())
+        if column is not None:  # the menu follows a header's click
+            descending = sorter.get_primary_sort_order() == Gtk.SortType.DESCENDING
+            self._sort_column.set_state(GLib.Variant('s', column))
+            self._sort_order.set_state(
+                GLib.Variant('s', 'descending' if descending else 'ascending'))
+        self._follow = False
         self._sort()
+
+    def _on_sort_chosen(self, action, value):
+        """The Sort By menu: sort as a header click would, its arrow on its column."""
+        action.set_state(value)
+        column = next(column for column, key in self._columns.items()
+                      if key == self._sort_column.get_state().get_string())
+        order = (Gtk.SortType.DESCENDING
+                 if self._sort_order.get_state().get_string() == 'descending'
+                 else Gtk.SortType.ASCENDING)
+        self._quiet = True
+        try:
+            self.column_view.sort_by_column(None, order)  # the previous column's arrow goes
+        finally:
+            self._quiet = False
+        self.column_view.sort_by_column(column, order)
 
     def _sort(self):
         sorter = self.column_view.get_sorter()
@@ -161,7 +227,7 @@ class SongsPage(Adw.NavigationPage):
                 # time with frames between (SongOrder.prepare), then this runs again. Sorting
                 # by a column whose keys exist (a header click) is immediate.
                 self._order = SongOrder(self._library.songs)
-                app().spawn(self._prepare(self._order, key))
+                self._prepare_task = app().spawn(self._prepare(self._order, key))
                 return
             descending = sorter.get_primary_sort_order() == Gtk.SortType.DESCENDING
             self._ordered = self._order.tracks(key, descending)
@@ -185,7 +251,9 @@ class SongsPage(Adw.NavigationPage):
         self._update_state()
 
     def _show(self, tracks):
-        """Make the table's rows tracks, from the top.
+        """Make the table's rows tracks: where they were, after a sync changed the songs
+        (the fewest splices, library.apply_diff: runs of the same tracks stay, and the view
+        its scroll position); from the top, after a new sort or filter.
 
         Replacing the rows in one splice would make the view destroy the widgets of rows
         whose tracks it no longer has and build new ones. Inserted at the front instead, the
@@ -193,7 +261,12 @@ class SongsPage(Adw.NavigationPage):
         the top leaves the old rows' widgets out of view, where the view recycles them for the
         new rows; removing the old rows then removes rows without widgets.
         """
+        follow, self._follow = self._follow, False
         if tracks == self._shown:
+            return
+        if follow and self._shown:
+            apply_diff(self._rows, tracks, old=self._shown)
+            self._shown = tracks
             return
         old = self._rows.get_n_items()
         self._rows.splice(0, 0, tracks)
@@ -204,14 +277,12 @@ class SongsPage(Adw.NavigationPage):
 
     def _update_state(self, *_args):
         total = len(self._ordered)
-        if total:
-            name = 'items'
-        elif self._library.state == 'loading' or not self._library.songs_ready:
-            name = 'loading'
-        else:
-            name = 'empty'
+        library = self._library
+        name = songs_state(total, library.state, library.songs_ready,
+                           library.songs.get_n_items(), library.syncing)
         self.stack.set_visible_child_name(name)
         self.filter_entry.set_visible(name == 'items')
+        self.sort_button.set_visible(name == 'items')
         if name != 'items':
             return
         shown = len(self._matches)
@@ -223,15 +294,35 @@ class SongsPage(Adw.NavigationPage):
         self.count_label.set_label(label.format(shown=f'{shown:n}', total=f'{total:n}'))
 
     def set_filter(self, text):
-        """Filter the table by `text`, as typing it in the header's entry would."""
+        """Filter the table by `text` at once, as typing it in the header's entry would after
+        its short delay (See All from a search's songs: the whole table must not show first)."""
         self.filter_entry.set_text(text)
+        self.on_filter_changed(self.filter_entry)
+
+    def focus_filter(self):
+        """Put the cursor in the filter with its text selected (Ctrl+F on this page); False
+        when the page has no filter to show yet (no songs)."""
+        if not self.filter_entry.get_visible():
+            return False
+        self.filter_entry.grab_focus()
+        self.filter_entry.select_region(0, -1)
+        return True
 
     @Gtk.Template.Callback()
     def on_filter_changed(self, entry):
         search = fold(entry.get_text())
         if search != self._search:
             self._search = search
+            self._follow = False
             self._filter()
+            self._announce_count()
+
+    def _announce_count(self):
+        """Say the new count once the typing has paused (the entry's own delay), not at
+        every keystroke."""
+        root = self.get_root()
+        if root is not None and self.get_mapped() and self.count_label.get_mapped():
+            root.announce(self.count_label.get_label(), Gtk.AccessibleAnnouncementPriority.LOW)
 
     @Gtk.Template.Callback()
     def on_stop_search(self, entry):
@@ -271,8 +362,7 @@ class SongsPage(Adw.NavigationPage):
 
     def _bind_row(self, _factory, row):
         track = row.get_item()
-        row.set_accessible_label(self._row_format.format(
-            title=track.title, artist=track.artist or '', album=track.album or ''))
+        row.set_accessible_label(track_label(track))
         row.set_accessible_description(track.duration_label or '')
 
     def _setup_title(self, _factory, cell):

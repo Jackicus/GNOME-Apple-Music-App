@@ -54,6 +54,20 @@ columnview.songs-table > listview > row > cell:last-child {
   padding-right: 24px;
 }
 
+/* Right to left, the first column is on the right: the same margins, mirrored (the node
+   order, which :first-child follows, is not). */
+columnview.songs-table > header > button:first-child:dir(rtl),
+columnview.songs-table > listview > row > cell:first-child:dir(rtl) {
+  padding-left: 6px;
+  padding-right: 24px;
+}
+
+columnview.songs-table > header > button:last-child:dir(rtl),
+columnview.songs-table > listview > row > cell:last-child:dir(rtl) {
+  padding-left: 24px;
+  padding-right: 6px;
+}
+
 /* The "E" after an explicit song's title: small and bold on a faint wash of the text colour. */
 .explicit-badge {
   padding: 0 4px;
