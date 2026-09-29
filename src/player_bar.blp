@@ -156,11 +156,16 @@ template $AppleMusicPlayerBar: Adw.Bin {
       valign: center;
 
       // Whether the item playing is loved: a click loves or unloves it (widgets/transport.py).
+      // Its name stays "Favourite"; the tooltip says what a click does now.
       ToggleButton heart_button {
         icon-name: "heart-outline-symbolic";
         tooltip-text: _("Favourite");
         sensitive: false;
         valign: center;
+
+        accessibility {
+          label: _("Favourite");
+        }
 
         styles [
           "flat",

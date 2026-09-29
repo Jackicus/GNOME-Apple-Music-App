@@ -8,7 +8,7 @@ the playback commands as thin coroutines over the engine.
     player.active, player.stopped              # playback under way (the bar shows Pause);
                                                # nothing playing or paused (no item, or ended)
     player.track       # a NowPlaying (id, catalog_id, title, artist, album, duration_ms,
-                       # artwork_url, index, explicit), or None
+                       # artwork_url, index, explicit, kind), or None
     player.position, player.duration           # seconds, floats
     player.shuffle (bool), player.repeat ('none', 'one', 'all'), player.volume (0 to 1)
     player.position_updated_at                 # time.monotonic() when position last changed
@@ -125,12 +125,31 @@ def _duration_of(data):
     return _number(data['duration']) if 'duration' in data else None
 
 
+# The API resource types a Track's `type` names, by what they are to the ratings.
+SONG_TYPES = ('songs', 'library-songs')
+VIDEO_TYPES = ('music-videos', 'library-music-videos')
+
+
+def _kind_of(data):
+    if 'type' not in data:
+        return 'song'
+    resource = data.get('type')
+    if resource in SONG_TYPES:
+        return 'song'
+    if resource in VIDEO_TYPES:
+        return 'video'
+    return ''
+
+
 class NowPlaying(GObject.Object):
     """The item playing: the bridge's Track shape (formatTrack in bridge.js), as properties.
 
     `artwork_url` is the artwork URL the bridge gives (256 px; remote.fetch_remote re-sizes
     it), None without artwork. `duration_ms` is Apple's for the item; the Player's `duration`
-    is what MusicKit reports while playing, which is what the seek bar follows.
+    is what MusicKit reports while playing, which is what the seek bar follows. `kind` is
+    what the item is to the account's ratings: 'song' or 'video' (from the Track's `type`,
+    the API's resource type; a Track without one is a song), else '' (a station's segment,
+    an ad: nothing to love).
     """
 
     __gtype_name__ = 'AppleMusicNowPlaying'
@@ -144,6 +163,7 @@ class NowPlaying(GObject.Object):
     artwork_url = GObject.Property(type=str, default=None)
     index = GObject.Property(type=int, default=0)
     explicit = GObject.Property(type=bool, default=False)
+    kind = GObject.Property(type=str, default='')
 
     def __init__(self, data):
         data = data if isinstance(data, dict) else {}
@@ -157,6 +177,7 @@ class NowPlaying(GObject.Object):
             artwork_url=data.get('artUrl') if isinstance(data.get('artUrl'), str) else None,
             index=int(_number(data.get('index'))),
             explicit=bool(data.get('explicit')),
+            kind=_kind_of(data),
         )
         self.raw = data
 
