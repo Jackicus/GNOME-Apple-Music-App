@@ -47,3 +47,4 @@ src/widgets/now_playing.py
 src/widgets/queue.py
 src/widgets/transport.py
 src/library.py
+src/remote.py

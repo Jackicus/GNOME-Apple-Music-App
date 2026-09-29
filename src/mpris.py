@@ -13,7 +13,7 @@ seeking keeps the status before it, the rest Stopped; no track is Stopped), Loop
 Shuffle from `repeat` and `shuffle`, Volume, Position as int64 microseconds from
 `estimated_position()` (the last position plus the time since while playing, so nothing polls),
 Metadata from `track` (mpris:trackid an object path made of the id, mpris:length, mpris:artUrl
-the file:// URL of the cached remote art once Artwork.fetch_remote has it, xesam:title,
+the file:// URL of the cached remote art once remote.fetch_remote has it, xesam:title,
 xesam:artist as a list, xesam:album), CanGoNext/CanGoPrevious/CanPlay/CanPause/CanSeek true
 while a track exists (CanPlay is what GNOME Shell shows the player by, so "Not Playing" shows
 nothing). The methods are the Player's commands, spawned through app.player_command (an
@@ -35,8 +35,8 @@ from gettext import gettext as _
 
 from gi.repository import Gio, GLib
 
+from . import remote
 from .player import ACTIVE_STATES, REPEAT_MODES
-from .widgets import artwork
 
 log = logging.getLogger(__name__)
 
@@ -451,7 +451,7 @@ class Mpris:
         """The remote-art file for a track's artwork, when it is on disk already."""
         if track is None or not track.artwork_url:
             return None
-        path = artwork.remote_art_path(track.artwork_url)
+        path = remote.remote_art_path(track.artwork_url)
         return path if path and os.path.isfile(path) else None
 
     async def _fetch_art(self, track):
@@ -459,7 +459,7 @@ class Mpris:
         one download serves both), then Metadata again with its URL, if the track is still
         the one playing."""
         try:
-            path = await artwork.get_default().fetch_remote(track.artwork_url)
+            path = await remote.fetch_remote(track.artwork_url)
         except Exception:
             log.exception('mpris: fetching the artwork failed')
             return

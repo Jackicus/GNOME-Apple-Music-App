@@ -7,6 +7,7 @@ from gi.repository import Adw, Gio, Gtk
 
 from ..backend.errors import EngineError
 from ..library import Item
+from ..remote import fetch_cover
 from ..widgets import artwork, context_menu
 from ..widgets.tile import Tile
 from ..widgets.util import connect_weak, weak_method
@@ -179,7 +180,7 @@ class ArtistPage(Adw.NavigationPage):
             Gio.Application.get_default().spawn(self._fetch_cover(self.item))
 
     async def _fetch_cover(self, item):
-        if await artwork.get_default().fetch_cover(item) and self.get_mapped():
+        if await fetch_cover(item) and self.get_mapped():
             self._load_portrait()
 
     def _load_portrait(self):

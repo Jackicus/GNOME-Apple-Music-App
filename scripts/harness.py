@@ -42,7 +42,7 @@ DEMO_DIR = os.path.join(ROOT, 'build', 'demo')  # what the development launcher 
 BASE_ID = 'io.github.jackicus.AppleMusic'
 
 # invented_playing_state()'s artwork URL: the album's cover is copied to where
-# Artwork.fetch_remote would put this URL's 640 px image, so nothing is fetched.
+# remote.fetch_remote would put this URL's 640 px image, so nothing is fetched.
 DEMO_ART_URL = 'https://example.invalid/demo-art/{w}x{h}bb.jpg'
 PLAYING_POSITION = 65.0  # seconds in: a line of the lyrics fixture is current, mid-song
 
@@ -149,7 +149,7 @@ def invented_playing_state(app, lyrics=False):
     playing 65 s in, the album's cover as the artwork, and with `lyrics` the synced lyrics of
     tests/fixtures/lyrics.json. The demo cannot play: this is what the Player would show."""
     from applemusic.backend import config
-    from applemusic.widgets.artwork import remote_art_path
+    from applemusic.remote import remote_art_path
 
     if not app.demo:
         sys.exit('harness: an invented playing state needs the demo library')

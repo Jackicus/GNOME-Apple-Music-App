@@ -104,6 +104,7 @@ install_data(
   'mpris.py',
   'player.py',
   'player_bar.py',
+  'remote.py',
   'sections.py',
   'shortcuts.py',
   'sidebar.py',

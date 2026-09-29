@@ -20,12 +20,12 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from ..backend.errors import EngineError
 from ..library import Item, Track, fold
-from ..widgets import artwork, context_menu
+from ..remote import fetch_shelf_art, fetch_thumb, needs_thumb, remote_item, remote_shelves
+from ..widgets import context_menu
 from ..widgets.category_tile import CategoryTile
 from ..widgets.cover import Cover
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.track_row import TrackRow
-from .shelves import fetch_shelf_art, remote_shelves
 
 log = logging.getLogger(__name__)
 
@@ -302,7 +302,7 @@ class SearchPage(Adw.NavigationPage):
             return
         if serial != self._serial:
             return
-        categories = [Item(artwork.remote_item(data))
+        categories = [Item(remote_item(data))
                       for data in answer.get('categories') or []
                       if isinstance(data, dict) and data.get('id')]
         self._categories.splice(0, self._categories.get_n_items(), categories)
@@ -330,7 +330,7 @@ class SearchPage(Adw.NavigationPage):
             return  # typed on since: a newer request answers
         rows = [Suggestion(term=term.get('term'), display=term.get('display'))
                 for term in answer.get('terms') or [] if term.get('term')]
-        rows += [Suggestion(item=Item(artwork.remote_item(data)))
+        rows += [Suggestion(item=Item(remote_item(data)))
                  for data in answer.get('items') or [] if isinstance(data, dict)]
         self._suggestions.splice(0, self._suggestions.get_n_items(), rows)
         if rows:
@@ -541,12 +541,12 @@ class SearchPage(Adw.NavigationPage):
             cover.set_paths(item.thumb, item.art)
             row.add_prefix(cover)
             row.context_item = item  # its context menu (widgets/context_menu.py)
-            if artwork.thumb_missing(item):
+            if needs_thumb(item):
                 self._app().spawn(self._fetch_row_art(item, cover))
         return row
 
     async def _fetch_row_art(self, item, cover):
-        if await artwork.get_default().fetch_thumb(item):
+        if await fetch_thumb(item):
             cover.refresh()
 
     @Gtk.Template.Callback()

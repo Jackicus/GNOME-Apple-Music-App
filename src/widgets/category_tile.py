@@ -2,6 +2,7 @@
 
 from gi.repository import Gio, Graphene, Gtk
 
+from ..remote import fetch_thumb, needs_thumb
 from . import artwork
 
 
@@ -13,7 +14,7 @@ class CategoryTile(Gtk.Overlay):
     right: the curator's square artwork, which shares that colour, fetched into
     <cache>/remote-art/ when the tile is first shown.
 
-    bind(item) takes an Item of kind 'category' in artwork.remote_item's shape (`thumb` the
+    bind(item) takes an Item of kind 'category' in remote.remote_item's shape (`thumb` the
     file the picture is fetched to, `thumbUrl` where from). The landing's tiles are made
     once each (a Gtk.FlowBox over the categories), not recycled, so the picture is fetched
     and decoded while the tile is mapped and let go of when it is unmapped.
@@ -70,16 +71,13 @@ class CategoryTile(Gtk.Overlay):
         self.picture.set_paintable(texture)
         if texture is not None:
             return
-        if artwork.thumb_missing(item):
-            if self._fetch is None or self._fetch.done():
-                self._fetch = Gio.Application.get_default().spawn(self._fetch_then_show(item))
-        else:
-            self._token = loader.request(path, self._on_texture)
+        self._token = loader.request(path, self._on_texture)
+        if needs_thumb(item) and (self._fetch is None or self._fetch.done()):
+            self._fetch = Gio.Application.get_default().spawn(self._fetch_then_show(item))
 
     async def _fetch_then_show(self, item):
-        loader = artwork.get_default()
-        if await loader.fetch_thumb(item) and self.item is item and self.get_mapped():
-            self._token = loader.request(item.thumb, self._on_texture)
+        if await fetch_thumb(item) and self.item is item and self.get_mapped():
+            self._show_art()
 
     def _release_art(self):
         artwork.get_default().cancel(self._token)

@@ -85,7 +85,7 @@ def _number(value, default=0.0):
 class NowPlaying(GObject.Object):
     """The item playing: the bridge's Track shape (formatTrack in bridge.js), as properties.
 
-    `artwork_url` is the artwork URL the bridge gives (256 px; Artwork.fetch_remote re-sizes
+    `artwork_url` is the artwork URL the bridge gives (256 px; remote.fetch_remote re-sizes
     it), None without artwork. `duration_ms` is Apple's for the item; the Player's `duration`
     is what MusicKit reports while playing, which is what the seek bar follows.
     """

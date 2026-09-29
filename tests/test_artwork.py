@@ -4,8 +4,10 @@ Runs under asyncio.run, without GTK's main loop or a display: textures are made 
 """
 
 import asyncio
+import concurrent.futures
 import os
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -13,7 +15,6 @@ import gi
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
-from applemusic.backend import store
 from applemusic.widgets import artwork
 
 gi.require_version('GdkPixbuf', '2.0')
@@ -30,124 +31,6 @@ async def settle():
         await asyncio.sleep(0.01)
         if not asyncio.all_tasks() - {asyncio.current_task()}:
             return
-
-
-class TestRemoteArt(unittest.TestCase):
-    """fetch_remote: the URL re-sized, the file under <cache>/remote-art/, shared fetches."""
-
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp_dir.cleanup)
-        patcher = mock.patch.dict(os.environ, {'APPLE_MUSIC_CACHE': self.temp_dir.name})
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.fetched = []
-        self.generations = []
-
-        def fake_cache_artwork(url, cache_dir, timeout=10.0, dest_path=None, generation=None):
-            self.fetched.append(url)
-            self.generations.append(generation)
-            if 'missing' in url:
-                return None
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-            with open(dest_path, 'wb') as file:
-                file.write(b'jpeg')
-            return dest_path
-
-        patcher = mock.patch.object(artwork.normalize, 'cache_artwork', fake_cache_artwork)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_sized_url(self):
-        self.assertEqual(artwork.sized_url('https://x.invalid/a/256x256bb.jpg', 640),
-                         'https://x.invalid/a/640x640bb.jpg')
-        self.assertEqual(artwork.sized_url('https://x.invalid/a/{w}x{h}bb.jpg', 320),
-                         'https://x.invalid/a/320x320bb.jpg')
-        self.assertEqual(artwork.sized_url('https://x.invalid/a/600x600bb-60.webp', 640),
-                         'https://x.invalid/a/640x640bb-60.webp')
-        self.assertEqual(artwork.sized_url('https://x.invalid/a/cover.jpg', 640),
-                         'https://x.invalid/a/cover.jpg')
-        self.assertIsNone(artwork.sized_url(None, 640))
-        self.assertIsNone(artwork.sized_url('', 640))
-
-    def test_fetches_into_remote_art_once(self):
-        loader = artwork.Artwork()
-        url = 'https://x.invalid/a/256x256bb.jpg'
-
-        async def go():
-            first, second = await asyncio.gather(loader.fetch_remote(url, 640),
-                                                 loader.fetch_remote(url, 640))
-            self.assertEqual(first, second)
-            self.assertEqual(os.path.dirname(first),
-                             os.path.join(self.temp_dir.name, 'remote-art'))
-            self.assertTrue(os.path.exists(first))
-            self.assertEqual(self.fetched, ['https://x.invalid/a/640x640bb.jpg'])
-            # On disk already: answered without a fetch.
-            self.assertEqual(await loader.fetch_remote(url, 640), first)
-            self.assertEqual(len(self.fetched), 1)
-            # Another size is another file.
-            other = await loader.fetch_remote(url, 320)
-            self.assertNotEqual(other, first)
-            self.assertEqual(self.fetched[-1], 'https://x.invalid/a/320x320bb.jpg')
-        run(go())
-
-    def test_a_fetch_writes_for_the_cache_it_began_in(self):
-        loader = artwork.Artwork()
-        generation = store.cache_generation()
-        run(loader.fetch_remote('https://x.invalid/a/256x256bb.jpg', 640))
-        self.assertEqual(self.generations, [generation])
-
-    def test_failures_answer_none(self):
-        loader = artwork.Artwork()
-
-        async def go():
-            self.assertIsNone(await loader.fetch_remote(None, 640))
-            self.assertIsNone(await loader.fetch_remote('https://x.invalid/missing/1x1.jpg', 640))
-        run(go())
-
-    def test_remote_item_names_the_remote_art_files(self):
-        hit = {'id': '1', 'kind': 'album', 'title': 'A', 'thumb': None,
-               'art': 'https://x.invalid/a/320x320bb.jpg'}
-        item = artwork.remote_item(hit)
-        self.assertIsNot(item, hit)
-        self.assertEqual(item['thumbUrl'], 'https://x.invalid/a/320x320bb.jpg')
-        self.assertEqual(item['artUrl'], 'https://x.invalid/a/640x640bb.jpg')
-        self.assertEqual(item['thumb'], artwork.remote_art_path(hit['art'], 320))
-        self.assertEqual(item['art'], artwork.remote_art_path(hit['art'], 640))
-        self.assertEqual(os.path.dirname(item['thumb']),
-                         os.path.join(self.temp_dir.name, 'remote-art'))
-        self.assertNotEqual(item['thumb'], item['art'])
-        # A thumbnail the sync has on disk is kept; the cover still comes from the URL.
-        kept = artwork.remote_item(dict(hit, thumb='/on/disk.jpg'))
-        self.assertEqual(kept['thumb'], '/on/disk.jpg')
-        self.assertEqual(kept['art'], item['art'])
-        # Artwork on disk, or none: the dict as it is.
-        for data in ({'art': '/cache/art/x.jpg', 'thumb': '/cache/thumb/x.jpg'},
-                     {'art': None, 'thumb': None}, {}, None):
-            self.assertIs(artwork.remote_item(data), data)
-
-    def test_fetch_thumb(self):
-        from applemusic.library import Item
-
-        loader = artwork.Artwork()
-        item = Item(artwork.remote_item({'id': '1', 'kind': 'album', 'title': 'A',
-                                         'art': 'https://x.invalid/a/320x320bb.jpg'}))
-        bare = Item({'id': '2', 'kind': 'album', 'title': 'B'})
-        failing = Item(artwork.remote_item({'id': '3', 'kind': 'album', 'title': 'C',
-                                            'art': 'https://x.invalid/missing/320x320bb.jpg'}))
-
-        async def go():
-            self.assertTrue(artwork.thumb_missing(item))
-            self.assertTrue(await loader.fetch_thumb(item))
-            self.assertTrue(os.path.exists(item.thumb))
-            self.assertFalse(artwork.thumb_missing(item))
-            self.assertEqual(self.fetched, ['https://x.invalid/a/320x320bb.jpg'])
-            self.assertTrue(await loader.fetch_thumb(item))  # on disk: no fetch
-            self.assertEqual(len(self.fetched), 1)
-            self.assertFalse(artwork.thumb_missing(bare))
-            self.assertFalse(await loader.fetch_thumb(bare))
-            self.assertFalse(await loader.fetch_thumb(failing))
-        run(go())
 
 
 class TestArtwork(unittest.TestCase):
@@ -260,7 +143,7 @@ class TestArtwork(unittest.TestCase):
         self.assertEqual(results, [None])
 
     def test_least_recently_used_is_evicted(self):
-        loader = artwork.Artwork(size=2)
+        loader = artwork.Artwork(max_entries=2)
 
         async def go():
             await self._load(loader, self.paths[0])
@@ -347,6 +230,31 @@ class TestArtwork(unittest.TestCase):
         self.assertEqual(loader.cached(), (2, 64 + 144))
         loader.clear()
         self.assertEqual(loader.cached(), (0, 0))
+
+    def test_decodes_do_not_wait_for_downloads(self):
+        # Every download thread busy (a slow connection): a cover on screen still decodes.
+        from applemusic import remote
+
+        busy = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.addCleanup(busy.shutdown)
+        release = threading.Event()
+        self.addCleanup(release.set)
+        loader = artwork.Artwork()
+        results = []
+
+        async def go():
+            with mock.patch.object(remote, '_executor', busy):
+                download = asyncio.get_running_loop().run_in_executor(
+                    remote._fetch_executor(), release.wait, 5)
+                loader.request(self.paths[0], results.append)
+                await settle()
+                self.assertFalse(download.done())
+                release.set()
+                await download
+
+        run(go())
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0])
 
     async def _load(self, loader, path):
         loader.request(path, lambda _texture: None)

@@ -341,7 +341,7 @@ def place_in_remote_art(item, art_urls, cache_dir):
     does not have on disk. art/ and thumb/ belong to library.json and are pruned against it
     after every sync, which would take the files from under an open page; remote-art/ is
     trimmed only to its budget. Each file is named after its URL's hash, as the pages' own
-    remote art is (widgets.artwork.remote_art_path), so the player bar and a page share one.
+    remote art is (the app's remote.remote_art_path), so the player bar and a page share one.
     Rewrites the item's `art`, `thumb` and rows' `thumb` in place and returns the registry of
     what it points at: {path: url}, for download_item_art."""
     remote = os.path.join(cache_dir, 'remote-art')

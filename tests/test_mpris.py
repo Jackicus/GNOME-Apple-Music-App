@@ -204,7 +204,7 @@ class FakeInvocation:
 
 
 class FakeArtwork:
-    """Artwork.fetch_remote: answers `path` at once, the URLs asked for recorded."""
+    """remote.fetch_remote: answers `path` at once, the URLs asked for recorded."""
 
     def __init__(self, path):
         self.path = path
@@ -298,9 +298,9 @@ class ServiceTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.art_path = os.path.join(self.temp.name, 'remote.jpg')
         self.artwork = FakeArtwork(self.art_path)
-        for name, value in (('get_default', lambda: self.artwork),
+        for name, value in (('fetch_remote', self.artwork.fetch_remote),
                             ('remote_art_path', lambda url, size=640: self.art_path)):
-            patcher = mock.patch.object(mpris.artwork, name, value)
+            patcher = mock.patch.object(mpris.remote, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
         self.owned = []
