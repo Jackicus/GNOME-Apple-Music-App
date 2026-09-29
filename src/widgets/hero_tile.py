@@ -1,7 +1,9 @@
 """AppleMusicHeroTile: a shelf's large card, the cover over a band in the artwork's colour."""
 
-from gi.repository import Graphene, Gtk
+from gi.repository import Gio, Graphene, Gtk
 
+from ..backend import config
+from ..remote import fetch_cover
 from . import artwork
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .util import connect_weak
@@ -21,10 +23,13 @@ class HeroTile(Gtk.Box):
     of Home and Radio's first stations.
 
     bind(item) and unbind() are called by a list factory, as for AppleMusicTile, and the card
-    follows its Item's notify signals while bound, as a tile does. The cover is
-    an AppleMusicCover, which decodes the 640 px art while it is mapped (the 320 px thumbnail is
-    shown meanwhile when it is decoded already). The band is drawn here rather than by CSS,
-    which cannot take a colour per item; the grid tiles do not pay for this Python snapshot.
+    follows its Item's notify signals while bound, as a tile does. The cover is an
+    AppleMusicCover of (art, thumb): the 640 px cover when it is on disk, else the 320 px
+    thumbnail the sync fetched. When the card draws more pixels than the thumbnail has (260 px
+    at a scale factor of 2) and the Item has the cover's URL, the cover is fetched while the
+    card is shown (remote.fetch_cover), and shown once it arrives. The band is drawn here
+    rather than by CSS, which cannot take a colour per item; the grid tiles do not pay for
+    this Python snapshot.
     """
 
     __gtype_name__ = 'AppleMusicHeroTile'
@@ -37,6 +42,12 @@ class HeroTile(Gtk.Box):
     _band = None  # what is drawn: that colour, made readable
     _item = None
     _handler = None  # the bound Item's notify handler
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # A class function, not a bound method: a handler on the card itself holding the card
+        # would be a cycle.
+        self.connect('notify::scale-factor', HeroTile._on_scale_factor)
 
     @property
     def context_item(self):
@@ -54,6 +65,30 @@ class HeroTile(Gtk.Box):
         self.title_label.set_text(item.title)
         self.subtitle_label.set_text(item.subtitle)
         self._set_colour(artwork.art_colour(item.art_color))
+        if self.get_mapped():
+            self._fetch_cover()
+
+    def do_map(self):
+        Gtk.Box.do_map(self)
+        if self._item is not None:
+            self._fetch_cover()
+
+    def _on_scale_factor(self, _pspec):
+        if self.get_mapped() and self._item is not None:
+            self._fetch_cover()
+
+    def _fetch_cover(self):
+        """Fetch the cover when the thumbnail is too small for the card and the Item says
+        where from; whether it is on disk already is asked in the fetch's thread."""
+        item = self._item
+        raw = item.raw if isinstance(item.raw, dict) else {}
+        if (item.art and raw.get('artUrl')
+                and self.cover.size * self.get_scale_factor() > config.THUMB_SIZE):
+            Gio.Application.get_default().spawn(self._fetch_then_show(item))
+
+    async def _fetch_then_show(self, item):
+        if await fetch_cover(item) and self._item is item:
+            self.cover.refresh()
 
     def unbind(self):
         if self._handler is not None:
