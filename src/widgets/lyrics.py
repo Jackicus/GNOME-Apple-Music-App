@@ -10,8 +10,10 @@ The list follows playback only while the sheet is open (set_active), and only wh
 current line changes: scroll_to brings the row on screen, and once the list's geometry has
 held still for a frame (a tick callback: the sheet's opening lays the list out over a few
 frames) the row glides to the middle of the view. Not while the user scrolled the list in
-the last USER_SCROLL_PAUSE seconds. Nothing here runs on a timer: the Player's position
-events (four a second) drive it.
+the last USER_SCROLL_PAUSE seconds. The line current is found at the Player's
+estimated_position() (MusicKit reports whole seconds; the lines start at milliseconds), on
+each position event and, while shown and playing, from one GLib timeout armed for the next
+line's start, so the highlight moves as the line begins rather than up to a second after.
 """
 
 import logging
@@ -27,6 +29,8 @@ log = logging.getLogger(__name__)
 USER_SCROLL_PAUSE = 4.0    # seconds after the user scrolls before the list follows again
 CENTRE_DURATION = 300      # ms, the glide bringing the current line to the middle
 SETTLE_FRAMES = 40         # frames to wait for the row's geometry to hold still, at most
+NEXT_LINE_FLOOR = 0.05     # seconds: the least a timeout for the next line waits (no spin
+                           # when the estimate stands still before a line's start)
 
 
 class LyricsView(Gtk.Stack):
@@ -51,6 +55,7 @@ class LyricsView(Gtk.Stack):
         self._page_seen = None          # the page size the last scroll_to or centring saw
         self._user_scrolled_at = 0.0
         self._animation = None
+        self._next_line_source = 0      # the timeout for the next line's start, while armed
 
         self.empty_page = Adw.StatusPage(icon_name='music-note-symbolic', title=_('No Lyrics'),
                                          description=_('Apple Music has no lyrics for this'))
@@ -98,6 +103,7 @@ class LyricsView(Gtk.Stack):
         player.connect('notify::lyrics', lambda *_: self._on_lyrics())
         player.connect('notify::lyrics-loading', lambda *_: self._update_page())
         player.connect('notify::position', lambda *_: self._follow())
+        player.connect('notify::state', lambda *_: self._follow())
         self._on_lyrics()
 
     def set_active(self, active):
@@ -106,6 +112,8 @@ class LyricsView(Gtk.Stack):
         if active:
             self._user_scrolled_at = 0.0
             self._follow(force=True)
+        else:
+            self._disarm_next_line()
 
     # -- the lyrics --------------------------------------------------------------------
 
@@ -114,6 +122,7 @@ class LyricsView(Gtk.Stack):
         if lyrics is not self._lyrics:
             self._lyrics = lyrics
             self._current = -1
+            self._disarm_next_line()
             self._stop_centring()
             self.list_view.set_model(
                 Gtk.NoSelection(model=lyrics.lines if lyrics is not None and lyrics.synced
@@ -138,18 +147,43 @@ class LyricsView(Gtk.Stack):
 
     def _follow(self, force=False):
         """Mark the line current at the Player's position and bring it into view when it
-        changed (or `force`: the lyrics or the sheet's state changed)."""
+        changed (or `force`: the lyrics or the sheet's state changed); then wait for the
+        next line's start."""
         lyrics = self._lyrics
         if lyrics is None or not lyrics.synced or self._player is None:
             return
-        index = lyrics.index_at(self._player.position)
-        if index == self._current and not force:
+        index = lyrics.index_at(self._player.estimated_position())
+        if index != self._current or force:
+            previous, self._current = self._current, index
+            self._style(previous)
+            self._style(index)
+            if self._active:
+                self._bring_into_view(index)
+        self._arm_next_line()
+
+    def _arm_next_line(self):
+        """One timeout for the moment the next line starts, while the tab is shown and the
+        music plays (the position events alone are up to a second late); it replaces any
+        pending one, and the next position or state event arms it again."""
+        self._disarm_next_line()
+        lyrics = self._lyrics
+        player = self._player
+        if (not self._active or lyrics is None or not lyrics.synced or player is None
+                or player.state != 'playing' or self._current + 1 >= len(lyrics)):
             return
-        previous, self._current = self._current, index
-        self._style(previous)
-        self._style(index)
-        if self._active:
-            self._bring_into_view(index)
+        delay = lyrics.start_of(self._current + 1) - player.estimated_position()
+        self._next_line_source = GLib.timeout_add(
+            int(max(delay, NEXT_LINE_FLOOR) * 1000), self._on_next_line)
+
+    def _on_next_line(self):
+        self._next_line_source = 0
+        self._follow()
+        return GLib.SOURCE_REMOVE
+
+    def _disarm_next_line(self):
+        if self._next_line_source:
+            GLib.source_remove(self._next_line_source)
+            self._next_line_source = 0
 
     def _style(self, position):
         label = self._rows.get(position)

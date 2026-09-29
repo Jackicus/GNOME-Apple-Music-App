@@ -426,17 +426,42 @@ class EventTest(unittest.TestCase):
         self.assertEqual(self.notified, [])  # the same position notifies nothing
 
     def test_estimated_position_runs_on_while_playing(self):
-        self.engine.event('playbackStateDidChange', {'state': 'playing'})
-        self.engine.event('playbackTimeDidChange', {'position': 10, 'duration': 12})
-        self.player.position_updated_at -= 1.0
-        estimate = self.player.estimated_position()
-        self.assertGreaterEqual(estimate, 11.0)
-        self.assertLessEqual(estimate, 12.0)
-        self.player.position_updated_at -= 10.0
-        self.assertEqual(self.player.estimated_position(), 12.0)  # never past the end
-        self.engine.event('playbackStateDidChange', {'state': 'paused'})
-        self.player.position_updated_at -= 5.0
-        self.assertEqual(self.player.estimated_position(), 10.0)  # paused: as reported
+        with patched_clocks() as clock:
+            self.engine.event('playbackStateDidChange', {'state': 'playing'})
+            self.engine.event('playbackTimeDidChange', {'position': 10, 'duration': 12})
+            clock.advance(0.5)
+            self.assertEqual(self.player.estimated_position(), 10.5)
+            clock.advance(10)
+            self.assertEqual(self.player.estimated_position(), 11.0)  # a second at most
+            self.engine.event('playbackTimeDidChange', {'position': 11.5, 'duration': 12})
+            clock.advance(0.8)
+            self.assertEqual(self.player.estimated_position(), 12.0)  # never past the end
+            self.engine.event('playbackStateDidChange', {'state': 'paused'})
+            clock.advance(5)
+            self.assertEqual(self.player.estimated_position(), 11.5)  # paused: as reported
+            # Resumed: it runs on from the moment of the resume, not from the last report.
+            self.engine.event('playbackStateDidChange', {'state': 'playing'})
+            clock.advance(0.25)
+            self.assertEqual(self.player.estimated_position(), 11.75)
+
+    def test_the_estimate_never_runs_backwards(self):
+        """MusicKit reports whole seconds four times a second: the estimate follows the
+        clock within a quarter second and never decreases."""
+        with patched_clocks() as clock:
+            self.engine.event('playbackStateDidChange', {'state': 'playing'})
+            estimates = []
+            for step in range(20):
+                second = 10 + step // 4
+                self.engine.event('playbackTimeDidChange', {'position': second, 'duration': 214})
+                estimates.append(self.player.estimated_position())
+                self.assertAlmostEqual(estimates[-1], 10 + step / 4, delta=0.25)
+                clock.advance(0.25)
+            self.assertEqual(estimates, sorted(estimates))
+            # After the tick from 12 to 13 plus 0.3 s, the estimate reaches a line at 13.2 s.
+            clock.advance(0.3)
+            lyrics = Lyrics({'synced': True, 'lines': [
+                {'startMs': 1000, 'text': 'One'}, {'startMs': 13200, 'text': 'Two'}]})
+            self.assertEqual(lyrics.index_at(self.player.estimated_position()), 1)
 
     def test_duration_shuffle_repeat_volume(self):
         self.engine.event('playbackDurationDidChange', {'duration': 300.5})
