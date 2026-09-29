@@ -6,11 +6,15 @@ widgets (names, roles, tooltips, focus) are in `.claude/rules/ui.md`; the keys t
 
 ## Keyboard walkthrough
 
-`scripts/headless.sh scripts/a11y_check.py` walks most of these steps on the demo library (add
-`--size 360x640` for the narrow layout, `--names` for the accessible names). It leaves out step
-8, Up in the sidebar, Ctrl+?, Tab and the mnemonics in Preferences, Escape closing a context
-menu, Left, Right, Enter and the close button in Now Playing, and Enter on the idle bar: walk
-those with a real keyboard. When a key or a page changes, change this list and the script
+`scripts/headless.sh scripts/a11y_check.py` walks these steps on the demo library (add
+`--size 360x640` for the narrow layout, `--names` for the accessible names), step 8 with the
+window maximized (a dialog is inside the window only when that is maximized or tiled; else it
+is a window of its own, which the window's keys never reach). It leaves out what needs a
+window with the keyboard, which a headless one never has: Tab from row to row in Preferences
+and, in the narrow layout, Down from one sidebar section to the next (a row keeps the focus
+there). Of the mnemonics in Preferences it presses Clear's and checks that every labelled
+button has one, since the demo leaves the other buttons insensitive or hidden. Walk those
+with a real keyboard. When a key or a page changes, change this list and the script
 together.
 
 1. Ctrl+1 puts the focus on the selected sidebar row. Down and Up move through every
@@ -34,9 +38,9 @@ together.
    plays or pauses, but never in an entry, in a menu or in a dialog. Ctrl+Right and Ctrl+Left
    skip.
 5. Ctrl+Shift+N opens Now Playing with the focus on its play button; Tab goes through the controls,
-   the Lyrics and Up Next toggle (Left and Right switch) and into the list (arrows move, Enter
-   seeks to a line or plays an entry), then the close button. Escape closes the sheet and the
-   focus goes back to where it was.
+   the Lyrics and Up Next toggle (Left and Right move between the two, Space or Enter
+   switches) and into the list (arrows move, Enter seeks to a line or plays an entry), then
+   the close button. Escape closes the sheet and the focus goes back to where it was.
 6. Ctrl+F shows Search with the cursor in the entry, over any page opened from its results;
    Tab reaches the Apple Music / Your Library toggle; Escape in the entry clears it. On the
    Songs page, Ctrl+F puts the cursor in the page's own filter instead.
@@ -50,9 +54,10 @@ together.
 
 - `scripts/a11y_check.py` cannot send real key presses (none can be synthesised on the
   development desktop). Its `press()` runs the handlers a real event would reach: the
-  capture-phase key and shortcut controllers from the window down to the focus, then the
-  shortcut controllers from the focus up, and a popover's own key handler. Typing is not
-  emulated; the entry's text is set.
+  capture-phase key and shortcut controllers from the window down to the focus (a mnemonic,
+  Alt and a label's underlined letter, runs there on its label, through the shortcut manager
+  above it), then the shortcut controllers from the focus up, and a popover's own key
+  handler. Typing is not emulated; the entry's text is set.
 - `--names` starts a private accessibility bus (a `dbus-daemon` with at-spi's configuration,
   from /usr/share/defaults/at-spi2 or /etc/at-spi2, on an abstract socket, and
   `at-spi2-registryd` from /usr/libexec, /usr/lib or /usr/lib/at-spi2-core), stops both when it
