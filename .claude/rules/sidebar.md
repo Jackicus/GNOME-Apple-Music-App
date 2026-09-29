@@ -3,6 +3,7 @@ paths:
   - "src/window.py"
   - "src/window.blp"
   - "src/sidebar.py"
+  - "src/sidebar_view.py"
   - "src/sections.py"
   - "tests/test_sidebar.py"
   - "tests/test_sections.py"

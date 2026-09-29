@@ -8,8 +8,10 @@ paths:
   - "src/player_bar.py"
   - "src/actions.py"
   - "src/sidebar.py"
+  - "src/sidebar_view.py"
   - "src/sections.py"
   - "src/shortcuts.py"
+  - "src/keyboard.py"
   - "src/style.css"
   - "src/icons/**"
 ---
