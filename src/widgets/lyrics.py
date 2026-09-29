@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicLyricsView: the Now Playing sheet's Lyrics tab, following the Player.
 
 A Gtk.Stack of four pages: synced lyrics as a Gtk.ListView over the Lyrics object's store

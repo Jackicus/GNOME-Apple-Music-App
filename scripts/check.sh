@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 # Everything that should pass before calling a change done.
 set -euo pipefail
 cd "$(dirname "$0")/.."

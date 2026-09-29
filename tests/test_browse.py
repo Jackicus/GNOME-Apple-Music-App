@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The backend's shaping of the New page (editorial groupings) and Made for You
 (recommendations) into shelves, over invented answers."""
 

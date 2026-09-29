@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The album, playlist and artist pages over the stand-in engine (tests/page_harness.py): an
 item without tracks is fetched once, a popped page's fetch is cancelled, and the pages follow
 their Item."""

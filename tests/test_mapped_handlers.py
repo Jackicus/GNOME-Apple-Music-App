@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """widgets.util.MappedHandlers: a widget's handlers on a longer-lived object are connected only
 while the widget is mapped, and hold the widget weakly."""
 

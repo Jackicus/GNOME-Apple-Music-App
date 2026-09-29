@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Search page over the stand-in engine (tests/page_harness.py): stale Apple Music answers
 never take over, Your Library follows the library's state, and the status pages offer Your
 Library."""

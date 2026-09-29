@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """EngineStatus: what a page that asks the engine (Search, New, Made for You, a category, an
 album's or an artist's page) shows when the engine cannot answer, and what its button does.
 No widget: the page draws the state, so the rules live here once and are tested without a

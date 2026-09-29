@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """A made-up Apple Music library for demo and screenshots:
 `demo_library.py [--cache DIR] [--albums N] [--playlists N] [--tracks N]`.
 

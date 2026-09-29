@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The app's sync (src/sync.py) against a fake engine answering with invented fixture pages, and
 Library.reload() keeping objects in place.
 

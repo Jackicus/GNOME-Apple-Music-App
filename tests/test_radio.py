@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Radio page (pages/radio.py) over an invented library.json: it shows the library's own
 store, so a reload that renames stations reaches the cards and the tiles, and "More Stations"
 shows only when there are more than the cards."""

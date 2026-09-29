@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicGridPage: a root page showing a model of Items as a grid of tiles.
 
 The chain is the page's store → Gtk.SortListModel (the header's sort choice, or none) →

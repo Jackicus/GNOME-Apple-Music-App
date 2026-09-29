@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Library.reload() over invented library.json files: what a reload tells, and to whom.
 
 A reload keeps every Item, Track and Shelf still in the library and says what changed by

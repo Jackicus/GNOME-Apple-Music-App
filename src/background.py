@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Background playback: the window closed while the music plays on.
 
     background = BackgroundPlayback(player, hold=app.hold, release=app.release,

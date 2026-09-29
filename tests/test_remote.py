@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """remote.py: artwork URLs and paths, the shared downloads, and the engine's shelves.
 
 Runs under asyncio.run, without GTK: the downloads are normalize.cache_artwork's, replaced by a

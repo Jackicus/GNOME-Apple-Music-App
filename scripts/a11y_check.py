@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Walk the keyboard checklist and list unnamed widgets, without a keyboard or a screen reader.
 
     scripts/a11y_check.py [--size WxH] [--light] [--names]

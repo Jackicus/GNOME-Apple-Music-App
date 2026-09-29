@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 # An older blueprint-compiler on PATH (as some distributions ship) falls back to the wrap's.
 blueprint_compiler = find_program('blueprint-compiler', version: '>= 0.22', required: false)
 if not blueprint_compiler.found()

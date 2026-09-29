@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The window's own keys: which playback action a key press runs, given where the focus is.
 
 The playback keys (shortcuts.PLAYBACK: Space, Ctrl+Right, Ctrl+Left) are not application

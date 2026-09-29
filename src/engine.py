@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Engine: Chrome's lifecycle inside the app, its one CDP connection, and the commands the
 UI awaits.
 

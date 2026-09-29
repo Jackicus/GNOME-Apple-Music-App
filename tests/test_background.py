@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Background playback (src/background.py): the hold, the grace timer and the release, with a
 stand-in Player and window and a fake clock. No display, no bus."""
 

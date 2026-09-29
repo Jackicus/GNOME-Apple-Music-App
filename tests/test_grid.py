@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The grid pages (pages/grid.py): their columns, their sort orders and the Sort By menu, the
 title in the header bar, and a folder that is gone."""
 

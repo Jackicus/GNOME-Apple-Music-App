@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """widgets.engine_status.EngineStatus: the states an engine-backed page shows, with stand-ins
 for the application and the engine (no display needed)."""
 

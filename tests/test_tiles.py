@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The artwork widgets: tiles, cards, covers, the Songs title cell, category tiles and the
 artist portrait, each drawing through an ArtworkSlot, with the Artwork loader replaced by
 test_artwork's FakeLoader (nothing is decoded: the tests answer the requests).

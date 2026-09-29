@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicShelvesPage: a page of shelves the engine answers with: New (engine.browse()),
 Made for You (engine.made_for_you()) and a search category (engine.category(id)).
 

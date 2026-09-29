@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Made for You destination: the personal mixes and stations Apple makes for the account
 (engine.made_for_you(): the recommendations made only of those) as shelves, the mixes as
 large cards."""

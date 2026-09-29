@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The window's key policy (applemusic.keyboard): which playback action a key runs, given
 where the focus is, as a table; the context-menu and main-menu keys agree with the shortcuts
 table. Widget classes only, no display."""

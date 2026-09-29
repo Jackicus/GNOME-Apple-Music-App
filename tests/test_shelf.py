@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """widgets/shelf.py: a Shelf follows its shelf and offers See All and the paging arrows only
 when the row does not show everything; a ShelfColumn keeps the widgets of the shelves it
 keeps, and never shows a shelf twice while it binds the rest a frame apart."""

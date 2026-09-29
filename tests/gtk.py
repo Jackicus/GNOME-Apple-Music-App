@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Widget tests: the `requires_gtk` decorator, isolated settings, and main-loop helpers.
 
 Most logic is tested without GTK, in non-widget classes and pure functions with stand-ins

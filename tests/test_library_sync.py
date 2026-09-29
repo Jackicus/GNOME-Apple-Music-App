@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The app's sync (sync.LibrarySync) and sync_library()'s ending: a cancelled sync ends only
 once its thread has, and writes nothing after. The engine is test_sync_app's FakeEngine over
 invented fixtures; no network, no display.

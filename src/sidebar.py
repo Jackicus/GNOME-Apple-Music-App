@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The sidebar's Playlists section as a model: All Playlists and Favourite Songs, then the user's
 folders and playlists in Apple's order, and the decisions the window's sidebar controller
 (sidebar_view.py) applies, as functions of plain data so that tests need no display.

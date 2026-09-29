@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Songs page (pages/songs.py): what it shows while the songs are on their way, and a
 sync that changes the songs keeps the table's place; the Sort By menu sorts as a header does.
 Over an invented library.json in a temporary cache (tests/page_harness.py's window)."""

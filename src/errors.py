@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """What the user is told when the engine fails: one sentence per EngineError code, and the
 button that helps, if one does. Application.report() shows it; the error's own message (what
 Chrome, the page or Apple said) goes to the log only.

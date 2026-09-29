@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Where the backend keeps things, the developer's DevTools port, and the artwork sizes.
 
 This replaces the extension's GSettings lookup: nothing in the backend imports gi, so these are

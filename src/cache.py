@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The cache directory (config.cache_dir()): what it holds, what it weighs, clearing it, and the
 JSON answers kept in it; and removing a directory Chrome may still be writing to (the profile, at
 sign-out). No GTK; every function blocks, so call it in a thread.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The library as GObject models the UI binds to, loaded from the cache's library.json.
 
 library.json holds the Item and Track shapes src/backend/README.md describes. Library.load()

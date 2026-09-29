@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Apple's answers as the library's data, and the artwork cache.
 
 Pure functions turn Apple Music API answers into the Item, Track and shelf shapes that

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The window's sidebar: its sections and items, the Playlists section following the library,
 the selection, the folders' expansion, the playlists' context menu and drop target, and the
 rows' accessible names.

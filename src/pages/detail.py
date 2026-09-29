@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicDetailPage: an album or a playlist, its cover, titles, Play and Shuffle over its
 tracks.
 

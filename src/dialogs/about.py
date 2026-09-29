@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The About dialog (app.about): built from the app's metainfo, which the gresource carries
 (metainfo.xml), so its name, developer, links, licence and release notes are the metainfo's;
 with the translators' credits, and the debug information a bug report wants (versions, the

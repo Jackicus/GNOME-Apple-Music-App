@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The transport pieces the player bar and the Now Playing sheet share, each a plain object
 over widgets a template built: the play/pause button's icon (PlayButton), the title and
 subtitle labels (TrackTitles), the seek slider with its times (SeekControl), the shuffle

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicSignInDialog: the sign-in flow (account.sign_in()), shown while it runs.
 
 Presenting the dialog starts the flow as a task: Chrome restarted in a window, Apple's

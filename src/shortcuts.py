@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The keyboard shortcuts in one table: the accelerators the app sets, the playback keys the
 window handles itself, and the Keyboard Shortcuts dialog, which lists them all.
 

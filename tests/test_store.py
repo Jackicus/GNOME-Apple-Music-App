@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """backend/store.py: the one atomic write every cache file goes through, and what the cache's
 writers and pruners do with it."""
 

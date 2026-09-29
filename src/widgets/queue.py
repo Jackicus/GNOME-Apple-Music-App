@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicQueueView: the Now Playing sheet's Up Next tab, the Player's queue from the
 entry playing on.
 

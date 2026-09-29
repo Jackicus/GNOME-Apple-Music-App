@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Render the app's window to a PNG, for checking UI changes without a human.
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]

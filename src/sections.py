@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The sidebar's destinations, in the order and grouping of music.apple.com.
 
 Each section has a stable id (the window finds the Playlists section by PLAYLISTS_SECTION,

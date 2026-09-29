@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """MPRIS: the metadata and property variants for a track and for none, PropertiesChanged with
 only the changed keys, Seeked, the methods and the writable properties, over a stand-in bus
 connection and a Player fed by apply() and by the engine's events. No GTK; the commands run

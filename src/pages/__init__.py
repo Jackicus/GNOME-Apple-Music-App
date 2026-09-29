@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The content pane's root pages, one per sidebar destination (PAGES).
 
 create(destination, library) builds a destination's page. The window builds each page on its

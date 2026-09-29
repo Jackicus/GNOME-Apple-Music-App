@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicSongTitle: the Songs table's title cell, a thumbnail, the title and an explicit
 badge."""
 

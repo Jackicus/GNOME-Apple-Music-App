@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Unit tests for src/i18n.py: Python's gettext and C's libintl both read the app's domain.
 
 Before i18n.setup(), the launcher bound only C's domain (GtkBuilder) and installed a builtin

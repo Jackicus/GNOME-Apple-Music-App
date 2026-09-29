@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicTile: an Item as a grid tile, its artwork, title and subtitle."""
 
 from gi.repository import Adw, GLib, Gtk

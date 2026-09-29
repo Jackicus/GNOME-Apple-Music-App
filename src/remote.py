@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Remote artwork and the engine's shelves: where the artwork the library does not hold is
 kept, and fetching it. No GTK here: the widgets decode what this puts on disk
 (widgets/artwork.py).

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Signing out and clearing the cache (src/account.py) with a stand-in app: the order of the
 steps (the session revoked, the cache's generation bumped, the sync cancelled, the engine
 stopped, only then the wipe), what is wiped and what is left, and the settings forgotten.

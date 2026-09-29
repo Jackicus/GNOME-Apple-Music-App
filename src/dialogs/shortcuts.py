@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The Keyboard Shortcuts dialog (app.shortcuts, Ctrl+?): every accelerator and key of
 shortcuts.py, grouped as shortcuts.sections() groups them.
 

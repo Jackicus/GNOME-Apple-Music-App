@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Drive the engine without the GUI: the app's own Engine, on the GLib-backed asyncio loop.
 
     scripts/am.py status                  who holds the Chrome profile, and what the bridge says

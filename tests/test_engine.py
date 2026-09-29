@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Unit tests for src/engine.py: the Engine's lifecycle and commands against a fake Chrome.
 
 The tests run on gi.events' GLib-backed loop, as the app does, and the Engine spawns "Chrome"

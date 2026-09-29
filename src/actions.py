@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """What can be done to an album, playlist, song, station, artist or video: the window's item
 actions, the menus that offer them, and what a track dragged onto a sidebar playlist does.
 

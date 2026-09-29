@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The account's lifecycle on this computer: signing in and out, and clearing the cache.
 
     await account.sign_in(app, on_status)   # True once signed in; the rest goes on by itself

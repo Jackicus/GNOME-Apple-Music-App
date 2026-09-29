@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """Artwork: covers decoded off the main thread into a small LRU of Gdk.Textures.
 
 One loader serves the whole process (get_default()). A widget first asks get(path), which

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The library model: Library.load() over a generated demo library and small invented ones.
 
 No display needed: the model is GObject and Gio only, and load() runs under asyncio.run.

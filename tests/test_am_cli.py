@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """scripts/am.py: its command line (the modes, --attach), and its commands with a Chrome of
 their own, run in this process against test_engine's fake Chrome on a temporary profile.
 Nothing here starts a real Chrome or reaches a real profile."""

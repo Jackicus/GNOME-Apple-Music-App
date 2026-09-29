@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicHomePage: the library's shelves, one under another, as on music.apple.com's Home."""
 
 from gi.repository import Adw, Gtk

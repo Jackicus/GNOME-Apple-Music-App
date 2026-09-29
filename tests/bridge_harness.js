@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2026 Jack Tully
+
 // A stand-in page for src/backend/bridge.js, run under gjs by tests/test_bridge.py.
 //
 // `window` is the global object, as in the page. `MusicKit` is a fake whose instance records

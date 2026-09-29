@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """The item actions (applemusic.actions): the menus built per kind, and the win.* actions run
 against a stand-in window, app and engine, so add to library, add to playlist, love and the
 drop onto a sidebar playlist are checked without Apple. Gio and GObject only, no display;

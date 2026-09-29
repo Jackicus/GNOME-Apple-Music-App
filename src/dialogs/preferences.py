@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 Jack Tully
+
 """AppleMusicPreferencesDialog: app.preferences (Ctrl+,).
 
 General: background playback (background-playback); how often the library refreshes
