@@ -28,7 +28,7 @@ the playback commands as thin coroutines over the engine.
     await player.pause() / resume() / next() / stop()
     await player.previous()     # the item before, or this one again when a few seconds in
     await player.seek(seconds); await player.set_volume(level)
-    await player.set_shuffle(True) / toggle_shuffle(); set_repeat('all') / cycle_repeat()
+    await player.set_shuffle(True); set_repeat('all')   # next_repeat(): the cycle's next
     await player.play_next(kind, id) / play_later(kind, id)
     await player.ensure_engine()  # start a down engine when signed in (the item actions)
 
@@ -708,14 +708,8 @@ class Player(GObject.Object):
     async def set_shuffle(self, on):
         return await self._engine.shuffle('on' if on else 'off')
 
-    async def toggle_shuffle(self):
-        return await self._engine.shuffle('toggle')
-
     async def set_repeat(self, mode):
         return await self._engine.repeat(mode)
-
-    async def cycle_repeat(self):
-        return await self._engine.repeat('cycle')
 
     def next_repeat(self):
         """The repeat mode after this one in the cycle none → one → all → none."""

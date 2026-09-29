@@ -360,13 +360,17 @@ class Application(Adw.Application):
     def _on_playback_error(self, _player, message):
         self.toast(message)  # the Player's sentence for MusicKit's code (playback_error_text)
 
-    def player_command(self, coro):
-        """A Player command as a task, its EngineError toasted."""
+    def player_command(self, coro, on_error=None):
+        """A Player command as a task, its EngineError reported (a toast); `on_error()` then
+        puts a widget back to the Player's state. The one runner of the Player's commands:
+        the actions, the bar, the sheet and MPRIS all go through it."""
         async def command():
             try:
                 await coro
             except EngineError as error:
                 self.report(error)
+                if on_error is not None:
+                    on_error()
         return self.spawn(command())
 
     def _on_now_playing(self, *_args):

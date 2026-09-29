@@ -168,6 +168,20 @@ class FakeApp:
     def toast(self, title, *_args):
         self.toasts.append(title)
 
+    def report(self, error):
+        self.toasts.append(error)
+
+    def player_command(self, coro, on_error=None):
+        """As the app's: a task whose EngineError is reported, then on_error() called."""
+        async def command():
+            try:
+                await coro
+            except EngineError as error:
+                self.report(error)
+                if on_error is not None:
+                    on_error()
+        return self.spawn(command())
+
     def spawn(self, coro):
         """A task on the running loop; without one (the event tests) the coroutine is only
         noted by name and closed."""
@@ -760,9 +774,7 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(await player.set_volume(0.3), 0.3)
             self.assertEqual(await player.set_shuffle(True), {'shuffle': 'on', 'repeat': 'none'})
             await player.set_shuffle(False)
-            await player.toggle_shuffle()
             await player.set_repeat('all')
-            await player.cycle_repeat()
             await player.play_next('song', 'i.1')
             await player.play_later('album', 'l.2')
             await player.queue_jump(1)
@@ -771,7 +783,7 @@ class CommandTest(unittest.TestCase):
                 ('control', 'play'),
                 ('control', 'next'), ('control', 'previous'), ('control', 'stop'),
                 ('seek', 42.5), ('volume', 0.3), ('shuffle', 'on'), ('shuffle', 'off'),
-                ('shuffle', 'toggle'), ('repeat', 'all'), ('repeat', 'cycle'),
+                ('repeat', 'all'),
                 ('play_next', 'song', 'i.1'), ('play_later', 'album', 'l.2'),
                 ('queue_jump', 1)])
             # Nothing above touched the properties: only events do.

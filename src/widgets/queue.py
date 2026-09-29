@@ -11,7 +11,6 @@ from gettext import gettext as _
 from gi.repository import Adw, Gtk, Pango
 
 from ..player import format_time
-from .transport import run_command
 
 
 class QueueRow(Gtk.Box):
@@ -170,4 +169,4 @@ class QueueView(Gtk.Stack):
     def _on_activate(self, _list_view, position):
         if self._player is None:
             return
-        run_command(self._app, self._player.queue_jump(position))
+        self._app.player_command(self._player.queue_jump(position))

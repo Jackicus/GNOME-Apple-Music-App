@@ -144,7 +144,7 @@ class FakeApp:
         self.tasks.append(task)
         return task
 
-    def player_command(self, coro):
+    def player_command(self, coro, on_error=None):
         """As the app's: a task whose EngineError is noted. Without a running loop (the
         private-bus test) the coroutine is only noted by name and closed."""
         try:
@@ -159,6 +159,8 @@ class FakeApp:
                 await coro
             except EngineError as error:
                 self.errors.append(error)
+                if on_error is not None:
+                    on_error()
         return self.spawn(command())
 
     async def settle(self):
