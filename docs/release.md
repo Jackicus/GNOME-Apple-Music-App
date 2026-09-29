@@ -23,8 +23,9 @@ prepares everything up to them and stops there.
 7. Commit, then tag `v<version>` (annotated) and push the tag. The PKGBUILD downloads
    GitHub's archive of that tag.
 8. Update the PKGBUILD: `pkgver`, `pkgrel=1`, then `updpkgsums` (it fills in the checksum once
-   the tag exists) and `makepkg --printsrcinfo > .SRCINFO`. Test it as below, then publish to
-   the AUR.
+   the tag exists) and `makepkg --printsrcinfo > .SRCINFO`. Set the `# Maintainer:` line's
+   contact to the one the owner wants public on the AUR (the repository's copy points at the
+   GitHub profile). Test it as below, then publish to the AUR.
 
 ## Installing from source
 

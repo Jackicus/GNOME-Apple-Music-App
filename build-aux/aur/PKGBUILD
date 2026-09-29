@@ -1,4 +1,4 @@
-# Maintainer: Jack Tully <jacktully97 at gmail dot com>
+# Maintainer: Jack Tully <https://github.com/Jackicus>
 #
 # The AUR package's source, kept in the app's repository (build-aux/aur/). After any change:
 #   updpkgsums && makepkg --printsrcinfo > .SRCINFO
