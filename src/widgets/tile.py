@@ -3,6 +3,7 @@
 from gi.repository import Adw, GLib, Gtk
 
 from . import artwork
+from .util import connect_weak
 
 # The subtitle's look inside the tile's markup: about the caption size, at libadwaita's
 # dim-label opacity (its --dim-opacity: 55%, and 90% with the system's high-contrast setting,
@@ -45,7 +46,9 @@ class Tile(Gtk.Box):
 
     A playlist folder (an Item of kind 'folder') has no cover: its tile shows a folder icon.
     bind(item) and unbind() are called by a list factory as tiles are recycled; the Item bound
-    is the tile's `context_item`, whose menu the view shows (widgets/context_menu.py). The cover is
+    is the tile's `context_item`, whose menu the view shows (widgets/context_menu.py). While
+    bound, the tile follows the Item's notify signals: a list does not rebind an item that
+    changed in place (a reload's new title or thumbnail, a fetched thumbnail). The cover is
     asked for by an artwork.ArtworkSlot: only while the tile is mapped, which in a Gtk.GridView
     means on screen, and let go of when it is unmapped, so the textures alive are about the
     ones on screen plus the Artwork cache; in an idle after the frame, not as the tile is
@@ -67,6 +70,7 @@ class Tile(Gtk.Box):
         self._folder = False
         self._marked = False  # the label holds markup's attributes (a subtitle's)
         self._item = None
+        self._handler = None  # the bound Item's notify handler
         self.avatar = None  # the artist variant's portrait, made when first wanted
         self._slot = artwork.ArtworkSlot(self._set_art, ART_SIZE)
         self._slot.attach(self)
@@ -100,7 +104,11 @@ class Tile(Gtk.Box):
         return self._item
 
     def bind(self, item):
+        if self._item is not None:
+            self.unbind()
         self._item = item
+        # The Item outlives the tile (the library's, a shelf's): it holds the tile weakly.
+        self._handler = connect_weak(item, 'notify', self._on_item_notify)
         folder = item.kind == 'folder'
         if folder != self._folder:  # only then: setting an icon costs a relayout
             self._folder = folder
@@ -125,8 +133,20 @@ class Tile(Gtk.Box):
             self._marked = True
 
     def unbind(self):
+        if self._handler is not None:
+            self._item.disconnect(self._handler)
+            self._handler = None
         self._item = None
         self._slot.set_paths()
+
+    def _on_item_notify(self, item, pspec):
+        """Follow the Item: a reload merges new values into it, and a fetch says a thumbnail
+        has arrived (notify::thumb, the path unchanged); a list does not rebind for either."""
+        name = pspec.name
+        if name in ('title', 'subtitle'):
+            self._show_label(item)
+        elif name in ('thumb', 'art') and not self._slot.set_paths(item.thumb or item.art):
+            self._slot.refresh()
 
     def _set_art(self, paintable, found):
         if self._artist:

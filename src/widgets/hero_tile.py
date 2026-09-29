@@ -4,6 +4,7 @@ from gi.repository import Graphene, Gtk
 
 from . import artwork
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
+from .util import connect_weak
 
 # The subtitle's opacity on the band (style.css, `.hero-caption > .dim-label`): the band is
 # made dark or light enough for it to read (artwork.band_colour).
@@ -19,7 +20,8 @@ class HeroTile(Gtk.Box):
     without one, on the card colour. Apple's "Top Picks for You" cards, for the first shelf
     of Home and Radio's first stations.
 
-    bind(item) and unbind() are called by a list factory, as for AppleMusicTile. The cover is
+    bind(item) and unbind() are called by a list factory, as for AppleMusicTile, and the card
+    follows its Item's notify signals while bound, as a tile does. The cover is
     an AppleMusicCover, which decodes the 640 px art while it is mapped (the 320 px thumbnail is
     shown meanwhile when it is decoded already). The band is drawn here rather than by CSS,
     which cannot take a colour per item; the grid tiles do not pay for this Python snapshot.
@@ -34,6 +36,7 @@ class HeroTile(Gtk.Box):
     _colour = None  # the item's colour
     _band = None  # what is drawn: that colour, made readable
     _item = None
+    _handler = None  # the bound Item's notify handler
 
     @property
     def context_item(self):
@@ -41,18 +44,37 @@ class HeroTile(Gtk.Box):
         return self._item
 
     def bind(self, item):
+        if self._item is not None:
+            self.unbind()
         self._item = item
-        # 260 px at a scale of 2 wants the 640 px art. The same paths again (an item rebound
-        # because its artwork has arrived, as a search's shelves do) are looked for again.
-        if not self.cover.set_paths(item.art, item.thumb):
-            self.cover.refresh()
+        # The Item outlives the card: it holds the card weakly.
+        self._handler = connect_weak(item, 'notify', self._on_item_notify)
+        # 260 px at a scale of 2 wants the 640 px art.
+        self.cover.set_paths(item.art, item.thumb)
         self.title_label.set_text(item.title)
         self.subtitle_label.set_text(item.subtitle)
         self._set_colour(artwork.art_colour(item.art_color))
 
     def unbind(self):
+        if self._handler is not None:
+            self._item.disconnect(self._handler)
+            self._handler = None
         self._item = None
         self.cover.set_paths()
+
+    def _on_item_notify(self, item, pspec):
+        """Follow the Item (a reload's new values, a fetched thumbnail): a list does not
+        rebind an item that changed in place."""
+        name = pspec.name
+        if name == 'title':
+            self.title_label.set_text(item.title)
+        elif name == 'subtitle':
+            self.subtitle_label.set_text(item.subtitle)
+        elif name in ('art', 'thumb'):
+            if not self.cover.set_paths(item.art, item.thumb):
+                self.cover.refresh()
+        elif name == 'art-color':
+            self._set_colour(artwork.art_colour(item.art_color))
 
     def _set_colour(self, colour):
         if colour is None and self._colour is None:

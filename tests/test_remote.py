@@ -287,14 +287,23 @@ class ShelfTest(RemoteTestCase):
              'art': f'https://x.invalid/{n}/320x320bb.jpg'} for n in range(3)] + [
             {'id': 'local', 'kind': 'album', 'title': 'On disk', 'art': '/cache/art/l.jpg'}]}])
         items = list(shelves[0].items)
+        notified = []
+        for item in items:
+            item.connect('notify::thumb', lambda item, _pspec: notified.append(item.id))
+        spliced = []
+        shelves[0].items.connect('items-changed', lambda *args: spliced.append(args[1:]))
         run(remote.fetch_shelf_art(shelves))
         self.assertEqual(sorted(self.fetched), [f'https://x.invalid/{n}/320x320bb.jpg'
                                                 for n in range(3)])
         for item in items[:3]:
             self.assertTrue(os.path.exists(item.thumb))
-        # Again: all on disk, nothing fetched.
+        # Each Item whose file arrived says so (the tiles follow it); the store is left alone.
+        self.assertEqual(sorted(notified), ['0', '1', '2'])
+        self.assertEqual(spliced, [])
+        # Again: all on disk, nothing fetched, nothing said.
         run(remote.fetch_shelf_art(shelves))
         self.assertEqual(len(self.fetched), 3)
+        self.assertEqual(len(notified), 3)
 
 
 if __name__ == '__main__':
