@@ -142,4 +142,4 @@ changes, change it here, with the date. The plan they came from is in
 ## Open
 
 - The app icon and the display name "Apple Music" resemble Apple's own; whether to change them
-  is the owner's call.
+  is the owner's call. `docs/icon-proposal.md` proposes an original icon.
