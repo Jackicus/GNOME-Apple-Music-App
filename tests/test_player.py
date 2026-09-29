@@ -833,6 +833,126 @@ class CommandTest(unittest.TestCase):
         asyncio.run(go())
 
 
+# What MusicKit sent live when a page played album B while A played (tests/test_mpris.py's
+# SEQUENCES has it with the times): it pauses, seeks and stops A as it loads the new queue.
+QUEUE_SWAP = [
+    ('playbackStateDidChange', {'state': 'paused', 'position': 100, 'duration': 214}),
+    ('playbackStateDidChange', {'state': 'seeking', 'position': 100, 'duration': 214}),
+    ('playbackStateDidChange', {'state': 'paused', 'position': 100, 'duration': 214}),
+    ('nowPlayingItemDidChange', {'track': None, 'index': -1}),
+    ('playbackStateDidChange', {'state': 'stopped', 'position': 0, 'duration': 0}),
+    ('nowPlayingItemDidChange', {'track': dict(TRACK, id='i.demo0002', index=3), 'index': 3}),
+    ('playbackDurationDidChange', {'duration': 180}),
+    ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180}),
+    ('playbackStateDidChange', {'state': 'waiting', 'position': 0, 'duration': 180}),
+    ('playbackStateDidChange', {'state': 'loading', 'position': 0, 'duration': 180}),
+    ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180}),
+]
+
+
+class PendingHoldTest(unittest.TestCase):
+    """While a play request is pending, `resting` (and so `active`, `stopped`, the bar and
+    MPRIS) holds through the stops MusicKit passes through as it swaps the queue."""
+
+    def setUp(self):
+        # A null item waits out its grace (the GLib timeout never runs under asyncio.run):
+        # the next item follows it, as it does live.
+        self.player, self.engine, self.app = make_player(state='up', grace_ms=10_000)
+        self.shown = []  # what a notify::state handler reads
+        self.player.connect('notify::state', lambda p, _pspec: self.shown.append(
+            (p.resting, p.active, p.stopped)))
+
+    def start(self, state='playing'):
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.engine.event('playbackStateDidChange', {'state': state, 'position': 10})
+        self.shown.clear()
+
+    async def request(self):
+        """A play request, held by the engine until the returned gate is set."""
+        gate = self.engine.gate('play')
+        task = asyncio.ensure_future(self.player.play({'kind': 'album', 'id': 'l.b'}))
+        await asyncio.sleep(0)
+        self.assertTrue(self.player.pending)
+        return gate, task
+
+    def test_the_queue_swap_never_shows_play_or_stopped(self):
+        async def go():
+            self.start()
+            gate, task = await self.request()
+            for name, data in QUEUE_SWAP:
+                self.engine.event(name, data)
+                where = f'{name} {data.get("state", "")}'
+                self.assertTrue(self.player.active, where)  # the bar keeps Pause
+                self.assertFalse(self.player.stopped, where)  # background playback holds
+                self.assertIn(self.player.resting, ACTIVE_STATES, where)
+            self.assertEqual(self.player.track.id, 'i.demo0002')
+            self.assertEqual(self.player.resting, 'playing')
+            self.assertTrue(all(active for _resting, active, _stopped in self.shown))
+            count = len(self.shown)
+            gate.set()
+            await task
+            self.assertFalse(self.player.pending)
+            self.assertEqual(len(self.shown), count)  # MusicKit's state is what was shown
+        asyncio.run(go())
+
+    def test_without_a_request_the_stops_show(self):
+        self.start()
+        for name, data in QUEUE_SWAP[:5]:
+            self.engine.event(name, data)
+        self.assertEqual(self.player.resting, 'stopped')
+        self.assertFalse(self.player.active)
+        self.assertEqual(self.shown[0], ('paused', False, False))
+
+    def test_the_answer_shows_musickits_state_and_tells_the_views(self):
+        async def go():
+            self.start()
+            gate, task = await self.request()
+            for name, data in QUEUE_SWAP[:5]:  # up to the stop: MusicKit refused B
+                self.engine.event(name, data)
+            self.assertEqual((self.player.state, self.player.resting), ('stopped', 'playing'))
+            self.engine.fail = EngineError('api', 'refused')
+            gate.set()
+            with self.assertRaises(EngineError):
+                await task
+            self.assertFalse(self.player.pending)
+            self.assertEqual(self.player.resting, 'stopped')
+            self.assertFalse(self.player.active)
+            self.assertEqual(self.shown[-1], ('stopped', False, True))  # notified
+        asyncio.run(go())
+
+    def test_the_hold_starts_from_the_state_the_request_found(self):
+        async def go():
+            self.start('paused')
+            gate, task = await self.request()
+            self.engine.event('playbackStateDidChange', {'state': 'stopped'})
+            self.assertEqual(self.player.resting, 'paused')  # not Stopped
+            self.engine.event('playbackStateDidChange', {'state': 'loading'})
+            self.assertEqual(self.player.resting, 'loading')  # under way shows at once
+            self.engine.event('playbackStateDidChange', {'state': 'stopped'})
+            self.assertEqual(self.player.resting, 'loading')  # and holds from then on
+            self.assertTrue(self.player.active)
+            gate.set()
+            await task
+            self.assertEqual(self.player.resting, 'stopped')
+            self.assertEqual(self.shown[-1], ('stopped', False, True))
+        asyncio.run(go())
+
+    def test_the_engine_going_down_ends_the_hold_at_once(self):
+        async def go():
+            self.start()
+            gate, task = await self.request()
+            self.engine.event('playbackStateDidChange', {'state': 'stopped'})
+            self.assertEqual(self.player.resting, 'playing')
+            self.engine.state = 'down'
+            self.assertEqual(self.player.resting, 'none')
+            self.assertTrue(self.player.stopped)
+            self.assertEqual(self.shown[-1], ('none', False, True))
+            gate.set()
+            await task
+            self.assertEqual(self.player.resting, 'none')
+        asyncio.run(go())
+
+
 class QueueTest(unittest.TestCase):
     """The queue store and index, from the queue events and the item playing."""
 

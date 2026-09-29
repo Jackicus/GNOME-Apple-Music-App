@@ -44,7 +44,8 @@ TRACK_PATH = '/io/github/jackicus/AppleMusic/track/2/i_2edemo0001'
 
 class FakeEngine(GObject.Object):
     """The Engine's surface the Player uses: state, the event signal, and the commands,
-    recorded."""
+    recorded; a command named in `gates` (an asyncio.Event each) answers once its gate is
+    set."""
 
     __gsignals__ = {
         'event': (GObject.SignalFlags.RUN_FIRST, None, (str, object)),
@@ -57,12 +58,24 @@ class FakeEngine(GObject.Object):
         super().__init__()
         self.calls = []
         self.fail = None
+        self.gates = {}
+
+    def gate(self, name):
+        """Hold the next `name` command until the returned event is set."""
+        self.gates[name] = asyncio.Event()
+        return self.gates[name]
 
     async def _command(self, name, *args):
         self.calls.append((name, *args))
+        gate = self.gates.get(name)
+        if gate is not None:
+            await gate.wait()
         if self.fail is not None:
             raise self.fail
         return None
+
+    async def play(self, kind, item_id, start_with=None, shuffle=None):
+        return await self._command('play', kind, item_id, start_with, shuffle)
 
     async def now_playing(self):
         await self._command('now_playing')
@@ -849,37 +862,42 @@ ALL_CANS = ['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay', 'CanSeek']
 
 # The event sequences seen live (docs/history/build-plan.md, phases 9, 12, 13 and 17),
 # each a list of steps: (event, data, what holds after it). `advance` moves the patched
-# clock, `grace` lets a null item's grace run out. What holds: the Player's `track` (an id or
-# None), `state`, `active`, `position`, `duration`, `queue_index`, the PropertiesChanged key
-# lists since the step before (`changed`) and the Seeked positions (`seeked`); a key left
-# out means unchanged, and `changed` and `seeked` left out mean nothing was sent.
+# clock, `grace` lets a null item's grace run out, `play` sends a play request that the
+# engine holds until `answer`. What holds: the Player's `track` (an id or None), `state`,
+# `resting`, `active`, `pending`, `position`, `duration`, `queue_index`, the
+# PropertiesChanged key lists since the step before (`changed`) and the Seeked positions
+# (`seeked`); a key left out means unchanged, and `changed` and `seeked` left out mean
+# nothing was sent.
 SEQUENCES = {
+    # MusicKit pauses, seeks and stops A as it loads B's queue; the request is pending all
+    # the while, so the Player holds A's Playing through it: no Paused or Stopped blip.
     'a new queue while A plays (a play() from a page)': [
         ('advance', 90, {}),
+        ('play', None, {'pending': True, 'resting': 'playing'}),
         ('playbackStateDidChange', {'state': 'paused', 'position': 100, 'duration': 214},
-         {'state': 'paused', 'active': False, 'position': 100.0,
-          'changed': [['PlaybackStatus']]}),
+         {'state': 'paused', 'resting': 'playing', 'active': True, 'position': 100.0}),
         ('playbackStateDidChange', {'state': 'seeking', 'position': 100, 'duration': 214},
-         {'state': 'seeking', 'active': False}),
+         {'state': 'seeking', 'resting': 'playing', 'active': True}),
         ('playbackStateDidChange', {'state': 'paused', 'position': 100, 'duration': 214},
-         {'state': 'paused'}),
+         {'state': 'paused', 'resting': 'playing'}),
         ('nowPlayingItemDidChange', {'track': None, 'index': -1},
          {'track': 'i.demo0001', 'queue_index': 2}),  # the grace: still A
         ('playbackStateDidChange', {'state': 'stopped', 'position': 0, 'duration': 0},
-         {'state': 'stopped', 'position': 100.0, 'duration': 214.0,  # A on its way out
-          'changed': [['PlaybackStatus']]}),
+         {'state': 'stopped', 'resting': 'playing', 'active': True, 'stopped': False,
+          'position': 100.0, 'duration': 214.0}),  # A on its way out
         ('nowPlayingItemDidChange', {'track': TRACK_B, 'index': 3},
          {'track': 'i.demo0002', 'position': 0.0, 'duration': 180.0, 'queue_index': 3,
           'changed': [['Metadata']]}),
         ('playbackDurationDidChange', {'duration': 180}, {'duration': 180.0}),
         ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180},
-         {'state': 'playing', 'active': True, 'changed': [['PlaybackStatus']]}),
+         {'state': 'playing', 'resting': 'playing', 'active': True}),
         ('playbackStateDidChange', {'state': 'waiting', 'position': 0, 'duration': 180},
          {'state': 'waiting', 'active': True}),
         ('playbackStateDidChange', {'state': 'loading', 'position': 0, 'duration': 180},
          {'state': 'loading', 'active': True}),
         ('playbackStateDidChange', {'state': 'playing', 'position': 0, 'duration': 180},
          {'state': 'playing', 'active': True}),
+        ('answer', None, {'pending': False, 'resting': 'playing'}),
         ('playbackTimeDidChange', {'position': 1, 'duration': 180}, {'position': 1.0}),
     ],
     'the item boundary: A ends, B follows': [
@@ -968,7 +986,8 @@ class SequenceTest(ServiceTest):
     events into a Player and the MPRIS service together: A playing at 10 s, with a queue of
     three, at the start of each."""
 
-    def replay(self, name, steps):
+    async def replay(self, name, steps):
+        request = gate = None
         with patched_clocks() as clock:
             self.make()
             self.player.track_grace_ms = 30
@@ -982,6 +1001,7 @@ class SequenceTest(ServiceTest):
             self.engine.emit('event', 'playbackTimeDidChange', {'position': 10, 'duration': 214})
             self.assertEqual((self.player.track.id, self.player.state, self.player.position,
                               self.player.queue_index), ('i.demo0001', 'playing', 10.0, 2))
+            await self.app.settle()  # A's artwork in hand, before a step lets the loop run
             self.connection.changed()
             self.connection.seeked()
             for number, (event, data, expect) in enumerate(steps, 1):
@@ -993,13 +1013,22 @@ class SequenceTest(ServiceTest):
                     context = GLib.MainContext.default()
                     while context.pending():
                         iterate(context)
+                elif event == 'play':
+                    self.engine.state = 'up'  # nothing to start first
+                    gate = self.engine.gate('play')
+                    request = asyncio.ensure_future(
+                        self.player.play({'kind': 'album', 'id': 'l.b'}))
+                    await asyncio.sleep(0)
+                elif event == 'answer':
+                    gate.set()
+                    await request
                 else:
                     self.engine.emit('event', event, data)
                 player = self.player
                 self.assertEqual(self.connection.seeked(), expect.get('seeked', []), where)
                 self.assertEqual(self.connection.changed(), expect.get('changed', []), where)
-                for key in ('state', 'active', 'position', 'duration', 'queue_index',
-                            'stopped'):
+                for key in ('state', 'resting', 'active', 'pending', 'position', 'duration',
+                            'queue_index', 'stopped'):
                     if key in expect:
                         self.assertEqual(getattr(player, key), expect[key], f'{where}: {key}')
                 if 'track' in expect:
@@ -1012,7 +1041,7 @@ class SequenceTest(ServiceTest):
                         'mpris:length', 10**12), where)
 
     async def replay_and_settle(self, name, steps):
-        self.replay(name, steps)
+        await self.replay(name, steps)
         await self.app.settle()
 
     def test_sequences(self):
