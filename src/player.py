@@ -25,7 +25,8 @@ the playback commands as thin coroutines over the engine.
                                                # or None: the mode as it is
     await player.queue_jump(3)  # play the queue's entry at index 3
     await player.toggle()       # pause while active (playing, loading…), else play
-    await player.pause() / resume() / next() / previous() / stop()
+    await player.pause() / resume() / next() / stop()
+    await player.previous()     # the item before, or this one again when a few seconds in
     await player.seek(seconds); await player.set_volume(level)
     await player.set_shuffle(True) / toggle_shuffle(); set_repeat('all') / cycle_repeat()
     await player.play_next(kind, id) / play_later(kind, id)
@@ -79,6 +80,10 @@ TRACK_GRACE_MS = 800
 # where the last one led before MPRIS calls it a seek.
 TRACK_HOLD = 2.0
 SEEK_JUMP = 2.0
+
+# Seconds into an item after which Previous restarts it rather than going to the item
+# before, as players do (GNOME Music, Apple's own).
+PREVIOUS_RESTART = 3.0
 
 PLAYBACK_STATES = ('none', 'loading', 'playing', 'paused', 'stopped', 'ended', 'seeking',
                    'waiting', 'stalled', 'completed')
@@ -651,7 +656,12 @@ class Player(GObject.Object):
         await self._engine.control('next')
 
     async def previous(self):
-        await self._engine.control('previous')
+        """The item before, or this one from the top when it is PREVIOUS_RESTART seconds
+        in."""
+        if self.estimated_position() > PREVIOUS_RESTART:
+            await self.seek(0)
+        else:
+            await self._engine.control('previous')
 
     async def stop(self):
         await self._engine.control('stop')

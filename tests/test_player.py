@@ -763,6 +763,19 @@ class CommandTest(unittest.TestCase):
             self.assertFalse(player.shuffle)
         asyncio.run(go())
 
+    def test_previous_restarts_the_item_a_few_seconds_in(self):
+        async def go():
+            player, engine, app = make_player(state='up')
+            await app.settle()
+            engine.calls.clear()
+            player.apply({'track': TRACK, 'state': 'paused', 'position': 30})
+            await player.previous()
+            self.assertEqual(engine.calls, [('seek', 0)])
+            player.apply({'position': 1})
+            await player.previous()
+            self.assertEqual(engine.calls[-1], ('control', 'previous'))
+        asyncio.run(go())
+
     def test_errors_pass_through(self):
         async def go():
             player, engine, app = make_player(state='up')

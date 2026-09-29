@@ -568,8 +568,8 @@ class ServiceTest(unittest.TestCase):
                 self.assertIsNone(invocation.error, method)
                 self.assertIsNone(invocation.returned, method)
             await self.app.settle()
-            self.assertEqual(self.engine.calls, [
-                ('control', 'pause'), ('control', 'next'), ('control', 'previous'),
+            self.assertEqual(self.engine.calls, [  # Previous at 10 s in: the top again
+                ('control', 'pause'), ('control', 'next'), ('seek', 0),
                 ('control', 'pause'), ('control', 'stop'), ('control', 'play')])
             self.engine.calls.clear()
             self.player.apply({'state': 'paused', 'position': 10})
