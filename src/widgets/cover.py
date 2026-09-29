@@ -33,7 +33,7 @@ class Cover(Gtk.Overlay):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._slot = artwork.ArtworkSlot(self._set_art, self.size)
-        self._slot.attach(self)
+        self._slot.follow_scale(self)
 
     def _get_size(self):
         return self.placeholder.get_size_request()[0]
@@ -56,6 +56,14 @@ class Cover(Gtk.Overlay):
     def refresh(self):
         """Look for the paths again (a better one has arrived on disk since)."""
         self._slot.refresh()
+
+    def do_map(self):
+        Gtk.Overlay.do_map(self)
+        self._slot.map(self.get_scale_factor())
+
+    def do_unmap(self):
+        self._slot.unmap()
+        Gtk.Overlay.do_unmap(self)
 
     def _set_art(self, paintable, found):
         # Never None, and the icon faded rather than hidden: either would lay the list out

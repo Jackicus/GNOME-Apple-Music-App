@@ -36,7 +36,7 @@ class CategoryTile(Gtk.Overlay):
         self._colour = None
         self._fetch = None
         self._slot = artwork.ArtworkSlot(self._set_art, ART_SIZE)
-        self._slot.attach(self)
+        self._slot.follow_scale(self)
 
     def bind(self, item):
         self.item = item
@@ -75,8 +75,13 @@ class CategoryTile(Gtk.Overlay):
 
     def do_map(self):
         Gtk.Overlay.do_map(self)
+        self._slot.map(self.get_scale_factor())
         if self.item is not None:
             self._fetch_art()
+
+    def do_unmap(self):
+        self._slot.unmap()
+        Gtk.Overlay.do_unmap(self)
 
     def _fetch_art(self):
         """The picture, when it is not on disk yet (asked in the fetch's thread)."""

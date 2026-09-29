@@ -41,8 +41,9 @@ docs/notes.md.
 - Artwork goes through `widgets.artwork.get_default()`: `get(path, size)` answers from the
   cache, `request(path, callback, size)` decodes in a thread, `cancel(token)` when the widget is
   recycled or unmapped. `size` is the edge drawn in device pixels. A widget never calls it
-  itself: it owns an `artwork.ArtworkSlot` (`set_paths()` in bind, `attach(widget)` for map,
-  unmap and the scale factor), which asks in an idle after the frame, not in bind, lets go on
+  itself: it owns an `artwork.ArtworkSlot` (`set_paths()` in bind, `map()`/`unmap()` from its
+  `do_map`/`do_unmap`, `follow_scale(self)`; `attach()` only for a widget class that is not
+  ours: signal handlers cost 0.6 KB a widget), which asks in an idle after the frame, lets go on
   unmap, falls through its paths, shows another size of one meanwhile, and always hands the
   widget a texture or `empty()`. Tile, Cover (and so SongTitle, TrackRow, HeroTile),
   CategoryTile and the artist portrait use one; a new artwork widget does too.

@@ -73,7 +73,7 @@ class Tile(Gtk.Box):
         self._handler = None  # the bound Item's notify handler
         self.avatar = None  # the artist variant's portrait, made when first wanted
         self._slot = artwork.ArtworkSlot(self._set_art, ART_SIZE)
-        self._slot.attach(self)
+        self._slot.follow_scale(self)
         self.set_artist(artist)
 
     def set_artist(self, artist):
@@ -147,6 +147,14 @@ class Tile(Gtk.Box):
             self._show_label(item)
         elif name in ('thumb', 'art') and not self._slot.set_paths(item.thumb or item.art):
             self._slot.refresh()
+
+    def do_map(self):
+        Gtk.Box.do_map(self)
+        self._slot.map(self.get_scale_factor())
+
+    def do_unmap(self):
+        self._slot.unmap()
+        Gtk.Box.do_unmap(self)
 
     def _set_art(self, paintable, found):
         if self._artist:

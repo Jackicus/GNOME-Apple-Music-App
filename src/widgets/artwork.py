@@ -201,18 +201,30 @@ class ArtworkSlot:
     tile, the artist portrait) and keeps only the drawing:
 
         self._slot = ArtworkSlot(self._set_art, size)   # size: the edge drawn, logical px
-        self._slot.attach(self)                         # map, unmap, the scale factor
+        self._slot.follow_scale(self)                   # in __init__
         self._slot.set_paths(item.art, item.thumb)      # in bind; set_paths() in unbind
+
+        def do_map(self):
+            Gtk.Box.do_map(self)
+            self._slot.map(self.get_scale_factor())
+
+        def do_unmap(self):
+            self._slot.unmap()
+            Gtk.Box.do_unmap(self)
 
         def _set_art(self, paintable, found):           # found: a texture, not empty()
             self.picture.set_paintable(paintable)
             self.placeholder_icon.set_opacity(0 if found else 1)
 
+    A widget of a class this app does not define (the artist page's Adw.Avatar) is followed
+    with attach(widget) instead, through its map and unmap signals: a signal handler costs
+    about 0.6 KB a widget, and artwork widgets are made by the thousand.
+
     `on_texture(paintable, found)` is a bound method of the widget, held weakly (a slot is
-    held by the widget's signal handlers: widgets/util.py), and always gets a paintable: a
-    texture (found True), or empty() at the size drawn (found False), never None, so nothing
-    is laid out again when artwork comes and goes (a widget that shows something else
-    without artwork, an Adw.Avatar's initials, reads `found`).
+    held by the widget, and by its signal handlers: widgets/util.py), and always gets a
+    paintable: a texture (found True), or empty() at the size drawn (found False), never
+    None, so nothing is laid out again when artwork comes and goes (a widget that shows
+    something else without artwork, an Adw.Avatar's initials, reads `found`).
 
     The paths are in order of preference; None and '' are skipped. While mapped, the first
     path decoded at the pixel size (size times the widget's scale factor) is shown at once
@@ -225,6 +237,9 @@ class ArtworkSlot:
     texture let go of (empty() shown); a new size or scale factor while mapped asks again at
     the new pixel size.
     """
+
+    __slots__ = ('_on_texture', '_loader', '_size', '_scale', '_paths', '_mapped', '_best',
+                 '_token', '_idle')
 
     def __init__(self, on_texture, size=0, loader=None):
         self._on_texture = weak_method(on_texture)
@@ -246,12 +261,18 @@ class ArtworkSlot:
         """The edge drawn in device pixels: the size the texture is decoded at."""
         return self._size * self._scale
 
+    def follow_scale(self, widget):
+        """Ask again at the new pixel size when `widget`'s scale factor changes (the window on
+        another monitor). The handler holds the slot, and the slot the widget weakly: no
+        cycle."""
+        widget.connect('notify::scale-factor', _on_scale_factor, self)
+
     def attach(self, widget):
-        """Follow `widget`'s map, unmap and scale factor (the handlers hold the slot, and the
-        slot the widget weakly: no cycle)."""
+        """Follow the map, unmap and scale factor of a widget whose do_map and do_unmap are
+        not this app's to call map() and unmap() from."""
         widget.connect('map', _on_map, self)
         widget.connect('unmap', _on_unmap, self)
-        widget.connect('notify::scale-factor', _on_scale_factor, self)
+        self.follow_scale(widget)
         if widget.get_mapped():
             self.map(widget.get_scale_factor())
 
