@@ -56,7 +56,7 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   mode it always answers `engine-down`).
 - A page of shelves is a vertical `Gtk.Box` of a handful of `AppleMusicShelf`, each a horizontal
   `Gtk.ListView` in its own scrolled window. Keep the shelf widgets on a reload and
-  `bind_shelf()` the new Shelf objects into them. Anything unbounded gets a page of its own (See
+  `bind_shelf()` the new `library.ShelfModel` objects into them. Anything unbounded gets a page of its own (See
   All), since a `Gtk.GridView` cannot sit under a shelf in the same scrolled window.
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).

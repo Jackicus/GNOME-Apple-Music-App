@@ -473,7 +473,7 @@ class PageLifetimeTest(WidgetTestCase):
         await self.assert_freed(*refs)
 
     async def test_shelf_widget(self):
-        from applemusic.library import Item, Shelf as ShelfModel
+        from applemusic.library import Item, ShelfModel
         from applemusic.widgets.shelf import Shelf
         from applemusic.widgets.tile import Tile
 
@@ -623,7 +623,7 @@ class HandlerTest(WidgetTestCase):
         self.assertEqual(self.app.engine.calls, ['item', 'start', 'item'])
 
     async def test_shelf_activation_and_see_all(self):
-        from applemusic.library import Item, Shelf as ShelfModel
+        from applemusic.library import Item, ShelfModel
         from applemusic.widgets.hero_tile import HeroTile
         from applemusic.widgets.shelf import Shelf
 

@@ -577,11 +577,10 @@ class Item(GObject.Object):
         return changed
 
 
-class Shelf(GObject.Object):
+class ShelfModel(GObject.Object):
     """A titled row of Items: Apple's home page recommendations, Heavy Rotation, Recently Added.
 
-    Its GType is AppleMusicShelfModel: AppleMusicShelf is the widget that shows one
-    (widgets/shelf.py).
+    AppleMusicShelf (widgets/shelf.py) is the widget that shows one.
     """
 
     __gtype_name__ = 'AppleMusicShelfModel'
@@ -974,7 +973,7 @@ class Library(GObject.Object):
         Item, a grid's scroll position and the sidebar's selection all survive.
 
         What changed is told as it is: a kept Item notifies each property that changed and
-        emits `groups-changed` when its groups did (Item.merge()); a kept Shelf notifies its
+        emits `groups-changed` when its groups did (Item.merge()); a kept ShelfModel notifies its
         title. Stores emit `items-changed` only where Items came, went or moved, and where a
         kept Item's title, subtitle or year changed (SORT_KEYS), so that the sort and filter
         models over them place it again (_notify_changed). A view's rows are not rebound by
@@ -1085,7 +1084,7 @@ class Library(GObject.Object):
             items = [shelf_item(item) for item in _dicts(raw.get('items'))]
             shelf = kept.pop(key, None)
             if shelf is None:
-                shelf = Shelf(key, title, items)
+                shelf = ShelfModel(key, title, items)
             else:
                 shelf.update(title, items)
             shelves.append(shelf)
