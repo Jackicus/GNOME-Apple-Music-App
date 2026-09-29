@@ -50,6 +50,13 @@ ROOT_LIMIT = 8
 ACCOUNT_PAGES = ('new', 'made-for-you', 'search')
 
 
+def sign_in_title(expired):
+    """The sign-in banner's title: signed out, or signed in but the session expired."""
+    if expired:
+        return _('Your Apple Music sign-in has expired')
+    return _('Sign in to see your library')
+
+
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/window.ui')
 class Window(Adw.ApplicationWindow):
     __gtype_name__ = 'AppleMusicWindow'
@@ -90,12 +97,17 @@ class Window(Adw.ApplicationWindow):
         self.player_bar.set_player(app.player, app)
         self.now_playing.set_player(app.player, app, self.bottom_sheet)
         self._library_handler = self._library.connect('changed', self._on_library_changed)
+        # The banners live under the visible page's header bar, whichever page that is.
+        self._banner_host = None
+        self.navigation_view.connect('notify::visible-page', self._dock_banners)
+        self._account_menu = Gio.Menu()
+        self.account_button.set_menu_model(self._account_menu)
         self._restore_window_state()
         self._restore_page(self._settings.get_string(self.account_key('last-page')))
 
-        # The account button and the banner follow the signed-in and account-name keys, and
-        # the button is off while signing out; the sync banner follows the app's sync
-        # (sync.LibrarySync).
+        # The account button and the banner follow the signed-in and account-name keys and
+        # whether the engine, up, finds the sign-in still good; the button is off while
+        # signing out; the sync banner follows the app's sync (sync.LibrarySync).
         self._settings_handlers = [
             self._settings.connect('changed::' + self.account_key('signed-in'),
                                    self._update_account),
@@ -104,6 +116,8 @@ class Window(Adw.ApplicationWindow):
         ]
         self._app_handlers = [
             (app, app.connect('notify::signing-out', self._update_account)),
+            (app.engine, app.engine.connect('notify::authorized', self._update_account)),
+            (app.engine, app.engine.connect('notify::state', self._update_account)),
             (app.library_sync, app.library_sync.connect('progress', self._on_sync_progress)),
             (app.library_sync,
              app.library_sync.connect('notify::running', self._on_sync_running)),
@@ -328,18 +342,48 @@ class Window(Adw.ApplicationWindow):
     # -- the account and the banners -------------------------------------------------------
 
     def _update_account(self, *_args):
+        """The account button and the sign-in banner: Sign In while signed out; the name
+        over a menu with Sign Out once signed in; and, when the engine is up but Apple no
+        longer takes the sign-in (the session expired: signed in here, not authorized
+        there), the banner says so with Sign In and the menu offers Sign In Again, until
+        the account is signed in again or out."""
+        app = self.get_application()
         signed_in = self._settings.get_boolean(self.account_key('signed-in'))
         name = self._settings.get_string(self.account_key('account-name'))
+        expired = (signed_in and not app.demo and app.engine.state == 'up'
+                   and not app.engine.authorized)
         self.account_stack.set_visible_child_name('account' if signed_in else 'sign-in')
         self.account_label.set_label(name or _('Signed In'))
         self.account_avatar.set_text(name)
         self.account_avatar.set_show_initials(bool(name))
-        self.account_button.set_sensitive(not self.get_application().signing_out)
-        self.sign_in_banner.set_revealed(not signed_in and not self.get_application().demo)
+        self.account_button.set_sensitive(not app.signing_out)
+        self._account_menu.remove_all()
+        if expired:
+            section = Gio.Menu()
+            section.append(_('Sign _In Again'), 'app.sign-in')
+            self._account_menu.append_section(None, section)
+        section = Gio.Menu()
+        section.append(_('Sign _Out'), 'app.sign-out')
+        self._account_menu.append_section(None, section)
+        self.sign_in_banner.set_title(sign_in_title(expired))
+        self.sign_in_banner.set_revealed((not signed_in or expired) and not app.demo)
 
-    @Gtk.Template.Callback()
-    def on_banner_sign_in(self, _banner):
-        self.get_application().activate_action('sign-in')
+    def _dock_banners(self, *_args):
+        """The banners under the visible page's header bar: every page has its own, in its
+        ToolbarView, and a banner above it would push the window controls and the back
+        button down. Moved from page to page as the visible page changes (a page dropped
+        meanwhile has let go of them already)."""
+        page = self.navigation_view.get_visible_page()
+        toolbar = first_descendant(page, Adw.ToolbarView) if page is not None else None
+        if toolbar is self._banner_host:
+            return
+        for banner in (self.sign_in_banner, self.sync_banner):
+            host = banner.get_ancestor(Adw.ToolbarView)
+            if host is not None:
+                host.remove(banner)
+            if toolbar is not None:
+                toolbar.add_top_bar(banner)  # after the header bar, its first top bar
+        self._banner_host = toolbar
 
     # The sync's progress, on a banner over the content, while the app's sync runs.
 

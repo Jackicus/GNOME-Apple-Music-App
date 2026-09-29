@@ -133,7 +133,8 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
           content: Adw.Sidebar sidebar {};
 
           // The account: Sign In while signed out; the name (or "Signed In") over a menu with
-          // Sign Out once signed in.
+          // Sign Out (and Sign In Again once the session has expired) once signed in, which
+          // window.py builds.
           [bottom]
           Stack account_stack {
             hhomogeneous: true;
@@ -155,11 +156,14 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
                 ]
 
                 child: Box {
-                  spacing: 10;
+                  spacing: 12;
 
-                  // Decorative: the button's name is its label.
+                  // Decorative: the button's name is its label. The text (never shown: no
+                  // initials) gives the avatar one colour; with none it picks one at random.
                   Adw.Avatar {
                     size: 28;
+                    text: "sign-in";
+                    show-initials: false;
                     icon-name: "avatar-default-symbolic";
                     accessible-role: presentation;
                   }
@@ -182,8 +186,8 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
               name: "account";
 
               child: MenuButton account_button {
-                menu-model: account_menu;
                 direction: up;
+                always-show-arrow: true;
                 tooltip-text: _("Account");
 
                 styles [
@@ -192,7 +196,7 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
                 ]
 
                 child: Box {
-                  spacing: 10;
+                  spacing: 12;
 
                   Adw.Avatar account_avatar {
                     size: 28;
@@ -217,31 +221,29 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
         };
       };
 
+      // Each page in the navigation view carries its own header bar; the banners below are
+      // docked under the visible page's (window.py).
       content: Adw.NavigationPage content_page {
         title: _("Home");
         tag: "content";
-
-        // Each page in the navigation view carries its own header bar; the banners sit above
-        // them: one while signed out, one while the library syncs (window.py reveals them).
-        child: Adw.ToolbarView {
-          [top]
-          Adw.Banner sign_in_banner {
-            title: _("Sign in to see your library");
-            button-label: _("Sign In");
-            button-clicked => $on_banner_sign_in();
-          }
-
-          [top]
-          Adw.Banner sync_banner {
-            title: _("Syncing your library…");
-          }
-
-          content: Adw.NavigationView navigation_view {};
-        };
+        child: Adw.NavigationView navigation_view {};
       };
     };
     };
   };
+}
+
+// The banners, one while signed out (or the sign-in has expired: window.py retitles it),
+// one while the library syncs, which window.py reveals and moves under the visible page's
+// header bar, so the window controls stay level with the sidebar's.
+Adw.Banner sign_in_banner {
+  title: _("Sign in to see your library");
+  button-label: _("Sign In");
+  action-name: "app.sign-in";
+}
+
+Adw.Banner sync_banner {
+  title: _("Syncing your library…");
 }
 
 menu primary_menu {
@@ -270,11 +272,3 @@ menu primary_menu {
   }
 }
 
-menu account_menu {
-  section {
-    item {
-      label: _("Sign _Out");
-      action: "app.sign-out";
-    }
-  }
-}

@@ -25,6 +25,8 @@ of that section. The shot then waits longer, for the artwork.
 --page also takes a sidebar playlist or folder, as last-page names them:
 playlist:ID or folder:ID. --expand opens these playlist folders in the
 sidebar (the expanded-folders setting); "first" is the library's first folder.
+--banner sign-in|expired reveals the sign-in banner as a signed-out release build,
+or one whose sign-in expired, shows it (the demo has no account, so none).
 --signed-in shows the account button as signed in (the signed-in and account-name
 settings, in the memory backend only), with NAME on it when given; the engine is
 never started here.
@@ -67,6 +69,9 @@ parser.add_argument('--sidebar', action='store_true',
                     help='in the narrow layout, show the sidebar rather than the --page')
 parser.add_argument('--expand', metavar='ID[,ID…]', default='',
                     help='expand these playlist folders in the sidebar ("first": the first one)')
+parser.add_argument('--banner', choices=['sign-in', 'expired'],
+                    help='reveal the sign-in banner as a signed-out release build, or one '
+                         'whose sign-in expired, shows it (the demo has no account)')
 parser.add_argument('--signed-in', metavar='NAME', nargs='?', const='',
                     help='show the account as signed in, as NAME when given')
 parser.add_argument('--now-playing', metavar='TAB', nargs='?', const='lyrics',
@@ -124,6 +129,8 @@ opened = False
 sheet_opened = False
 searched = False
 menu_opened = False
+banner_shown = False
+failed = False  # a step raised: the app quits and the script exits 1
 preferences = None  # the Preferences dialog, once --preferences has opened it
 dialog = None  # the --dialog dialog, once opened
 
@@ -232,7 +239,23 @@ def draw_popovers(window, snapshot):
 
 
 def shoot():
-    global opened, sheet_opened, searched, menu_opened, preferences, dialog
+    """One step of the shot (each stage waits for the next frame), or the shot itself. A
+    step that raises ends the run: the app quits, the traceback shown, rather than waiting
+    for a step that never comes."""
+    global failed
+    try:
+        return _shoot()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        failed = True
+        app.quit()
+        return GLib.SOURCE_REMOVE
+
+
+def _shoot():
+    global opened, sheet_opened, searched, menu_opened, banner_shown, preferences, dialog
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -278,6 +301,14 @@ def shoot():
             sys.exit(f'screenshot: no {args.dialog} dialog shown')
         GLib.timeout_add(1200, shoot)  # shown
         return GLib.SOURCE_REMOVE
+    if args.banner and not banner_shown:
+        banner_shown = True
+        from applemusic.window import sign_in_title
+
+        window.sign_in_banner.set_title(sign_in_title(args.banner == 'expired'))
+        window.sign_in_banner.set_revealed(True)
+        GLib.timeout_add(600, shoot)  # laid out under the header bar
+        return GLib.SOURCE_REMOVE
     for shown in (preferences, dialog):
         if shown is not None and shown.get_root() is not window:
             window = shown.get_root()  # a window of its own
@@ -294,3 +325,5 @@ def shoot():
 
 app.connect('activate', on_activate)
 harness.run_app(app)
+if failed:
+    sys.exit(1)
