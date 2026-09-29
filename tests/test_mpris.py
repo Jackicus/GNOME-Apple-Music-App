@@ -491,6 +491,34 @@ class ServiceTest(unittest.TestCase):
             await self.app.settle()
         asyncio.run(go())
 
+    def test_a_new_queue_keeps_the_player_on_the_bus(self):
+        """A → null → B within the Player's grace: GNOME Shell (which lists a player by
+        CanPlay) never sees the player go, and the Metadata changes once, to B."""
+        async def go():
+            self.make()
+            self.player.track_grace_ms = 30
+            self.play()
+            await self.app.settle()
+            self.connection.changed()
+            self.engine.emit('event', 'nowPlayingItemDidChange', {'track': None, 'index': -1})
+            self.engine.emit('event', 'playbackStateDidChange', {'state': 'stopped'})
+            other = dict(TRACK, id='i.demo0002', catalogId='1000000002', index=0)
+            self.engine.emit('event', 'nowPlayingItemDidChange', {'track': other, 'index': 0})
+            self.engine.emit('event', 'playbackStateDidChange', {'state': 'playing'})
+            await asyncio.sleep(0.06)
+            GLib.MainContext.default().iteration(False)  # the grace timer, had it fired
+            await self.app.settle()
+            metadata_sent = [parameters[1]['Metadata'] for _i, _s, parameters
+                             in self.connection.signals if 'Metadata' in parameters[1]]
+            changes = self.connection.changed()
+            self.assertNotIn('CanPlay', [key for keys in changes for key in keys])
+            # B's Metadata, then B's again with its artwork: never an empty one.
+            self.assertEqual([data['mpris:trackid'] for data in metadata_sent],
+                             [track_path('i.demo0002')] * 2)
+            self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
+                'xesam:title'], 'Harbour Lights')
+        asyncio.run(go())
+
     def test_methods_run_the_player(self):
         async def go():
             self.make()
