@@ -365,9 +365,13 @@ class LyricsView(Gtk.Stack):
     def _on_bind(self, _factory, list_item):
         position = list_item.get_position()
         label = list_item.get_child()
-        text = list_item.get_item().text
-        label.set_label(text)
-        list_item.set_accessible_label(text)
+        line = list_item.get_item()
+        label.set_label(line.text)
+        list_item.set_accessible_label(line.text)
+        if line.stanza and position:  # a gap before a verse or a chorus, as in the text
+            label.add_css_class('stanza')
+        else:
+            label.remove_css_class('stanza')
         self._rows[position] = label
         _set_current(label, position == self._current)
 

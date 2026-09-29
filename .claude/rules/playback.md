@@ -49,8 +49,19 @@ paths:
   MusicKit passes through `ended` and `stopped` between items, so anything acting on "stopped"
   waits a moment (background playback waits 10 s before quitting).
 - The bar and the sheet share their transport pieces (`widgets/transport.py`: `PlayButton`,
-  `SeekControl`, `ModeControl`, `HeartControl`, `RemoteCover`): change them there. The bar
-  announces each new item through the window, once per item.
+  `TrackTitles`, `SeekControl` over a GTK-free `SeekGuard`, `ModeControl`, `VolumeControl`
+  over a `Coalescer`, `HeartControl`, `RemoteCover`): change them there, and test their
+  decisions in tests/test_transport.py with stand-in buttons. The bar announces each new
+  item through the window, once per item, and with nothing playing hides its seek slider
+  and heart. The sheet's layout follows three window properties set by breakpoints in
+  window.blp: `wide` (900sp and up: the item beside the tabs), `compact` (600sp and under:
+  a smaller cover) and `short` (a window too low for the cover over the titles: a 96 px
+  cover beside them). Only the last matching breakpoint applies, so each width band has a
+  short variant repeating its setters; check every size with
+  `scripts/screenshot.py --demo --now-playing lyrics|queue --size WxH` and the log for
+  libadwaita's "exceeds … height" warning. Up Next is a `Gtk.SliceListModel` of the queue
+  from the entry playing on; the lyrics list is the user's while they scroll it (wheel,
+  touch, scrollbar) or have the focus on a line.
 - MPRIS: the app owns `org.mpris.MediaPlayer2.<app id>`; Chrome's own player is disabled by its
   launch flags. The object is registered with
   `Gio.DBusConnection.register_object_with_closures2` (the older call is deprecated since GLib

@@ -224,6 +224,11 @@ listview.lyrics-list > row {
   opacity: 1;
 }
 
+/* The first line of a verse or a chorus: a gap before it, as the unsynced text has. */
+.lyric-line.stanza {
+  margin-top: 18px;
+}
+
 .lyrics-text {
   font-size: 1.1em;
   line-height: 1.5;

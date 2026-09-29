@@ -106,6 +106,7 @@ class LyricsObjectTest(unittest.TestCase):
             {'startMs': 10000, 'text': 'Chorus again'}]})
         self.assertEqual(lyrics.text, 'Verse one\nVerse two\n\nChorus\nChorus again')
         self.assertEqual(len(lyrics), 4)
+        self.assertEqual([line.stanza for line in lyrics.lines], [True, False, True, False])
 
     def test_synced_without_lines_is_not_synced(self):
         lyrics = Lyrics({'synced': True, 'lines': []})
