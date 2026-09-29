@@ -2,8 +2,7 @@
 
 The keyboard walkthrough every release should pass, and how to check it. The rules for new
 widgets (names, roles, tooltips, focus) are in `.claude/rules/ui.md`; the keys themselves are in
-`src/shortcuts.py`, which also feeds the Keyboard Shortcuts dialog (Ctrl+?), except the
-sidebar's Left and Right on folders (`src/sidebar_view.py`).
+`src/shortcuts.py`, which also feeds the Keyboard Shortcuts dialog (Ctrl+?).
 
 ## Keyboard walkthrough
 

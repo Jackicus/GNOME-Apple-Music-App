@@ -6,9 +6,10 @@ window handles itself, and the Keyboard Shortcuts dialog, which lists them all.
 
 main.py sets ACCELS with Gtk.Application.set_accels_for_action and builds the dialog from
 sections(); keyboard.py parses PLAYBACK into its PLAYBACK_KEYS and MAIN_MENU into the window's
-F10, and widgets/context_menu.py binds CONTEXT_MENU. tests/test_shortcuts.py checks that the
-dialog lists every accelerator and playback key. Keys that are none of these are listed as they
-are: Escape (the Now Playing sheet's, the dialogs').
+F10, widgets/context_menu.py binds CONTEXT_MENU, and sidebar_view.py binds FOLDER_OPEN and
+FOLDER_CLOSE on the sidebar (keys for the focused row, only with the focus in the sidebar).
+tests/test_shortcuts.py checks that the dialog lists every one of them. Keys that are none of
+these are listed as they are: Escape (the Now Playing sheet's, the dialogs').
 
 The playback keys are not accelerators: GTK 4 runs application accelerators in the window's
 capture phase, before the focus widget, so a bare Space would fire while typing in an entry
@@ -43,6 +44,9 @@ PLAYBACK = {
 MAIN_MENU = 'F10'
 CONTEXT_MENU = 'Menu <shift>F10'
 CLOSE = 'Escape'
+# On a focused sidebar row: open or close a folder (Left on an entry inside one moves to it).
+FOLDER_OPEN = 'Right'
+FOLDER_CLOSE = 'Left'
 
 
 def accelerator(key):
@@ -75,6 +79,8 @@ def sections():
             (_('Focus the Page'), 'win.focus-content'),
             (_('Focus the Player Bar'), 'win.focus-player'),
             (_('Show Context Menu'), CONTEXT_MENU),
+            (_('Open Sidebar Folder'), FOLDER_OPEN),
+            (_('Close Sidebar Folder'), FOLDER_CLOSE),
         ]),
         (_('Playback'), [
             (_('Play or Pause'), 'play-pause'),
