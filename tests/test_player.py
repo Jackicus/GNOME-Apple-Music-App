@@ -2,8 +2,10 @@
 engine. GObject only, no GTK or display; the commands run under asyncio.run."""
 
 import asyncio
+import contextlib
 import time
 import unittest
+from unittest import mock
 
 from gi.repository import GObject
 
@@ -12,6 +14,29 @@ from tests import ROOT  # noqa: F401  registers src/ as applemusic
 from applemusic.backend.errors import EngineError
 from applemusic.lyrics import Lyrics
 from applemusic.player import ACTIVE_STATES, STOPPED_STATES, NowPlaying, Player, format_time
+
+
+class Clock:
+    """A stand-in time.monotonic(): `now`, moved by advance()."""
+
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+@contextlib.contextmanager
+def patched_clocks(start=1000.0):
+    """time.monotonic() under the test's control, as the Player and the MPRIS service read
+    it (both read the time module's). asyncio's own timers stand still meanwhile: no
+    `asyncio.sleep()` of more than 0 inside."""
+    clock = Clock(start)
+    with mock.patch.object(time, 'monotonic', clock):
+        yield clock
 
 # An invented track, as the bridge's formatTrack shapes it.
 TRACK = {
@@ -224,12 +249,14 @@ class EventTest(unittest.TestCase):
         self.assertIn('track', self.notified)
 
     def test_the_same_item_again_is_not_a_change(self):
-        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
-        self.engine.event('playbackTimeDidChange', {'position': 40, 'duration': 214})
-        self.notified.clear()
-        self.engine.event('nowPlayingItemDidChange', {'track': dict(TRACK), 'index': 2})
-        self.assertEqual(self.notified, [])
-        self.assertEqual(self.player.position, 40.0)
+        with patched_clocks() as clock:
+            self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            clock.advance(41)
+            self.engine.event('playbackTimeDidChange', {'position': 40, 'duration': 214})
+            self.notified.clear()
+            self.engine.event('nowPlayingItemDidChange', {'track': dict(TRACK), 'index': 2})
+            self.assertEqual(self.notified, [])
+            self.assertEqual(self.player.position, 40.0)
 
     def test_null_item_clears_the_track(self):
         self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
@@ -301,13 +328,36 @@ class EventTest(unittest.TestCase):
         self.assertEqual(self.player.duration, 213.5)
 
     def test_the_same_song_at_another_queue_position_keeps_its_times(self):
-        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
-        self.engine.event('playbackTimeDidChange', {'position': 40, 'duration': 214})
-        self.notified.clear()
-        self.engine.event('nowPlayingItemDidChange', {'track': dict(TRACK, index=5), 'index': 5})
-        self.assertEqual(self.notified, ['track'])  # the queue was reordered under it
-        self.assertEqual(self.player.track.index, 5)
-        self.assertEqual((self.player.position, self.player.duration), (40.0, 214.0))
+        with patched_clocks() as clock:
+            self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            clock.advance(41)
+            self.engine.event('playbackTimeDidChange', {'position': 40, 'duration': 214})
+            self.notified.clear()
+            self.engine.event('nowPlayingItemDidChange',
+                              {'track': dict(TRACK, index=5), 'index': 5})
+            self.assertEqual(self.notified, ['track'])  # the queue was reordered under it
+            self.assertEqual(self.player.track.index, 5)
+            self.assertEqual((self.player.position, self.player.duration), (40.0, 214.0))
+
+    def test_a_position_an_answer_gave_goes_on(self):
+        """The engine coming up mid-song: the answer's position, then MusicKit's ticks from
+        there, all taken (a seek of the app's own ends the hold too)."""
+        with patched_clocks() as clock:
+            self.player.apply({'track': TRACK, 'state': 'playing', 'position': 90,
+                               'duration': 214})
+            clock.advance(0.25)
+            self.engine.event('playbackTimeDidChange', {'position': 90, 'duration': 214})
+            clock.advance(0.75)
+            self.engine.event('playbackTimeDidChange', {'position': 91, 'duration': 214})
+            self.assertEqual(self.player.position, 91.0)
+            self.engine.event('nowPlayingItemDidChange',
+                              {'track': dict(TRACK, id='i.demo0002', index=3), 'index': 3})
+
+            async def seek():
+                await self.player.seek(60)
+            asyncio.run(seek())
+            self.engine.event('playbackTimeDidChange', {'position': 60, 'duration': 214})
+            self.assertEqual(self.player.position, 60.0)
 
     def test_playback_state_and_times(self):
         self.engine.event('playbackStateDidChange',
@@ -431,6 +481,53 @@ class EventTest(unittest.TestCase):
         self.assertEqual(errors[0], 'CONTENT_UNAVAILABLE')
         self.assertEqual(len(errors), 2)
         self.assertTrue(errors[1])  # a wording of its own
+
+
+class StalePositionTest(unittest.TestCase):
+    """After a track change MusicKit reports the previous item's position once more: the
+    Player drops it, so no view sees it."""
+
+    def test_the_previous_items_position_is_dropped_after_a_change(self):
+        with patched_clocks() as clock:
+            player, engine, _app = make_player()
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            engine.event('playbackStateDidChange',
+                         {'state': 'playing', 'position': 195, 'duration': 214})
+            clock.advance(5)
+            engine.event('playbackTimeDidChange', {'position': 200, 'duration': 214})
+            self.assertEqual(player.position, 200.0)
+            other = dict(TRACK, id='i.demo0009', catalogId='1000000009', title='Later',
+                         durationMs=180000, index=3)
+            engine.event('nowPlayingItemDidChange', {'track': other, 'index': 3})
+            # The skip's state transitions carry A's position and length once more.
+            engine.event('playbackStateDidChange',
+                         {'state': 'playing', 'position': 200, 'duration': 214})
+            self.assertEqual(player.state, 'playing')  # the state is still taken
+            self.assertEqual((player.position, player.duration), (0.0, 180.0))
+            engine.event('playbackTimeDidChange', {'position': 200, 'duration': 214})
+            self.assertEqual((player.position, player.duration), (0.0, 180.0))
+            # The new item's own positions are taken, a little ahead of the clock too.
+            engine.event('playbackTimeDidChange', {'position': 1, 'duration': 180})
+            self.assertEqual(player.position, 1.0)
+            clock.advance(1)
+            engine.event('playbackTimeDidChange', {'position': 2.5, 'duration': 180})
+            self.assertEqual(player.position, 2.5)
+            engine.event('playbackTimeDidChange', {'position': 5, 'duration': 180})
+            self.assertEqual(player.position, 2.5)  # 5 s in, 1 s after it started: stale
+            # Once the hold is over, a jump is a seek and is taken.
+            clock.advance(2)
+            engine.event('playbackTimeDidChange', {'position': 60, 'duration': 180})
+            self.assertEqual(player.position, 60.0)
+
+    def test_the_same_song_at_another_position_is_not_a_new_start(self):
+        with patched_clocks() as clock:
+            player, engine, _app = make_player()
+            engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+            clock.advance(5)
+            engine.event('playbackTimeDidChange', {'position': 200, 'duration': 214})
+            engine.event('nowPlayingItemDidChange', {'track': dict(TRACK, index=4), 'index': 4})
+            engine.event('playbackTimeDidChange', {'position': 201, 'duration': 214})
+            self.assertEqual(player.position, 201.0)  # a reorder: its positions go on
 
 
 class EngineLifecycleTest(unittest.TestCase):

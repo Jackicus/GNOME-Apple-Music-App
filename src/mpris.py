@@ -22,9 +22,9 @@ EngineError is toasted); setting LoopStatus, Shuffle and Volume the same; OpenUr
 PropertiesChanged is emitted from the Player's notify signals with only the keys whose value
 differs from what was last put on the bus; Seeked after a seek asked for here, and when a
 position arrives further than SEEK_JUMP seconds from where it should have been (a seek from
-the bar or from Apple's page), except in the moments after a track change, when MusicKit
-reports the previous item's position once more and then the new one's 0. Losing the name
-(another owner, no bus) is logged and the app runs on without media controls.
+the bar or from Apple's page; the Player has already dropped the previous item's position
+that MusicKit reports once more after a track change). Losing the name (another owner, no
+bus) is logged and the app runs on without media controls.
 """
 
 import logging
@@ -36,7 +36,7 @@ from gettext import gettext as _
 from gi.repository import Gio, GLib
 
 from . import remote
-from .player import ACTIVE_STATES, REPEAT_MODES
+from .player import ACTIVE_STATES, REPEAT_MODES, SEEK_JUMP
 
 log = logging.getLogger(__name__)
 
@@ -49,10 +49,10 @@ PROPERTIES_INTERFACE = 'org.freedesktop.DBus.Properties'
 # without a track the Metadata is empty.
 TRACK_PATH_PREFIX = '/io/github/jackicus/AppleMusic/track/'
 
-SEEK_JUMP = 2.0    # seconds a position may land from where it was expected before it is a seek
-SEEK_HOLD = 1.5    # seconds after a seek asked for here during which stale positions are ignored
-TRACK_HOLD = 2.0   # the same after a track change: MusicKit reports the previous item's
-                   # position once more with the state transitions, then the new item's 0
+# Seconds after a seek asked for here during which stale positions are ignored (the Player
+# drops the previous item's position after a track change itself; SEEK_JUMP, how far a
+# position may land from where the last one led before it is a seek, is the Player's).
+SEEK_HOLD = 1.5
 
 # LoopStatus values by the Player's repeat modes, and back.
 LOOP_STATUS = {'none': 'None', 'one': 'Track', 'all': 'Playlist'}
@@ -161,17 +161,26 @@ def art_url(path):
     return GLib.filename_to_uri(os.path.abspath(path), None)
 
 
+def track_length(track, duration=None):
+    """A track's length in seconds: its own (Apple's duration_ms), else `duration` (what
+    MusicKit reports, standing in for a track without one), else None when neither is
+    known. What mpris:length publishes and what SetPosition and Seek measure against."""
+    if track is None:
+        return None
+    if track.duration_ms:
+        return track.duration_ms / 1000
+    return duration if duration and duration > 0 else None
+
+
 def metadata(track, art_path=None, duration=None):
     """The Metadata dict (name → GLib.Variant) for a NowPlaying, or {} for None. `art_path` is
-    the track's cached artwork file, once it is on disk. The length is the track's own
-    duration_ms; `duration` (seconds, what MusicKit reports) stands in for a track without
-    one, so a track change never carries the previous item's length."""
+    the track's cached artwork file, once it is on disk; the length is track_length()'s."""
     if track is None:
         return {}
     data = {'mpris:trackid': GLib.Variant('o', track_path(track.id))}
-    length = track.duration_ms * 1000 if track.duration_ms else (duration or 0) * 1_000_000
-    if length > 0:
-        data['mpris:length'] = GLib.Variant('x', int(length))
+    length = track_length(track, duration)
+    if length:
+        data['mpris:length'] = GLib.Variant('x', int(round(length * 1_000_000)))
     url = art_url(art_path)
     if url:
         data['mpris:artUrl'] = GLib.Variant('s', url)
@@ -293,6 +302,10 @@ class Mpris:
         of its own (the Player sets it with the track, so it is never the previous item's)."""
         return metadata(self._player.track, self._art_path, self._player.duration)
 
+    def _length(self):
+        """The length published for the track playing, in seconds, or None."""
+        return track_length(self._player.track, self._player.duration)
+
     def _track_path(self):
         track = self._player.track
         return track_path(track.id) if track is not None else None
@@ -381,7 +394,6 @@ class Mpris:
         self._shown = self._player.track
         self._follow_art()
         self._status = self._playback_status()
-        self._hold_until = time.monotonic() + TRACK_HOLD  # the reset to 0 is not a seek
         self._note(0.0)
         self._changed('Metadata', 'PlaybackStatus', 'CanGoNext', 'CanGoPrevious', 'CanPlay',
                       'CanPause', 'CanSeek')
@@ -401,8 +413,8 @@ class Mpris:
 
     def _on_position(self, *_args):
         """A position from MusicKit: Seeked when it is not where the last one led (a seek
-        from the bar or from Apple's page), except in the moments after a track change and
-        after a seek asked for here (TRACK_HOLD, SEEK_HOLD), when stale ones arrive."""
+        from the bar or from Apple's page), except in the moments after a seek asked for
+        here (SEEK_HOLD), when stale ones arrive."""
         if self._player.track is not self._shown:
             return  # a new item's 0: its notify follows, and notes it
         position = self._player.position
@@ -561,8 +573,8 @@ class Mpris:
 
     def _seek_to(self, seconds):
         seconds = max(0.0, seconds)
-        duration = self._player.duration
-        if duration and seconds >= duration:
+        length = self._length()
+        if length and seconds >= length:
             self._command(self._player.next())
             return
         self._command(self._seek_and_tell(seconds))
