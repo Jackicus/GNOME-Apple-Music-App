@@ -37,6 +37,48 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
     }
   }
 
+  // The Now Playing sheet in a window too low for its artwork over the titles: `short`
+  // puts a small cover beside them (widgets/now_playing.py). Only the last breakpoint that
+  // matches applies, so each width band above has a short variant repeating its setters.
+  Adw.Breakpoint {
+    condition ("max-width: 900sp and max-height: 880sp")
+
+    setters {
+      now_playing.short: true;
+    }
+  }
+
+  Adw.Breakpoint {
+    condition ("max-width: 640sp and max-height: 880sp")
+
+    setters {
+      split_view.collapsed: true;
+      sidebar.mode: page;
+      now_playing.short: true;
+    }
+  }
+
+  Adw.Breakpoint {
+    condition ("max-width: 600sp and max-height: 880sp")
+
+    setters {
+      split_view.collapsed: true;
+      sidebar.mode: page;
+      player_bar.compact: true;
+      now_playing.compact: true;
+      now_playing.short: true;
+    }
+  }
+
+  Adw.Breakpoint {
+    condition ("min-width: 900sp and max-height: 640sp")
+
+    setters {
+      now_playing.wide: true;
+      now_playing.short: true;
+    }
+  }
+
   // The player bar is the bottom sheet's bottom bar, always shown under the content and the
   // window's full width (not full-width, it floats over the content as a pill the width of
   // its controls, which covers the tiles); the sheet over it is Now Playing

@@ -1,8 +1,9 @@
 """The transport pieces the player bar and the Now Playing sheet share, each a plain object
-over widgets a template built: the play/pause button's icon (PlayButton), the seek slider
-with its times (SeekControl), the shuffle and repeat toggles (ModeControl), the volume
-button (VolumeControl), a cover following the item's remote artwork (RemoteCover), and the
-heart (HeartControl, which talks to the engine rather than the Player). `attach(player,
+over widgets a template built: the play/pause button's icon (PlayButton), the title and
+subtitle labels (TrackTitles), the seek slider with its times (SeekControl), the shuffle
+and repeat toggles (ModeControl), the volume button (VolumeControl), a cover following the
+item's remote artwork (RemoteCover), and the heart (HeartControl, which talks to the
+engine rather than the Player). `attach(player,
 app)` makes one follow the Player's properties and send its commands through the Player,
 run by `app.player_command(coro, on_error)`: a command that fails is toasted by the app
 and the widget put back to the Player's state.
@@ -121,6 +122,41 @@ def track_subtitle(track):
     if track.album and track.album != track.title:
         subtitle = f'{track.artist} — {track.album}' if track.artist else track.album
     return subtitle
+
+
+class TrackTitles:
+    """The title and subtitle labels of the bar and the sheet: the item's title ("Unknown
+    Title" without one) and track_subtitle(), or "Not Playing" and no subtitle; the
+    `sensitive` widgets (the seek box, the toggles, the volume) follow whether there is an
+    item. With `tooltips`, the labels carry their full text as a tooltip (the sheet's wrap
+    to two lines and may still cut a long one)."""
+
+    def __init__(self, title_label, subtitle_label, sensitive=(), tooltips=False):
+        self.title_label = title_label
+        self.subtitle_label = subtitle_label
+        self._sensitive = tuple(sensitive)
+        self._tooltips = tooltips
+        self._player = None
+        self.playing = False  # whether an item is shown
+
+    def attach(self, player):
+        self._player = player
+        player.connect('notify::track', lambda *_: self.update())
+        self.update()
+
+    def update(self):
+        track = self._player.track if self._player is not None else None
+        self.playing = track is not None
+        title = (track.title or _('Unknown Title')) if self.playing else _('Not Playing')
+        subtitle = track_subtitle(track) if self.playing else ''
+        self.title_label.set_label(title)
+        self.subtitle_label.set_label(subtitle)
+        self.subtitle_label.set_visible(bool(subtitle))
+        if self._tooltips:
+            self.title_label.set_tooltip_text(title if self.playing else None)
+            self.subtitle_label.set_tooltip_text(subtitle or None)
+        for widget in self._sensitive:
+            widget.set_sensitive(self.playing)
 
 
 class PlayButton:

@@ -1,19 +1,22 @@
 """AppleMusicNowPlayingSheet: the bottom sheet's Now Playing view, following the Player.
 
 The window hands it the Player, the app and the Adw.BottomSheet it sits in (set_player)
-once, after the template is built. The artwork, titles, transport, seek slider and toggles
-follow the Player as the player bar's do (the pieces are shared: widgets/transport.py); the
-Lyrics and Up Next tabs are a LyricsView and a QueueView (built here: GtkBuilder does not
-run a Python widget's __init__) in a stack an Adw.ToggleGroup switches. The close button
-sets the bottom sheet's `open` false; Escape and a swipe down are the bottom sheet's own.
+once, after the template is built. The artwork, titles, transport, seek slider, toggles,
+heart and volume follow the Player as the player bar's do (the pieces are shared:
+widgets/transport.py); the Lyrics and Up Next tabs are a LyricsView and a QueueView (built
+here: GtkBuilder does not run a Python widget's __init__) in an Adw.ViewStack an inline
+view switcher switches. The close button sets the bottom sheet's `open` false; Escape and a
+swipe down are the bottom sheet's own.
 
 Sizing: an AdwBottomSheet gives its sheet its natural height (clamped to the window less a
 margin), so this widget asks for a tall one (SHEET_NATURAL_HEIGHT) and the tabs' lists take
 what is left under the controls. It measures and allocates its child itself: an Adw.Bin's
 layout manager answers gtk_widget_measure before the class's measure vfunc, so the bin's is
-dropped (set_layout_manager(None)). `wide` (set by the window's 900sp breakpoint) lays the
-item and the tabs side by side; `compact` (600sp) shrinks the artwork so a phone-sized window
-keeps room for the tabs.
+dropped (set_layout_manager(None)). The window's breakpoints set three properties: `wide`
+(900sp and up) lays the item and the tabs side by side; `compact` (600sp and under) shrinks
+the artwork so a phone-sized window keeps room for the tabs; `short` (a window too low for
+the artwork over the titles: window.blp's height conditions) puts a small cover beside the
+titles instead, so the transport is never cut off and the tabs keep a few lines.
 """
 
 from gettext import gettext as _
@@ -23,11 +26,13 @@ from gi.repository import Adw, GLib, GObject, Gtk
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .lyrics import LyricsView
 from .queue import QueueView
-from .transport import ModeControl, PlayButton, RemoteCover, SeekControl, track_subtitle
+from .transport import (HeartControl, ModeControl, PlayButton, RemoteCover, SeekControl,
+                        TrackTitles, VolumeControl)
 
 SHEET_NATURAL_HEIGHT = 10000   # as tall as the window allows
 COVER_SIZE = 320
 COVER_SIZE_COMPACT = 240
+COVER_SIZE_SHORT = 96          # beside the titles, in a short window
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/now_playing.ui')
@@ -38,9 +43,13 @@ class NowPlayingSheet(Adw.Bin):
 
     toast_overlay = Gtk.Template.Child()
     close_button = Gtk.Template.Child()
+    heart_button = Gtk.Template.Child()
+    volume_button = Gtk.Template.Child()
+    volume_adjustment = Gtk.Template.Child()
     layout = Gtk.Template.Child()
     player_column = Gtk.Template.Child()
-    tabs_column = Gtk.Template.Child()
+    item_box = Gtk.Template.Child()
+    titles_box = Gtk.Template.Child()
     cover = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
     subtitle_label = Gtk.Template.Child()
@@ -50,11 +59,8 @@ class NowPlayingSheet(Adw.Bin):
     elapsed_label = Gtk.Template.Child()
     remaining_label = Gtk.Template.Child()
     shuffle_button = Gtk.Template.Child()
-    previous_button = Gtk.Template.Child()
     play_button = Gtk.Template.Child()
-    next_button = Gtk.Template.Child()
     repeat_button = Gtk.Template.Child()
-    tabs = Gtk.Template.Child()
     tab_stack = Gtk.Template.Child()
 
     def __init__(self, **kwargs):
@@ -65,14 +71,22 @@ class NowPlayingSheet(Adw.Bin):
         self._open = False
         self._wide = False
         self._compact = False
+        self._short = False
         self.lyrics_view = LyricsView()
         self.queue_view = QueueView()
-        self.tab_stack.add_named(self.lyrics_view, 'lyrics')
-        self.tab_stack.add_named(self.queue_view, 'queue')
+        self.tab_stack.add_titled(self.lyrics_view, 'lyrics', _('Lyrics'))
+        self.tab_stack.add_titled(self.queue_view, 'queue', _('Up Next'))
+        self.tab_stack.connect('notify::visible-child-name', lambda *_: self._on_open_changed())
         self._play = PlayButton(self.play_button)
+        self._titles = TrackTitles(self.title_label, self.subtitle_label,
+                                   sensitive=(self.seek_box, self.shuffle_button,
+                                              self.repeat_button, self.volume_button),
+                                   tooltips=True)
         self._seek = SeekControl(self.seek_scale, self.seek_adjustment, self.elapsed_label,
                                  self.remaining_label)
         self._modes = ModeControl(self.shuffle_button, self.repeat_button)
+        self._heart = HeartControl(self.heart_button)
+        self._volume = VolumeControl(self.volume_button, self.volume_adjustment)
         self._art = RemoteCover(self.cover)
         self._apply_layout()
 
@@ -100,16 +114,40 @@ class NowPlayingSheet(Adw.Bin):
     compact = GObject.Property(type=bool, default=False, getter=_get_compact,
                                setter=_set_compact, nick='Compact', blurb='Smaller artwork')
 
+    def _get_short(self):
+        return self._short
+
+    def _set_short(self, short):
+        if short != self._short:
+            self._short = short
+            self._apply_layout()
+
+    short = GObject.Property(type=bool, default=False, getter=_get_short, setter=_set_short,
+                             nick='Short', blurb='A small cover beside the titles')
+
     def _apply_layout(self):
-        wide = self._wide
+        wide, short = self._wide, self._short
         self.layout.set_orientation(
             Gtk.Orientation.HORIZONTAL if wide else Gtk.Orientation.VERTICAL)
-        self.layout.set_spacing(36 if wide else 12 if self._compact else 18)
+        self.layout.set_spacing(36 if wide else 12 if self._compact or short else 18)
         self.player_column.set_valign(Gtk.Align.CENTER if wide else Gtk.Align.START)
-        self.player_column.set_spacing(12 if self._compact and not wide else 18)
+        self.player_column.set_spacing(12 if (self._compact or short) and not wide else 18)
         self.player_column.set_hexpand(False)
-        self.cover.set_property('size', COVER_SIZE_COMPACT if self._compact and not wide
-                                else COVER_SIZE)
+        self.player_column.set_halign(Gtk.Align.FILL if short and not wide
+                                      else Gtk.Align.CENTER)
+        # The cover beside the titles (short), else over them.
+        self.item_box.set_orientation(Gtk.Orientation.HORIZONTAL if short
+                                      else Gtk.Orientation.VERTICAL)
+        self.item_box.set_spacing(12 if short else 18)
+        self.item_box.set_halign(Gtk.Align.FILL if short else Gtk.Align.CENTER)
+        self.titles_box.set_hexpand(short)
+        self.titles_box.set_halign(Gtk.Align.START if short else Gtk.Align.CENTER)
+        for label in (self.title_label, self.subtitle_label):
+            label.set_xalign(0 if short else 0.5)
+            label.set_justify(Gtk.Justification.LEFT if short else Gtk.Justification.CENTER)
+        self.cover.set_property(
+            'size', COVER_SIZE_SHORT if short
+            else COVER_SIZE_COMPACT if self._compact and not wide else COVER_SIZE)
 
     def do_measure(self, orientation, for_size):
         child = self.get_child()
@@ -134,29 +172,16 @@ class NowPlayingSheet(Adw.Bin):
         self._player = player
         self._bottom_sheet = bottom_sheet
         self._play.attach(player)
+        self._titles.attach(player)
         self._seek.attach(player, app)
         self._modes.attach(player, app)
+        self._heart.attach(player, app)
+        self._volume.attach(player, app)
         self._art.attach(player, app)
         self.lyrics_view.set_player(player, app)
         self.queue_view.set_player(player, app)
-        player.connect('notify::track', lambda *_: self._update_track())
         bottom_sheet.connect('notify::open', lambda *_: self._on_open_changed())
-        self._update_track()
         self._on_open_changed()
-
-    def _update_track(self):
-        track = self._player.track if self._player is not None else None
-        playing = track is not None
-        if playing:
-            self.title_label.set_label(track.title or _('Unknown Title'))
-            self.subtitle_label.set_label(track_subtitle(track))
-        else:
-            self.title_label.set_label(_('Not Playing'))
-            self.subtitle_label.set_label('')
-        self.subtitle_label.set_visible(playing and bool(self.subtitle_label.get_label()))
-        self.seek_box.set_sensitive(playing)
-        self.shuffle_button.set_sensitive(playing)
-        self.repeat_button.set_sensitive(playing)
 
     def _on_open_changed(self):
         is_open = self._bottom_sheet is not None and self._bottom_sheet.get_open()
@@ -190,9 +215,3 @@ class NowPlayingSheet(Adw.Bin):
     def on_close_clicked(self, _button):
         if self._bottom_sheet is not None:
             self._bottom_sheet.set_open(False)
-
-    @Gtk.Template.Callback()
-    def on_tab_changed(self, tabs, _pspec):
-        name = tabs.get_active_name() or 'lyrics'
-        self.tab_stack.set_visible_child_name(name)
-        self._on_open_changed()

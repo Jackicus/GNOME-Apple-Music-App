@@ -26,7 +26,7 @@ from gi.repository import Adw, GObject, Gtk
 
 from .widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .widgets.transport import (HeartControl, ModeControl, PlayButton, RemoteCover, SeekControl,
-                                VolumeControl, track_subtitle)
+                                TrackTitles, VolumeControl, track_subtitle)
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/player_bar.ui')
@@ -58,6 +58,9 @@ class PlayerBar(Adw.Bin):
         self._app = None
         self._announced = None      # the id of the item last announced
         self._play = PlayButton(self.play_button)
+        self._titles = TrackTitles(self.title_label, self.subtitle_label,
+                                   sensitive=(self.seek_box, self.shuffle_button,
+                                              self.repeat_button, self.volume_button))
         self._seek = SeekControl(self.seek_scale, self.seek_adjustment, self.elapsed_label,
                                  self.remaining_label)
         self._modes = ModeControl(self.shuffle_button, self.repeat_button)
@@ -85,6 +88,7 @@ class PlayerBar(Adw.Bin):
         self._player = player
         self._app = app
         self._play.attach(player)
+        self._titles.attach(player)
         self._seek.attach(player, app)
         self._modes.attach(player, app)
         self._heart.attach(player, app)
@@ -117,19 +121,10 @@ class PlayerBar(Adw.Bin):
     # -- following the Player --------------------------------------------------------------
 
     def _update_track(self):
+        """What the bar adds to TrackTitles: the bar button's description, and the
+        announcement of a new item."""
         track = self._player.track if self._player is not None else None
         playing = track is not None
-        if playing:
-            self.title_label.set_label(track.title or _('Unknown Title'))
-            self.subtitle_label.set_label(track_subtitle(track))
-        else:
-            self.title_label.set_label(_('Not Playing'))
-            self.subtitle_label.set_label('')
-        self.subtitle_label.set_visible(playing and bool(self.subtitle_label.get_label()))
-        self.seek_box.set_sensitive(playing)
-        self.shuffle_button.set_sensitive(playing)
-        self.repeat_button.set_sensitive(playing)
-        self.volume_button.set_sensitive(playing)
         button = self._bar_button()
         if button is not None:
             description = (', '.join(part for part in (track.title, track_subtitle(track))
