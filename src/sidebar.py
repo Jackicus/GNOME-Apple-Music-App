@@ -1,14 +1,24 @@
 """The sidebar's Playlists section as a model: All Playlists and Favourite Songs, then the user's
-folders and playlists in Apple's order.
+folders and playlists in Apple's order, and the decisions the window's sidebar controller
+(sidebar_view.py) applies, as functions of plain data so that tests need no display.
 
 The window binds the section to a Gio.ListStore of SidebarEntry (AdwSidebarSection.bind_model),
 whose create function makes a SidebarItem for each. AdwSidebar cannot indent, so a folder's
 contents follow it in order and its arrow says whether they are shown; the contents of a
 collapsed folder are hidden items (AdwSidebarItem:visible). Keys name what an entry shows, and are
 what the `last-page` setting keeps: a destination's key, "playlist:<id>" or "folder:<id>".
+
+    plan_update(old, new)                    what a changed tree does to the section's entries
+    restore_target(key, entries, ready)      what to select and show for the page last shown
+    reveal(key, entries)                     the folders to expand for an entry to be listed
+    stale_roots(root_keys, entries, shown)   the root pages of playlists and folders now gone
 """
 
+from difflib import SequenceMatcher
+
 from gi.repository import Adw, GObject, Gtk
+
+from .sections import ALL_PLAYLISTS, HOME
 
 FOLDER_ICON = 'folder-symbolic'
 PLAYLIST_ICON = 'playlist-symbolic'  # bundled (src/icons)
@@ -61,9 +71,14 @@ class SidebarEntry(GObject.Object):
         """The folder's id, for a folder entry; None otherwise."""
         return self.item.id if self.kind == 'folder' else None
 
+    def place(self):
+        """Where the entry sits in the tree, without its title: two entries of the same
+        place show the same thing (plan_update keeps the sidebar item of one for the
+        other), whatever the thing is called now."""
+        return (self.kind, self.key, self.depth, self.ancestors)
+
     def shape(self):
-        """What the sidebar shows of the entry: two lists of entries with the same shapes need
-        no new sidebar items, only their `item`s swapped."""
+        """What the sidebar shows of the entry: its place and its title."""
         return (self.kind, self.key, self.title, self.depth, self.ancestors)
 
 
@@ -87,6 +102,63 @@ def playlist_entries(tree):
 def is_shown(entry, expanded):
     """Whether the entry is listed: every folder it is in is expanded (ids in `expanded`)."""
     return all(folder_id in expanded for folder_id in entry.ancestors)
+
+
+def plan_update(old, new):
+    """What makes the section list `new` in place of `old` (two lists of SidebarEntry) with
+    the fewest changes: (retitles, splices).
+
+    Entries at the same place (SidebarEntry.place) are the same thing: the old entry keeps
+    its sidebar item, so the selection and the focus survive a reload, and only takes the
+    new title when that changed. `retitles` is [(index, entry)]: old's entry at index takes
+    entry's title. `splices` is [(index, count, entries)], last first: `count` of old's
+    entries from index make way for `entries`. Apply the retitles first (their indexes are
+    old's), then the splices in the order given, so each leaves the earlier indexes as they
+    were. Two lists of the same places and titles need nothing.
+    """
+    matcher = SequenceMatcher(None, [entry.place() for entry in old],
+                              [entry.place() for entry in new], autojunk=False)
+    retitles = []
+    splices = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            retitles.extend((i1 + n, new[j1 + n]) for n in range(i2 - i1)
+                            if old[i1 + n].title != new[j1 + n].title)
+        else:
+            splices.append((i1, i2 - i1, new[j1:j2]))
+    splices.reverse()
+    return retitles, splices
+
+
+def restore_target(key, entries_by_key, library_ready):
+    """What to select and show for the page last shown (`key`, the last-page setting) as the
+    window opens: (the key to select, the key to show).
+
+    The key's own when the sidebar has it (`entries_by_key` maps every key it has). A
+    playlist's or folder's key while the library has not loaded is shown under All
+    Playlists, selected meanwhile: the library's load selects it, or goes Home when it is
+    gone. A key nobody has otherwise (a playlist gone, a destination that is no more) is
+    Home.
+    """
+    if key in entries_by_key:
+        return key, key
+    if parse_key(key) is not None and not library_ready:
+        return ALL_PLAYLISTS, key
+    return HOME, HOME
+
+
+def reveal(key, entries_by_key):
+    """The ids of the folders to expand for key's entry to be listed: the folders it is in,
+    outermost first; none for a key the section has not got, or an entry at the top."""
+    entry = entries_by_key.get(key)
+    return tuple(getattr(entry, 'ancestors', ()))
+
+
+def stale_roots(root_keys, entries_by_key, shown):
+    """The playlist and folder keys among `root_keys` (the root pages kept) whose entries
+    the library has no more, except the one shown: its page says that it is gone."""
+    return [key for key in root_keys
+            if parse_key(key) is not None and key not in entries_by_key and key != shown]
 
 
 class SidebarItem(Adw.SidebarItem):
