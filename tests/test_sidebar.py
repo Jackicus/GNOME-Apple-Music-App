@@ -11,9 +11,9 @@ gi.require_version('Adw', '1')
 
 from applemusic.library import Item, PlaylistTree  # noqa: E402
 from applemusic.sections import ALL_PLAYLISTS, HOME, Destination  # noqa: E402
-from applemusic.sidebar import (SidebarEntry, is_shown, parse_key,  # noqa: E402
-                                plan_update, playlist_entries, restore_target, reveal,
-                                stale_roots)
+from applemusic.sidebar import (SidebarEntry, SidebarItem, is_shown,  # noqa: E402
+                                parse_key, plan_update, playlist_entries, restore_target,
+                                reveal, stale_roots, tooltip_markup)
 
 
 def playlist(playlist_id, favourites=False, title=None):
@@ -194,6 +194,28 @@ class TestEntries(unittest.TestCase):
         for key in ('home', 'playlist:', 'album:l.1', '', None):
             with self.subTest(key=key):
                 self.assertIsNone(parse_key(key))
+
+    def test_nested_entries_name_their_folder(self):
+        entries = {entry.key: entry for entry in playlist_entries(tree())}
+        self.assertEqual(entries['playlist:p3'].parent_title, 'Folder B')
+        self.assertEqual(entries['folder:b'].parent_title, 'Folder A')
+        self.assertEqual(entries['playlist:p2'].parent_title, '')  # the top level
+        self.assertEqual(entries['folder:a'].parent_title, '')
+
+    def test_tooltip_is_the_whole_name_escaped(self):
+        self.assertEqual(tooltip_markup('A & B <C>'), 'A &amp; B &lt;C&gt;')
+        self.assertEqual(tooltip_markup(None), '')
+        # A playlist's item (no widget inside: a folder's arrow would need a display).
+        item = SidebarItem(SidebarEntry('playlist', 'playlist:p9', 'A & B <C>', 'x', 1,
+                                        playlist('p9', title='A & B <C>'), ('a',), 'Folder A'))
+        self.assertEqual(item.get_tooltip(), 'A &amp; B &lt;C&gt;')
+        self.assertEqual(item.get_subtitle(), 'Folder A')
+        item.retitle('C <D>')
+        self.assertEqual((item.get_title(), item.entry.title, item.get_tooltip()),
+                         ('C <D>', 'C <D>', 'C &lt;D&gt;'))
+        fixed = SidebarItem(SidebarEntry.fixed(Destination('all-playlists', 'All', 'x')))
+        self.assertFalse(fixed.get_tooltip())
+        self.assertFalse(fixed.get_subtitle())
 
 
 if __name__ == '__main__':

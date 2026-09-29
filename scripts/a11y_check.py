@@ -441,6 +441,31 @@ async def walkthrough(window):
     check('Space on a tile plays or pauses',
           actions == ['play-pause'] and (handled or '').endswith('key controller'),
           (actions, handled, describe(window.get_focus())))
+    print('-- folders')
+    tree = app.library.playlist_tree()
+    folder = next(node for node in tree.flat if node.kind == 'folder' and node.children)
+    child = folder.children[0]
+    sidebar = window._sidebar
+    window.select_page(f'folder:{folder.id}')
+    await asyncio.sleep(0.6)
+    await key(window, '<primary>1', 0.6)
+    folder_row = sidebar.row(sidebar.item_for(f'folder:{folder.id}').get_index())
+    check("Ctrl+1 puts the focus on the folder's row", window.get_focus() == folder_row,
+          (describe(window.get_focus()), row_title(window.get_focus()),
+           window.sidebar.get_selected(), len(sidebar.rows())))
+    child_item = sidebar.item_for(f'{child.kind}:{child.id}')
+    await key(window, 'Right', 0.4)
+    check('Right opens the folder without changing the page',
+          child_item.get_visible() and window.shown == f'folder:{folder.id}',
+          (child_item.get_visible(), window.shown))
+    await key(window, 'Down', 0.4)
+    check("Down moves to the folder's first entry",
+          window.get_focus() == sidebar.row(child_item.get_index()), describe(window.get_focus()))
+    await key(window, 'Left', 0.4)
+    check('Left moves back to the folder', window.get_focus() == folder_row,
+          describe(window.get_focus()))
+    await key(window, 'Left', 0.4)
+    check('Left closes the folder', not child_item.get_visible())
     print('-- Preferences')
     await key(window, '<primary>comma', 1.0)
     dialog = app._preferences

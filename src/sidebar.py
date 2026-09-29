@@ -16,7 +16,7 @@ what the `last-page` setting keeps: a destination's key, "playlist:<id>" or "fol
 
 from difflib import SequenceMatcher
 
-from gi.repository import Adw, GObject, Gtk
+from gi.repository import Adw, GLib, GObject, Gtk
 
 from .sections import ALL_PLAYLISTS, HOME
 
@@ -45,8 +45,10 @@ class SidebarEntry(GObject.Object):
 
     `kind` is 'fixed' (a destination of sections.py: All Playlists, Favourite Songs), 'folder'
     or 'playlist'; `key` what it shows (see the module); `depth` its nesting, 0 at the top
-    level; `item` the folder's or playlist's library Item (None for a fixed entry), and
-    `ancestors` the ids of the folders it is in, outermost first.
+    level; `item` the folder's or playlist's library Item (None for a fixed entry),
+    `ancestors` the ids of the folders it is in, outermost first, and `parent_title` the name
+    of the folder holding it ('' at the top level), shown as a nested item's subtitle since
+    the sidebar cannot indent.
     """
 
     __gtype_name__ = 'AppleMusicSidebarEntry'
@@ -57,10 +59,12 @@ class SidebarEntry(GObject.Object):
     icon_name = GObject.Property(type=str)
     depth = GObject.Property(type=int, default=0)
 
-    def __init__(self, kind, key, title, icon_name, depth=0, item=None, ancestors=()):
+    def __init__(self, kind, key, title, icon_name, depth=0, item=None, ancestors=(),
+                 parent_title=''):
         super().__init__(kind=kind, key=key, title=title, icon_name=icon_name, depth=depth)
         self.item = item
         self.ancestors = tuple(ancestors)
+        self.parent_title = parent_title
 
     @classmethod
     def fixed(cls, destination):
@@ -90,12 +94,15 @@ def playlist_entries(tree):
     entries = []
     for node in tree.flat:
         item = node.item
+        parent = node.parent
+        parent_title = parent.item.title if parent is not None and parent.parent is not None else ''
         if node.kind == 'folder':
             entries.append(SidebarEntry('folder', folder_key(item.id), item.title, FOLDER_ICON,
-                                        node.depth, item, node.ancestors()))
+                                        node.depth, item, node.ancestors(), parent_title))
         elif not item.favourites:
             entries.append(SidebarEntry('playlist', playlist_key(item.id), item.title,
-                                        PLAYLIST_ICON, node.depth, item, node.ancestors()))
+                                        PLAYLIST_ICON, node.depth, item, node.ancestors(),
+                                        parent_title))
     return entries
 
 
@@ -161,9 +168,17 @@ def stale_roots(root_keys, entries_by_key, shown):
             if parse_key(key) is not None and key not in entries_by_key and key != shown]
 
 
+def tooltip_markup(title):
+    """A playlist's or folder's title as the row's tooltip, which is Pango markup: escaped,
+    so "A & B <C>" reads as it is. The whole name, where the row ellipsizes it."""
+    return GLib.markup_escape_text(title or '')
+
+
 class SidebarItem(Adw.SidebarItem):
     """A sidebar item made from a SidebarEntry, which it keeps as `entry`. A folder's has a
-    disclosure arrow as its suffix, pointing down while expanded."""
+    disclosure arrow as its suffix, pointing down while expanded, hidden in the page mode
+    (where a folder only drills down and the row has an arrow of its own); a nested item
+    names its folder as its subtitle; a playlist's or folder's tooltip is its whole name."""
 
     __gtype_name__ = 'AppleMusicSidebarItem'
 
@@ -171,14 +186,27 @@ class SidebarItem(Adw.SidebarItem):
         # Not activated by a drag hovering over it: a track is dropped onto a playlist, and
         # switching pages under the drag would take the list it came from away.
         super().__init__(title=entry.title, icon_name=entry.icon_name,
-                         drag_motion_activate=False)
+                         subtitle=entry.parent_title or None, drag_motion_activate=False)
         self.entry = entry
         self._arrow = None
+        if entry.kind != 'fixed':
+            self.set_tooltip(tooltip_markup(entry.title))
         if entry.kind == 'folder':
             self._arrow = Gtk.Image(icon_name='pan-end-symbolic',
                                     accessible_role=Gtk.AccessibleRole.PRESENTATION)
             self.set_suffix(self._arrow)
 
+    def retitle(self, title):
+        """The item's title (and tooltip) after its playlist or folder was renamed."""
+        self.entry.title = title
+        self.set_title(title)
+        if self.entry.kind != 'fixed':
+            self.set_tooltip(tooltip_markup(title))
+
     def set_expanded(self, expanded):
         if self._arrow is not None:
             self._arrow.set_from_icon_name('pan-down-symbolic' if expanded else 'pan-end-symbolic')
+
+    def set_arrow_visible(self, visible):
+        if self._arrow is not None:
+            self._arrow.set_visible(visible)

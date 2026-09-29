@@ -23,9 +23,17 @@ window keeps its selection, folder expansion, context menu and drop target.
 - With nothing selected, its list selects the row with the focus when the window is shown or
   becomes active. Never leave it empty on purpose; the window routes its own selections through
   `_set_selected`, which shows nothing.
-- It scrolls to its selection only when its list maps; a later `set_selected()` does not
-  scroll. It has no scroll-to of its own, but its rows sit in ScrolledWindow > Viewport >
-  ListBox, and `Gtk.Viewport.scroll_to(row, None)` on that viewport, after the map, works.
+- It scrolls to its selection only when its list maps, and then centres the row, which moves
+  the list even when the row was in view; a later `set_selected()` does not scroll. It has no
+  public scroll-to, but its rows sit in ScrolledWindow > Viewport > ListBox, and
+  `Gtk.Viewport.scroll_to(row, None)` on that viewport, after the map, works: the controller's
+  `reveal_selected()` (an idle after libadwaita's) puts the list back at the top when the row
+  is in view there, else scrolls the least that shows it.
+- Its drop signals are `drop-enter`, `drop` and `drop-value-loaded` (no leave): a drag
+  leaving the sidebar is seen through a `Gtk.DropControllerMotion` on it. In page mode each
+  section is a boxed list of its own; Down from a section's last row moves on to the next
+  only in an active window (GtkListBoxRow's focus handler reads `has-focus`), which a
+  headless one never is (a11y_check steps over it).
 - Context menus: it emits `setup-menu(item)`, then shows one `Gtk.PopoverMenu` built from the
   section's `menu-model`. An empty model still shows an empty popover (the window pops it down
   from an idle). `setup-menu(None)` can arrive after the next item's `setup-menu`: never clear
