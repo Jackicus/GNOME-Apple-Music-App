@@ -71,8 +71,11 @@ Each of these was checked against the toolkit (or found the hard way). The sideb
   claimed, so the item's own click gesture never sees them. A popover can be parented to any
   widget with a layout manager; unparent it from an idle after `closed`, because the chosen
   item's action runs after the popover closes and finds `win.*` through its parent.
-- The drag type is `actions.TrackRef`, offered with `Gdk.ContentProvider.new_for_value(ref)`.
+- The drag type is `library.TrackRef`, offered with `Gdk.ContentProvider.new_for_value(ref)`.
   `Gdk.Clipboard.set(text)` works from Python (it is `set_value`).
+- A `Gio.MenuItem` with the attribute `hidden-when` = `action-disabled` is shown by a
+  `Gtk.PopoverMenu` only while its action is enabled, and follows the action's state while
+  the menu is open (Favourite / Remove from Favourites, as Nautilus's Star / Unstar).
 
 ## PyGObject and asyncio
 

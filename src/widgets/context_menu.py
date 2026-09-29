@@ -16,13 +16,15 @@ a click on a Songs row's album column finds its title cell.
 The menu is the window's (window.item_actions.menu_for(obj): see actions.py), shown in a
 Gtk.PopoverMenu parented to that widget, without an arrow, pointing at the pointer, or beside
 the widget from the keyboard; it is unparented once closed (after an idle: its action is
-activated after it closes, and looks the window's actions up through its parent).
+activated after it closes, and looks the window's actions up through its parent). The row or
+tile whose menu is open is marked `.has-open-popup` meanwhile, as GTK's own menus mark
+theirs, so it stays highlighted while the pointer is in the menu.
 """
 
 from gi.repository import Gdk, GLib, Graphene, Gtk
 
 from .. import shortcuts
-from ..actions import TrackRef
+from ..library import TrackRef
 
 # The containers whose children are rows or tiles.
 LIST_TYPES = (Gtk.ListBase, Gtk.FlowBox, Gtk.ListBox)
@@ -71,6 +73,16 @@ def find(view, widget):
     return None
 
 
+def owner(widget):
+    """The row or tile of a list that holds widget (widget itself when it is one): the
+    child of a LIST_TYPES container; None when widget is in no list."""
+    while widget is not None:
+        if isinstance(widget.get_parent(), LIST_TYPES):
+            return widget
+        widget = widget.get_parent()
+    return None
+
+
 def popup(widget, obj, x=None, y=None):
     """Show the menu for obj in a popover parented to widget, pointing at (x, y) in its
     coordinates, or at the whole widget. The popover, or None when obj has no menu."""
@@ -86,12 +98,17 @@ def popup(widget, obj, x=None, y=None):
         rectangle.x, rectangle.y, rectangle.width, rectangle.height = int(x), int(y), 1, 1
         popover.set_pointing_to(rectangle)
         popover.set_halign(Gtk.Align.START)  # the menu opens from the pointer
-    popover.connect('closed', _on_closed)
+    marked = owner(widget)
+    if marked is not None:
+        marked.add_css_class('has-open-popup')
+    popover.connect('closed', _on_closed, marked)
     popover.popup()
     return popover
 
 
-def _on_closed(popover):
+def _on_closed(popover, marked):
+    if marked is not None:
+        marked.remove_css_class('has-open-popup')
     GLib.idle_add(_unparent, popover)
 
 

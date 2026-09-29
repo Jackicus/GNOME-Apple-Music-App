@@ -377,6 +377,32 @@ class Track(GObject.Object):
         return self._search_key
 
 
+class TrackRef(GObject.Object):
+    """What a dragged track carries (Gdk.ContentProvider.new_for_value), and what a sidebar
+    playlist accepts (actions.ItemActions.drop): a song's or music video's own id (a
+    library "i." id, else a catalog one), its `kind` ('song' or 'video': what it is added
+    to a playlist as) and its title."""
+
+    __gtype_name__ = 'AppleMusicTrackRef'
+
+    song_id = GObject.Property(type=str, default='')
+    kind = GObject.Property(type=str, default='song')
+    title = GObject.Property(type=str, default='')
+
+    @classmethod
+    def for_object(cls, obj):
+        """The TrackRef of a Track (a video by Track.kind), or of a song or music video Item;
+        None for anything else, or for one without an id."""
+        if isinstance(obj, Track):
+            kind = obj.kind or 'song'
+        elif isinstance(obj, Item) and obj.kind in ('song', 'video'):
+            kind = obj.kind
+        else:
+            return None
+        song_id = obj.id or obj.catalog_id
+        return cls(song_id=song_id, kind=kind, title=obj.title or '') if song_id else None
+
+
 class Group(GObject.Object):
     """A disc of an album, a playlist's one list, an album of an artist: {name, play, entries}.
 

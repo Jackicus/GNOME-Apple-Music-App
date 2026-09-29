@@ -4,7 +4,7 @@ actions, the menus that offer them, and what a track dragged onto a sidebar play
     actions = ItemActions(window, app)     # made once by the window; adds the win.* actions
     menu = actions.menu_for(obj)           # a Gio.Menu for an Item or a Track, or None
     actions.fill_sidebar_menu(menu, item)  # a sidebar playlist's Play, Play Next, Open in Browser
-    actions.drop(playlist, ref)            # a TrackRef dropped on a sidebar playlist
+    actions.drop(playlist, ref)            # a library.TrackRef dropped on a sidebar playlist
 
 The actions, each on the window (win.*) with a GLib.Variant target "(ss)", the (kind, id) of
 what it acts on (an Item's kind and id, or 'song' and a Track's id):
@@ -18,17 +18,22 @@ what it acts on (an Item's kind and id, or 'song' and a Track's id):
     item-open-in-browser its music.apple.com page, in the default browser (Gtk.UriLauncher)
     item-copy-link       that page's address, on the clipboard
 
-and item-add-to-playlist, "(sss)" (playlist id, kind, id): a song added to a library playlist.
-A target names an object the menu was built for (remembered, the last REMEMBERED of them) or
-one the library has; failing both, the target's kind and id are used as they are. Each action
-awaits the engine (started first when it is down and the account is signed in, as a play
-request does) and confirms with a toast, or toasts the EngineError (app.report).
+and item-add-to-playlist, "(sss)" (playlist id, kind, id): a song or a music video added to a
+library playlist. A target names an object the menu was built for (remembered, the last
+REMEMBERED of them) or one the library has; failing both, the target's kind and id are used
+as they are. Each action awaits the engine (started first when it is down and the account is
+signed in, as a play request does) and confirms with a toast, or reports the EngineError
+(app.report: signed out, that opens the sign-in). After a song was added to a playlist, or a
+song loved or unloved, the playlist (Favourite Songs) is fetched again and merged into the
+library's Item, so an open page shows the change at once.
 
-The menus are built in code, per kind (build_menu): Play, Play Next, Play Later; Favourite or
-Remove from Favourites, Add to Library, Add to Playlist (the library's playlists that take
-songs, folders flattened); Open in Browser, Copy Link; each only where it applies. Whether an
-item is loved is not in the library: a menu shows what the engine said last (its `rated`
-signal), and asks again (engine.rating) as it opens, swapping the item when the answer differs.
+The menus are built in code, per kind (build_menu): Play, Play Next, Play Later; Favourite
+and Remove from Favourites (both, of which the menu shows the one whose action is enabled:
+the actions' state says whether the item is loved), Add to Library, Add to Playlist (the
+library's playlists that take songs, folders flattened); Open in Browser, Copy Link (only an
+address anyone can open: not the web player's library routes); each only where it applies.
+Whether an item is loved is not in the library: a menu shows what the engine said last (its
+`rated` signal), and asks again (engine.rating) as it opens.
 
 Only Gio, GLib and GObject at import time besides Gtk's UriLauncher, used when a page is
 opened: tests build the menus and run the actions with a stand-in window, app and engine.
@@ -37,12 +42,13 @@ opened: tests build the menus and run the actions with a stand-in window, app an
 import logging
 from collections import OrderedDict
 from gettext import gettext as _
+from urllib.parse import urlsplit
 
-from gi.repository import Gio, GLib, GObject
+from gi.repository import Gio, GLib
 
 from .backend.errors import EngineError
 from .backend.api import is_library_id
-from .library import Item, Track
+from .library import Item, Track, TrackRef
 
 log = logging.getLogger(__name__)
 
@@ -53,12 +59,14 @@ PLAYLIST_TARGET = GLib.VariantType.new('(sss)')
 REMEMBERED = 64
 
 WEB = 'https://music.apple.com'
+# The hosts of Apple Music's pages: the only addresses the app opens or copies.
+APPLE_HOSTS = frozenset({'music.apple.com', 'geo.music.apple.com'})
 # The page of a catalog item without a URL: music.apple.com/<storefront>/<path>/<id>, which
 # Apple redirects to the canonical address with the item's name in it.
 WEB_PATHS = {'album': 'album', 'playlist': 'playlist', 'song': 'song', 'station': 'station',
              'artist': 'artist', 'video': 'music-video'}
 # The web player's own routes for library items (as its sidebar links and its router name
-# them): a library playlist's and a library album's pages.
+# them): a library playlist's and a library album's pages, which open for the owner only.
 LIBRARY_ROUTES = {'playlist': 'library/playlist', 'album': 'library/albums'}
 
 # Ids the library makes up for what Apple gave none (backend.normalize groups songs into albums
@@ -75,34 +83,19 @@ SIDEBAR_ACTIONS = ('item-play', 'item-play-next', 'item-open-in-browser')
 
 
 def action_labels():
-    """The menu's labels, by action, translated on call (after gettext is set up)."""
+    """The menu's labels, by action, translated on call (after gettext is set up). Each has
+    a mnemonic (GtkPopoverMenu shows them with use-underline), no two the same letter."""
     return {
-        'item-play': _('Play'),
-        'item-play-next': _('Play Next'),
-        'item-play-later': _('Play Later'),
-        'item-love': _('Favourite'),
-        'item-unlove': _('Remove from Favourites'),
-        'item-add-to-library': _('Add to Library'),
-        'item-add-to-playlist': _('Add to Playlist'),
-        'item-open-in-browser': _('Open in Browser'),
-        'item-copy-link': _('Copy Link'),
+        'item-play': _('_Play'),
+        'item-play-next': _('Play _Next'),
+        'item-play-later': _('Play _Later'),
+        'item-love': _('_Favourite'),
+        'item-unlove': _('_Remove from Favourites'),
+        'item-add-to-library': _('_Add to Library'),
+        'item-add-to-playlist': _('Add to Pla_ylist'),
+        'item-open-in-browser': _('_Open in Browser'),
+        'item-copy-link': _('_Copy Link'),
     }
-
-
-class TrackRef(GObject.Object):
-    """What a dragged track carries (Gdk.ContentProvider.new_for_value), and what a sidebar
-    playlist accepts: the song's id, a library "i." id or a catalog one, and its title."""
-
-    __gtype_name__ = 'AppleMusicTrackRef'
-
-    song_id = GObject.Property(type=str, default='')
-    title = GObject.Property(type=str, default='')
-
-    @classmethod
-    def for_object(cls, obj):
-        """The TrackRef of a Track or a song Item, or None for anything else."""
-        song_id = playlist_song(obj)
-        return cls(song_id=song_id, title=obj.title or '') if song_id else None
 
 
 def _synthetic(item_id):
@@ -152,9 +145,13 @@ def queue_target(obj):
 
 def rating_target(obj):
     """(kind, id) that love, unlove and rating() take for obj, or None when it has no
-    rating: a song by its catalog id (the heart's too), an album, playlist, station or video
-    by its own id. Not Favourite Songs itself, nor an item the library made up."""
-    if isinstance(obj, Track) or (isinstance(obj, Item) and obj.kind == 'song'):
+    rating: a song by its catalog id (the heart's too), a track that is a music video as a
+    video (Track.kind), an album, playlist, station or video by its own id. Not Favourite
+    Songs itself, nor an item the library made up."""
+    if isinstance(obj, Track):
+        song_id = _song_id(obj)
+        return (obj.kind or 'song', song_id) if song_id else None
+    if isinstance(obj, Item) and obj.kind == 'song':
         song_id = _song_id(obj)
         return ('song', song_id) if song_id else None
     if (isinstance(obj, Item) and obj.kind in RATED_KINDS and obj.id
@@ -167,32 +164,56 @@ def library_target(obj):
     """(kind, id) that Add to Library adds, or None: only what is not the library's already
     (a catalog id), a song, album, playlist or video."""
     if isinstance(obj, Track):
-        return ('song', obj.id) if obj.id and not is_library_id(obj.id) else None
+        return (obj.kind or 'song', obj.id) if obj.id and not is_library_id(obj.id) else None
     if isinstance(obj, Item) and obj.kind in LIBRARY_KINDS and obj.id and not is_library_id(
             obj.id):
         return obj.kind, obj.id
     return None
 
 
+def playlist_track(obj):
+    """(kind, id) that Add to Playlist and a drop add, or None: a Track's or a song or music
+    video Item's own id (a library "i." id, or a catalog one), as a 'song' or a 'video'
+    (library.TrackRef.for_object's rule)."""
+    ref = TrackRef.for_object(obj)
+    return (ref.kind, ref.song_id) if ref is not None else None
+
+
 def playlist_song(obj):
-    """The song id Add to Playlist and a drop add: a Track's or a song Item's own id (a
-    library "i." id, or a catalog one), or None."""
-    if isinstance(obj, Track) or (isinstance(obj, Item) and obj.kind == 'song'):
-        return obj.id or obj.catalog_id or None
-    return None
+    """The id Add to Playlist and a drop add (playlist_track), or None."""
+    track = playlist_track(obj)
+    return track[1] if track is not None else None
+
+
+def is_apple_music_url(url):
+    """Whether url is a page of music.apple.com over https: the only addresses the app
+    opens or copies. An Item's `url` comes from Apple's answers, but is checked all the
+    same; anything else falls back to the address made from the item's id."""
+    try:
+        parts = urlsplit(url or '')
+    except ValueError:
+        return False
+    return parts.scheme == 'https' and (parts.hostname or '').lower() in APPLE_HOSTS
+
+
+def is_shareable(url):
+    """Whether an address opens for anyone: a music.apple.com page that is not one of the
+    web player's library routes (those open only for the account signed in)."""
+    return is_apple_music_url(url) and not url.startswith(f'{WEB}/library/')
 
 
 def web_url(obj, storefront=None):
-    """The music.apple.com page of obj, or None: the Item's own URL; the web player's page of
-    a library playlist or album; a catalog item's page by its id; a track's song page by its
-    catalog id."""
+    """The music.apple.com page of obj, or None: the Item's own URL (when it is one of
+    Apple's, is_apple_music_url); the web player's page of a library playlist or album; a
+    catalog item's page by its id; a track's song page by its catalog id."""
     storefront = storefront or 'us'
     if isinstance(obj, Track):
         song_id = obj.catalog_id or (obj.id if not is_library_id(obj.id) else None)
-        return f'{WEB}/{storefront}/song/{song_id}' if song_id else None
+        path = WEB_PATHS[obj.kind or 'song']
+        return f'{WEB}/{storefront}/{path}/{song_id}' if song_id else None
     if not isinstance(obj, Item) or not obj.id:
         return None
-    if obj.url:
+    if obj.url and is_apple_music_url(obj.url):
         return obj.url
     if is_library_id(obj.id):
         route = LIBRARY_ROUTES.get(obj.kind)
@@ -203,6 +224,13 @@ def web_url(obj, storefront=None):
         return None
     path = WEB_PATHS.get(obj.kind)
     return f'{WEB}/{storefront}/{path}/{obj.id}' if path else None
+
+
+def share_url(obj, storefront=None):
+    """The address Copy Link copies, or None: obj's page when anyone can open it
+    (is_shareable), never a library route."""
+    url = web_url(obj, storefront)
+    return url if is_shareable(url) else None
 
 
 def needs_catalog_url(obj):
@@ -219,14 +247,27 @@ def menu_item(action, target, label=None):
     return item
 
 
-def favourite_item(target, loved):
-    return menu_item('item-unlove' if loved else 'item-love', target)
+def favourite_items(target):
+    """Favourite and Remove from Favourites, of which a menu shows the one whose action is
+    enabled (GMenu's hidden-when): ItemActions keeps the two actions' state as the item's
+    loved state, so the menu follows an answer without its items being replaced."""
+    items = []
+    for action in ('item-love', 'item-unlove'):
+        item = menu_item(action, target)
+        item.set_attribute_value('hidden-when', GLib.Variant('s', 'action-disabled'))
+        items.append(item)
+    return items
 
 
-def build_menu(obj, playlists=(), loved=False, storefront=None):
+def mnemonic_escaped(title):
+    """A name of the user's as a menu label: its underscores doubled, since the label's
+    underscores are mnemonics."""
+    return title.replace('_', '__')
+
+
+def build_menu(obj, playlists=(), storefront=None):
     """The menu for obj (an Item or a Track), or None when nothing applies (a folder, a
-    category). `playlists` are the (id, title) pairs the Add to Playlist submenu lists;
-    `loved` whether obj is known to be loved (Remove from Favourites instead of Favourite)."""
+    category). `playlists` are the (id, title) pairs the Add to Playlist submenu lists."""
     named = describe(obj)
     if named is None or (isinstance(obj, Item) and obj.kind not in MENU_KINDS):
         return None
@@ -239,7 +280,8 @@ def build_menu(obj, playlists=(), loved=False, storefront=None):
         play.append_item(menu_item('item-play-next', target))
         play.append_item(menu_item('item-play-later', target))
     if rating_target(obj) is not None:
-        keep.append_item(favourite_item(target, loved))
+        for item in favourite_items(target):
+            keep.append_item(item)
     if library_target(obj) is not None:
         keep.append_item(menu_item('item-add-to-library', target))
     if playlist_song(obj) and playlists:
@@ -247,11 +289,14 @@ def build_menu(obj, playlists=(), loved=False, storefront=None):
         for playlist_id, title in playlists:
             submenu.append_item(menu_item(
                 'item-add-to-playlist', GLib.Variant('(sss)', (playlist_id, *named)),
-                label=title or _('Untitled Playlist')))
+                label=mnemonic_escaped(title or _('Untitled Playlist'))))
         keep.append_submenu(action_labels()['item-add-to-playlist'], submenu)
     if web_url(obj, storefront):
         share.append_item(menu_item('item-open-in-browser', target))
-        share.append_item(menu_item('item-copy-link', target))
+        # Copy Link: an address anyone can open, or a library album's catalog page, which
+        # the engine can say when the link is asked for.
+        if share_url(obj, storefront) or needs_catalog_url(obj):
+            share.append_item(menu_item('item-copy-link', target))
     menu = Gio.Menu()
     for section in sections:
         if section.get_n_items():
@@ -277,27 +322,6 @@ def fill_sidebar_menu(menu, playlist):
         menu.append_item(menu_item(action, target))
 
 
-def set_favourite(menu, target, loved):
-    """Swap the Favourite / Remove from Favourites item of a menu built by build_menu for the
-    other one, where the loved state it shows is not `loved`. True when it changed."""
-    wanted = 'win.item-unlove' if loved else 'win.item-love'
-    for position in range(menu.get_n_items()):
-        section = menu.get_item_link(position, Gio.MENU_LINK_SECTION)
-        if section is None:
-            continue
-        for index in range(section.get_n_items()):
-            action = section.get_item_attribute_value(index, Gio.MENU_ATTRIBUTE_ACTION)
-            action = action.get_string() if action is not None else None
-            if action not in ('win.item-love', 'win.item-unlove'):
-                continue
-            if action == wanted:
-                return False
-            section.remove(index)
-            section.insert_item(index, favourite_item(target, loved))
-            return True
-    return False
-
-
 def love_messages(kind):
     """(loved, unloved) toasts for an item of kind: a song goes into Favourite Songs."""
     if kind == 'song':
@@ -306,15 +330,16 @@ def love_messages(kind):
 
 
 class ItemActions:
-    """The window's item actions. `window` gives toast(), play_request(), get_clipboard()
-    and add_action(); `app` the engine, the player, the library, spawn(), report() and demo.
-    See the module."""
+    """The window's item actions. `window` gives play_request(), get_clipboard() and
+    add_action(); `app` the engine, the player, the library, spawn(), toast(), report() and
+    refuse_in_demo(). See the module."""
 
     def __init__(self, window, app):
         self.window = window
         self.app = app
         self._remembered = OrderedDict()  # (kind, id) -> the object a menu was built for
         self._loved = {}  # rating_target -> bool, as the engine last said
+        self._menu_rated = None  # the rating target of the last menu built
         app.engine.connect('rated', self._on_rated)
         handlers = {
             'item-play': self._on_play,
@@ -349,19 +374,21 @@ class ItemActions:
 
     def menu_for(self, obj):
         """The menu for obj (build_menu), obj remembered for its actions; None when nothing
-        applies. With the engine up, whether obj is loved is asked as the menu opens."""
+        applies. The favourite actions' state shows whether obj is loved, as last known;
+        with the engine up, it is asked again as the menu opens."""
         named = describe(obj)
         if named is None:
             return None
-        rated = rating_target(obj)
-        loved = bool(self._loved.get(rated)) if rated else False
-        menu = build_menu(obj, self.playlists() if playlist_song(obj) else (), loved,
+        menu = build_menu(obj, self.playlists() if playlist_song(obj) else (),
                           self._storefront())
         if menu is None:
             return None
         self._remember(named, obj)
+        rated = rating_target(obj)
+        self._menu_rated = rated
+        self._show_loved(bool(self._loved.get(rated)) if rated else False)
         if rated is not None and self._engine_ready():
-            self.app.spawn(self._refine(menu, named, rated, loved))
+            self.app.spawn(self._refine(rated))
         return menu
 
     def fill_sidebar_menu(self, menu, playlist):
@@ -379,18 +406,22 @@ class ItemActions:
         return [(node.item.id, node.item.title) for node in tree.flat
                 if node.kind == 'playlist' and node.item.editable]
 
-    async def _refine(self, menu, named, rated, shown):
+    def _show_loved(self, loved):
+        """The favourite actions' state: a menu shows Favourite while the item is not
+        loved, Remove from Favourites while it is."""
+        self.actions['item-love'].set_enabled(not loved)
+        self.actions['item-unlove'].set_enabled(loved)
+
+    async def _refine(self, rated):
         try:
-            value = await self.engine.rating(*rated)
+            await self.engine.rating(*rated)  # its `rated` signal brings the answer
         except EngineError as error:
             log.debug('rating of %s %s: %s', *rated, error)
-            return
-        loved = value == 1
-        if loved != shown:
-            set_favourite(menu, GLib.Variant('(ss)', named), loved)
 
     def _on_rated(self, _engine, kind, item_id, value):
         self._loved[(kind, item_id)] = value == 1
+        if (kind, item_id) == self._menu_rated:
+            self._show_loved(value == 1)
 
     def _remember(self, named, obj):
         self._remembered[named] = obj
@@ -418,23 +449,26 @@ class ItemActions:
 
     # -- running -----------------------------------------------------------------------------
 
-    def _run(self, method, args, message=None):
-        """await method(*args) with the engine up (started when it is down and the account
-        signed in), then toast message; an EngineError is toasted instead. The task, or None
-        in demo mode."""
-        if self.app.demo:
-            self.window.toast(_('Not available with the demo library'))
+    def _run(self, method, args, message=None, ensure=True, after=None):
+        """await method(*args), with the engine up first when `ensure` (started when it is
+        down and the account signed in; the Player's own commands do that themselves), then
+        toast message and await after(); an EngineError is reported instead (app.report).
+        The task, or None with the demo library (which says so)."""
+        if self.app.refuse_in_demo():
             return None
 
         async def run():
             try:
-                await self.app.player.ensure_engine()
+                if ensure:
+                    await self.app.player.ensure_engine()
                 await method(*args)
             except EngineError as error:
                 self.app.report(error)
                 return
             if message:
-                self.window.toast(message)
+                self.app.toast(message)
+            if after is not None:
+                await after()
 
         return self.app.spawn(run())
 
@@ -454,16 +488,16 @@ class ItemActions:
         obj, kind, item_id = self._unpack(parameter)
         target = queue_target(obj) if obj is not None else (kind, item_id)
         if target is None:
-            self.window.toast(_('This cannot be queued'))
+            self.app.toast(_('This cannot be queued'))
             return None
         title = obj.title if obj is not None else ''
         if later:
             message = (_('“{title}” will play later').format(title=title) if title
                        else _('Playing later'))
-            return self._run(self.app.player.play_later, target, message)
+            return self._run(self.app.player.play_later, target, message, ensure=False)
         message = (_('“{title}” will play next').format(title=title) if title
                    else _('Playing next'))
-        return self._run(self.app.player.play_next, target, message)
+        return self._run(self.app.player.play_next, target, message, ensure=False)
 
     def _on_play_next(self, _action, parameter):
         return self._queue(parameter, later=False)
@@ -475,12 +509,14 @@ class ItemActions:
         obj, kind, item_id = self._unpack(parameter)
         target = rating_target(obj) if obj is not None else (kind, item_id)
         if target is None:
-            self.window.toast(_('This cannot be a favourite'))
+            self.app.toast(_('This cannot be a favourite'))
             return None
         loved, unloved = love_messages(target[0])
+        # A song loved goes into Favourite Songs: that playlist is fetched again.
+        after = self._refresh_favourites if target[0] == 'song' else None
         if love:
-            return self._run(self.engine.love, target, loved)
-        return self._run(self.engine.unlove, target, unloved)
+            return self._run(self.engine.love, target, loved, after=after)
+        return self._run(self.engine.unlove, target, unloved, after=after)
 
     def _on_love(self, _action, parameter):
         return self._rate(parameter, love=True)
@@ -492,7 +528,7 @@ class ItemActions:
         obj, kind, item_id = self._unpack(parameter)
         target = library_target(obj) if obj is not None else (kind, item_id)
         if target is None:
-            self.window.toast(_('This is in your library already'))
+            self.app.toast(_('This is in your library already'))
             return None
         title = obj.title if obj is not None else ''
         message = (_('Added “{title}” to your library').format(title=title) if title
@@ -502,13 +538,17 @@ class ItemActions:
     def _on_add_to_playlist(self, _action, parameter):
         playlist_id, kind, item_id = parameter.unpack()
         obj = self._resolve(kind, item_id)
-        song_id = playlist_song(obj) if obj is not None else item_id
-        return self.add_to_playlist(playlist_id, song_id, obj.title if obj is not None else '')
+        track = playlist_track(obj) if obj is not None else (kind, item_id)
+        if track is None:
+            track = (kind, item_id)
+        return self.add_to_playlist(playlist_id, track[1], obj.title if obj is not None else '',
+                                    kind=track[0])
 
-    def add_to_playlist(self, playlist_id, song_id, title=''):
-        """Add the song to the library playlist, confirming with a toast that names both."""
+    def add_to_playlist(self, playlist_id, song_id, title='', kind='song'):
+        """Add the song (or music video, `kind` 'video') to the library playlist, confirming
+        with a toast that names both, and fetch the playlist again so its page shows it."""
         if not song_id:
-            self.window.toast(_('Only songs can be added to a playlist'))
+            self.app.toast(_('Only songs can be added to a playlist'))
             return None
         playlist = self.library.by_id('playlist', playlist_id)
         name = playlist.title if playlist is not None else ''
@@ -518,7 +558,29 @@ class ItemActions:
             message = _('Added to “{playlist}”').format(playlist=name)
         else:
             message = _('Added to the playlist')
-        return self._run(self.engine.add_to_playlist, (playlist_id, song_id), message)
+        return self._run(self.engine.add_to_playlist, (playlist_id, song_id, kind), message,
+                         after=lambda: self._refresh_playlist(playlist_id))
+
+    async def _refresh_playlist(self, playlist_id):
+        """Bring a library playlist up to date after it changed on Apple's side (a song
+        added, Favourite Songs loved into): the engine's full Item merged into the
+        library's, whose groups-changed re-shows an open page. A failure is only logged:
+        the next sync brings the change anyway."""
+        playlist = self.library.by_id('playlist', playlist_id)
+        if playlist is None:
+            return
+        try:
+            answer = await self.engine.item('playlist', playlist_id)
+        except EngineError as error:
+            log.debug('playlist %s not refreshed: %s', playlist_id, error)
+            return
+        if isinstance(answer, dict):
+            playlist.merge(answer)
+
+    async def _refresh_favourites(self):
+        favourites = self.library.favourite_songs()
+        if favourites is not None and favourites.id:
+            await self._refresh_playlist(favourites.id)
 
     def can_drop(self, playlist):
         """Whether a track may be dropped on this sidebar playlist Item (one that takes
@@ -526,11 +588,11 @@ class ItemActions:
         return isinstance(playlist, Item) and playlist.editable
 
     def drop(self, playlist, ref):
-        """A TrackRef dropped on a sidebar playlist: added to it. False when the playlist
-        takes nothing (the drop is refused) or the ref names no song."""
+        """A library.TrackRef dropped on a sidebar playlist: added to it. False when the
+        playlist takes nothing (the drop is refused) or the ref names no song."""
         if not self.can_drop(playlist) or not isinstance(ref, TrackRef) or not ref.song_id:
             return False
-        self.add_to_playlist(playlist.id, ref.song_id, ref.title)
+        self.add_to_playlist(playlist.id, ref.song_id, ref.title, kind=ref.kind or 'song')
         return True
 
     # -- links -------------------------------------------------------------------------------
@@ -546,7 +608,7 @@ class ItemActions:
             except EngineError as error:
                 log.debug('catalog page of %s: %s', obj.id, error)
                 url = None
-            if url:
+            if url and is_apple_music_url(url):
                 return url
         return web_url(obj, self._storefront())
 
@@ -557,7 +619,7 @@ class ItemActions:
     async def _open(self, obj, kind, item_id):
         url = await self.link(obj, kind, item_id)
         if not url:
-            self.window.toast(_('This has no page to open'))
+            self.app.toast(_('This has no page to open'))
             return
         self.launch(url)
 
@@ -573,16 +635,18 @@ class ItemActions:
             launcher.launch_finish(result)
         except GLib.Error as error:
             log.warning('could not open %s: %s', launcher.get_uri(), error.message)
-            self.window.toast(_('Could not open the browser'))
+            self.app.toast(_('Could not open the browser'))
 
     def _on_copy_link(self, _action, parameter):
         obj, kind, item_id = self._unpack(parameter)
         return self.app.spawn(self._copy(obj, kind, item_id))
 
     async def _copy(self, obj, kind, item_id):
+        """The link on the clipboard, when it is one anyone can open (a library album's
+        catalog page comes from the engine; without it, the album has only its owner's)."""
         url = await self.link(obj, kind, item_id)
-        if not url:
-            self.window.toast(_('This has no link to copy'))
+        if not is_shareable(url):
+            self.app.toast(_('This has no link to copy'))
             return
         self.window.get_clipboard().set(url)
-        self.window.toast(_('Link copied'))
+        self.app.toast(_('Link copied'))
