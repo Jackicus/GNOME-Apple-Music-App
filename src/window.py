@@ -450,27 +450,44 @@ class Window(Adw.ApplicationWindow):
             self._sidebar.select(select, show=False)
             self.show_root(show)
 
-    def show_root(self, key):
+    def show_root(self, key, pop=False):
         """Make key's root page the navigation view's root. Pages pushed over it stay when it is
-        the root already: a reload selecting the page shown again must not pop them."""
+        the root already (a reload selecting the page shown again must not pop them), unless
+        `pop`: the user asked for that page, so they are popped."""
         root = self._root(key)
         stack = self.navigation_view.get_navigation_stack()
         if not stack.get_n_items() or stack.get_item(0) is not root:
             self.navigation_view.replace([root])
+        elif pop and stack.get_n_items() > 1:
+            self.navigation_view.pop_to_page(root)
         self.content_page.set_title(root.get_title())
         self.shown = key  # written to last-page when the window closes (_save_window_state)
 
     # -- the window's actions --------------------------------------------------------------
 
     def _on_search(self, *_args):
-        """win.search: select Search in the sidebar and put the cursor in its entry (the Now
-        Playing sheet closed first)."""
+        """win.search (Ctrl+F): the cursor in the filter of the page shown when it has one
+        (the Songs page's, as GNOME's apps with an in-page filter do), else in the Search
+        page's entry, that page shown over anything pushed on it (the Now Playing sheet
+        closed first; the content shown first in the collapsed layout)."""
         self._close_sheet()
-        self._sidebar.select('search')
-        self.split_view.set_show_content(True)
+        page = self.navigation_view.get_visible_page()
+        if page is not None and page is self._roots.get('songs') and page.focus_filter():
+            self._show_content_then(page.focus_filter)  # again, once the content is mapped
+            return
+        self._sidebar.select('search', pop=True)
         page = self._roots.get('search')
         if page is not None and hasattr(page, 'focus_entry'):
-            page.focus_entry()
+            self._show_content_then(page.focus_entry)
+
+    def _show_content_then(self, focus):
+        """Show the content in the collapsed layout, then run focus (a page's grab), from an
+        idle when the content had to be shown first (it is mapped by then)."""
+        if self.split_view.get_collapsed() and not self.split_view.get_show_content():
+            self.split_view.set_show_content(True)
+            GLib.idle_add(lambda: focus() and False)
+        else:
+            focus()
 
     def _can_go_back(self):
         return (len(self.navigation_view.get_navigation_stack()) > 1
@@ -501,23 +518,21 @@ class Window(Adw.ApplicationWindow):
     def _on_focus_content(self, *_args):
         """win.focus-content: the focus on the page shown, its content first (a grid, a
         list, an entry) rather than its header bar (the content shown first in the collapsed
-        layout, the sheet closed). Nothing moves when the focus is on the page already."""
+        layout, the sheet closed). Nothing moves when the focus is in the page's content
+        already; from its header bar (Back, Sort By, a filter) it moves into the content."""
         self._close_sheet()
-        if self.split_view.get_collapsed() and not self.split_view.get_show_content():
-            self.split_view.set_show_content(True)
-            GLib.idle_add(self._focus_content)
-        else:
-            self._focus_content()
+        self._show_content_then(self._focus_content)
 
     def _focus_content(self):
         page = self.navigation_view.get_visible_page()
         if page is None:
             return GLib.SOURCE_REMOVE
-        focus = self.get_focus()
-        if focus is not None and focus.is_ancestor(page):
-            return GLib.SOURCE_REMOVE
         toolbar = first_descendant(page, Adw.ToolbarView)
         content = toolbar.get_content() if toolbar is not None else None
+        focus = self.get_focus()
+        if focus is not None and content is not None and (
+                focus is content or focus.is_ancestor(content)):
+            return GLib.SOURCE_REMOVE
         if content is None or not content.child_focus(Gtk.DirectionType.TAB_FORWARD):
             page.child_focus(Gtk.DirectionType.TAB_FORWARD)
         return GLib.SOURCE_REMOVE

@@ -10,13 +10,16 @@ widgets (names, roles, tooltips, focus) are in `.claude/rules/ui.md`; the keys t
 narrow layout, `--names` for the accessible names). With a real keyboard, do the same by hand.
 When a key or a page changes, change this list and the script together.
 
-1. Ctrl+1 puts the focus on the selected sidebar row. Down and Up move: in the wide layout
-   they select, which shows the page; in the narrow one they only move. Enter shows the row's
-   page (and opens or closes a folder); a screen reader hears whether a folder is expanded.
+1. Ctrl+1 puts the focus on the selected sidebar row. Down and Up move through every
+   destination: in the wide layout they select, which shows the page; in the narrow one they
+   only move (each section is a boxed list of its own there, and libadwaita passes the focus
+   on from one to the next). Enter shows the row's page (and opens or closes a folder); a
+   screen reader hears whether a folder is expanded.
 2. Ctrl+2 puts the focus in the page: the first tile of a grid, the Songs table, the Search
-   entry, an album's Play. Arrows move between tiles and rows, Tab leaves a grid, shelf or list
-   after one item, Enter opens a tile or plays a row, Menu or Shift+F10 opens the focused item's
-   context menu and Escape closes it.
+   entry, an album's Play; from the page's header bar (Back, Sort By, a filter) too. Arrows
+   move between tiles and rows, Tab leaves a grid, shelf or list after one item, Enter opens a
+   tile or plays a row, Menu or Shift+F10 opens the focused item's context menu and Escape
+   closes it.
 3. On an album or playlist: Play, Tab to Shuffle and to More Options (the item's menu), Tab to
    the first track (Shift+Tab goes back to More Options), Down, and Enter plays from that
    track. Alt+Left (or Escape inside the page) goes back.
@@ -29,8 +32,9 @@ When a key or a page changes, change this list and the script together.
    the Lyrics and Up Next toggle (Left and Right switch) and into the list (arrows move, Enter
    seeks to a line or plays an entry), then the close button. Escape closes the sheet and the
    focus goes back to where it was.
-6. Ctrl+F shows Search with the cursor in the entry; Tab reaches the Apple Music / Your Library
-   toggle; Escape in the entry clears it.
+6. Ctrl+F shows Search with the cursor in the entry, over any page opened from its results;
+   Tab reaches the Apple Music / Your Library toggle; Escape in the entry clears it. On the
+   Songs page, Ctrl+F puts the cursor in the page's own filter instead.
 7. F10 opens the main menu, from a page in the narrow layout too (the sidebar comes back with
    it). Ctrl+, opens Preferences: Tab through the rows, Alt and the underlined letter for its
    buttons, Escape closes it. Ctrl+? lists every shortcut.

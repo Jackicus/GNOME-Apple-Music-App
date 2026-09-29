@@ -66,7 +66,7 @@ def sections():
             (_('Quit'), 'app.quit'),
         ]),
         (_('Navigation'), [
-            (_('Search'), 'win.search'),
+            (_('Search or Filter'), 'win.search'),
             (_('Go Back'), 'win.back'),
             (_('Focus the Sidebar'), 'win.focus-sidebar'),
             (_('Focus the Page'), 'win.focus-content'),
