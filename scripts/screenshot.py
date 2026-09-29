@@ -4,18 +4,22 @@
 
 """Render the app's window to a PNG, for checking UI changes without a human.
 
-    scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
-                          [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
+    scripts/headless.sh scripts/screenshot.py [out.png] --demo [--light] [--size WxH]
+                          [--page KEY] [--open KIND:ID] [--sidebar] [--expand ID[,ID…]]
+                          [--banner sign-in|expired] [--signed-in [NAME]]
                           [--now-playing [lyrics|queue]] [--playing] [--search TERM]
                           [--context-menu] [--preferences [general|engine]]
                           [--dialog about|shortcuts]
 
-Builds nothing itself: run meson install -C build (or scripts/run.sh) first.
-The window is really mapped for about a second, so --size is only a request:
+Builds nothing itself: run meson install -C build (or scripts/demo.sh) first. Run it
+through scripts/headless.sh, so the window opens on a private display and never on
+the desktop. The window is really mapped for a moment, so --size is only a request:
 a tiling window manager may choose its own. Settings go to a memory backend,
 and animations are off, so transitions finish at once. The shots use stock
 GNOME's icons and font (the Adwaita icon theme, Adwaita Sans 11), not the
-desktop's (scripts/harness.py).
+desktop's (scripts/harness.py). Before the shot, the script waits until no
+artwork decode has been in flight for a few polls (5 s at most), so tiles show
+their covers rather than placeholders.
 In the narrow (collapsed) layout the shot shows the sidebar, or the page when
 --page is given (--sidebar keeps the sidebar, scrolled to the page's row).
 --demo shows the invented library in build/demo (generated first if missing)
@@ -23,11 +27,12 @@ or in $APPLE_MUSIC_CACHE when that is set, as scripts/demo.sh does. The shot
 waits for the library to finish loading.
 --open KIND:ID opens an item once the library has loaded, as activating its
 tile does (window.open_item), over the --page (default home): KIND is album,
-artist, playlist, station or video, and ID an item id or "first", the first
-of that section. The shot then waits longer, for the artwork.
+artist, playlist, folder, station or video, and ID an item id or "first", the
+first of that section (for folder, the library's first playlist folder).
 --page also takes a sidebar playlist or folder, as last-page names them:
-playlist:ID or folder:ID. --expand opens these playlist folders in the
-sidebar (the expanded-folders setting); "first" is the library's first folder.
+playlist:ID or folder:ID (folder:first too). --expand opens these playlist
+folders in the sidebar (the expanded-folders setting); "first" is the library's
+first folder.
 --banner sign-in|expired reveals the sign-in banner as a signed-out release build,
 or one whose sign-in expired, shows it (the demo has no account, so none).
 --signed-in shows the account button as signed in (the signed-in and account-name
@@ -115,7 +120,10 @@ def first_folder():
 
 
 def on_activate(_app):
-    app.settings.set_string('last-page', args.page or 'home')
+    page = args.page or 'home'
+    if page == 'folder:first':
+        page = f'folder:{first_folder()}'
+    app.settings.set_string('last-page', page)
     expand = [folder_id for folder_id in args.expand.split(',') if folder_id]
     expand = [first_folder() if folder_id == 'first' else folder_id for folder_id in expand]
     app.settings.set_strv('expanded-folders', [folder_id for folder_id in expand if folder_id])
@@ -136,6 +144,14 @@ banner_shown = False
 failed = False  # a step raised: the app quits and the script exits 1
 preferences = None  # the Preferences dialog, once --preferences has opened it
 dialog = None  # the --dialog dialog, once opened
+# Waiting for the artwork before the shot: a poll every ARTWORK_POLL ms, the shot once
+# ARTWORK_QUIET polls in a row found no decode in flight (an ArtworkSlot asks in an idle
+# after its frame, so one quiet poll is not enough), or after ARTWORK_POLLS polls whatever.
+ARTWORK_POLL = 100
+ARTWORK_QUIET = 3
+ARTWORK_POLLS = 50
+artwork_polls = 0
+artwork_quiet = 0
 
 
 def open_now_playing(window):
@@ -160,6 +176,8 @@ def open_item(window):
     kind, _sep, item_id = args.open.partition(':')
     if item_id == 'first' and kind in SECTIONS:
         item = getattr(app.library, SECTIONS[kind]).get_item(0)
+    elif item_id == 'first' and kind == 'folder':
+        item = app.library.by_id('folder', first_folder())
     else:
         item = app.library.by_id(kind, item_id)
     if item is None:
@@ -241,6 +259,17 @@ def draw_popovers(window, snapshot):
         snapshot.restore()
 
 
+def artwork_settled():
+    """Whether the artwork has arrived: ARTWORK_QUIET polls in a row with no decode in
+    flight, or ARTWORK_POLLS polls in all."""
+    global artwork_polls, artwork_quiet
+    from applemusic.widgets import artwork
+
+    artwork_polls += 1
+    artwork_quiet = 0 if artwork.get_default().pending() else artwork_quiet + 1
+    return artwork_quiet >= ARTWORK_QUIET or artwork_polls >= ARTWORK_POLLS
+
+
 def shoot():
     """One step of the shot (each stage waits for the next frame), or the shot itself. A
     step that raises ends the run: the app quits, the traceback shown, rather than waiting
@@ -311,6 +340,9 @@ def _shoot():
         window.sign_in_banner.set_title(sign_in_title(args.banner == 'expired'))
         window.sign_in_banner.set_revealed(True)
         GLib.timeout_add(600, shoot)  # laid out under the header bar
+        return GLib.SOURCE_REMOVE
+    if not artwork_settled():
+        GLib.timeout_add(ARTWORK_POLL, shoot)
         return GLib.SOURCE_REMOVE
     for shown in (preferences, dialog):
         if shown is not None and shown.get_root() is not window:
