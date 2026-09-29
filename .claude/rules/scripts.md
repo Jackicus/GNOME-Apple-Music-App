@@ -26,7 +26,9 @@ paths:
 - screenshot.py and a11y_check.py also use the stock GNOME look (Adwaita icons, Adwaita Sans 11)
   and no animations, so shots do not depend on the desktop's theme.
 - `screenshot.py` without `--demo` reads the release build's real cache (`APPLE_MUSIC_CACHE`
-  names the .Devel build's): never for a shot that is committed or shared.
+  names the .Devel build's): never for a shot that is committed or shared. `--now-playing
+  [lyrics|queue]` opens the sheet on an invented item; `--playing` puts the item on the Player
+  with the sheet closed (the bar's playing state); both need `--demo`.
 - `a11y_check.py` cannot send real key presses here: `press()` runs the controllers a real event
   would reach. `--names` runs a private AT-SPI bus (a dbus-daemon and at-spi2-registryd) and
   stops it however the script exits.

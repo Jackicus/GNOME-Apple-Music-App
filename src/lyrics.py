@@ -4,7 +4,8 @@ current at a playback position, which the Now Playing sheet highlights.
 
     lyrics = Lyrics(answer, catalog_id)
     lyrics.synced          # True when the lines carry times (Apple's TTML had begin="…")
-    lyrics.lines           # Gio.ListStore of LyricLine (start_ms, end_ms, text), in time order
+    lyrics.lines           # Gio.ListStore of LyricLine (start_ms, end_ms, text, stanza), in
+                           # time order
     lyrics.text            # every line on its own line, a blank line before each stanza (a
                            # verse, a chorus: a line the answer marks `stanza`): the unsynced view
     lyrics.index_at(42.5)  # the index of the line current 42.5 s in, -1 before the first
@@ -24,13 +25,16 @@ from gi.repository import Gio, GObject
 
 
 class LyricLine(GObject.Object):
-    """One line of lyrics: its text and, when synced, when it starts and ends (milliseconds)."""
+    """One line of lyrics: its text, when synced when it starts and ends (milliseconds),
+    and whether it opens a stanza (a verse, a chorus: the synced view leaves a gap before
+    it, as the text does)."""
 
     __gtype_name__ = 'AppleMusicLyricLine'
 
     start_ms = GObject.Property(type=int, default=0)
     end_ms = GObject.Property(type=int, default=0)
     text = GObject.Property(type=str, default='')
+    stanza = GObject.Property(type=bool, default=False)
 
 
 def _ms(value):
@@ -81,8 +85,8 @@ class Lyrics(GObject.Object):
         parsed = parse_lines(answer)
         self.synced = bool(isinstance(answer, dict) and answer.get('synced')) and bool(parsed)
         self.lines = Gio.ListStore(item_type=LyricLine)
-        self.lines.splice(0, 0, [LyricLine(start_ms=start, end_ms=end, text=text)
-                                 for start, end, text, _stanza in parsed])
+        self.lines.splice(0, 0, [LyricLine(start_ms=start, end_ms=end, text=text, stanza=stanza)
+                                 for start, end, text, stanza in parsed])
         self._starts = [start for start, _end, _text, _stanza in parsed] if self.synced else []
         texts = []
         for index, (_start, _end, text, stanza) in enumerate(parsed):
