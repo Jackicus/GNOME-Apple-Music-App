@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """widgets/shelf.py: a Shelf follows its shelf and offers See All and the paging arrows only
-when the row does not show everything; a ShelfColumn keeps the widgets of the shelves it
-keeps, and never shows a shelf twice while it binds the rest a frame apart."""
+when the row does not show everything (no arrows in a narrow window); a ShelfColumn keeps the
+widgets of the shelves it keeps, and never shows a shelf twice while it binds the rest a frame
+apart."""
 
 import unittest
 
@@ -18,12 +19,20 @@ def model(key, count, title=None):
 
 
 class ShelfTest(PageTestCase):
-    async def shown(self, shelf_model, **options):
+    async def shown(self, shelf_model, width=None, **options):
+        """A Shelf of shelf_model shown in the window, `width` pixels wide (or the window's
+        width)."""
+        from gi.repository import Adw
+
         from applemusic.widgets.shelf import Shelf
 
         shelf = Shelf(see_all=True, **options)
         shelf.bind_shelf(shelf_model)
-        self.window.root_box.append(shelf)
+        if width is None:
+            self.window.root_box.append(shelf)
+        else:
+            self.window.root_box.append(Adw.Clamp(maximum_size=width,
+                                                  tightening_threshold=width, child=shelf))
         adjustment = shelf.scrolled_window.get_hadjustment()
         self.assertTrue(await self.until(lambda: adjustment.get_page_size() > 0))
         await self.turn()
@@ -49,6 +58,55 @@ class ShelfTest(PageTestCase):
         self.assertTrue(shelf.previous_button.get_sensitive())
         shelf.see_all_button.emit('clicked')
         self.assertEqual(len(self.window.shelves_opened), 1)
+
+    async def test_a_narrow_row_leaves_the_arrows_out_for_its_title(self):
+        from gi.repository import Gtk
+
+        from applemusic.widgets.shelf import ARROWS_MIN_WIDTH, text_scale
+
+        shelf = await self.shown(model('narrow', 40, title='Invented Rotations'), width=360)
+        scale = text_scale(shelf.get_settings())
+        adjustment = shelf.scrolled_window.get_hadjustment()
+        self.assertLessEqual(shelf.get_width(), ARROWS_MIN_WIDTH * scale)
+        self.assertGreater(adjustment.get_upper(), adjustment.get_page_size())  # overflows
+        self.assertTrue(shelf.see_all_button.get_visible())
+        self.assertFalse(shelf.previous_button.get_visible())
+        self.assertFalse(shelf.next_button.get_visible())
+        # The title has the room the arrows would have taken: all it asks for, here.
+        title = shelf.title_label
+        self.assertGreaterEqual(title.get_width(),
+                                title.measure(Gtk.Orientation.HORIZONTAL, -1)[1])
+
+    async def test_a_row_a_little_wider_keeps_its_arrows(self):
+        from gi.repository import Gdk, Gtk
+
+        from applemusic.widgets.shelf import ARROWS_MIN_WIDTH, text_scale
+
+        # The app's stylesheet, whose padding on the row takes 30 px off its adjustment's page.
+        provider = Gtk.CssProvider()
+        provider.load_from_resource('/io/github/jackicus/AppleMusic/style.css')
+        display = Gdk.Display.get_default()
+        Gtk.StyleContext.add_provider_for_display(display, provider,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.addCleanup(Gtk.StyleContext.remove_provider_for_display, display, provider)
+        width = round(ARROWS_MIN_WIDTH * text_scale(Gtk.Settings.get_default())) + 20
+        shelf = await self.shown(model('wider', 40), width=width)
+        self.assertEqual(shelf.get_width(), width)  # the list's padding not taken off
+        self.assertTrue(shelf.previous_button.get_visible())
+        self.assertTrue(shelf.next_button.get_visible())
+
+    def test_text_scale_follows_the_xft_dpi(self):
+        from types import SimpleNamespace
+
+        from applemusic.widgets.shelf import text_scale
+
+        def settings(dpi):
+            return SimpleNamespace(props=SimpleNamespace(gtk_xft_dpi=dpi))
+
+        self.assertEqual(text_scale(settings(96 * 1024)), 1.0)
+        self.assertEqual(text_scale(settings(144 * 1024)), 1.5)
+        self.assertEqual(text_scale(settings(-1)), 1.0)  # not set
+        self.assertEqual(text_scale(None), 1.0)
 
     async def test_see_all_follows_the_items(self):
         shelf_model = model('growing', 1)
