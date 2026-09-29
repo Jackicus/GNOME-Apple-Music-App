@@ -1,12 +1,13 @@
 """MPRIS: the metadata and property variants for a track and for none, PropertiesChanged with
 only the changed keys, Seeked, the methods and the writable properties, over a stand-in bus
 connection and a Player fed by apply() and by the engine's events. No GTK; the commands run
-under asyncio.run. One test puts the service on a private bus (Gio.TestDBus) and talks to it
-through GDBus, as a client would."""
+under asyncio.run. One test puts the service on a private bus (a dbus-daemon of its own) and
+talks to it through GDBus, as a client would."""
 
 import asyncio
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -835,20 +836,35 @@ class ServiceTest(unittest.TestCase):
         asyncio.run(go())
 
 
+def private_bus(test):
+    """The address of a dbus-daemon of the test's own, ended after it. Not Gio.TestDBus,
+    which is for a process of its own: its down() disposes the process's session-bus
+    singleton and waits up to 30 s for it to go (the widget tests hold one), and it unsets
+    DBUS_SESSION_BUS_ADDRESS and XDG_RUNTIME_DIR for the tests after."""
+    daemon = subprocess.Popen(
+        ['dbus-daemon', '--session', '--nofork', '--nopidfile', '--print-address=1'],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    test.addCleanup(daemon.wait)
+    test.addCleanup(daemon.terminate)
+    address = daemon.stdout.readline().strip()
+    daemon.stdout.close()
+    if not address:
+        raise unittest.SkipTest('dbus-daemon gave no address')
+    return address
+
+
 @unittest.skipUnless(shutil.which('dbus-daemon'), 'no dbus-daemon for a private bus')
 class PrivateBusTest(unittest.TestCase):
-    """The service on a private bus (Gio.TestDBus), reached through GDBus as a client would:
-    what GLib checks and answers itself from the node info (introspection, GetAll, a Set of
-    the wrong type), and a method call's round trip."""
+    """The service on a private bus (a dbus-daemon of its own), reached through GDBus as a
+    client would: what GLib checks and answers itself from the node info (introspection,
+    GetAll, a Set of the wrong type), and a method call's round trip."""
 
     def test_over_gdbus(self):
-        bus = Gio.TestDBus.new(Gio.TestDBusFlags.NONE)
-        bus.up()
-        self.addCleanup(bus.down)
+        address = private_bus(self)
         flags = (Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
                  | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION)
-        server = Gio.DBusConnection.new_for_address_sync(bus.get_bus_address(), flags, None, None)
-        client = Gio.DBusConnection.new_for_address_sync(bus.get_bus_address(), flags, None, None)
+        server = Gio.DBusConnection.new_for_address_sync(address, flags, None, None)
+        client = Gio.DBusConnection.new_for_address_sync(address, flags, None, None)
         engine = FakeEngine()
         app = FakeApp(engine)
         player = Player(app)
