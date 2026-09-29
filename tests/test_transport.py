@@ -249,6 +249,17 @@ class HeartTest(unittest.TestCase):
         self.assertIsNone(heart.target())  # nor an item of no known kind
 
 
+class QueueSliceTest(unittest.TestCase):
+    def test_the_slice_starts_at_the_entry_playing(self):
+        from applemusic.widgets.queue import slice_offset
+
+        self.assertEqual(slice_offset(4), 4)
+        self.assertEqual(slice_offset(0), 0)
+        self.assertEqual(slice_offset(-1), 0)  # nothing playing: the whole queue
+        # A row activated at slice position 2 while entry 4 plays is the queue's entry 6.
+        self.assertEqual(2 + slice_offset(4), 6)
+
+
 class ModeControlTest(unittest.TestCase):
     def test_the_repeat_cycle_is_put_back_on_a_failure(self):
         from applemusic.widgets.transport import ModeControl
