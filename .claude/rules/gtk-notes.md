@@ -30,7 +30,8 @@ Each of these was checked against the toolkit (or found the hard way). The sideb
 - A `Gtk.StringFilter` over `Gtk.ClosureExpression.new(str, lambda item: item.search_key, None)`
   filters tens of thousands of items in one pass (fold the text first, `ignore-case: false`).
 - A `Gtk.SliceListModel` whose `offset` plus `size` passes `G_MAXUINT` wraps its end and
-  ignores changes after it: "the rest from N" is `size = GLib.MAXUINT32 - N`.
+  ignores changes after it, or reports them wrongly (a `Gtk.ListView` over it has crashed):
+  "the rest from N" is `size = GLib.MAXUINT32 - N`, set again whenever the offset changes.
 
 ## Layout and widgets
 

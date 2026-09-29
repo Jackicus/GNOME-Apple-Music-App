@@ -12,6 +12,7 @@ paths:
   - "tests/test_player.py"
   - "tests/test_mpris.py"
   - "tests/test_transport.py"
+  - "tests/test_queue.py"
   - "tests/test_lyrics.py"
 ---
 
@@ -60,8 +61,9 @@ paths:
   short variant repeating its setters; check every size with
   `scripts/screenshot.py --demo --now-playing lyrics|queue --size WxH` and the log for
   libadwaita's "exceeds … height" warning. Up Next is a `Gtk.SliceListModel` of the queue
-  from the entry playing on; the lyrics list is the user's while they scroll it (wheel,
-  touch, scrollbar) or have the focus on a line.
+  from the entry playing on, its size set again with each offset (`queue.slice_size()`,
+  gtk-notes.md; tests/test_queue.py); the lyrics list is the user's while they scroll it
+  (wheel, touch, scrollbar) or have the focus on a line.
 - MPRIS: the app owns `org.mpris.MediaPlayer2.<app id>`; Chrome's own player is disabled by its
   launch flags. The object is registered with
   `Gio.DBusConnection.register_object_with_closures2` (the older call is deprecated since GLib
