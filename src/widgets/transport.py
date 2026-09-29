@@ -548,14 +548,18 @@ class RemoteCover:
         self.show(track.artwork_url if track is not None else None)
 
     def show(self, url):
+        """The artwork at `url`: the one shown stays until the new one has been found
+        (most are on disk already: no placeholder flashes between items), or none for None
+        or a failed fetch."""
         if url == self._url:
             return
         self._url = url
-        self.cover.set_paths()
         if url and self._app is not None:
             self._app.spawn(self._fetch(url))
+        else:
+            self.cover.set_paths()
 
     async def _fetch(self, url):
         path = await fetch_remote(url, config.COVER_SIZE)
-        if path and self._url == url:
-            self.cover.set_paths(path)
+        if self._url == url:
+            self.cover.set_paths(*([path] if path else []))

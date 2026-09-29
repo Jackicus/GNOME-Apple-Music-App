@@ -3,8 +3,9 @@
 
     scripts/screenshot.py [out.png] [--light] [--size WxH] [--page KEY] [--demo]
                           [--open KIND:ID] [--expand ID[,ID…]] [--signed-in [NAME]]
-                          [--now-playing [lyrics|queue]] [--search TERM] [--context-menu]
-                          [--preferences [general|engine]] [--dialog about|shortcuts]
+                          [--now-playing [lyrics|queue]] [--playing] [--search TERM]
+                          [--context-menu] [--preferences [general|engine]]
+                          [--dialog about|shortcuts]
 
 Builds nothing itself: run meson install -C build (or scripts/run.sh) first.
 The window is really mapped for about a second, so --size is only a request:
@@ -31,6 +32,8 @@ never started here.
 library's first album, playing, its queue the album, the synced lyrics of
 tests/fixtures/lyrics.json, the album's cover as its artwork) and opens the Now
 Playing sheet on its Lyrics tab, or on Up Next with "queue". With --demo only.
+--playing puts the same item on the Player and leaves the sheet closed: the player
+bar in its playing state. With --demo only.
 --search TERM shows the Search page in Your Library mode with TERM typed (the
 results of the offline filter; the engine is never started here).
 --context-menu pops up the context menu of the page's first tile or row (the
@@ -67,6 +70,8 @@ parser.add_argument('--signed-in', metavar='NAME', nargs='?', const='',
 parser.add_argument('--now-playing', metavar='TAB', nargs='?', const='lyrics',
                     choices=['lyrics', 'queue'],
                     help='an invented item playing, the Now Playing sheet open on TAB')
+parser.add_argument('--playing', action='store_true',
+                    help='an invented item playing, the sheet closed (the player bar)')
 parser.add_argument('--search', metavar='TERM',
                     help='the Search page in Your Library mode with TERM typed')
 parser.add_argument('--context-menu', action='store_true',
@@ -79,8 +84,8 @@ parser.add_argument('--dialog', choices=['about', 'shortcuts'],
 args = parser.parse_args()
 if args.search:
     args.page = 'search'
-if args.now_playing and not args.demo:
-    parser.error('--now-playing needs --demo')
+if (args.now_playing or args.playing) and not args.demo:
+    parser.error('--now-playing and --playing need --demo')
 width, height = (int(n) for n in args.size.split('x'))
 
 app = harness.make_app('Screenshot', demo=args.demo, light=args.light, size=(width, height))
@@ -123,10 +128,12 @@ dialog = None  # the --dialog dialog, once opened
 
 def open_now_playing(window):
     """--now-playing: the invented item on the Player (the demo's first album playing, with
-    the lyrics fixture) and the sheet open on the tab."""
+    the lyrics fixture) and the sheet open on the tab; --playing: the item only, for the
+    player bar."""
     app.player.apply(harness.invented_playing_state(app, lyrics=True))
-    window.now_playing.tab_stack.set_visible_child_name(args.now_playing)
-    window.bottom_sheet.set_open(True)
+    if args.now_playing:
+        window.now_playing.tab_stack.set_visible_child_name(args.now_playing)
+        window.bottom_sheet.set_open(True)
 
 
 def search_library(window):
@@ -239,7 +246,7 @@ def shoot():
         open_item(window)
         GLib.timeout_add(1500, shoot)  # after the push, with the artwork decoded
         return GLib.SOURCE_REMOVE
-    if args.now_playing and not sheet_opened:
+    if (args.now_playing or args.playing) and not sheet_opened:
         sheet_opened = True
         open_now_playing(window)
         GLib.timeout_add(1500, shoot)  # the sheet open, the artwork decoded
