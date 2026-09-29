@@ -24,6 +24,7 @@ from ..widgets import context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.track_row import TrackRow
 from ..widgets.util import connect_weak
+from . import app
 
 log = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ class DetailPage(Adw.NavigationPage):
         self.cover.set_paths(item.art, item.thumb)  # the 640 px cover, else the thumbnail
         if item.raw.get('artUrl'):
             # A sync fetches thumbnails only: the cover comes now, if it is not on disk yet.
-            Gio.Application.get_default().spawn(self._fetch_cover(item))
+            app().spawn(self._fetch_cover(item))
         self.title_label.set_label(item.title)
         self.subtitle_label.set_label(item.subtitle)
         self.subtitle_label.set_visible(bool(item.subtitle))
@@ -237,12 +238,11 @@ class DetailPage(Adw.NavigationPage):
     def _fetch(self, item):
         self._fetching = item
         self._set_status('loading')
-        Gio.Application.get_default().spawn(self._fetch_groups(item))
+        app().spawn(self._fetch_groups(item))
 
     async def _fetch_groups(self, item):
-        app = Gio.Application.get_default()
         try:
-            answer = await app.engine.item(item.kind, item.id)
+            answer = await app().engine.item(item.kind, item.id)
         except EngineError as error:
             log.info('tracks of %s %s: %s', item.kind, item.id, error)
             if self._fetching is item:
@@ -286,22 +286,20 @@ class DetailPage(Adw.NavigationPage):
         self.status_button.set_visible(bool(button))
 
     def _on_status_clicked(self, _button):
-        app = Gio.Application.get_default()
         if self._status == 'not-signed-in':
-            app.activate_action('sign-in')
+            app().activate_action('sign-in')
         elif self._status == 'engine-down':
             self._fetching = self.item
             self._set_status('loading')
-            app.spawn(self._start_and_fetch(self.item))
+            app().spawn(self._start_and_fetch(self.item))
         elif self.item is not None:
             self._fetch(self.item)
 
     async def _start_and_fetch(self, item):
-        app = Gio.Application.get_default()
         try:
-            await app.engine.start()
+            await app().engine.start()
         except EngineError as error:
-            app.report(error)
+            app().report(error)
             if self._fetching is item:
                 self._fetching = None
                 if self.item is item:

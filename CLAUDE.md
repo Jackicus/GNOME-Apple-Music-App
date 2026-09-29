@@ -52,7 +52,8 @@ Application (main.py)    app.settings, .library, .engine, .player, .mpris, .libr
 
 Pages reach the app through the window's seams (`self.get_root()`): `open_item(item)`,
 `open_shelf(shelf)`, `open_songs(text)`, `play_request(play, start_with=None, shuffle=False)`
-(every "play this"), `add_toast(toast)` and `item_actions`, not its internals.
+(every "play this"), `add_toast(toast)` and `item_actions`, not its internals; the Application
+through `pages.app()`.
 
 On disk: `$XDG_CACHE_HOME/apple-music/` (library.json, art/, thumb/, remote-art/,
 lyrics/, day-long page answers; `apple-music-devel/` for .Devel);

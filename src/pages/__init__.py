@@ -1,12 +1,16 @@
-"""The content pane's root pages, one per sidebar destination that has one.
+"""The content pane's root pages, one per sidebar destination (PAGES).
 
-create(destination, library) builds a destination's page, or returns None for a destination that
-has none yet (the window shows a placeholder for it). The window builds each page on its first
-visit and keeps it. The sidebar's playlists and folders get theirs from playlist() and folder(),
-which a folder's tiles use too.
+create(destination, library) builds a destination's page. The window builds each page on its
+first visit and keeps the fixed destinations' for good; the sidebar's playlists and folders get
+theirs from playlist() and folder() (which a folder's tiles use too), and the window keeps only
+the most recently shown few of those (window.ROOT_LIMIT), building one again when it is shown
+again.
 
 Each page's module is imported when its first page is built, not here: the app starts with one
 page, and importing every page module (their templates and widgets) cost about 20 ms of startup.
+
+Pages reach the application through app(), and the window through get_root() and its seams
+(open_item, open_shelf, open_songs, play_request, add_toast, item_actions).
 """
 
 from gettext import gettext as _
@@ -17,12 +21,18 @@ from ..library import ROOT_FOLDER
 from ..sidebar import FOLDER_ICON, PLAYLIST_ICON
 
 
+def app():
+    """The application (Gio.Application.get_default()): its engine, settings, spawn() and
+    report(). How every page reaches it; None only in a test without one."""
+    return Gio.Application.get_default()
+
+
 def mark_bound(page):
     """Note a page's first tile or row being bound, for the startup timing
     (Application.mark: '<tag>-bound', and '<tag>-painted' at the end of that frame), when
     the page is a root page (the window tags those with their key)."""
     tag = page.get_tag()
-    mark = getattr(Gio.Application.get_default(), 'mark', None)
+    mark = getattr(app(), 'mark', None)
     if tag and mark is not None:
         mark(f'{tag}-bound', painted=f'{tag}-painted')
 
@@ -124,8 +134,9 @@ def _music_videos(destination, library):
 
 
 def playlist(library, playlist_id, title):
-    """A sidebar playlist's root page: its detail page, following the library by the id (each
-    load makes new Items), with an empty state once the playlist is gone."""
+    """A sidebar playlist's root page: its detail page, following the library by the id (a
+    load after sign-out makes new Items; a reload keeps them, and the page follows the Item's
+    signals), with an empty state once the playlist is gone."""
     from .detail import DetailPage
 
     return DetailPage(library, find=lambda: library.by_id('playlist', playlist_id), root=True,
@@ -162,6 +173,5 @@ PAGES = {
 
 
 def create(destination, library):
-    """A new root page for the destination, or None when it has no page yet."""
-    factory = PAGES.get(destination.key)
-    return factory(destination, library) if factory else None
+    """A new root page for the destination (KeyError for a key PAGES does not know)."""
+    return PAGES[destination.key](destination, library)

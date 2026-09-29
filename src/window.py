@@ -512,8 +512,6 @@ class Window(Adw.ApplicationWindow):
             destination = self._destination_keys.get(key)
             if destination is not None:
                 page = pages.create(destination, self._library)
-                if page is None:
-                    page = self._placeholder_page(destination)
             else:
                 kind, item_id = parse_key(key)
                 entry = self._entry(key)
@@ -577,16 +575,6 @@ class Window(Adw.ApplicationWindow):
         if self._expanded:
             self._expanded.clear()
             self._save_expanded()
-
-    def _placeholder_page(self, destination):
-        status = Adw.StatusPage(
-            icon_name=destination.icon_name,
-            title=destination.title,
-            description=_('Nothing here yet'),
-        )
-        toolbar = Adw.ToolbarView(content=status)
-        toolbar.add_top_bar(Adw.HeaderBar(show_title=False))
-        return Adw.NavigationPage(title=destination.title, child=toolbar)
 
     def _restore_page(self, key):
         """Show the page last-page names.

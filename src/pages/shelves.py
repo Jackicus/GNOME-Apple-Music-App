@@ -13,12 +13,13 @@ again past the day-long cache.
 import logging
 from gettext import gettext as _
 
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gtk
 
 from ..backend.errors import EngineError
 from ..remote import fetch_shelf_art, remote_shelves
 from ..widgets.shelf import Shelf
 from ..widgets.util import connect_weak
+from . import app
 
 log = logging.getLogger(__name__)
 
@@ -65,15 +66,11 @@ class ShelvesPage(Adw.NavigationPage):
         connect_weak(self.refresh_button, 'clicked', self._on_refresh_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
 
-    @staticmethod
-    def _app():
-        return Gio.Application.get_default()
-
     # The engine outlives the page: it is watched only while the page is shown.
 
     def do_map(self):
         Adw.NavigationPage.do_map(self)
-        engine = self._app().engine
+        engine = app().engine
         self._engine_handlers = [
             engine.connect('notify::state', self._on_engine_changed),
             engine.connect('notify::authorized', self._on_engine_changed),
@@ -82,7 +79,7 @@ class ShelvesPage(Adw.NavigationPage):
             self.load()
 
     def do_unmap(self):
-        engine = self._app().engine
+        engine = app().engine
         for handler in self._engine_handlers:
             engine.disconnect(handler)
         self._engine_handlers = []
@@ -92,7 +89,7 @@ class ShelvesPage(Adw.NavigationPage):
         """Ask for the shelves (again, past the cache, with `refresh`)."""
         if self._task is not None and not self._task.done():
             self._task.cancel()
-        self._task = self._app().spawn(self._load(refresh))
+        self._task = app().spawn(self._load(refresh))
 
     async def _load(self, refresh):
         if not self._shelves:
@@ -103,7 +100,7 @@ class ShelvesPage(Adw.NavigationPage):
         except EngineError as error:
             log.info('%s: %s', self.get_title(), error)
             if self._shelves:
-                self._app().report(error)  # a refresh that failed keeps what is shown
+                app().report(error)  # a refresh that failed keeps what is shown
             else:
                 self._set_status(error.code, error.message)
             return
@@ -131,7 +128,7 @@ class ShelvesPage(Adw.NavigationPage):
         if shelves:
             self._status = None
             self.stack.set_visible_child_name('items')
-            self._art_task = self._app().spawn(fetch_shelf_art(shelves))
+            self._art_task = app().spawn(fetch_shelf_art(shelves))
         else:
             self._set_status('empty')
 
@@ -141,14 +138,13 @@ class ShelvesPage(Adw.NavigationPage):
         already, when the spinner stays; 'not-signed-in': Sign In; anything else: Try
         Again), or 'empty'."""
         self._status = status
-        app = self._app()
-        if status == 'loading' or (status == 'engine-down' and app.engine.state == 'starting'):
+        if status == 'loading' or (status == 'engine-down' and app().engine.state == 'starting'):
             self.stack.set_visible_child_name('loading')
             return
         self.status_page.set_icon_name(self._icon_name)
         if status == 'engine-down':
             title = _('Engine Not Running')
-            if app.demo:
+            if app().demo:
                 description, button = _('Not available with the demo library'), None
             else:
                 description, button = _('Start the engine to load this page'), _('Start Engine')
@@ -179,21 +175,19 @@ class ShelvesPage(Adw.NavigationPage):
         self.load(refresh=True)
 
     def _on_status_clicked(self, _button):
-        app = self._app()
         if self._status == 'not-signed-in':
-            app.activate_action('sign-in')
+            app().activate_action('sign-in')
         elif self._status == 'engine-down':
             self._set_status('loading')
-            app.spawn(self._start_and_load())
+            app().spawn(self._start_and_load())
         else:
             self.load()
 
     async def _start_and_load(self):
-        app = self._app()
         try:
-            await app.engine.start()
+            await app().engine.start()
         except EngineError as error:
-            app.report(error)
+            app().report(error)
             self._set_status(error.code, error.message)
             return
         self.load()
@@ -202,9 +196,8 @@ class ShelvesPage(Adw.NavigationPage):
 def category_page(item):
     """A category's page (a tile of the search landing, a banner of New), pushed over the
     page it was opened from: the curator's grouping as shelves."""
-    app = Gio.Application.get_default()
     page = ShelvesPage(item.title,
-                       lambda refresh: app.engine.category(item.id, refresh=refresh),
+                       lambda refresh: app().engine.category(item.id, refresh=refresh),
                        root=False, icon_name='view-grid-symbolic', hero=False,
                        empty_title=_('Nothing Here'),
                        empty_description=_('This category has nothing to show right now'))

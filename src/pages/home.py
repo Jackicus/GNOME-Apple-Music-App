@@ -1,9 +1,10 @@
 """AppleMusicHomePage: the library's shelves, one under another, as on music.apple.com's Home."""
 
-from gi.repository import Adw, Gio, Gtk
+from gi.repository import Adw, Gtk
 
 from ..library import yield_to_frames
 from ..widgets.shelf import Shelf
+from . import app
 
 # The shelves bound before the page is drawn: the hero cards and what fits under them. The
 # rest are bound one a frame after that, below the fold: a library with 21 shelves made
@@ -74,12 +75,11 @@ class HomePage(Adw.NavigationPage):
         frame apart (a newer _show() stops the rest)."""
         self._shelves = shelves
         self._generation += 1
-        app = Gio.Application.get_default()
-        now = shelves if app is None else shelves[:FIRST_SHELVES]
+        now = shelves if app() is None else shelves[:FIRST_SHELVES]
         for position, shelf in enumerate(now):
             self._bind(position, shelf)
         if len(now) < len(shelves):
-            app.spawn(self._show_rest(shelves, len(now), self._generation))
+            app().spawn(self._show_rest(shelves, len(now), self._generation))
         else:
             self._trim(len(shelves))
 
