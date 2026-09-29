@@ -64,6 +64,11 @@ its "Performance pass" phase.
   160 px (headless, 40,000 songs, 2026-09-29): 3.1-3.5 ms of work a frame against 2.9 ms
   without stand-ins, the longest frame the same (5.2-5.6 ms). Kept: the rows show the cover at
   once instead of the placeholder.
+- Hidden root pages keep their list and grid widgets (the window keeps each visited root page).
+  Letting the six hidden views' item widgets go while they are hidden, and rebuilding them on a
+  revisit, would free about 6.3 MB on the 3,000-album, 40,000-song library (headless,
+  2026-09-29): under the 10 MB it had to save to be worth a rebuild on every revisit, so it is
+  not done.
 
 ## Chrome and the page
 
