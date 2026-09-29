@@ -194,11 +194,17 @@ class ArtistPage(Adw.NavigationPage):
 
     def do_unmap(self):
         self._engine_status.unwatch()
+        Adw.NavigationPage.do_unmap(self)
+
+    def do_hidden(self):
+        # Left (popped, covered, or another destination shown), not just unmapped (a push
+        # maps, unmaps and maps a page again): the fetch stops, asked again when shown.
         if self._fetch_task is not None and not self._fetch_task.done():
             self._fetch_task.cancel()
-            self._fetched = None  # asked again when the page shows again
+            self._fetch_task = None
+            self._fetched = None
             self._engine_status.clear()
-        Adw.NavigationPage.do_unmap(self)
+        Adw.NavigationPage.do_hidden(self)
 
     async def _fetch_cover(self, item):
         if await fetch_cover(item) and self.item is item:

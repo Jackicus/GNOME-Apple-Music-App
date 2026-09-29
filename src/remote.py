@@ -221,13 +221,20 @@ def remote_shelves(dicts):
     """ShelfModel objects for the engine's shelf dicts ({key, title, items}), titled by
     shelf_title(), the items wrapped as Items with their artwork under remote-art
     (remote_item()); a shelf with nothing in it, or an item without an id and a kind, is left
-    out."""
+    out. An artist, whose dict has no subtitle (the backend writes no words), is subtitled
+    'Artist', which a card shows under the name as an album's shows its artist."""
+    # Translators: the second line of an artist's card among a search's top results, where
+    # an album's card names its artist.
+    artist = _('Artist')
     shelves = []
     for data in dicts or []:
         if not isinstance(data, dict):
             continue
         items = [Item(remote_item(entry)) for entry in data.get('items') or []
                  if isinstance(entry, dict) and entry.get('id') and entry.get('kind')]
+        for item in items:
+            if item.kind == 'artist' and not item.subtitle:
+                item.subtitle = artist
         if items:
             shelves.append(ShelfModel(str(data.get('key') or ''), shelf_title(data), items))
     return shelves

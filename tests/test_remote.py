@@ -281,6 +281,21 @@ class ShelfTest(RemoteTestCase):
         ])
         self.assertEqual([(shelf.key, shelf.title) for shelf in shelves], [('albums', '<Albums>')])
 
+    def test_an_unknown_key_keeps_apples_title(self):
+        shelves = remote.remote_shelves([
+            {'key': 'top', 'title': 'Top Results', 'items': [{'id': '1', 'kind': 'song'}]},
+            {'key': 'new-best', 'title': 'Best New Songs',
+             'items': [{'id': '2', 'kind': 'song'}]},
+        ])
+        self.assertEqual([shelf.title for shelf in shelves], ['<Top Results>', 'Best New Songs'])
+
+    def test_an_artist_is_subtitled_by_its_kind(self):
+        shelves = remote.remote_shelves([{'key': 'top', 'title': '', 'items': [
+            {'id': '1', 'kind': 'artist', 'title': 'Invented Artist'},
+            {'id': '2', 'kind': 'album', 'title': 'Invented Album', 'subtitle': 'Someone'},
+        ]}])
+        self.assertEqual([item.subtitle for item in shelves[0].items], ['<Artist>', 'Someone'])
+
     def test_shelf_art_is_fetched_for_the_items_that_name_it(self):
         shelves = remote.remote_shelves([{'key': 'albums', 'title': '', 'items': [
             {'id': str(n), 'kind': 'album', 'title': f'A{n}',
