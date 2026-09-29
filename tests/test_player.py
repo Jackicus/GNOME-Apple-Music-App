@@ -275,6 +275,26 @@ class EventTest(unittest.TestCase):
         self.engine.event('playbackStateDidChange', {'state': 'stopped'})
         self.assertFalse(self.player.active)
 
+    def test_seeking_keeps_the_state_before_it(self):
+        self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})
+        self.engine.event('playbackStateDidChange', {'state': 'playing'})
+        self.engine.event('playbackStateDidChange', {'state': 'seeking', 'position': 30})
+        self.assertEqual((self.player.state, self.player.resting), ('seeking', 'playing'))
+        self.assertTrue(self.player.active)  # the bar keeps its Pause icon
+        self.assertFalse(self.player.stopped)
+
+        async def toggle():
+            await self.player.toggle()
+        asyncio.run(toggle())
+        self.assertEqual(self.engine.calls[-1], ('control', 'pause'))
+        self.engine.event('playbackStateDidChange', {'state': 'paused'})
+        self.engine.event('playbackStateDidChange', {'state': 'seeking'})
+        self.assertEqual(self.player.resting, 'paused')
+        self.assertFalse(self.player.active)
+        self.engine.event('playbackStateDidChange', {'state': 'stopped'})
+        self.engine.event('playbackStateDidChange', {'state': 'seeking'})
+        self.assertTrue(self.player.stopped)
+
     def test_stopped_is_no_item_or_a_stopped_state(self):
         self.assertTrue(self.player.stopped)  # nothing yet
         self.engine.event('nowPlayingItemDidChange', {'track': TRACK, 'index': 2})

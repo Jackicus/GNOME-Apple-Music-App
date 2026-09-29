@@ -285,9 +285,6 @@ class MetadataTest(unittest.TestCase):
         self.assertEqual(playback_status('paused'), 'Paused')
         for state in ('none', 'stopped', 'ended', 'completed', 'bogus'):
             self.assertEqual(playback_status(state), 'Stopped')
-        self.assertEqual(playback_status('seeking', 'Playing'), 'Playing')
-        self.assertEqual(playback_status('seeking', 'Paused'), 'Paused')
-        self.assertEqual(playback_status('seeking'), 'Stopped')
 
     def test_loop_status(self):
         self.assertEqual([loop_status(mode) for mode in ('none', 'one', 'all', 'x')],
