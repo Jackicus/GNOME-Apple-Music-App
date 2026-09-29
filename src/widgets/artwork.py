@@ -25,6 +25,7 @@ engine.
 """
 
 import asyncio
+import functools
 import itertools
 import logging
 from collections import OrderedDict
@@ -36,6 +37,8 @@ gi.require_version('Gdk', '4.0')
 gi.require_version('GdkPixbuf', '2.0')
 
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib  # noqa: E402
+
+from .util import weak_method  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -171,6 +174,178 @@ def empty(size):
     if paintable is None:
         paintable = _EMPTY[size] = Gdk.Paintable.new_empty(size, size)
     return paintable
+
+
+class ArtworkSlot:
+    """The artwork of one widget: which file it shows, at what size, and only while the
+    widget is on screen. Every widget that draws artwork owns one (a tile, a cover, a category
+    tile, the artist portrait) and keeps only the drawing:
+
+        self._slot = ArtworkSlot(self._set_art, size)   # size: the edge drawn, logical px
+        self._slot.attach(self)                         # map, unmap, the scale factor
+        self._slot.set_paths(item.art, item.thumb)      # in bind; set_paths() in unbind
+
+        def _set_art(self, paintable, found):           # found: a texture, not empty()
+            self.picture.set_paintable(paintable)
+            self.placeholder_icon.set_opacity(0 if found else 1)
+
+    `on_texture(paintable, found)` is a bound method of the widget, held weakly (a slot is
+    held by the widget's signal handlers: widgets/util.py), and always gets a paintable: a
+    texture (found True), or empty() at the size drawn (found False), never None, so nothing
+    is laid out again when artwork comes and goes (a widget that shows something else
+    without artwork, an Adw.Avatar's initials, reads `found`).
+
+    The paths are in order of preference; None and '' are skipped. While mapped, the first
+    path decoded at the pixel size (size times the widget's scale factor) is shown at once
+    from the Artwork cache; until a better one arrives, any of them decoded at another size
+    stands in (a detail page's cover shows the thumbnail its tile decoded). The better ones
+    are asked for in an idle after the frame, not as the widget binds or maps (a list maps
+    and binds rows by the hundred and shows a dozen): the first path, and on failure the next,
+    down to the one shown. The idle reads the paths and the best found when it runs, so a
+    rebind before it runs asks for the new item's. Unmapped, the request is cancelled and the
+    texture let go of (empty() shown); a new size or scale factor while mapped asks again at
+    the new pixel size.
+    """
+
+    def __init__(self, on_texture, size=0, loader=None):
+        self._on_texture = weak_method(on_texture)
+        self._loader = loader  # None: get_default(), looked up when used
+        self._size = size
+        self._scale = 1
+        self._paths = ()
+        self._mapped = False
+        self._best = 0  # the position of the path shown from the cache; len(paths): none
+        self._token = None  # the decode asked for
+        self._idle = None  # the idle that will ask for it
+
+    @property
+    def paths(self):
+        return self._paths
+
+    @property
+    def pixels(self):
+        """The edge drawn in device pixels: the size the texture is decoded at."""
+        return self._size * self._scale
+
+    def attach(self, widget):
+        """Follow `widget`'s map, unmap and scale factor (the handlers hold the slot, and the
+        slot the widget weakly: no cycle)."""
+        widget.connect('map', _on_map, self)
+        widget.connect('unmap', _on_unmap, self)
+        widget.connect('notify::scale-factor', _on_scale_factor, self)
+        if widget.get_mapped():
+            self.map(widget.get_scale_factor())
+
+    def set_paths(self, *paths):
+        """Show the first of these files that decodes. False when they are the paths shown
+        already (nothing is asked for again: refresh() does that)."""
+        paths = tuple(path for path in paths if path)
+        if paths == self._paths:
+            return False
+        self._paths = paths
+        if self._mapped:
+            self._show()
+        return True
+
+    def refresh(self):
+        """Look for the paths again: a better file has arrived on disk since."""
+        if self._mapped:
+            self._show()
+
+    def set_size(self, size):
+        """The edge drawn, in logical pixels."""
+        if size != self._size:
+            self._size = size
+            if self._mapped:
+                self._show()
+
+    def set_scale(self, scale):
+        if scale != self._scale:
+            self._scale = scale
+            if self._mapped:
+                self._show()
+
+    def map(self, scale=1):
+        self._mapped = True
+        self._scale = scale
+        self._show()
+
+    def unmap(self):
+        self._mapped = False
+        self._cancel()
+        self._emit(None)
+
+    def _get_loader(self):
+        return self._loader or get_default()
+
+    def _show(self):
+        """Show the best path decoded already, and ask for the better ones before it once the
+        frame has settled."""
+        loader = self._get_loader()
+        loader.cancel(self._token)
+        self._token = None
+        pixels = self.pixels
+        best, texture = len(self._paths), None
+        for position, path in enumerate(self._paths):
+            texture = loader.get(path, pixels)
+            if texture is not None:
+                best = position
+                break
+        else:  # meanwhile, one of the paths decoded at another size, if any is
+            texture = next((found for found in map(loader.get_any, self._paths)
+                            if found is not None), None)
+        self._best = best
+        self._emit(texture)
+        if best > 0 and self._idle is None:
+            self._idle = GLib.idle_add(self._request_soon, priority=GLib.PRIORITY_DEFAULT_IDLE)
+
+    def _request_soon(self):
+        self._idle = None
+        if self._mapped:
+            self._request(0)
+        return GLib.SOURCE_REMOVE
+
+    def _request(self, position):
+        """Decode the path at position, and on failure the next, stopping short of the one
+        shown."""
+        if position >= self._best:
+            return
+        callback = functools.partial(self._on_decoded, position)
+        token = self._get_loader().request(self._paths[position], callback, self.pixels)
+        if token is not None:  # None: answered already, and the callback went on from there
+            self._token = token
+
+    def _on_decoded(self, position, texture):
+        self._token = None
+        if texture is not None:
+            self._emit(texture)
+        else:
+            self._request(position + 1)
+
+    def _cancel(self):
+        if self._idle is not None:
+            GLib.source_remove(self._idle)
+            self._idle = None
+        self._get_loader().cancel(self._token)
+        self._token = None
+
+    def _emit(self, texture):
+        if texture is None:
+            self._on_texture(empty(self.pixels), False)
+        else:
+            self._on_texture(texture, True)
+
+
+def _on_map(widget, slot):
+    slot.map(widget.get_scale_factor())
+
+
+def _on_unmap(_widget, slot):
+    slot.unmap()
+
+
+def _on_scale_factor(widget, _pspec, slot):
+    slot.set_scale(widget.get_scale_factor())
 
 
 def _weight(texture):

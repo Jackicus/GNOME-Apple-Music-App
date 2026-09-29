@@ -40,11 +40,12 @@ docs/notes.md.
   hidden. Show `artwork.empty(size)` for no texture and fade the placeholder icon instead.
 - Artwork goes through `widgets.artwork.get_default()`: `get(path, size)` answers from the
   cache, `request(path, callback, size)` decodes in a thread, `cancel(token)` when the widget is
-  recycled or unmapped. `size` is the edge drawn in device pixels. Ask in an idle after the
-  frame, not in bind, and let go on unmap. Tile, SongTitle and Cover each carry a copy of that
-  logic, and CategoryTile and the artist portrait a looser one; the copies have diverged (only
-  Cover falls back to `get_any()`; the last two skip the idle, the size and `empty()`). A fix to
-  one belongs in all of them.
+  recycled or unmapped. `size` is the edge drawn in device pixels. A widget never calls it
+  itself: it owns an `artwork.ArtworkSlot` (`set_paths()` in bind, `attach(widget)` for map,
+  unmap and the scale factor), which asks in an idle after the frame, not in bind, lets go on
+  unmap, falls through its paths, shows another size of one meanwhile, and always hands the
+  widget a texture or `empty()`. Tile, Cover (and so SongTitle, TrackRow, HeroTile),
+  CategoryTile and the artist portrait use one; a new artwork widget does too.
 - A model change that removes the items a `Gtk.ListView` or `ColumnView` shows destroys those
   rows and builds new ones. To replace a list's contents, insert the new items first,
   `scroll_to(0)`, then remove the old ones (`SongsPage._show()`): the rows are only rebound.

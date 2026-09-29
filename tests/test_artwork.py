@@ -5,20 +5,28 @@ Runs under asyncio.run, without GTK's main loop or a display: textures are made 
 
 import asyncio
 import concurrent.futures
+import gc
+import itertools
 import os
 import tempfile
 import threading
 import unittest
+import warnings
 from unittest import mock
 
 import gi
 
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
+from tests.gtk import pump
 
 from applemusic.widgets import artwork
 
 gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import GdkPixbuf  # noqa: E402
+
+# PyGObject 3.56 looks the asyncio loop up through asyncio's policy when a GLib source runs
+# (the slots' idles, run by pump()), which Python 3.14 deprecates; the app filters it too.
+warnings.filterwarnings('ignore', r"'asyncio\.\w*policy\w*' is deprecated", DeprecationWarning)
 
 
 def run(coroutine):
@@ -259,6 +267,208 @@ class TestArtwork(unittest.TestCase):
     async def _load(self, loader, path):
         loader.request(path, lambda _texture: None)
         await settle()
+
+
+class FakeLoader:
+    """What an ArtworkSlot asks of the Artwork loader: `cache` {(path, size): texture} answers
+    get() and get_any(); request() records (path, size) and waits for answer()."""
+
+    def __init__(self):
+        self.cache = {}
+        self.requests = []  # (path, size), in order
+        self.waiting = {}  # token -> (path, size, callback)
+        self.cancelled = []
+        self._tokens = itertools.count(1)
+
+    def get(self, path, size=None):
+        return self.cache.get((path, size))
+
+    def get_any(self, path):
+        return next((texture for (cached, _size), texture in self.cache.items()
+                     if cached == path), None)
+
+    def request(self, path, callback, size=None):
+        self.requests.append((path, size))
+        texture = self.get(path, size)
+        if texture is not None:
+            callback(texture)
+            return None
+        token = next(self._tokens)
+        self.waiting[token] = (path, size, callback)
+        return token
+
+    def cancel(self, token):
+        if self.waiting.pop(token, None) is not None:
+            self.cancelled.append(token)
+
+    def answer(self, path, texture):
+        """Decode `path`: its waiting callback gets `texture` (None: not an image)."""
+        for token, (waiting, _size, callback) in list(self.waiting.items()):
+            if waiting == path:
+                del self.waiting[token]
+                callback(texture)
+
+
+class Shown:
+    """The widget side of a slot: what it was given to draw."""
+
+    def __init__(self):
+        self.calls = []  # (paintable, found)
+
+    def on_texture(self, paintable, found):
+        self.calls.append((paintable, found))
+
+    @property
+    def last(self):
+        return self.calls[-1] if self.calls else None
+
+
+class TestArtworkSlot(unittest.TestCase):
+    """The slot's decisions, with a fake loader: what is shown at once, what is asked for in
+    the idle, and when."""
+
+    def setUp(self):
+        self.loader = FakeLoader()
+        self.shown = Shown()
+        self.slot = artwork.ArtworkSlot(self.shown.on_texture, 40, loader=self.loader)
+
+    def texture(self, name):
+        return f'<texture {name}>'  # the slot hands textures on without looking at them
+
+    def test_a_cached_path_answers_without_a_request(self):
+        self.loader.cache[('/a/thumb', 80)] = self.texture('a')
+        self.slot.set_paths('/a/thumb')
+        self.assertEqual(self.shown.calls, [])  # nothing drawn while unmapped
+        self.slot.map(scale=2)
+        pump()
+        self.assertEqual(self.shown.last, (self.texture('a'), True))
+        self.assertEqual(self.loader.requests, [])
+
+    def test_a_miss_shows_empty_then_asks_in_an_idle(self):
+        self.slot.map()
+        self.slot.set_paths('/a/thumb')
+        paintable, found = self.shown.last
+        self.assertFalse(found)
+        self.assertIs(paintable, artwork.empty(40))
+        self.assertEqual(self.loader.requests, [])  # not in bind: after the frame
+        pump()
+        self.assertEqual(self.loader.requests, [('/a/thumb', 40)])
+        self.loader.answer('/a/thumb', self.texture('a'))
+        self.assertEqual(self.shown.last, (self.texture('a'), True))
+
+    def test_another_size_stands_in_meanwhile(self):
+        self.loader.cache[('/a/thumb', 160)] = self.texture('big')
+        self.slot.map()
+        self.slot.set_paths('/a/art', '/a/thumb')
+        self.assertEqual(self.shown.last, (self.texture('big'), True))
+        pump()
+        self.assertEqual(self.loader.requests, [('/a/art', 40)])
+
+    def test_a_rebind_before_the_idle_asks_for_the_new_paths(self):
+        # A's thumbnail is cached (only the cover is asked for, in an idle); before the idle
+        # runs the slot is rebound to B, of which nothing is cached: B's cover and then B's
+        # thumbnail are asked for, not A's leftover choice.
+        self.loader.cache[('/a/thumb', 40)] = self.texture('a')
+        self.slot.map()
+        self.slot.set_paths('/a/art', '/a/thumb')
+        self.assertEqual(self.shown.last, (self.texture('a'), True))
+        self.slot.set_paths()
+        self.slot.set_paths('/b/art', '/b/thumb')
+        pump()
+        self.assertEqual(self.loader.requests, [('/b/art', 40)])
+        self.loader.answer('/b/art', None)  # B's cover is not on disk
+        self.assertEqual(self.loader.requests, [('/b/art', 40), ('/b/thumb', 40)])
+        self.loader.answer('/b/thumb', self.texture('b'))
+        self.assertEqual(self.shown.last, (self.texture('b'), True))
+
+    def test_a_failure_falls_through_to_the_next_path(self):
+        self.slot.map()
+        self.slot.set_paths('/a/art', '/a/thumb')
+        pump()
+        self.loader.answer('/a/art', None)
+        self.loader.answer('/a/thumb', None)
+        self.assertEqual(self.loader.requests, [('/a/art', 40), ('/a/thumb', 40)])
+        self.assertEqual(self.shown.last, (artwork.empty(40), False))
+        self.assertEqual(self.loader.waiting, {})
+
+    def test_asks_only_for_the_paths_better_than_the_one_shown(self):
+        self.loader.cache[('/a/thumb', 40)] = self.texture('a')
+        self.slot.map()
+        self.slot.set_paths('/a/art', '/a/thumb')
+        pump()
+        self.loader.answer('/a/art', None)
+        self.assertEqual(self.loader.requests, [('/a/art', 40)])  # not the thumbnail again
+        self.assertEqual(self.shown.last, (self.texture('a'), True))
+
+    def test_unmap_cancels_and_lets_go(self):
+        self.slot.map()
+        self.slot.set_paths('/a/thumb')
+        self.slot.unmap()
+        pump()
+        self.assertEqual(self.loader.requests, [])  # the idle went with the unmap
+        self.slot.map()
+        pump()
+        self.slot.unmap()
+        self.assertEqual(self.loader.cancelled, [1])
+        self.assertEqual(self.shown.last, (artwork.empty(40), False))
+        self.loader.answer('/a/thumb', self.texture('late'))  # a cancelled decode's answer
+        self.assertEqual(self.shown.last, (artwork.empty(40), False))
+
+    def test_a_rebind_cancels_the_decode_asked_for(self):
+        self.slot.map()
+        self.slot.set_paths('/a/thumb')
+        pump()
+        self.slot.set_paths('/b/thumb')
+        self.assertEqual(self.loader.cancelled, [1])
+        pump()
+        self.loader.answer('/a/thumb', self.texture('a'))  # cancelled: never shown
+        self.loader.answer('/b/thumb', self.texture('b'))
+        self.assertEqual(self.shown.last, (self.texture('b'), True))
+        self.assertNotIn((self.texture('a'), True), self.shown.calls)
+
+    def test_the_same_paths_ask_nothing_until_refreshed(self):
+        self.slot.map()
+        self.assertTrue(self.slot.set_paths('/a/thumb', None, ''))
+        self.assertEqual(self.slot.paths, ('/a/thumb',))
+        pump()
+        self.loader.answer('/a/thumb', None)
+        self.assertFalse(self.slot.set_paths('/a/thumb'))
+        pump()
+        self.assertEqual(len(self.loader.requests), 1)
+        self.slot.refresh()  # the file has arrived since
+        pump()
+        self.assertEqual(len(self.loader.requests), 2)
+
+    def test_a_new_size_or_scale_asks_again(self):
+        self.loader.cache[('/a/thumb', 40)] = self.texture('small')
+        self.slot.map()
+        self.slot.set_paths('/a/thumb')
+        self.slot.set_size(60)
+        self.assertEqual(self.shown.last, (self.texture('small'), True))  # stands in
+        pump()
+        self.assertEqual(self.loader.requests, [('/a/thumb', 60)])
+        self.slot.set_scale(2)
+        pump()
+        self.assertEqual(self.loader.requests[-1], ('/a/thumb', 120))
+        self.assertEqual(self.slot.pixels, 120)
+        # Unmapped, a new size is only noted: asked for at the next map.
+        self.slot.unmap()
+        self.slot.set_size(80)
+        pump()
+        self.assertEqual(len(self.loader.requests), 2)
+        self.slot.map(scale=1)
+        pump()
+        self.assertEqual(self.loader.requests[-1], ('/a/thumb', 80))
+
+    def test_the_widget_is_held_weakly(self):
+        shown = Shown()
+        slot = artwork.ArtworkSlot(shown.on_texture, 40, loader=self.loader)
+        del shown
+        gc.collect()
+        slot.map()  # nothing to draw into, and no error
+        slot.set_paths('/a/thumb')
+        pump()
+        self.loader.answer('/a/thumb', self.texture('a'))
 
 
 class TestArtColour(unittest.TestCase):
