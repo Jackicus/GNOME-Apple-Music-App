@@ -44,7 +44,7 @@ it as Chrome.
 ### From source, with Meson
 
 ```bash
-git clone https://github.com/Jackicus/music-sleeve.git
+git clone https://github.com/Jackicus/GNOME-Music-Sleeve.git
 cd music-sleeve
 meson setup _build --prefix=/usr
 meson compile -C _build
