@@ -26,7 +26,7 @@ The screenshots show an invented demo library.
 
 - Your library: Recently Added, Artists, Albums, Songs, Music Videos and Made for You,
   with your playlists and playlist folders in the sidebar.
-- Home, New, Radio and Search, laid out like Apple's web player.
+- Home, New, Radio and Search, with a page for every album, playlist and artist.
 - A player bar, and a Now Playing view with synced lyrics and the queue.
 - GNOME's media controls (MPRIS) and the keyboard's media keys.
 - Light and dark styles; the window adapts down to 360 px wide.
