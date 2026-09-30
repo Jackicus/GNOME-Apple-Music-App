@@ -68,8 +68,19 @@ class ActivityTest(unittest.TestCase):
         activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
         self.assertEqual(activity['type'], discord.LISTENING)
         self.assertEqual(activity['details'], 'Low Tide Warning')
-        self.assertEqual(activity['state'],
-                         'The Midnight Archipelago — Signal from the Shallows')
+        self.assertEqual(activity['state'], 'The Midnight Archipelago')
+
+    def test_it_is_listening_to_the_service_not_the_app(self):
+        activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
+        self.assertEqual(activity['name'], 'Apple Music')
+
+    def test_the_status_line_is_the_artist(self):
+        activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
+        self.assertEqual(activity['status_display_type'], discord.STATUS_STATE)
+
+    def test_the_album_is_on_the_cover(self):
+        activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
+        self.assertEqual(activity['assets']['large_text'], 'Signal from the Shallows')
 
     def test_playing_carries_the_span_of_the_track(self):
         activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
@@ -85,17 +96,20 @@ class ActivityTest(unittest.TestCase):
         activity = discord.activity_for(Track(), 'playing', 0.0, 0.0, now=1000.0)
         self.assertNotIn('timestamps', activity)
 
-    def test_a_track_with_no_artist_or_album_has_no_state(self):
-        activity = discord.activity_for(Track(artist='', album=''), 'playing', 0, 0)
+    def test_a_track_with_no_artist_has_no_state(self):
+        # The status line then falls back to the name, "Apple Music".
+        activity = discord.activity_for(Track(artist=''), 'playing', 0, 0)
         self.assertEqual(activity['details'], 'Low Tide Warning')
         self.assertNotIn('state', activity)
+        self.assertNotIn('status_display_type', activity)
 
     def test_nothing_of_the_account_is_sent(self):
         # The artwork is the catalogue's own cover URL, which is public; no library id, no
         # token and nothing of the account's goes with it.
         activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
         self.assertEqual(set(activity),
-                         {'type', 'details', 'state', 'timestamps', 'assets'})
+                         {'type', 'name', 'details', 'state', 'status_display_type',
+                          'timestamps', 'assets'})
         self.assertEqual(set(activity['assets']), {'large_image', 'large_text'})
 
 
@@ -143,11 +157,17 @@ class SocketPathTest(unittest.TestCase):
 
 
 class FakeDiscord:
-    """A unix socket that speaks enough of the protocol to record what arrives."""
+    """A unix socket that speaks enough of the protocol to record what arrives. Like Discord,
+    it answers the handshake with READY after a moment, and drops without a word any frame
+    that comes before its READY has gone (`dropped`)."""
 
-    def __init__(self, path):
+    READY_DELAY = 0.05
+
+    def __init__(self, path, answer_handshake=True):
         self.path = path
+        self.answer_handshake = answer_handshake
         self.frames = []
+        self.dropped = []
         self._server = None
         self._arrived = asyncio.Event()
 
@@ -167,25 +187,43 @@ class FakeDiscord:
         await self._server.wait_closed()
 
     async def _serve(self, reader, writer):
+        ready = None
         try:
             while True:
                 header = await reader.readexactly(discord.HEADER_SIZE)
                 opcode, length = struct.unpack('<II', header)
                 body = await reader.readexactly(length) if length else b''
-                self.frames.append((opcode, json.loads(body) if body else None))
+                payload = json.loads(body) if body else None
+                if opcode == discord.OP_HANDSHAKE:
+                    if self.answer_handshake:
+                        ready = asyncio.create_task(self._ready(writer))
+                elif ready is None or not ready.done():
+                    self.dropped.append((opcode, payload))
+                    continue
+                else:
+                    self._answer(writer, {'cmd': payload.get('cmd'), 'evt': None,
+                                          'nonce': payload.get('nonce')})
+                self.frames.append((opcode, payload))
                 self._arrived.set()
-                # Discord answers every frame; the app reads and drops these.
-                answer = json.dumps({'evt': 'READY'}).encode()
-                writer.write(struct.pack('<II', discord.OP_FRAME, len(answer)) + answer)
-                await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
+            if ready is not None:
+                ready.cancel()
             writer.close()  # the server's own end, or the suite warns of an unclosed socket
             try:
                 await writer.wait_closed()
             except (ConnectionError, OSError):
                 pass
+
+    async def _ready(self, writer):
+        await asyncio.sleep(self.READY_DELAY)
+        self._answer(writer, {'cmd': 'DISPATCH', 'evt': 'READY', 'data': {'v': 1}})
+
+    @staticmethod
+    def _answer(writer, payload):
+        answer = json.dumps(payload).encode()
+        writer.write(struct.pack('<II', discord.OP_FRAME, len(answer)) + answer)
 
 
 class ConnectionTest(unittest.IsolatedAsyncioTestCase):
@@ -232,6 +270,23 @@ class ConnectionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload['args']['pid'], os.getpid())
         self.assertEqual(payload['args']['activity']['details'], 'Low Tide Warning')
         self.assertTrue(payload['nonce'])
+
+    async def test_nothing_is_sent_before_discord_is_ready(self):
+        connection = await self.connected()
+        await connection.set_activity({'type': discord.LISTENING, 'details': 'Low Tide Warning'})
+        await self.discord.wait_for(2)
+        self.assertEqual(self.discord.dropped, [])
+
+    async def test_a_discord_that_never_answers_is_given_up(self):
+        await self.discord.stop()
+        self.discord = FakeDiscord(self.path, answer_handshake=False)
+        await self.discord.start()
+        connection = discord.Connection('123456')
+        self.connections.append(connection)
+        original, discord.READY_TIMEOUT = discord.READY_TIMEOUT, 0.1
+        self.addCleanup(setattr, discord, 'READY_TIMEOUT', original)
+        self.assertFalse(await connection.connect([self.path]))
+        self.assertFalse(connection.open)
 
     async def test_clearing_sends_a_null_activity(self):
         connection = await self.connected()

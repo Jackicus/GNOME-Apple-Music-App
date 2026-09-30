@@ -11,19 +11,25 @@
 Discord listens on a unix socket in the runtime directory (`discord-ipc-0` … `-9`, and the
 same names under the subdirectories its Flatpak and Snap packages use). The protocol is
 frames of a little-endian opcode and length followed by JSON: a HANDSHAKE carrying the
-application's id, then a FRAME per command. Only SET_ACTIVITY is sent here, and Discord's
-answers are read and dropped, since nothing it says changes what the app does.
+application's id, which Discord answers with a READY dispatch, then a FRAME per command. A
+frame that arrives before READY has gone out is dropped by Discord without a word, so nothing
+is sent until it has been heard. Only SET_ACTIVITY is sent here, and Discord's other answers
+are read and dropped, since nothing it says changes what the app does.
 
 Everything is best-effort and quiet. Discord is usually not running, and that is not an error
 the user should hear about: a socket that is missing, refuses, or breaks leaves the presence
 disconnected and the app playing. A broken connection is retried when the track next changes,
 never on a timer, so a user without Discord pays nothing.
 
-The activity is the track's title as the details, the artist and album as the state, the
-album's cover as the image, and `type` 2, which Discord renders as "Listening to" rather than
-"Playing". While the music plays the timestamps carry the start and end of the track in
-wall-clock seconds, so Discord counts down by itself and nothing has to be sent for the
-progress to stay right; paused, they are left out, which stops the counter where it is.
+The activity is the track's title as the details, the artist as the state, the album's
+cover as the image with the album's name on it, and `type` 2, which Discord renders as
+"Listening to" rather than "Playing". Its `name` is the service, so the card reads "Listening
+to Apple Music" rather than the application's name, and `status_display_type` puts the state,
+the artist, in the one-line status under the user's name.
+
+While the music plays the timestamps carry the start and end of the track in wall-clock
+seconds, so Discord counts down by itself and nothing has to be sent for the progress to stay
+right; paused, they are left out, which stops the counter where it is.
 
 Only what Discord shows is sent: the title, the artist, the album and the catalogue's own
 cover URL, which is public. No library id, no token, nothing of the account's.
@@ -31,8 +37,8 @@ cover URL, which is public. No library id, no token, nothing of the account's.
 APPLICATION_ID is the app's own Discord application, registered by the project at
 discord.com/developers. It is the application's id and nothing else: rich presence needs no
 bot, no token and no OAuth, so the id is public and belongs in the source. Discord shows the
-application's name, so a profile reads "Listening to Music Sleeve". An empty id turns the
-feature off and says why once in the log.
+application's name unless the activity names itself, which this one does. An empty id turns
+the feature off and says why once in the log.
 """
 
 import asyncio
@@ -56,7 +62,17 @@ HEADER_SIZE = HEADER.size
 MAX_FRAME = 64 * 1024  # a sane ceiling: Discord's answers are small, and a wild length is a
                        # broken stream, not a message worth reading
 
-LISTENING = 2  # Discord's activity type: "Listening to <the application's name>"
+# Discord answers the handshake in a few hundred milliseconds; one that has not answered in
+# this long is not going to, and the connection is given up until the next track.
+READY_TIMEOUT = 5
+
+LISTENING = 2  # Discord's activity type: "Listening to <the activity's name>"
+
+# What the user is listening on: the service, named as the service, as Discord names Spotify.
+# It is a name, not a sentence, so it is not translated.
+SERVICE_NAME = 'Apple Music'
+
+STATUS_STATE = 1  # Discord's status_display_type: the status line shows the state
 
 # Discord fetches an external image itself and only over https, so Apple's own artwork URL is
 # handed over as it is and nothing is uploaded anywhere. (The tools that do this for MPRIS
@@ -158,11 +174,11 @@ def activity_for(track, state, position, duration, now=None):
     details = _field(track.title)
     if details is None:
         return None
-    activity = {'type': LISTENING, 'details': details}
-    by = ' — '.join(part for part in (track.artist, track.album) if part)
-    line = _field(by)
-    if line is not None:
-        activity['state'] = line
+    activity = {'type': LISTENING, 'name': SERVICE_NAME, 'details': details}
+    artist = _field(track.artist)
+    if artist is not None:
+        activity['state'] = artist
+        activity['status_display_type'] = STATUS_STATE
     art = artwork_for(getattr(track, 'artwork_url', None))
     if art is not None:
         activity['assets'] = {'large_image': art}
@@ -200,7 +216,14 @@ class Connection:
             try:
                 self._reader, self._writer = await asyncio.open_unix_connection(path)
                 await self._send(OP_HANDSHAKE, {'v': 1, 'client_id': self.application_id})
-            except (OSError, asyncio.IncompleteReadError):
+                async with asyncio.timeout(READY_TIMEOUT):
+                    ready = await self._wait_for_ready()
+            except (OSError, TimeoutError, asyncio.IncompleteReadError, ValueError):
+                ready = False
+            except asyncio.CancelledError:
+                self._abort()
+                raise
+            if not ready:
                 await self.close()
                 continue
             log.debug('discord: connected on %s', path)
@@ -234,6 +257,27 @@ class Connection:
             await writer.wait_closed()
         except OSError:
             pass
+
+    def _abort(self):
+        """Close at once, for a cancelled connect that cannot wait for the socket."""
+        writer, self._writer, self._reader = self._writer, None, None
+        if writer is not None:
+            writer.close()
+
+    async def _wait_for_ready(self):
+        """Read until Discord's READY. False if it refuses the handshake instead (an unknown
+        application id closes the socket with an error)."""
+        while True:
+            header = await self._reader.readexactly(HEADER_SIZE)
+            opcode, length = HEADER.unpack(header)
+            if length > MAX_FRAME:
+                return False
+            body = await self._reader.readexactly(length) if length else b''
+            if opcode == OP_CLOSE:
+                log.debug('discord: handshake refused: %s', body.decode(errors='replace'))
+                return False
+            if opcode == OP_FRAME and body and json.loads(body).get('evt') == 'READY':
+                return True
 
     async def _send(self, opcode, payload):
         data = json.dumps(payload).encode()
