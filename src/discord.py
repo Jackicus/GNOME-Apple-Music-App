@@ -63,6 +63,31 @@ LISTENING = 2  # Discord's activity type: "Listening to <the application's name>
 # players go to Last.fm, MusicBrainz or an image host, because MPRIS metadata rarely carries a
 # URL Discord can fetch; here the player already has one.) The player holds a 256 px URL and
 # Discord's card is bigger, so Apple's size segment is asked for larger where it is there.
+# A track change arrives in pieces — the Player's duration resets and is filled a moment
+# later — so an update waits this long and the changes in between collapse into one frame.
+# Without it Discord is sent an activity with no timestamps and then one with, and its
+# progress bar appears, vanishes and comes back at every track change.
+UPDATE_GRACE_MS = 250
+
+# A track on its way to playing is seen first as `loading` and only then as `playing` with a
+# duration, and until both have arrived there are no timestamps to send. Rather than publish a
+# track with no progress bar and correct it a moment later, wait this long for it to settle; a
+# change cancels the wait and publishes at once, and something that never settles (a radio
+# stream has no duration) is published without timestamps when this runs out.
+DURATION_GRACE_MS = 1500
+
+# player.py's states between asking for a track and hearing it play.
+SETTLING_STATES = ('loading', 'waiting', 'stalled', 'seeking')
+
+# Playback is over, whatever item the Player still holds: nobody is listening, so the profile
+# says nothing. Paused is not here — a paused track is still what you are listening to, and
+# Discord shows it with the clock stopped.
+FINISHED_STATES = ('none', 'stopped', 'ended', 'completed')
+
+# The start is worked out from the position each time, so it drifts by a moment between
+# updates. A difference that small is not a seek and must not cost a frame.
+TIMESTAMP_TOLERANCE_MS = 2000
+
 ARTWORK_SIZE = 512
 ARTWORK_SEGMENT = re.compile(r'/\d+x\d+(?=[a-z-]*\.(?:jpg|jpeg|png|webp)$)', re.IGNORECASE)
 
@@ -100,6 +125,19 @@ def _field(text):
     return (cut[:space] if space > FIELD_MAX // 2 else cut) + '…'
 
 
+def same_activity(one, other):
+    """Whether Discord would show the same thing, ignoring the start's drift."""
+    if one is None or other is None:
+        return one is other
+    if ({k: v for k, v in one.items() if k != 'timestamps'}
+            != {k: v for k, v in other.items() if k != 'timestamps'}):
+        return False
+    first, second = one.get('timestamps'), other.get('timestamps')
+    if (first is None) != (second is None):
+        return False
+    return first is None or abs(first['start'] - second['start']) <= TIMESTAMP_TOLERANCE_MS
+
+
 def artwork_for(url):
     """The image URL to give Discord, or None. Only https is any use: Discord treats an http
     URL as an asset key instead, fails to find one, and shows the application's icon."""
@@ -111,10 +149,11 @@ def artwork_for(url):
 def activity_for(track, state, position, duration, now=None):
     """The activity to send for a track, or None when there is nothing to show.
 
-    `state` is the Player's; `position` and `duration` are seconds. Playing, the timestamps
-    span the track so Discord runs the clock itself; paused, they are left out and the clock
-    stops."""
-    if track is None:
+    `state` is the Player's `resting`; `position` and `duration` are seconds. Playing, the
+    timestamps span the track so Discord runs the clock itself; paused, they are left out and
+    the clock stops. Once playback has finished there is nothing to show, whatever item the
+    Player still holds."""
+    if track is None or state in FINISHED_STATES:
         return None
     details = _field(track.title)
     if details is None:
@@ -239,6 +278,8 @@ class Presence:
             (settings, settings.connect('changed::discord-presence', self._on_setting)),
             (player, player.connect('notify::track', self._on_change)),
             (player, player.connect('notify::state', self._on_change)),
+            (player, player.connect('notify::duration', self._on_change)),
+            (player, player.connect('notify::pending', self._on_change)),
         ]
         if self._enabled():
             self._update_soon()
@@ -279,10 +320,22 @@ class Presence:
         self._task = self.app.spawn(self._update())
 
     async def _update(self):
+        # Let the track change settle: _update_soon cancels this task if another change
+        # arrives, so everything within the grace goes out as one frame.
+        await asyncio.sleep(UPDATE_GRACE_MS / 1000)
         player = self.app.player
-        activity = activity_for(player.track, player.state,
-                                player.position, player.duration)
-        if activity == self._sent and self._connection is not None:
+        # `resting`, not `state`: it sees through a seek, and through the pause and stop
+        # MusicKit puts the queue through while it loads the next one, which otherwise
+        # published the track that was ending with its clock stopped (mpris.py does the same
+        # for PlaybackStatus).
+        state = player.resting
+        if player.track is not None and (
+                state in SETTLING_STATES
+                or (state == 'playing' and player.duration <= 0)):
+            await asyncio.sleep(DURATION_GRACE_MS / 1000)
+            state = player.resting
+        activity = activity_for(player.track, state, player.position, player.duration)
+        if same_activity(activity, self._sent) and self._connection is not None:
             return
         if not self.application_id:
             if not self._warned:
