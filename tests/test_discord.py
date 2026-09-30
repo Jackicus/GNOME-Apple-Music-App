@@ -24,10 +24,12 @@ class Track:
     """What the Player's NowPlaying gives the presence."""
 
     def __init__(self, title='Low Tide Warning', artist='The Midnight Archipelago',
-                 album='Signal from the Shallows'):
+                 album='Signal from the Shallows',
+                 artwork_url='https://example.invalid/image/thumb/aW52ZW50ZWQ/256x256bb.jpg'):
         self.title = title
         self.artist = artist
         self.album = album
+        self.artwork_url = artwork_url
 
 
 class FieldTest(unittest.TestCase):
@@ -86,8 +88,41 @@ class ActivityTest(unittest.TestCase):
         self.assertNotIn('state', activity)
 
     def test_nothing_of_the_account_is_sent(self):
+        # The artwork is the catalogue's own cover URL, which is public; no library id, no
+        # token and nothing of the account's goes with it.
         activity = discord.activity_for(Track(), 'playing', 65.0, 303.0, now=1000.0)
-        self.assertEqual(set(activity), {'type', 'details', 'state', 'timestamps'})
+        self.assertEqual(set(activity),
+                         {'type', 'details', 'state', 'timestamps', 'assets'})
+        self.assertEqual(set(activity['assets']), {'large_image', 'large_text'})
+
+
+class ArtworkTest(unittest.TestCase):
+    def test_an_https_url_is_asked_for_larger(self):
+        self.assertEqual(
+            discord.artwork_for('https://example.invalid/a/b/256x256bb.jpg'),
+            'https://example.invalid/a/b/512x512bb.jpg')
+
+    def test_a_url_without_a_size_is_left_alone(self):
+        url = 'https://example.invalid/cover.png'
+        self.assertEqual(discord.artwork_for(url), url)
+
+    def test_http_is_refused_because_discord_would_show_its_own_icon(self):
+        self.assertIsNone(discord.artwork_for('http://example.invalid/a/256x256bb.jpg'))
+
+    def test_no_artwork_is_no_artwork(self):
+        self.assertIsNone(discord.artwork_for(None))
+        self.assertIsNone(discord.artwork_for(''))
+
+    def test_a_track_without_artwork_still_makes_an_activity(self):
+        activity = discord.activity_for(Track(artwork_url=None), 'playing', 0, 200)
+        self.assertNotIn('assets', activity)
+        self.assertEqual(activity['details'], 'Low Tide Warning')
+
+    def test_the_cover_and_the_album_go_together(self):
+        activity = discord.activity_for(Track(), 'playing', 0, 200)
+        self.assertEqual(activity['assets']['large_image'],
+                         'https://example.invalid/image/thumb/aW52ZW50ZWQ/512x512bb.jpg')
+        self.assertEqual(activity['assets']['large_text'], 'Signal from the Shallows')
 
 
 class SocketPathTest(unittest.TestCase):

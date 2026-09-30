@@ -19,12 +19,14 @@ the user should hear about: a socket that is missing, refuses, or breaks leaves 
 disconnected and the app playing. A broken connection is retried when the track next changes,
 never on a timer, so a user without Discord pays nothing.
 
-The activity is the track's title as the details, the artist and album as the state, and
-`type` 2, which Discord renders as "Listening to" rather than "Playing". While the music plays
-the timestamps carry the start and end of the track in wall-clock seconds, so Discord counts
-down by itself and nothing has to be sent for the progress to stay right; paused, they are
-left out, which stops the counter where it is. Only the fields Discord shows are sent: no
-ids, no URLs and nothing of the account's.
+The activity is the track's title as the details, the artist and album as the state, the
+album's cover as the image, and `type` 2, which Discord renders as "Listening to" rather than
+"Playing". While the music plays the timestamps carry the start and end of the track in
+wall-clock seconds, so Discord counts down by itself and nothing has to be sent for the
+progress to stay right; paused, they are left out, which stops the counter where it is.
+
+Only what Discord shows is sent: the title, the artist, the album and the catalogue's own
+cover URL, which is public. No library id, no token, nothing of the account's.
 
 APPLICATION_ID is the app's own Discord application, registered by the project at
 discord.com/developers. Without one there is nothing to connect as, so an empty id turns the
@@ -35,6 +37,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import struct
 import time
 
@@ -52,6 +55,14 @@ MAX_FRAME = 64 * 1024  # a sane ceiling: Discord's answers are small, and a wild
                        # broken stream, not a message worth reading
 
 LISTENING = 2  # Discord's activity type: "Listening to <the application's name>"
+
+# Discord fetches an external image itself and only over https, so Apple's own artwork URL is
+# handed over as it is and nothing is uploaded anywhere. (The tools that do this for MPRIS
+# players go to Last.fm, MusicBrainz or an image host, because MPRIS metadata rarely carries a
+# URL Discord can fetch; here the player already has one.) The player holds a 256 px URL and
+# Discord's card is bigger, so Apple's size segment is asked for larger where it is there.
+ARTWORK_SIZE = 512
+ARTWORK_SEGMENT = re.compile(r'/\d+x\d+(?=[a-z-]*\.(?:jpg|jpeg|png|webp)$)', re.IGNORECASE)
 
 # Discord's own limits. A field outside them is rejected and the whole activity with it, so
 # they are applied here rather than discovered at run time.
@@ -87,6 +98,14 @@ def _field(text):
     return (cut[:space] if space > FIELD_MAX // 2 else cut) + '…'
 
 
+def artwork_for(url):
+    """The image URL to give Discord, or None. Only https is any use: Discord treats an http
+    URL as an asset key instead, fails to find one, and shows the application's icon."""
+    if not url or not url.startswith('https://'):
+        return None
+    return ARTWORK_SEGMENT.sub(f'/{ARTWORK_SIZE}x{ARTWORK_SIZE}', url)
+
+
 def activity_for(track, state, position, duration, now=None):
     """The activity to send for a track, or None when there is nothing to show.
 
@@ -103,6 +122,12 @@ def activity_for(track, state, position, duration, now=None):
     line = _field(by)
     if line is not None:
         activity['state'] = line
+    art = artwork_for(getattr(track, 'artwork_url', None))
+    if art is not None:
+        activity['assets'] = {'large_image': art}
+        album = _field(track.album)
+        if album is not None:
+            activity['assets']['large_text'] = album
     if state == 'playing' and duration > 0:
         started = (now if now is not None else time.time()) - max(position, 0.0)
         activity['timestamps'] = {'start': int(started * 1000),
