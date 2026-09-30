@@ -383,9 +383,10 @@ class Application(Adw.Application):
 
     # -- the library and the account --------------------------------------------------------
 
-    def start_sync(self):
-        """Sync the library (LibrarySync.start()): the task, or None."""
-        return self.library_sync.start()
+    def start_sync(self, quick=False):
+        """Sync the library (LibrarySync.start()): the task, or None. `quick`: the short pass
+        after a library write, which leaves last-sync alone."""
+        return self.library_sync.start(quick=quick)
 
     async def clear_cache(self):
         """Clear the cache and sync again (account.clear_cache()); False in demo mode."""

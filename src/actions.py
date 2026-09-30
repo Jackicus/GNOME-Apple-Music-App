@@ -536,7 +536,15 @@ class ItemActions:
         title = obj.title if obj is not None else ''
         message = (_('Added “{title}” to your library').format(title=title) if title
                    else _('Added to your library'))
-        return self._run(self.engine.add_to_library, target, message)
+        return self._run(self.engine.add_to_library, target, message,
+                         after=self._refresh_library)
+
+    async def _refresh_library(self):
+        """Show what was just added: a quick sync (sync.py), which reads the songs and the
+        shelves and keeps the rest of last time's file, so the item is in Songs and in
+        Recently Added at once. Apple answers the write with no body, so there is nothing to
+        merge in as _refresh_playlist() does; the item has to be read back."""
+        self.app.start_sync(quick=True)
 
     def _on_add_to_playlist(self, _action, parameter):
         playlist_id, kind, item_id = parameter.unpack()
