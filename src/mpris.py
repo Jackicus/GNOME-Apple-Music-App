@@ -36,8 +36,8 @@ it rebuilds its card (GNOME Shell's blinked through its no-cover icon at every t
 Seeked comes after a seek asked for here, and when a position arrives further than SEEK_JUMP
 seconds from where a client would have extrapolated it (a seek from the bar or from Apple's
 page, or a stall the published status hid; the Player has already dropped the previous item's
-position that MusicKit reports once more after a track change). Losing the name (another owner, no bus) is logged and the app runs on without
-media controls.
+position that MusicKit reports once more after a track change). Losing the name (another
+owner, no bus) is logged and the app runs on without media controls.
 """
 
 import logging
