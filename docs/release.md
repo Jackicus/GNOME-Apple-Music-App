@@ -59,7 +59,7 @@ skipped at -1. Only stale files are compiled again, so development installs stay
   `build/meson-dist/`, and builds and tests the tarball with the build directory's options, so
   it needs `blueprint-compiler` installed or the network for the wrap.
 - Test a tarball in a temporary directory with its own `--prefix`.
-- Test the PKGBUILD in a temporary copy: make a `git archive --prefix=GNOME-Apple-Music-App-<version>/`
+- Test the PKGBUILD in a temporary copy: make a `git archive --prefix=music-sleeve-<version>/`
   tarball named as its source (makepkg then skips the download) and run `makepkg` there without
   `-i`: build and check it, don't install it. Without `blueprint-compiler` installed, use
   `makepkg --nodeps` with a `blueprint-compiler` shim on PATH that runs

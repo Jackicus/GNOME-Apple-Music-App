@@ -14,7 +14,7 @@ pkgver=0.9.0
 pkgrel=1
 pkgdesc='Native GNOME client for Apple Music, played through Google Chrome'
 arch=('any')
-url='https://github.com/Jackicus/GNOME-Apple-Music-App'
+url='https://github.com/Jackicus/music-sleeve'
 license=('GPL-2.0-or-later')
 depends=(
   'gdk-pixbuf2'
@@ -37,7 +37,7 @@ optdepends=('google-chrome: the playback engine (its Widevine plays the protecte
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
-_srcname="GNOME-Apple-Music-App-$pkgver"
+_srcname="music-sleeve-$pkgver"
 
 build() {
   arch-meson "$_srcname" build
