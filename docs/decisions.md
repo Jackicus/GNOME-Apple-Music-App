@@ -147,6 +147,13 @@ changes, change it here, with the date. The plan they came from is in
   library, and pages opened and closed leave at most 5 MB behind (`docs/notes.md`).
 - **Comments describe the code** (2026-09-28), as it is and why: no phase numbers, review IDs,
   plans or history, which belong in commit messages.
+- **An item reaches MPRIS once** (2026-09-30). A new item's Metadata and Can*s wait for its
+  artwork file, at most 200 ms (`ART_GRACE_MS`), rather than go out at once and again with
+  `mpris:artUrl`: two changes made GNOME Shell's card blink through its no-cover icon at every
+  track change (#182). The wait ends the moment the file is there, which is at once for the
+  next song of one album (the same URL, nothing fetched) and a moment for a file on disk; a
+  slower download publishes the item first and its artwork after, since a card that is right
+  late is worse than one that fills in twice.
 - **An icon of the app's own** (2026-09-30). A record coming out of its sleeve, in GNOME's
   palette: the old icon was a red rounded square with a white double note, near enough to Apple
   Music's own logo to confuse users and to invite a complaint. Apple's guidelines for third

@@ -254,14 +254,23 @@ class FakeInvocation:
 
 
 class FakeArtwork:
-    """remote.fetch_remote: answers `path` at once, the URLs asked for recorded."""
+    """remote.fetch_remote: answers `path` at once, or once the gate hold() gives is set (a
+    download taking its time), the URLs asked for recorded."""
 
     def __init__(self, path):
         self.path = path
         self.urls = []
+        self.gate = None
+
+    def hold(self):
+        """Hold the fetches from here on until the returned event is set."""
+        self.gate = asyncio.Event()
+        return self.gate
 
     async def fetch_remote(self, url, size=640):
         self.urls.append(url)
+        if self.gate is not None:
+            await self.gate.wait()
         return self.path
 
 
@@ -377,6 +386,7 @@ class ServiceTest(unittest.TestCase):
         self.app.player = self.player
         self.service = Mpris(self.app)
         self.service.start()
+        self.addCleanup(self.service.stop)  # no artwork wait left on the main context
         self.assertEqual(self.owned[0][1], 'org.mpris.MediaPlayer2.' + APP_ID)
         self.connection = FakeConnection()
         self.service._on_bus_acquired(self.connection, self.owned[0][1])
@@ -420,11 +430,9 @@ class ServiceTest(unittest.TestCase):
         async def go():
             self.make()
             self.play()
-            changed = self.connection.changed()
-            # The track's notify comes first (Metadata and the Can*s), then the state's.
-            self.assertEqual(changed[0], ['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay',
-                                          'CanSeek', 'Metadata'])
-            self.assertIn(['PlaybackStatus'], changed)
+            # The state's notify is all that goes out at once: the item's own properties
+            # (Metadata and the Can*s) wait for its artwork.
+            self.assertEqual(self.connection.changed(), [['PlaybackStatus']])
             values = {name: value.unpack()
                       for name, value in self.connection.get_all(PLAYER_INTERFACE).items()}
             self.assertEqual(values['PlaybackStatus'], 'Playing')
@@ -437,10 +445,13 @@ class ServiceTest(unittest.TestCase):
             # The same again: nothing differs, nothing is emitted.
             self.play()
             self.assertEqual(self.connection.changed(), [])
-            # The artwork arrives: Metadata again, with its file URL, and only that.
+            # The artwork arrives: the item's properties go out together, once, its file
+            # URL among them.
             await self.app.settle()
             self.assertEqual(self.artwork.urls, [TRACK['artUrl']])
-            self.assertEqual(self.connection.changed(), [['Metadata']])
+            self.assertEqual(self.connection.changed(),
+                             [['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay', 'CanSeek',
+                               'Metadata']])
             art_url = self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()['mpris:artUrl']
             self.assertEqual(art_url, GLib.filename_to_uri(self.art_path, None))
         asyncio.run(go())
@@ -466,6 +477,7 @@ class ServiceTest(unittest.TestCase):
         async def go():
             self.make()
             self.play()
+            await self.app.settle()  # the item's artwork in hand, its properties out
             self.connection.changed()
             self.player.apply({'state': 'paused'})
             self.assertEqual(self.connection.changed(), [['PlaybackStatus']])
@@ -500,7 +512,7 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
                 'mpris:length'], 231_000_000)
             await self.app.settle()
-            self.assertEqual(self.connection.changed(), [['Metadata']])  # its artwork
+            self.assertEqual(self.connection.changed(), [])  # the same artwork: no fetch
             # The engine goes: nothing playing, Stopped, the Can*s off, Metadata empty.
             self.player.apply(None)
             self.assertEqual(self.connection.changed()[0], [
@@ -855,8 +867,11 @@ class ServiceTest(unittest.TestCase):
         asyncio.run(go())
 
 
+# The next item, of another album: its artwork is its own, so a track change fetches one
+# (the covers of one album are the same URL, and no fetch happens at all).
 TRACK_B = dict(TRACK, id='i.demo0002', catalogId='1000000002', title='Pilot Light',
-               durationMs=180000, index=3)
+               durationMs=180000, index=3,
+               artUrl='https://example.invalid/art/other/256x256bb.jpg')
 B_PATH = '/io/github/jackicus/MusicSleeve/track/3/i_2edemo0002'
 ALL_CANS = ['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay', 'CanSeek']
 
@@ -991,6 +1006,7 @@ class SequenceTest(ServiceTest):
         with patched_clocks() as clock:
             self.make()
             self.player.track_grace_ms = 30
+            self.service.art_grace_ms = 30  # long enough that the artwork always wins it
             self.engine.emit('event', 'queueItemsDidChange', {'index': 2, 'items': [
                 dict(TRACK, id='i.demo0003', catalogId='1000000003', index=0),
                 dict(TRACK, id='i.demo0004', catalogId='1000000004', index=1), TRACK, TRACK_B]})
@@ -1024,6 +1040,8 @@ class SequenceTest(ServiceTest):
                     await request
                 else:
                     self.engine.emit('event', event, data)
+                for _ in range(3):
+                    await asyncio.sleep(0)  # a new item's artwork lands within its grace
                 player = self.player
                 self.assertEqual(self.connection.seeked(), expect.get('seeked', []), where)
                 self.assertEqual(self.connection.changed(), expect.get('changed', []), where)
@@ -1048,6 +1066,106 @@ class SequenceTest(ServiceTest):
         for name, steps in SEQUENCES.items():
             with self.subTest(sequence=name):
                 asyncio.run(self.replay_and_settle(name, steps))
+
+
+class ArtworkWaitTest(ServiceTest):
+    """A new item's properties wait for its artwork file, at most the grace, so a client sees
+    one Metadata change for it: GNOME Shell's media card swapped its cover for the no-cover
+    icon and back when the Metadata arrived without mpris:artUrl and again with it."""
+
+    async def on_a(self):
+        """A playing, its artwork in hand, its properties on the bus and forgotten."""
+        self.make()
+        self.play()
+        await self.app.settle()
+        self.connection.changed()
+
+    def wait_out_the_grace(self):
+        """Let the grace (a GLib timeout) run out: real time, and the default main context
+        run by hand, since the loop here is asyncio's own."""
+        time.sleep(0.05)
+        context = GLib.MainContext.default()
+        while context.pending():
+            iterate(context)
+
+    def test_one_metadata_change_for_the_new_item(self):
+        async def go():
+            await self.on_a()
+            self.player.apply({'track': TRACK_B, 'position': 0, 'duration': 180})
+            self.assertEqual(self.connection.changed(), [])  # waiting for B's artwork
+            await self.app.settle()
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            data = self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()
+            self.assertEqual(data['xesam:title'], 'Pilot Light')
+            self.assertEqual(data['mpris:artUrl'], GLib.filename_to_uri(self.art_path, None))
+            self.assertEqual(self.artwork.urls, [TRACK['artUrl'], TRACK_B['artUrl']])
+        asyncio.run(go())
+
+    def test_an_artwork_slower_than_the_grace_follows_the_item(self):
+        async def go():
+            await self.on_a()
+            self.service.art_grace_ms = 30
+            gate = self.artwork.hold()
+            self.player.apply({'track': TRACK_B, 'position': 0, 'duration': 180})
+            self.assertEqual(self.connection.changed(), [])
+            # The grace runs out: the item goes out as it is, rather than be held back.
+            self.wait_out_the_grace()
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            self.assertNotIn('mpris:artUrl',
+                             self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack())
+            gate.set()
+            await self.app.settle()
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            self.assertIn('mpris:artUrl',
+                          self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack())
+        asyncio.run(go())
+
+    def test_a_second_item_while_the_first_waits(self):
+        """Two skips in a row: the item passed through never reaches the bus."""
+        async def go():
+            await self.on_a()
+            gate = self.artwork.hold()
+            self.player.apply({'track': TRACK_B, 'position': 0, 'duration': 180})
+            third = dict(TRACK, id='i.demo0005', catalogId='1000000005', title='Slipway',
+                         index=4, artUrl='https://example.invalid/art/third/256x256bb.jpg')
+            self.player.apply({'track': third, 'position': 0})
+            self.assertEqual(self.connection.changed(), [])
+            gate.set()
+            await self.app.settle()
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            data = self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()
+            self.assertEqual(data['xesam:title'], 'Slipway')
+            self.assertIn('mpris:artUrl', data)
+        asyncio.run(go())
+
+    def test_the_artwork_of_the_item_before_needs_no_wait(self):
+        """The next song of one album: the same artwork URL, no fetch, nothing to wait for."""
+        async def go():
+            await self.on_a()
+            same = dict(TRACK, id='i.demo0006', catalogId='1000000006', title='Low Tide',
+                        index=3)
+            self.player.apply({'track': same, 'position': 0})
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            self.assertIn('mpris:artUrl',
+                          self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack())
+            self.assertEqual(self.artwork.urls, [TRACK['artUrl']])
+        asyncio.run(go())
+
+    def test_an_item_without_artwork_needs_no_wait(self):
+        async def go():
+            await self.on_a()
+            bare = dict(TRACK, id='i.demo0007', catalogId='1000000007', title='Slack Water',
+                        index=3, artUrl=None)
+            self.player.apply({'track': bare, 'position': 0})
+            self.assertEqual(self.connection.changed(), [['Metadata']])
+            self.assertNotIn('mpris:artUrl',
+                             self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack())
+            # Nothing playing: the item's properties go out at once too.
+            self.player.apply(None)
+            self.assertEqual(self.connection.changed()[0],
+                             ['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay', 'CanSeek',
+                              'Metadata', 'PlaybackStatus'])
+        asyncio.run(go())
 
 
 def private_bus(test):

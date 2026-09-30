@@ -29,11 +29,14 @@ ignores a stale trackid and a position outside the track. Setting LoopStatus, Sh
 Volume ask the Player; Rate 0 pauses; OpenUri does nothing.
 
 PropertiesChanged is emitted from the Player's notify signals with only the keys whose value
-differs from what was last put on the bus; Seeked after a seek asked for here, and when a
-position arrives further than SEEK_JUMP seconds from where a client would have extrapolated
-it (a seek from the bar or from Apple's page, or a stall the published status hid; the Player
-has already dropped the previous item's position that MusicKit reports once more after a
-track change). Losing the name (another owner, no bus) is logged and the app runs on without
+differs from what was last put on the bus; a new item's own properties (ITEM_PROPERTIES:
+Metadata and the Can*s) go out together, once its artwork file is in hand or ART_GRACE_MS has
+passed, since a client that saw Metadata without mpris:artUrl and then the same Metadata with
+it rebuilds its card (GNOME Shell's blinked through its no-cover icon at every track change).
+Seeked comes after a seek asked for here, and when a position arrives further than SEEK_JUMP
+seconds from where a client would have extrapolated it (a seek from the bar or from Apple's
+page, or a stall the published status hid; the Player has already dropped the previous item's
+position that MusicKit reports once more after a track change). Losing the name (another owner, no bus) is logged and the app runs on without
 media controls.
 """
 
@@ -64,6 +67,17 @@ TRACK_PATH_PREFIX = '/io/github/jackicus/MusicSleeve/track/'
 # drops the previous item's position after a track change itself; SEEK_JUMP, how far a
 # position may land from where the last one led before it is a seek, is the Player's).
 SEEK_HOLD = 1.5
+
+# The properties that belong to the item playing: they go out together, once, so a client
+# never reads a new track's Metadata beside the last one's Can*s, or Metadata whose artwork
+# is still on its way.
+ITEM_PROPERTIES = ('Metadata', 'CanGoNext', 'CanGoPrevious', 'CanPlay', 'CanPause', 'CanSeek')
+
+# How long a new item's properties wait for its artwork file (`art_grace_ms`, 0 in tests that
+# want no wait). The file is usually the item before's (one cover for an album: no fetch at
+# all) or on disk already, and the wait is a moment; a download slower than this publishes the
+# item without its artwork and the artwork follows in a second change, as it did before.
+ART_GRACE_MS = 200
 
 # LoopStatus values by the Player's repeat modes, and back.
 LOOP_STATUS = {'none': 'None', 'one': 'Track', 'all': 'Playlist'}
@@ -278,6 +292,9 @@ class Mpris:
         self._art_url = None     # the artwork URL the art path is for
         self._art_path = None    # the cached artwork file of the track shown, once on disk
         self._art_task = None
+        self.art_grace_ms = ART_GRACE_MS  # 0: an item's properties never wait for its artwork
+        self._art_wait = 0       # the GLib source waiting out the grace, while one does
+        self._art_held = set()    # the item properties it holds back meanwhile
         self._hold_until = 0.0   # until when positions are not looked at for a seek
         self._noted = (0.0, time.monotonic(), False)  # position, when, running: for Seeked
 
@@ -314,6 +331,7 @@ class Mpris:
         if self._art_task is not None and not self._art_task.done():
             self._art_task.cancel()
         self._art_task = None
+        self._end_art_wait(publish=False)
         self._unregister()
         if self._owner:
             Gio.bus_unown_name(self._owner)
@@ -388,7 +406,16 @@ class Mpris:
 
     def _changed(self, *names):
         """PropertiesChanged for the Player properties named, those whose value differs from
-        what was last put on the bus (Position never: the spec says it does not signal)."""
+        what was last put on the bus (Position never: the spec says it does not signal). While
+        a new item waits for its artwork, its own properties are held back for it (they go out
+        together when it arrives, or when the grace runs out); anything else goes at once."""
+        if self._art_wait:
+            held = [name for name in names if name in ITEM_PROPERTIES]
+            if held:
+                self._art_held.update(held)
+                names = tuple(name for name in names if name not in ITEM_PROPERTIES)
+            if not names:
+                return
         changed = {}
         for name in names:
             value = PLAYER_GETTERS[name](self)
@@ -418,12 +445,16 @@ class Mpris:
 
     def _on_track(self, *_args):
         """A new item (its times reset with it, whichever notify comes first: the
-        position's and the duration's wait for this one)."""
+        position's and the duration's wait for this one). Its properties wait for its
+        artwork while one is being fetched, so the card fills in once."""
         self._shown = self._player.track
         self._stopped = False
-        self._follow_art()
+        self._end_art_wait(publish=False)  # this item's wait replaces the item before's
+        fetching = self._follow_art()
         self._status = self._playback_status()
         self._note(0.0)
+        if fetching and self.art_grace_ms:
+            self._art_wait = GLib.timeout_add(self.art_grace_ms, self._art_grace_over)
         self._changed('Metadata', 'PlaybackStatus', 'CanGoNext', 'CanGoPrevious', 'CanPlay',
                       'CanPause', 'CanSeek')
 
@@ -476,19 +507,22 @@ class Mpris:
     def refresh_art(self):
         """The artwork file of the track shown may be gone (the cache was cleared, or the
         account signed out): look for it again, fetch it when it is missing, and put the
-        Metadata on the bus again, without a file that is no longer there."""
+        Metadata on the bus again, without a file that is no longer there. It does not wait
+        for the new file: naming one that is not there is the thing to undo."""
+        self._end_art_wait(publish=False)
         self._follow_art(again=True)
-        self._changed('Metadata')
+        self._changed(*ITEM_PROPERTIES)
 
     def _follow_art(self, again=False):
         """The track's artwork file: asked of remote.fetch_remote (which finds it on disk,
         off the main loop, or downloads it) in a task that puts the Metadata on the bus again
         with its URL. The file already found is kept for a track with the same artwork (the
-        same song at another queue position), unless `again`."""
+        same song at another queue position), unless `again`. Answers whether a fetch is under
+        way, which the item's properties wait for."""
         track = self._player.track
         url = track.artwork_url if track is not None else None
         if url and url == self._art_url and not again:
-            return
+            return False
         if self._art_task is not None and not self._art_task.done():
             self._art_task.cancel()
         self._art_task = None
@@ -496,19 +530,43 @@ class Mpris:
         self._art_path = None
         if url:
             self._art_task = self._app.spawn(self._fetch_art(track))
+        return self._art_task is not None
 
     async def _fetch_art(self, track):
         """The track's artwork from the remote-art cache (the bar asks for the same file, so
-        one download serves both), then Metadata again with its URL, if the track shown
-        still has that artwork."""
+        one download serves both), then the item's properties on the bus with its URL: the
+        ones its change held back for this, or Metadata again when the grace ran out first.
+        Another track's artwork by now is its own fetch's business."""
         try:
             path = await remote.fetch_remote(track.artwork_url)
         except Exception:
             log.exception('mpris: fetching the artwork failed')
+            path = None
+        if self._art_url != track.artwork_url:
             return
-        if path and self._art_url == track.artwork_url:
+        if path:
             self._art_path = path
-            self._changed('Metadata')
+        self._end_art_wait()
+        self._changed('Metadata')
+
+    def _art_grace_over(self):
+        """The artwork is taking longer than the grace: the item goes out without it, and its
+        own change follows when it arrives."""
+        self._art_wait = 0
+        log.debug('mpris: the artwork is slower than the grace; the item goes out without it')
+        self._end_art_wait()
+        return GLib.SOURCE_REMOVE
+
+    def _end_art_wait(self, publish=True):
+        """Stop holding the item's properties back: `publish` puts the ones held on the bus
+        (one PropertiesChanged, the artwork with them when it is what ended the wait), and a
+        new item's change drops them instead, since it sends them all itself."""
+        if self._art_wait:
+            GLib.source_remove(self._art_wait)
+            self._art_wait = 0
+        held, self._art_held = self._art_held, set()
+        if publish and held:
+            self._changed(*sorted(held))
 
     # -- D-Bus ---------------------------------------------------------------------------
 
