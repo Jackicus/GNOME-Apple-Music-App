@@ -2,7 +2,7 @@ pkgbase = music-sleeve
 	pkgdesc = Native GNOME client for Apple Music, played through Google Chrome
 	pkgver = 0.9.0
 	pkgrel = 1
-	url = https://github.com/Jackicus/GNOME-Apple-Music-App
+	url = https://github.com/Jackicus/music-sleeve
 	arch = any
 	license = GPL-2.0-or-later
 	checkdepends = appstream
@@ -17,7 +17,7 @@ pkgbase = music-sleeve
 	depends = python
 	depends = python-gobject
 	optdepends = google-chrome: the playback engine (its Widevine plays the protected streams)
-	source = music-sleeve-0.9.0.tar.gz::https://github.com/Jackicus/GNOME-Apple-Music-App/archive/refs/tags/v0.9.0.tar.gz
+	source = music-sleeve-0.9.0.tar.gz::https://github.com/Jackicus/music-sleeve/archive/refs/tags/v0.9.0.tar.gz
 	sha256sums = SKIP
 
 pkgname = music-sleeve
