@@ -9,13 +9,13 @@ widgets (names, roles, tooltips, focus) are in `.claude/rules/ui.md`; the keys t
 `scripts/headless.sh scripts/a11y_check.py` walks these steps on the demo library (add
 `--size 360x640` for the narrow layout, `--names` for the accessible names), step 8 with the
 window maximized (a dialog is inside the window only when that is maximized or tiled; else it
-is a window of its own, which the window's keys never reach). It leaves out what needs a
-window with the keyboard, which a headless one never has: Tab from row to row in Preferences
-and, in the narrow layout, Down from one sidebar section to the next (a row keeps the focus
-there). Of the mnemonics in Preferences it presses Clear's and checks that every labelled
-button has one, since the demo leaves the other buttons insensitive or hidden. Walk those
-with a real keyboard. When a key or a page changes, change this list and the script
-together.
+is a window of its own, which the window's keys never reach). The keys are real: the headless
+mutter injects them through its RemoteDesktop interface (`scripts/remote_keys.py`), so the
+window is active and what needs that is walked too — Tab from row to row in Preferences and,
+in the narrow layout, Down from one sidebar section to the next. Of the mnemonics in
+Preferences it presses Clear's and checks that every labelled button has one, since the demo
+leaves the other buttons insensitive or hidden. When a key or a page changes, change this
+list and the script together.
 
 1. Ctrl+1 puts the focus on the selected sidebar row. Down and Up move through every
    destination: in the wide layout they select, which shows the page; in the narrow one they
@@ -52,12 +52,23 @@ together.
 
 ## The tools
 
-- `scripts/a11y_check.py` cannot send real key presses (none can be synthesised on the
-  development desktop). Its `press()` runs the handlers a real event would reach: the
-  capture-phase key and shortcut controllers from the window down to the focus (a mnemonic,
-  Alt and a label's underlined letter, runs there on its label, through the shortcut manager
-  above it), then the shortcut controllers from the focus up, and a popover's own key
-  handler. Typing is not emulated; the entry's text is set.
+- `scripts/a11y_check.py` sends real key presses. `scripts/remote_keys.py` starts a session on
+  the headless mutter's `org.gnome.Mutter.RemoteDesktop` and `NotifyKeyboardKeycode` injects
+  each one as a keyboard would; only keyboard events are asked for, so no screen-cast stream is
+  needed. That call takes evdev keycodes, which the module works out from the accelerator
+  through the keymap the compositor gave the client (`Gtk.accelerator_parse`, then
+  `Gdk.Display.map_keyval`, a Wayland or XKB keycode being the evdev one plus 8); a keyval on a
+  shifted level of its key brings Shift with it. Typing is real too. The compositor points the
+  keyboard at a window only once it has an event to deliver, so the script presses Shift on its
+  own first: without that the window is never active and the first key is lost.
+- `--emulate-keys`, and the fallback where that interface is not on the session bus (on a
+  desktop session it is behind the remote-desktop portal, which asks the user first),
+  dispatches each press through GTK's own handlers instead. `press()` runs the handlers a real
+  event would reach: the capture-phase key and shortcut controllers from the window down to the
+  focus (a mnemonic, Alt and a label's underlined letter, runs there on its label, through the
+  shortcut manager above it), then the shortcut controllers from the focus up, and a popover's
+  own key handler. Typing is not emulated (the entry's text is set), the window is never
+  active, and the steps that need an active window are left out.
 - `--names` starts a private accessibility bus (a `dbus-daemon` with at-spi's configuration,
   from /usr/share/defaults/at-spi2 or /etc/at-spi2, on an abstract socket, and
   `at-spi2-registryd` from /usr/libexec, /usr/lib or /usr/lib/at-spi2-core), stops both when it
@@ -76,5 +87,6 @@ together.
   default factories leave its list items unnamed, in the popup and in the row's own display
   of the value (dialogs/preferences.py gives the row factories that name them); an open
   `Adw.BottomSheet` leaves the content behind it "showing".
-- Not checked by machine: real key presses and input methods, Orca itself, the high-contrast
-  switch live, and right-to-left layouts.
+- Not checked by machine: input methods, Orca itself, the high-contrast switch live, and
+  right-to-left layouts. Nor is CI: its container has no mutter, so the keyboard walkthrough is
+  a tool to run here, not a job there.

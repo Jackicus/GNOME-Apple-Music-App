@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
-"""Walk the keyboard checklist and list unnamed widgets, without a keyboard or a screen reader.
+"""Walk the keyboard checklist and list unnamed widgets, with no one at the keyboard.
 
-    scripts/a11y_check.py [--size WxH] [--light] [--names]
+    scripts/a11y_check.py [--size WxH] [--light] [--names] [--emulate-keys]
 
 Runs the installed build (meson install -C build, or scripts/run.sh, first) on the demo
 library, as screenshot.py --demo does (scripts/harness.py: memory settings, animations off,
@@ -12,15 +12,18 @@ no engine), and walks the
 keyboard walkthrough in docs/accessibility.md key by key, printing PASS or FAIL for each step;
 the exit status is 1 when a step fails. Use --size 360x640 for the narrow layout.
 
-Keys cannot be sent to a window on this Wayland desktop, so each press is dispatched through
-GTK's own handlers as a key event would be (press()): the capture-phase key and shortcut
+Under scripts/headless.sh the keys are real: scripts/remote_keys.py opens a session on the
+headless mutter's org.gnome.Mutter.RemoteDesktop and injects them as a keyboard would, so the
+window is active and nothing about the walkthrough is emulated — typing included. With
+--emulate-keys, or where that interface is not on the session bus, each press is dispatched
+through GTK's own handlers instead (press()): the capture-phase key and shortcut
 controllers from the window down to the focus widget (the window's playback keys, the
 application's accelerators, the mnemonics a dialog's shortcut manager runs on its labels),
 then the shortcut controllers from the focus widget up to the window (the widgets' own keys:
-Tab, the arrows, Enter, Escape, the context-menu keys) and a popover's own key handler.
-Typing into an entry is not emulated (the text is set). Step 8 of the walkthrough (a dialog
-over the window) runs with the window maximized, where a dialog is inside it, and the
-window is made its --size again afterwards.
+Tab, the arrows, Enter, Escape, the context-menu keys) and a popover's own key handler; typing
+is not emulated (the text is set), and the steps that need an active window are left out.
+Step 8 of the walkthrough (a dialog over the window) runs with the window maximized, where a
+dialog is inside it, and the window is made its --size again afterwards.
 
 --names also starts a private accessibility bus (a dbus-daemon with at-spi's configuration on
 an abstract socket, and at-spi2-registryd, stopped when the script exits, however it exits;
@@ -48,6 +51,9 @@ parser.add_argument('--size', default='1100x760')
 parser.add_argument('--light', action='store_true')
 parser.add_argument('--names', action='store_true',
                     help='list focusable controls without an accessible name (libatspi)')
+parser.add_argument('--emulate-keys', action='store_true',
+                    help="dispatch each press through GTK's handlers instead of sending a real "
+                         "key through the compositor's RemoteDesktop interface")
 parser.add_argument('--dump', action='store_true', help=argparse.SUPPRESS)  # the lister
 args = parser.parse_args()
 
@@ -186,11 +192,22 @@ if args.names:
 # The program name is how the lister finds the app on the accessibility bus.
 app = harness.make_app('A11yCheck', light=args.light, size=(width, height), name='a11y_check')
 
+import remote_keys  # noqa: E402  (imports Gtk, so after make_app)
 from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402  (after make_app)
 
 from applemusic import shortcuts  # noqa: E402  (the installed build's, after make_app)
 
 failures = []
+
+# The compositor's keyboard, or None where the walkthrough falls back to press().
+keyboard = None
+if not args.emulate_keys:
+    try:
+        keyboard = remote_keys.open_keyboard()
+        atexit.register(keyboard.close)
+    except remote_keys.Unavailable as error:
+        print(f'a11y_check: no real key presses ({error}); emulating them instead')
+print('keys: real' if keyboard else 'keys: emulated (press())')
 
 
 # -- key presses --------------------------------------------------------------------------
@@ -316,10 +333,31 @@ def row_title(row):
 
 
 async def key(window, accel, wait=0.25):
-    """Press accel and wait; what handled it (press())."""
-    handled = press(window, accel)
+    """Press accel and wait. With a real keyboard the press goes to the focused window,
+    whatever `window` is, and nothing can say what handled it (None); emulated, it is
+    dispatched in window and what handled it comes back (press())."""
+    if keyboard is None:
+        handled = press(window, accel)
+    else:
+        keyboard.send(accel)
+        handled = None
     await asyncio.sleep(wait)
     return handled
+
+
+def by(handled, what):
+    """Whether an emulated press ended in `what`. True with a real keyboard, which cannot see
+    what handled a key: the step's own effect is what it checks there."""
+    return keyboard is not None or (handled or '').endswith(what)
+
+
+async def type_into(entry, text, wait=0.4):
+    """Put text in the focused entry: typed key by key with a real keyboard, else set."""
+    if keyboard is None:
+        entry.set_text(text)
+    else:
+        keyboard.type_text(text)
+    await asyncio.sleep(wait)
 
 
 async def until(condition, timeout=2.0):
@@ -367,11 +405,11 @@ async def walkthrough(window):
           isinstance(window.get_focus(), Gtk.ListBoxRow) and inside(window.get_focus(),
                                                                      window.sidebar))
     if narrow:
-        # The page mode's sidebar is a boxed list per section. Down from a section's last
-        # row moves to the next section's first (libadwaita passes the focus on) only in an
-        # active window: GtkListBoxRow's focus handler reads the row's has-focus, which
-        # GTK sets while the toplevel has the keyboard, and a headless window never has
-        # it. The script steps over the section's end itself.
+        # The page mode's sidebar is a boxed list per section, and libadwaita passes the focus
+        # from one section to the next on Down from its last row. That needs an active window:
+        # GtkListBoxRow's focus handler reads the row's has-focus, which GTK sets only while
+        # the toplevel has the keyboard. A real key press makes the window active; an emulated
+        # one cannot, so there the script steps over the section's end itself.
         for _ in range(2):  # Home → New, Radio
             await key(window, 'Down', 0.15)
         check('Down moves to Radio', row_title(window.get_focus()) == 'Radio',
@@ -379,8 +417,17 @@ async def walkthrough(window):
         await key(window, 'Up', 0.15)
         check('Up moves back to New', row_title(window.get_focus()) == 'New',
               row_title(window.get_focus()))
-        rows = window._sidebar.rows()
-        next((row for row in rows if row_title(row) == 'Recently Added'), rows[0]).grab_focus()
+        await key(window, 'Down', 0.15)  # Radio again, the section's last row
+        if keyboard is None:
+            rows = window._sidebar.rows()
+            next((row for row in rows if row_title(row) == 'Recently Added'),
+                 rows[0]).grab_focus()
+            await asyncio.sleep(0.15)
+        else:
+            await key(window, 'Down', 0.15)
+            check("Down from a section's last row moves to the next section",
+                  row_title(window.get_focus()) == 'Recently Added',
+                  row_title(window.get_focus()))
         for _ in range(2):  # Recently Added → Artists, Albums
             await key(window, 'Down', 0.15)
         check('Down moves to Albums', row_title(window.get_focus()) == 'Albums',
@@ -458,7 +505,7 @@ async def walkthrough(window):
     handled = await key(window, 'space')
     await until(lambda: actions)  # the button clicks once its pressed state has shown
     check('Space presses the focused play button (play-pause)',
-          actions == ['play-pause'] and handled == 'signal(activate)', (actions, handled))
+          actions == ['play-pause'] and by(handled, 'signal(activate)'), (actions, handled))
     await key(window, '<primary>Right')
     await key(window, '<primary>Left')
     for action, handler in handlers:
@@ -523,8 +570,9 @@ async def walkthrough(window):
     search = window.navigation_view.get_visible_page()
     check('Ctrl+F shows Search with the focus in its entry',
           window.shown == 'search' and inside(window.get_focus(), search.search_entry))
-    search.search_entry.set_text('tide')  # typed
-    await asyncio.sleep(0.4)
+    await type_into(search.search_entry, 'tide')
+    check('typing into the entry reaches it', search.search_entry.get_text() == 'tide',
+          search.search_entry.get_text())
     await key(window, 'Tab')
     await key(window, 'Right')
     await key(window, 'space', 0.8)
@@ -572,7 +620,7 @@ async def walkthrough(window):
     await until(lambda: actions)
     app.lookup_action('play-pause').disconnect(handler)
     check('Space on a tile plays or pauses',
-          actions == ['play-pause'] and (handled or '').endswith('key controller'),
+          actions == ['play-pause'] and by(handled, 'key controller'),
           (actions, handled, describe(window.get_focus())))
     print('-- folders')
     tree = app.library.playlist_tree()
@@ -605,8 +653,17 @@ async def walkthrough(window):
     check('Ctrl+, opens Preferences', dialog is not None)
     if dialog is not None:
         toplevel = dialog.get_root()
-        # Tab from a row stays on it in a window without the keyboard (GtkListBoxRow's
-        # focus handler reads has-focus), which a headless one never has: not walked.
+        if keyboard is not None:
+            # Tab from a row stays on it in a window without the keyboard (GtkListBoxRow's
+            # focus handler reads has-focus): only a real press makes a window active.
+            visited = []
+            for _ in range(4):
+                await key(toplevel, 'Tab', 0.2)
+                visited.append(toplevel.get_focus())
+            check('Tab moves from row to row inside it',
+                  len({id(widget) for widget in visited}) == len(visited)
+                  and all(inside(widget, dialog) for widget in visited),
+                  [describe(widget) for widget in visited])
         buttons = [widget for widget in descendants(dialog)
                    if isinstance(widget, Adw.ButtonRow)
                    or (isinstance(widget, Gtk.Button) and widget.get_label())]
@@ -618,13 +675,12 @@ async def walkthrough(window):
         clicks = []
         handler = dialog.clear_button.connect('clicked', lambda _button: clicks.append(True))
         app.refuse_in_demo = lambda: True
-        handled = press(toplevel, '<alt>l')
+        handled = await key(toplevel, '<alt>l', 0)
         await until(lambda: clicks)  # the button clicks once its pressed state has shown
         del app.refuse_in_demo
         dialog.clear_button.disconnect(handler)
         check('Alt+L presses Clear', clicks == [True], (handled, clicks))
-        press(toplevel, 'Escape')
-        await asyncio.sleep(0.8)
+        await key(toplevel, 'Escape', 0.8)
         check('Escape closes it', app._preferences is None)
     print('-- Keyboard Shortcuts')
     await key(window, '<primary>question', 1.0)
@@ -635,7 +691,7 @@ async def walkthrough(window):
                   if isinstance(row, Gtk.ListBoxRow) and hasattr(row, 'get_title')}
         wanted = {title for _section, items in shortcuts.sections() for title, _key in items}
         check('it lists every shortcut', titles == wanted, sorted(titles ^ wanted))
-        press(shown.get_root(), 'Escape')
+        await key(shown.get_root(), 'Escape', 0)
         await until(lambda: dialog_shown(window, Adw.ShortcutsDialog) is None)
         check('Escape closes it', dialog_shown(window, Adw.ShortcutsDialog) is None)
     print('-- a dialog over the window')
@@ -665,7 +721,7 @@ async def walkthrough(window):
               after == before and not window.bottom_sheet.get_open() and not actions
               and inside(window.get_focus(), dialog),
               (after[0], window.bottom_sheet.get_open(), actions, describe(window.get_focus())))
-        press(window, 'Escape')
+        await key(window, 'Escape', 0)
         await until(lambda: app._preferences is None)
         check('Escape closes it', app._preferences is None)
     window.unmaximize()
@@ -734,6 +790,12 @@ async def run():
             await asyncio.sleep(0.1)
         await asyncio.sleep(1.0)
         window = app.get_active_window()
+        if keyboard is not None:
+            # A real press goes wherever the compositor points the keyboard, and it points it
+            # at the window only once there is something to deliver: Shift on its own, then
+            # the window is active and no step's first key is lost.
+            keyboard.nudge()
+            check('the window takes the keyboard', await until(window.is_active, 5.0))
         await walkthrough(window)
         if args.names:
             await names(window)

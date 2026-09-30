@@ -176,6 +176,16 @@ changes, change it here, with the date. The plan they came from is in
   next song of one album (the same URL, nothing fetched) and a moment for a file on disk; a
   slower download publishes the item first and its artwork after, since a card that is right
   late is worse than one that fills in twice.
+- **The keyboard walkthrough presses real keys** (2026-09-30). `scripts/a11y_check.py` sends
+  them through the headless mutter's `org.gnome.Mutter.RemoteDesktop` interface, which
+  `scripts/headless.sh` already puts on a private session bus, rather than dispatching each
+  press through GTK's controllers: the window is then active, so the walkthrough covers what
+  only an active window does — Tab from row to row and Down from one boxed sidebar section to
+  the next — and typing is typed. The emulation stays behind `--emulate-keys`, and as the
+  fallback on a session that has no such interface (a desktop one keeps it behind the
+  remote-desktop portal, which asks the user first). It stays a tool to run here rather than a
+  CI job: the container installs no mutter, and nothing in `check.sh` may need one (#169).
+
 ## Open
 
 - Nothing. The questions that were open here are settled above; what is left before the

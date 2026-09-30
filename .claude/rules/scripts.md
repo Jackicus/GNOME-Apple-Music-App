@@ -22,7 +22,9 @@ paths:
   unset. Run every GUI script through it (screenshot.py, a11y_check.py, scroll_test.py,
   bench.py, the widget tests) so no window opens on, or takes focus from, the user's desktop, and
   the app's MPRIS player never reaches the real session. Compare timings only with other
-  headless runs. Chrome is the one thing it sends back to the desktop: before
+  headless runs. mutter owns `org.gnome.Mutter.RemoteDesktop` on that private session, which is
+  where `remote_keys.py` gets real key presses from; CI has no mutter, so nothing in check.sh
+  may depend on it. Chrome is the one thing it sends back to the desktop: before
   `dbus-run-session`, it records the desktop's session bus as `APPLE_MUSIC_HOST_SESSION_BUS`
   (the address in the environment, else `$XDG_RUNTIME_DIR/bus`; a nested run keeps the
   outer's), which the engine gives Chrome as its `DBUS_SESSION_BUS_ADDRESS`, so Chrome reaches
@@ -38,8 +40,15 @@ paths:
   `--banner sign-in|expired` and `--sidebar` (the narrow layout's sidebar) show those states;
   `--help` lists the rest. It shoots once no artwork decode has been in flight for a few polls
   (5 s at most), so a new step that shows artwork needs no delay of its own for it.
-- `a11y_check.py` cannot send real key presses here: `press()` runs the controllers a real event
-  would reach, a label's mnemonic included. A dialog is inside the window only while that is
+- `a11y_check.py` sends real key presses: `remote_keys.py` starts a session on the headless
+  mutter's `org.gnome.Mutter.RemoteDesktop` and injects each key by its evdev keycode, which it
+  works out from the accelerator through the display's own keymap; it presses Shift alone first,
+  since the compositor points the keyboard at a window only once it has an event for it, and
+  until then the window is not active and the first key is lost. That active window is what lets
+  the walkthrough cover Tab from row to row and Down from one sidebar section to the next.
+  `--emulate-keys`, and any session without that interface (a desktop one puts it behind the
+  remote-desktop portal), falls back to `press()`, which runs the controllers a real event would
+  reach, a label's mnemonic included, and leaves those steps out. A dialog is inside the window only while that is
   maximized (or tiled), so the dialog step maximizes it and puts it back. `--names` runs a private
   AT-SPI bus (a dbus-daemon and at-spi2-registryd) and stops it however the script exits.
 - `am.py` drives the real engine: `status`, `eval`, `now-playing`, `events`. By default each
