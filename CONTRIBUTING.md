@@ -57,7 +57,12 @@ generates the demo library). The same goes for logs pasted into issues.
    renames in their own commit), and write commit messages that say what changes and why.
 3. Fill in the pull request template: link the issues with `Closes #123` so they close on merge,
    and attach screenshots for UI changes.
-4. CI must be green. Pull requests are merged by rebase or squash; the branch is deleted after
-   the merge.
+4. CI must be green. `main` is a protected branch: it takes no direct push, so every change
+   arrives as a pull request whose `check.sh (Arch Linux)` run has passed. No approving review
+   is required — the maintainer merges, and only the maintainer can. Pull requests are squashed
+   (`main` keeps a linear history) and the branch is deleted after the merge.
+
+You do not need write access to contribute: fork the repository, push your branch to your fork
+and open the pull request from there. CI runs on it automatically.
 
 Security problems are reported privately: see [SECURITY.md](SECURITY.md).

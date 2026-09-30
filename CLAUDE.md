@@ -101,13 +101,10 @@ scripts/headless.sh python3 -m unittest discover -s tests    the unit tests alon
 scripts/headless.sh scripts/screenshot.py build/shot.png --demo [--page KEY]
                              [--open album:first] [--light] [--size WxH]: a PNG (--help for more)
 scripts/headless.sh scripts/a11y_check.py [--size 360x640] [--names]   the keyboard checklist
-scripts/demo_library.py --cache build/demo-big --albums 3000 --playlists 300 --tracks 40000
-                             a big invented library for measuring; then scripts/bench.py (startup,
-                             page switches, memory) and scripts/scroll_test.py (per-frame work)
+scripts/demo_library.py --cache build/demo-big --albums 3000 --tracks 40000   a big invented
+                             library; then scripts/bench.py and scripts/scroll_test.py measure on it
 scripts/am.py --help         the engine, no GUI: its own Chrome on the real profile, or --attach
-meson setup _build --prefix=/usr && meson compile -C _build && sudo meson install -C _build
-  --skip-subprojects         a system install (release profile) in a directory of its own, never
-                             build/, which run.sh and check.sh keep on the development profile
+meson setup _build --prefix=/usr …   a system install, never into build/ (docs/release.md)
 ```
 
 ## Conventions
@@ -173,7 +170,7 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
 - **Apple's marks are Apple's**: the name and icon are the app's own; "Apple Music" names the
   service, never this app; Apple's logos, fonts and artwork are never used (packaging.md).
 
-## Verifying a change
+## Verifying and landing a change
 
 1. `scripts/check.sh` passes. CI (`.github/workflows/ci.yml`) runs it on every push to main and
    every pull request, in an Arch Linux container under Xvfb with software rendering, no
@@ -185,6 +182,9 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
 4. The startup path, a page's first build or a list's bind: `scripts/bench.py` and
    `scripts/scroll_test.py` on build/demo-big, before and after (headless runs only).
 5. The real engine only when the change needs it, and it never leaves data in the repo.
+6. `main` is protected and takes no direct push, from anyone. Work on a branch, open a pull
+   request, let CI go green, then `gh pr merge --squash --delete-branch`: no approving review is
+   required, so a session merges its own. Anything but a trivial fix gets an issue first.
 
 ## More
 

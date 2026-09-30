@@ -2,9 +2,14 @@
 
 Releases are native: `meson install` with the release profile, and the AUR package
 `music-sleeve`, whose PKGBUILD lives in `build-aux/aur/`. The Flatpak manifest is for
-development only, and Flathub is out of scope (`docs/decisions.md`). Tagging a release,
-publishing it on GitHub and uploading the package to the AUR are the owner's steps: an agent
-prepares everything up to them and stops there.
+development only, and Flathub is out of scope (`docs/decisions.md`).
+
+An agent may carry out a release end to end once the owner has said to release, and that
+includes the tag and the GitHub release. The exception is the AUR upload, which needs the
+maintainer's AUR account and an SSH key registered with aur.archlinux.org: an agent prepares
+the PKGBUILD and `.SRCINFO` and hands over the exact commands. The tag is the irreversible
+step — once it is pushed and anyone has installed it, it must not be moved or deleted; cut a
+new version instead.
 
 ## Checklist
 
@@ -14,7 +19,12 @@ prepares everything up to them and stops there.
 3. Retake the metainfo screenshots if the UI changed (the `screenshots` skill, step 5), and
    look at every one.
 4. Set the version in `meson.build` (`version`). The development profile appends the git
-   revision by itself.
+   revision by itself. Which digit moves, given the last release:
+   **patch** (0.9.0 → 0.9.1) for fixes alone; **minor** (→ 0.10.0) when a feature was added;
+   **major** (→ 1.0.0) for a break, or for the first release the project stands behind. The
+   digits count independently — 0.10.0 follows 0.9.2 and is newer, despite reading smaller.
+   Nothing detects this: the version stays where it is while work lands on `main`, and moves
+   only here, as the first step of releasing.
 5. Add a `<release version="…" date="…">` at the top of the metainfo's `<releases>`, with a
    short description: a `<p>` and a `<ul>`.
 6. Pin the metainfo's screenshot URLs to the tag: `/main/` becomes `/v<version>/` in each
@@ -75,9 +85,10 @@ the exact options). The metainfo lists the light ones first (`environment="gnome
 `type="default"`), then the dark ones (`environment="gnome:dark"`), by
 `raw.githubusercontent.com/…/data/screenshots/…` URLs: on `main` between releases, pinned to
 the tag at a release (step 6). Renaming or removing a file still breaks the metainfo of any
-build from `main` that names it. Shrink them losslessly (oxipng through `uv run --no-project
---with pyoxipng` saved about 15 %), and check that none carries a text chunk before
-committing.
+build from `main` that names it. Shrink them losslessly with
+`oxipng --opt 4 --strip safe data/screenshots/*.png` (about 12 %), and check that none carries
+a text chunk before committing: `grep -c -a -E 'tEXt|iTXt|zTXt' data/screenshots/*.png` prints
+0 for each.
 
 ## The Flatpak manifest
 
