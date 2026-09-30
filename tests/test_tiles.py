@@ -5,7 +5,9 @@
 artist portrait, each drawing through an ArtworkSlot, with the Artwork loader replaced by
 test_artwork's FakeLoader (nothing is decoded: the tests answer the requests).
 
-Each test shows its widget in a presented window (tests/gtk.py) and lets the main context run.
+Each test shows its widget in a presented window (tests/gtk.py) and lets the main context run,
+with the page tests' stand-in application as the default one (tests/page_harness.py): the
+artist page shown here looks for it.
 """
 
 import gc
@@ -39,6 +41,11 @@ class WidgetTestCase(unittest.TestCase):
     def setUpClass(cls):
         from gi.repository import Gtk
 
+        from tests.page_harness import stand_in_app
+
+        # The artist page here reaches the application through pages.app(): its own stand-in,
+        # so this module passes on its own as well as in the suite.
+        cls.app = stand_in_app()
         cls.window = Gtk.Window(default_width=600, default_height=400)
         cls.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         cls.window.set_child(cls.box)

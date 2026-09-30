@@ -23,6 +23,11 @@ paths:
   `tests/page_harness.py`'s `PageTestCase`: a presented stand-in window (the seams, recorded),
   a stand-in application (`pages.app()`) and an engine that answers each request from
   `engine.answers`.
+- Each module has to pass on its own (`python3 -m unittest tests.test_tiles`), not only in the
+  suite: nothing in a test process is reset between modules, so state one module leaves behind
+  can hide another's missing set-up. The default application is the one that bites — a page
+  finds it through `pages.app()` and it outlives the module that set it — so a widget test that
+  builds a page makes its own with `page_harness.stand_in_app()`.
 - Tests never start Chrome, touch the real profile or cache, or reach the network (a server
   the test runs itself on 127.0.0.1, as test_normalize's artwork fetch does, is fine): point
   `APPLE_MUSIC_CACHE` (and `APPLE_MUSIC_PROFILE`) at a temporary directory. test_engine.py runs

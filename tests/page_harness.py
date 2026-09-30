@@ -12,8 +12,9 @@ engine does. `engine.calls` lists the requests in order. The application records
 asked (actions, reports, toasts) and runs spawn()ed coroutines as tasks that settle() waits for.
 
 The application here is not registered and has an ID of its own, so the lifetime tests'
-(test_page_lifetime.py) can live beside it; each PageTestCase class makes it the default
-application while it runs.
+(test_page_lifetime.py) can live beside it; stand_in_app() makes it the default application,
+which is how a page finds it. Any widget test that builds a page calls that, PageTestCase and
+test_tiles alike.
 """
 
 import asyncio
@@ -189,6 +190,18 @@ def classes():
     return _stand_ins
 
 
+def stand_in_app():
+    """The stand-in application, made once and made the default one, which is how a page
+    reaches it (pages.app() is Gio.Application.get_default()). Any widget test that builds a
+    page calls this: a module that leans on the default application another module left behind
+    passes in the suite and fails on its own."""
+    stand_ins = classes()
+    if 'app' not in stand_ins:
+        stand_ins['app'] = stand_ins['App']()
+    stand_ins['app'].set_default()
+    return stand_ins['app']
+
+
 def find(widget, cls):
     """The first widget of class cls in widget's tree (widget included), depth first."""
     if isinstance(widget, cls):
@@ -249,14 +262,11 @@ class PageTestCase(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls):
         from gi.repository import Gtk
 
-        stand_ins = classes()
-        if 'app' not in stand_ins:
-            stand_ins['app'] = stand_ins['App']()
-        cls.app = stand_ins['app']
+        cls.app = stand_in_app()
         cls.gtk_settings = Gtk.Settings.get_default()
         cls.animations = cls.gtk_settings.props.gtk_enable_animations
         cls.gtk_settings.props.gtk_enable_animations = False
-        cls.window = stand_ins['Window']()
+        cls.window = classes()['Window']()
         cls.window.present()
         deadline = time.monotonic() + 2
         while not cls.window.get_mapped() and time.monotonic() < deadline:
