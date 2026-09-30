@@ -16,8 +16,11 @@ import unittest
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
 
 from gi.events import GLibEventLoop  # noqa: E402
+from gi.repository import Gio, GObject  # noqa: E402
 
 from applemusic import discord  # noqa: E402
+
+from tests.gtk import SCHEMA_ID  # noqa: E402
 
 
 class Track:
@@ -177,6 +180,12 @@ class FakeDiscord:
                 await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
+        finally:
+            writer.close()  # the server's own end, or the suite warns of an unclosed socket
+            try:
+                await writer.wait_closed()
+            except (ConnectionError, OSError):
+                pass
 
 
 class ConnectionTest(unittest.IsolatedAsyncioTestCase):
@@ -246,3 +255,116 @@ class ConnectionTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ApplicationIdTest(unittest.TestCase):
+    def test_the_application_id_is_a_discord_snowflake(self):
+        """The app's own Discord application. It needs no bot and no token, so the id is
+        public and belongs in the source; what it must not be is empty, or the feature is
+        silently inert."""
+        self.assertTrue(discord.APPLICATION_ID.isdigit(), discord.APPLICATION_ID)
+        self.assertGreaterEqual(len(discord.APPLICATION_ID), 17)
+
+
+class FakePlayer(GObject.Object):
+    state = GObject.Property(type=str, default='none')
+    track = GObject.Property(type=object)
+    position = GObject.Property(type=float, default=0.0)
+    duration = GObject.Property(type=float, default=0.0)
+
+
+class FakeApp:
+    """Only what Presence reaches for."""
+
+    def __init__(self):
+        self.settings = Gio.Settings.new(SCHEMA_ID)
+        self.settings.set_boolean('discord-presence', False)
+        self.player = FakePlayer()
+        self.tasks = []
+
+    def spawn(self, coro):
+        task = asyncio.ensure_future(coro)
+        self.tasks.append(task)
+        return task
+
+    async def settle(self):
+        while self.tasks:
+            tasks, self.tasks = self.tasks, []
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+class PresenceTest(unittest.IsolatedAsyncioTestCase):
+    """The whole of it against a fake Discord: the setting, the Player's signals and the
+    socket, with only Discord itself standing in."""
+
+    loop_factory = GLibEventLoop
+
+    async def asyncSetUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, 'discord-ipc-0')
+        self.discord = FakeDiscord(self.path)
+        await self.discord.start()
+        self.app = FakeApp()
+        self.presence = discord.Presence(self.app, application_id='123456')
+        # Look only where the fake is: the real runtime directory is not the test's business.
+        self.presence._paths = [self.path]
+        original = discord.Connection.connect
+        paths = [self.path]
+
+        async def connect(connection, _paths=None):
+            return await original(connection, paths)
+
+        discord.Connection.connect = connect
+        self.addCleanup(setattr, discord.Connection, 'connect', original)
+
+    async def asyncTearDown(self):
+        self.presence.stop()
+        await self.app.settle()
+        if self.presence._connection is not None:
+            await self.presence._connection.close()
+        await self.discord.stop()
+        self.dir.cleanup()
+
+    def play(self, track=None):
+        self.app.player.track = track if track is not None else Track()
+        self.app.player.duration = 303.0
+        self.app.player.state = 'playing'
+
+    async def test_nothing_is_sent_while_the_setting_is_off(self):
+        self.presence.start()
+        self.play()
+        await self.app.settle()
+        self.assertEqual(self.discord.frames, [])
+
+    async def test_the_track_reaches_discord_when_the_setting_is_on(self):
+        self.app.settings.set_boolean('discord-presence', True)
+        self.presence.start()
+        self.play()
+        await self.app.settle()
+        await self.discord.wait_for(2)
+        self.assertEqual(self.discord.frames[0][0], discord.OP_HANDSHAKE)
+        activity = self.discord.frames[1][1]['args']['activity']
+        self.assertEqual(activity['details'], 'Low Tide Warning')
+        self.assertEqual(activity['type'], discord.LISTENING)
+
+    async def test_turning_the_setting_off_clears_the_activity(self):
+        self.app.settings.set_boolean('discord-presence', True)
+        self.presence.start()
+        self.play()
+        await self.app.settle()
+        await self.discord.wait_for(2)
+        self.app.settings.set_boolean('discord-presence', False)
+        await self.app.settle()
+        await self.discord.wait_for(3)
+        self.assertIsNone(self.discord.frames[-1][1]['args']['activity'])
+
+    async def test_stopping_clears_the_activity(self):
+        self.app.settings.set_boolean('discord-presence', True)
+        self.presence.start()
+        self.play()
+        await self.app.settle()
+        await self.discord.wait_for(2)
+        self.presence.stop()
+        await self.app.settle()
+        await self.discord.wait_for(3)
+        self.assertIsNone(self.discord.frames[-1][1]['args']['activity'])
