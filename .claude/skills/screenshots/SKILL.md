@@ -41,9 +41,8 @@ What to shoot: $ARGUMENTS
    - `albums`: `--page albums --playing`;
    - `album`: `--page albums --open album:first --playing` (the album playing);
    - `now-playing`: `--page albums --now-playing`.
-   Keep the names: installed metainfo files link them by URL. Shrink them losslessly (oxipng:
-   `uv run --no-project --with pyoxipng python3 -c 'import oxipng, sys; [oxipng.optimize(f,
-   level=4, strip=oxipng.StripChunks.safe()) for f in sys.argv[1:]]' data/screenshots/*.png`),
+   Keep the names: installed metainfo files link them by URL. Shrink them losslessly with
+   `oxipng --opt 4 --strip safe data/screenshots/*.png`,
    look at each one (demo data only), and check that none carries a text chunk:
    `grep -c -a -E 'tEXt|iTXt|zTXt' data/screenshots/*.png` prints 0 for each. Update the
    captions in the metainfo if what a shot shows changed.
