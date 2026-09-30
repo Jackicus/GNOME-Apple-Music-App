@@ -23,6 +23,8 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
 
 ## Templates and widget lifetimes
 
+- The app's name in a user-visible string is "Music Sleeve". "Apple Music" names the service
+  ("Sign in to Apple Music", "Search Apple Music"), never this app (`.claude/rules/packaging.md`).
 - Blueprint 0.22: `template $AppleMusicName: Parent { … }`, `styles ["flat"]`, handlers
   `clicked => $on_clicked();`, bindings `label: bind item.title;`,
   `Adw.Breakpoint { condition ("max-width: 640sp") setters { … } }`. A custom widget used in a

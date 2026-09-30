@@ -21,8 +21,10 @@ Target: $ARGUMENTS
    - tooltips on icon-only buttons, mnemonics in dialogs, ellipsizing rather than clipping,
      nothing wider than 360 px;
    - both colour schemes and high contrast, no hard-coded colours;
-   - the Apple Music web player's arrangement of the same page (shelves, hero cards, grids;
-     "Reference layout" in `docs/history/build-plan.md`), where it does not fight the HIG.
+   - the structure a streaming player's page has, which this app's own pages follow (a sidebar
+     of destinations, shelves of tiles, hero cards, grids; "Reference layout" in
+     `docs/history/build-plan.md` describes it), where it does not fight the HIG. Take the
+     arrangement, never another app's visual design: the look is GNOME's.
 4. Prefer libadwaita widgets and style classes; remove CSS that a style class covers.
 5. Fix, shoot again and look again. If focus or keys changed, run
    `scripts/headless.sh scripts/a11y_check.py` (also `--size 360x640`). Run

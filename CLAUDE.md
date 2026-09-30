@@ -3,8 +3,8 @@
 A native GNOME client for Apple Music: Python and PyGObject, GTK 4 and libadwaita, Blueprint for
 the UI, Meson, gettext. GPL-2.0-or-later. App ID `io.github.jackicus.MusicSleeve`
 (`io.github.jackicus.MusicSleeve.Devel` with `-Dprofile=development`), resource base path
-`/io/github/jackicus/MusicSleeve`. It should feel like a GNOME core app (Music, Nautilus, Settings)
-while laying out its pages like the Apple Music web player.
+`/io/github/jackicus/MusicSleeve`. It should feel like a GNOME core app (Music, Nautilus,
+Settings); its pages carry a streaming player's structure, its look is GNOME's, not Apple's.
 
 Developed on GTK 4.22, libadwaita 1.9, Python 3.14 and PyGObject 3.56. The minimums are Python
 3.12 (`pyproject.toml`) and, in `meson.build`, GTK 4.20, GLib 2.84, libadwaita 1.9, PyGObject
@@ -68,8 +68,7 @@ src/*.py                        services and logic (engine, player, mpris, sync,
                                 keyboard, sidebar, sections, timing; new ones go here), and the
                                 window's parts (player_bar, sidebar_view)
 src/library.py                  the data model: GLib, GObject and Gio only, no GTK
-src/pages/<name>.py + .blp      one module per sidebar destination or pushed page (PAGES in
-                                pages/__init__.py)
+src/pages/<name>.py + .blp      one per destination or pushed page (PAGES in pages/__init__.py)
 src/widgets/                    reusable widgets: tiles, shelves, rows, covers, transport, artwork
 src/dialogs/                    sign-in, preferences, keyboard shortcuts, about
 src/backend/                    Chrome, the CDP client, bridge.js, API normalising: stdlib and
@@ -158,7 +157,7 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
   pure functions, tested with stand-ins; widget tests go through `tests/gtk.py`. Backend, model
   and service changes come with a test.
 
-## Privacy and the real account
+## Privacy, the real account and Apple's marks
 
 - The repository is public. No real account data in code, tests, fixtures, docs, logs or
   committed screenshots: no names, playlist or song titles, library IDs, tokens, artwork, or
@@ -171,6 +170,8 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
   `APPLE_MUSIC_DEBUG_PORT` opens the signed-in session to every local program: live checks only.
 - Don't write to a real Apple account (love, add to library or a playlist, sign out, clear the
   cache) unless the task asks for it, and put back anything you change.
+- **Apple's marks are Apple's**: the name and icon are the app's own; "Apple Music" names the
+  service, never this app; Apple's logos, fonts and artwork are never used (packaging.md).
 
 ## Verifying a change
 
@@ -192,9 +193,8 @@ meson setup _build --prefix=/usr && meson compile -C _build && sudo meson instal
   reads a file of that area; working through a shell, read the area's file first.
 - Skills in `.claude/skills/`: `review-pass`, `fix-bug`, `hig-polish`, `performance-pass`,
   `screenshots`, `live-engine-check`.
-- `docs/`: `architecture.md` (how the parts work together), `decisions.md` (settled decisions
-  and why), `notes.md` (measurements, lab notes), `accessibility.md` (the keyboard walkthrough),
-  `release.md` (releasing, packaging), `history/build-plan.md` (the plan the app was built from;
-  history, not instructions). `src/backend/README.md`: the bridge, events, library.json shapes.
+- `docs/`: `architecture.md` (how the parts fit), `decisions.md` (settled decisions and why),
+  `notes.md` (measurements), `accessibility.md` (the keyboard walkthrough), `release.md`,
+  `history/build-plan.md` (history, not instructions); `src/backend/README.md` (the bridge).
 - A change that makes a line in these files wrong fixes that line in the same commit
   (tests/test_docs.py checks the paths and keys they name, and this file's 200 lines).

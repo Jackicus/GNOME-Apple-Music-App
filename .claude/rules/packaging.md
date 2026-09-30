@@ -55,3 +55,14 @@ paths:
 - Nothing installed (the launcher, the desktop file, the PKGBUILD, the Flatpak manifest) sets
   `APPLE_MUSIC_DEBUG_PORT`: it opens the signed-in session to every local program (engine.md).
 - Release steps (version, metainfo release notes, tag, tarball, AUR) are in docs/release.md.
+- **Apple's marks.** The app is Music Sleeve, with an icon of its own (`docs/decisions.md`,
+  #145). Apple's guidelines for third parties allow no use of their logos, icons or artwork at
+  all, and no imitation of them, and no Apple trademark as or as part of a product name;
+  Flathub requires a name and icon distinct enough that no official affiliation is implied. So:
+  the display name, the app ID, the icons and the AUR package never carry an Apple mark, and
+  the icon is never drawn from Apple's artwork or in imitation of it. "Apple Music" is used
+  referentially only — the metainfo summary and description, the desktop file's `Keywords=`,
+  and strings that name the service — always less prominent than the app's own name. The
+  "Not affiliated with Apple. Apple Music is a trademark of Apple Inc." notice stays in the
+  metainfo description and the About dialog (`src/dialogs/about.py`), and the README keeps its
+  equivalent. Changing any of this is a decision for the owner, not a tidy-up.
