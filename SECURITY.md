@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report vulnerabilities **privately**, through GitHub's private vulnerability reporting:
-[open a report](https://github.com/Jackicus/music-sleeve/security/advisories/new)
+[open a report](https://github.com/Jackicus/GNOME-Music-Sleeve/security/advisories/new)
 (Security › Report a vulnerability on the repository page). Do not open a public issue, and do
 not include your own Apple Account details or anything from your Chrome profile in the report.
 

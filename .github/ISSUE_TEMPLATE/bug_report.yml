@@ -6,9 +6,9 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report this. Please search the
-        [existing issues](https://github.com/Jackicus/music-sleeve/issues?q=is%3Aissue)
+        [existing issues](https://github.com/Jackicus/GNOME-Music-Sleeve/issues?q=is%3Aissue)
         first. A security or privacy problem should not be reported here: see
-        [SECURITY.md](https://github.com/Jackicus/music-sleeve/blob/main/SECURITY.md).
+        [SECURITY.md](https://github.com/Jackicus/GNOME-Music-Sleeve/blob/main/SECURITY.md).
 
         **Privacy:** this issue is public. Leave out your Apple Account name or email, your
         playlist and library contents, and anything from `~/.cache/apple-music` or
