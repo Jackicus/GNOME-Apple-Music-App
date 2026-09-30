@@ -52,8 +52,6 @@ From `docs/release.md`:
 - [ ] Build and run the Flatpak in GNOME Builder (the manifest in `build-aux/flatpak/` has
       never been built: no GNOME 50 runtime on the development machine).
 - [ ] Translations: the strings are ready (`po/`), no languages yet.
-- [ ] Re-run `oxipng` over `data/screenshots/` — it is not installed on this machine, so they
-      were shrunk with zlib instead and are about 250 KB larger than they need to be.
 - [ ] The internal names that still say Apple Music, none of them user-visible: the
       `applemusic` Python package, the `AppleMusic*` GType names, the `APPLE_MUSIC_*`
       environment variables, and the cache and Chrome profile directories. Left alone on
@@ -66,10 +64,9 @@ Claude Code sessions (area rules load as files are touched; skills: `fix-bug`, `
 `performance-pass`, `review-pass`, `screenshots`, `live-engine-check`). Run GUI scripts through
 `scripts/headless.sh` so no window opens on the desktop.
 
-This machine needs `ruff`, `python-cairo` and `oxipng` installed
-(`sudo pacman -S ruff python-cairo oxipng`). Without the first two `scripts/check.sh` quietly
-skips the lint and three demo-library tests — which has already cost one round trip through CI
-for a line-length error that ruff would have caught in a second. `oxipng` shrinks the metainfo
-screenshots (`docs/release.md`).
+`ruff`, `python-cairo` and `oxipng` are installed here (2026-09-30), so `scripts/check.sh`
+runs the lint and the whole suite — 992 tests, `check: ok`. Without the first two it used to
+skip the lint and three demo-library tests silently, which once let a line-length error reach
+CI; if a machine lacks them, `sudo pacman -S ruff python-cairo oxipng`.
 
 Delete this file once it's all done.
