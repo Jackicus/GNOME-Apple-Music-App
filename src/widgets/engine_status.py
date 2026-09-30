@@ -15,6 +15,12 @@ display (tests/test_engine_status.py).
     self._status.activate()       # the status page's button
     self._status.watch()          # from do_map; unwatch() from do_unmap
 
+watch() and unwatch() are a page's do_map and do_unmap, which must not raise whatever they
+find: an exception from do_unmap leaves GTK a widget it believes is still mapped, and the
+unrealize that follows aborts the process. Without an application there is no engine to
+follow (pages.app() is None in a widget test that shows a page without one), so both do
+nothing; a page that asks the engine has one by then.
+
 `show(status, title, description, button)` draws `status`: 'loading' (a spinner; the texts
 are None), or one of the states below with its words (`button` None for none). `retry()` asks
 again: the page's load or fetch.
@@ -104,19 +110,25 @@ class EngineStatus:
 
     # The engine, watched while the page is shown.
 
+    def _engine(self):
+        """The application's engine, or None where there is no application (see the module)."""
+        return getattr(self._app, 'engine', None)
+
     def watch(self):
         """Follow the engine (from the page's do_map): up or authorized retries a state it
         can clear; starting shows the spinner."""
         if self._handlers:
             return
-        engine = self._app.engine
+        engine = self._engine()
+        if engine is None:
+            return
         self._handlers = [connect_weak(engine, 'notify::state', self._on_engine_changed),
                           connect_weak(engine, 'notify::authorized', self._on_engine_changed)]
         self._on_engine_changed(engine, None)  # what changed while the page was hidden
 
     def unwatch(self):
         """Stop following the engine (from the page's do_unmap)."""
-        engine = self._app.engine
+        engine = self._engine()
         for handler in self._handlers:
             engine.disconnect(handler)
         self._handlers = []
