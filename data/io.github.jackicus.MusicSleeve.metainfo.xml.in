@@ -36,7 +36,7 @@
   <url type="bugtracker">https://github.com/Jackicus/GNOME-Music-Sleeve/issues</url>
   <url type="vcs-browser">https://github.com/Jackicus/GNOME-Music-Sleeve</url>
   <url type="contribute">https://github.com/Jackicus/GNOME-Music-Sleeve/blob/main/CONTRIBUTING.md</url>
-  <url type="translate">https://github.com/Jackicus/GNOME-Music-Sleeve#translating</url>
+  <url type="translate">https://github.com/Jackicus/GNOME-Music-Sleeve/blob/main/CONTRIBUTING.md#translating</url>
 
   <translation type="gettext">music-sleeve</translation>
 

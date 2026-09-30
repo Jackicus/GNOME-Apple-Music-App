@@ -195,6 +195,6 @@ meson setup _build --prefix=/usr …   a system install, never into build/ (docs
   `screenshots`, `live-engine-check`.
 - `docs/`: `architecture.md` (how the parts fit), `decisions.md` (settled decisions and why),
   `notes.md` (measurements), `accessibility.md` (the keyboard walkthrough), `release.md`,
-  `history/build-plan.md` (history, not instructions); `src/backend/README.md` (the bridge).
+  `user-guide.md` (for users), `history/build-plan.md` (history); `src/backend/README.md` (bridge).
 - A change that makes a line in these files wrong fixes that line in the same commit
   (tests/test_docs.py checks the paths and keys they name, and this file's 200 lines).
