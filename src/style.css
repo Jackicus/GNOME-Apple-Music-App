@@ -1,11 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* SPDX-FileCopyrightText: 2026 Jack Tully */
 
-/* The icon's purple as the app's accent; libadwaita derives --accent-color from it. */
-:root {
-  --accent-bg-color: #9141ac;
-}
-
 /* The player bar (player_bar.blp), the bottom sheet's bottom bar: the transport buttons a
    little larger than the toolbar default, the seek slider's trough flush with the labels. */
 .player-bar {
@@ -40,7 +35,7 @@ gridview.tile-grid {
   padding: calc(36px + 2.4em) 6px 24px 6px;
 }
 
-/* A tile's cover and its placeholder: the corners Apple Music gives its artwork. */
+/* A tile's cover and its placeholder: rounded as the cards elsewhere in the app are. */
 .tile-art {
   border-radius: 8px;
 }
@@ -87,7 +82,7 @@ button.artist-link {
   font-weight: bold;
 }
 
-/* Artwork over its placeholder (widgets/cover.blp): Apple Music's corners, by size. */
+/* Artwork over its placeholder (widgets/cover.blp): rounded by size. */
 .cover > .card,
 .cover > picture {
   border-radius: 8px;
