@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* SPDX-FileCopyrightText: 2026 Jack Tully */
 
-/* Apple Music's red as the app's accent; libadwaita derives --accent-color from it. */
+/* The icon's purple as the app's accent; libadwaita derives --accent-color from it. */
 :root {
-  --accent-bg-color: #fa2d48;
+  --accent-bg-color: #9141ac;
 }
 
 /* The player bar (player_bar.blp), the bottom sheet's bottom bar: the transport buttons a

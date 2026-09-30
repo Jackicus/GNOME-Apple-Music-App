@@ -31,8 +31,10 @@ install_data(
   install_dir: get_option('datadir') / 'glib-2.0' / 'schemas',
 )
 
+# The development build gets the striped icon, installed under its own .Devel name.
+app_icon = get_option('profile') == 'development' ? base_id + '-devel.svg' : base_id + '.svg'
 install_data(
-  'icons' / base_id + '.svg',
+  'icons' / app_icon,
   rename: application_id + '.svg',
   install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
 )

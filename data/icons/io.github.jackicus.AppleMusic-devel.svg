@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
   <!-- SPDX-FileCopyrightText: 2026 Jack Tully -->
+  <!-- The development build's icon: the release icon under a band of stripes.
+       Keep it in step with io.github.jackicus.AppleMusic.svg. -->
   <!-- A record coming out of its sleeve, in GNOME's palette: a physical object, as the HIG
        asks of an app icon, and one that says "music" without another player's mark. Both
        objects stand on a darker side, so the icon sits among GNOME's own. -->
@@ -20,6 +22,17 @@
     </radialGradient>
   </defs>
 
+  <defs>
+    <pattern id="stripes" width="14" height="14" patternUnits="userSpaceOnUse"
+             patternTransform="rotate(45)">
+      <rect width="14" height="14" fill="#e5a50a"/>
+      <rect width="7" height="14" fill="#241f31"/>
+    </pattern>
+    <clipPath id="sleeve-clip">
+      <rect x="6" y="42" width="70" height="70" rx="9"/>
+    </clipPath>
+  </defs>
+
   <!-- The record: its rim below, then its face, its grooves and its label. -->
   <circle cx="84" cy="50" r="34" fill="#1a1622"/>
   <circle cx="84" cy="46" r="34" fill="url(#record)"/>
@@ -37,6 +50,10 @@
   <rect x="6" y="42" width="70" height="70" rx="9" fill="url(#sleeve)"/>
   <rect x="6.5" y="42.5" width="69" height="69" rx="8.5" fill="none" stroke="#ffffff"
         stroke-opacity="0.3"/>
+  <!-- The development build's stripes, clipped to the sleeve so the silhouette is the same. -->
+  <g clip-path="url(#sleeve-clip)">
+    <rect x="6" y="96" width="70" height="16" fill="url(#stripes)" fill-opacity="0.95"/>
+  </g>
   <g fill="#ffffff" fill-opacity="0.92">
     <rect x="27" y="65" width="7" height="24" rx="3.5"/>
     <rect x="38" y="56" width="7" height="42" rx="3.5"/>

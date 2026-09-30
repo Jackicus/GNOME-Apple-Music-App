@@ -96,8 +96,8 @@
   </screenshots>
 
   <branding>
-    <color type="primary" scheme_preference="light">#ffc2cb</color>
-    <color type="primary" scheme_preference="dark">#3d0b17</color>
+    <color type="primary" scheme_preference="light">#dc8add</color>
+    <color type="primary" scheme_preference="dark">#2b1a33</color>
   </branding>
 
   <releases>
