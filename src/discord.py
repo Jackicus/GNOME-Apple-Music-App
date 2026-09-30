@@ -29,7 +29,9 @@ Only what Discord shows is sent: the title, the artist, the album and the catalo
 cover URL, which is public. No library id, no token, nothing of the account's.
 
 APPLICATION_ID is the app's own Discord application, registered by the project at
-discord.com/developers. Without one there is nothing to connect as, so an empty id turns the
+discord.com/developers. It is the application's id and nothing else: rich presence needs no
+bot, no token and no OAuth, so the id is public and belongs in the source. Discord shows the
+application's name, so a profile reads "Listening to Music Sleeve". An empty id turns the
 feature off and says why once in the log.
 """
 
@@ -43,7 +45,7 @@ import time
 
 log = logging.getLogger(__name__)
 
-APPLICATION_ID = ''
+APPLICATION_ID = '1554953668954955896'
 
 OP_HANDSHAKE = 0
 OP_FRAME = 1
