@@ -10,7 +10,7 @@
 # compiles the modules again in memory.
 
 pkgname=music-sleeve
-pkgver=0.9.0
+pkgver=0.10.0
 pkgrel=1
 pkgdesc='Native GNOME client for Apple Music, played through Google Chrome'
 arch=('any')
