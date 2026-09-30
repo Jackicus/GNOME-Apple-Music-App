@@ -50,7 +50,7 @@ from .widgets.util import descendants
 log = logging.getLogger(__name__)
 
 # How long a track dragged over a closed folder hovers before the folder opens.
-SPRING_DELAY_MS = 700
+SPRING_DELAY_MS = 500
 # How long after the last change the expanded folders are written to the settings.
 EXPANDED_WRITE_DELAY_MS = 1000
 # How often, and how many times at most, reveal_selected() looks again for the rows to be
