@@ -271,6 +271,13 @@ class FakePlayer(GObject.Object):
     track = GObject.Property(type=object)
     position = GObject.Property(type=float, default=0.0)
     duration = GObject.Property(type=float, default=0.0)
+    pending = GObject.Property(type=bool, default=False)
+
+    @property
+    def resting(self):
+        """The real Player smooths the states a queue swap passes through; nothing here
+        needs that, so the state stands for it."""
+        return self.state
 
 
 class FakeApp:
@@ -368,3 +375,95 @@ class PresenceTest(unittest.IsolatedAsyncioTestCase):
         await self.app.settle()
         await self.discord.wait_for(3)
         self.assertIsNone(self.discord.frames[-1][1]['args']['activity'])
+
+
+class SameActivityTest(unittest.TestCase):
+    """What counts as a change worth a frame."""
+
+    def make(self, start=1000, **kw):
+        a = {'type': 2, 'details': 'Low Tide Warning', 'state': 'The Midnight Archipelago'}
+        a.update(kw)
+        if start is not None:
+            a['timestamps'] = {'start': start, 'end': start + 300000}
+        return a
+
+    def test_a_start_that_drifted_is_the_same_activity(self):
+        # Worked out from the position each time, so it moves by a moment. Not a seek.
+        self.assertTrue(discord.same_activity(self.make(1000), self.make(1900)))
+
+    def test_a_real_seek_is_a_change(self):
+        self.assertFalse(discord.same_activity(self.make(1000), self.make(60000)))
+
+    def test_a_different_track_is_a_change(self):
+        self.assertFalse(discord.same_activity(self.make(), self.make(details='Other')))
+
+    def test_losing_the_timestamps_is_a_change(self):
+        # Playing to paused: the clock has to stop.
+        self.assertFalse(discord.same_activity(self.make(), self.make(start=None)))
+
+    def test_nothing_equals_nothing(self):
+        self.assertTrue(discord.same_activity(None, None))
+        self.assertFalse(discord.same_activity(None, self.make()))
+
+
+class SettlingTest(unittest.IsolatedAsyncioTestCase):
+    """A track change arrives in pieces; Discord must see one frame, not four."""
+
+    loop_factory = GLibEventLoop
+
+    async def asyncSetUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, 'discord-ipc-0')
+        self.discord = FakeDiscord(self.path)
+        await self.discord.start()
+        self.app = FakeApp()
+        self.app.settings.set_boolean('discord-presence', True)
+        self.presence = discord.Presence(self.app, application_id='123456')
+        original = discord.Connection.connect
+        paths = [self.path]
+
+        async def connect(connection, _paths=None):
+            return await original(connection, paths)
+
+        discord.Connection.connect = connect
+        self.addCleanup(setattr, discord.Connection, 'connect', original)
+
+    async def asyncTearDown(self):
+        self.presence.stop()
+        await self.app.settle()
+        if self.presence._connection is not None:
+            await self.presence._connection.close()
+        await self.discord.stop()
+        self.dir.cleanup()
+
+    async def test_a_track_change_in_pieces_is_one_frame(self):
+        self.presence.start()
+        # As the Player really does it: the track arrives, the duration is still 0, then it
+        # lands and the state turns over. Live this sent four frames, two of them without
+        # timestamps, and Discord's progress bar flickered at every track change.
+        self.app.player.track = Track()
+        self.app.player.state = 'playing'
+        self.app.player.duration = 303.0
+        await self.app.settle()
+        await self.discord.wait_for(2)
+        await asyncio.sleep(discord.UPDATE_GRACE_MS / 1000 + 0.2)
+        await self.app.settle()
+        activities = [f[1]['args']['activity'] for f in self.discord.frames
+                      if f[0] == discord.OP_FRAME]
+        self.assertEqual(len(activities), 1, activities)
+        self.assertIn('timestamps', activities[0])
+
+
+class FinishedTest(unittest.TestCase):
+    """Playback over means nothing on the profile, whatever the Player still holds."""
+
+    def test_stopping_shows_nothing(self):
+        for state in discord.FINISHED_STATES:
+            with self.subTest(state=state):
+                self.assertIsNone(
+                    discord.activity_for(Track(), state, 10.0, 300.0))
+
+    def test_paused_still_shows_the_track(self):
+        activity = discord.activity_for(Track(), 'paused', 10.0, 300.0)
+        self.assertEqual(activity['details'], 'Low Tide Warning')
+        self.assertNotIn('timestamps', activity)
