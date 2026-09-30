@@ -1,3 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <path fill="#222" d="M13 1v10a2.5 2.5 0 1 1-1.5-2.3V4.5L6 5.6V12.5a2.5 2.5 0 1 1-1.5-2.3V2.8z"/>
+  <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+  <!-- SPDX-FileCopyrightText: 2026 Jack Tully -->
+  <!-- The record of the app icon, alone: at 16 px the sleeve behind it only muddies the
+       silhouette, while a record reads at once. Its rim, a groove and its label, as one
+       even-odd path: filled, hole, filled, hole. -->
+  <path fill="#222" fill-rule="evenodd"
+        d="M1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 1 0-13 0Z
+           M2.7 8a5.3 5.3 0 1 0 10.6 0 5.3 5.3 0 1 0-10.6 0Z
+           M3.7 8a4.3 4.3 0 1 0 8.6 0 4.3 4.3 0 1 0-8.6 0Z
+           M6 8a2 2 0 1 0 4 0 2 2 0 1 0-4 0Z"/>
 </svg>

@@ -47,12 +47,14 @@ Also in #154. These need real input, your eyes, or change the account:
 Nine issues labelled `needs-decision`. Seven already have a working default that is easy to flip:
 if you're happy with it, close the issue. My recommendation is in bold.
 
-- [ ] [#145](https://github.com/Jackicus/GNOME-Apple-Music-App/issues/145) **The icon and name
-      resemble Apple Music's (trademark risk).** The icon is close to Apple's logo and the
-      display name is exactly "Apple Music". Options: keep both; a new original icon
-      (`docs/icon-proposal.md` has a concept and a draft SVG); or a new icon and a distinct
-      name. **Replace the icon before any public listing, and settle the name before tagging:
-      nobody uses the app yet, so even the app ID could change now at no cost to anyone.**
+- [ ] [#145](https://github.com/Jackicus/GNOME-Apple-Music-App/issues/145) **The name still
+      resembles Apple Music's (trademark risk).** The icon is now the app's own (a record and
+      its sleeve, `docs/decisions.md`), but the display name is still exactly "Apple Music",
+      which Apple's guidelines for third parties do not allow as a product name and Flathub
+      rejects. **Settle a name of its own before tagging, and change the app ID with it:
+      nobody uses the app yet, so it costs nothing now.** "Apple Music" stays in the summary,
+      the description and the desktop file's keywords, where referential use is allowed and
+      where app search actually looks.
 - [ ] [#146](https://github.com/Jackicus/GNOME-Apple-Music-App/issues/146) **When to tag v0.9.0
       and publish to the AUR.** **After sections 1–3 pass and #145 is settled.** Steps are in
       section 5.

@@ -147,8 +147,17 @@ changes, change it here, with the date. The plan they came from is in
   library, and pages opened and closed leave at most 5 MB behind (`docs/notes.md`).
 - **Comments describe the code** (2026-09-28), as it is and why: no phase numbers, review IDs,
   plans or history, which belong in commit messages.
+- **An icon of the app's own** (2026-09-30). A record coming out of its sleeve, in GNOME's
+  palette: the old icon was a red rounded square with a white double note, near enough to Apple
+  Music's own logo to confuse users and to invite a complaint. Apple's guidelines for third
+  parties allow no use of their logos or icons at all, and Flathub requires an icon distinct
+  enough to carry the project's own identity. The symbolic icon is the record alone: at 16 px
+  the sleeve behind it only muddies the silhouette. The development build's icon is the same
+  artwork under a band of stripes, and the metainfo's brand colours follow it.
 
 ## Open
 
-- The app icon and the display name "Apple Music" resemble Apple's own; whether to change them
-  is the owner's call. `docs/icon-proposal.md` proposes an original icon.
+- The display name "Apple Music" is Apple's trademark used as the product name, which Apple's
+  guidelines for third parties do not allow and Flathub rejects. A name of the app's own, with
+  "Apple Music" kept to the summary, the description and the desktop file's keywords, is the
+  owner's call (#145).
