@@ -41,7 +41,8 @@ new version instead.
    (it fills in the checksum once the tag exists), `makepkg --printsrcinfo > .SRCINFO`, and set
    the `# Maintainer:` line to the contact to be public there. Test it as below. Publishing
    itself needs an AUR account and an SSH key registered with aur.archlinux.org, so it is the
-   maintainer's to do; README's install section says "once published" until then.
+   maintainer's to do; README's install section says "until it is published there" until
+   then.
 
 ## Installing from source
 
