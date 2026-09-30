@@ -60,6 +60,12 @@ touches widgets.
   and the playback commands. The player bar, the Now Playing sheet and MPRIS all follow it.
 - **MPRIS** (`mpris.py`): the app on the session bus as `org.mpris.MediaPlayer2.<app id>`, for
   GNOME Shell's media controls and the media keys. Chrome's own MPRIS player is switched off.
+- **Discord presence** (`discord.py`): while `discord-presence` is on, the track the player
+  holds, sent as a rich presence activity over the Discord desktop app's local socket. It
+  follows the player's notifications like MPRIS, connects only when there is something to
+  show and Discord is there, waits for Discord's READY before sending, and sends one frame per
+  change once a track change has settled. Discord being absent is not an error. At shutdown it
+  clears the activity; Discord also drops it by itself when the app's socket closes.
 - **Artwork** (`widgets/artwork.py`): one loader that decodes covers in threads, at the size
   they are drawn, into a small LRU of textures. The files it decodes that the sync does not
   bring (covers, the item playing, the engine's search and browse answers) are downloaded by
@@ -68,7 +74,7 @@ touches widgets.
 ## Flows
 
 - **Startup.** `do_startup` starts reading library.json in a thread, then makes the engine,
-  the player, the sync and MPRIS; `do_activate` builds the window, awaits the library (then
+  the player, the sync, MPRIS and the Discord presence; `do_activate` builds the window, awaits the library (then
   trims the caches in a thread) and, when the account is signed in and `engine-autostart` is
   on, starts the engine, whose coming up starts a sync when one is due.
 - **Playing.** A tile, row or button calls `window.play_request()`, which calls

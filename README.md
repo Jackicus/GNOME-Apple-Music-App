@@ -29,6 +29,8 @@ The screenshots show an invented demo library.
 - Home, New, Radio and Search, with a page for every album, playlist and artist.
 - A player bar, and a Now Playing view with synced lyrics and the queue.
 - GNOME's media controls (MPRIS) and the keyboard's media keys.
+- If you turn it on in Preferences, what you are listening to shows on your Discord
+  profile.
 - Light and dark styles; the window adapts down to 360 px wide.
 
 What it does not do: offline listening or downloads (it streams, as the web player does);
@@ -61,7 +63,7 @@ sudo dnf install gtk4-devel libadwaita-devel glib2-devel python3-gobject python3
     meson gettext                                                                             # Fedora 44+
 sudo apt install libgtk-4-dev libadwaita-1-dev python3-gi python-gi-dev meson gettext        # Ubuntu 26.04
 
-tar xf music-sleeve-0.9.0.tar.xz && cd music-sleeve-0.9.0
+tar xf music-sleeve-0.10.0.tar.xz && cd music-sleeve-0.10.0
 meson setup _build --prefix=/usr
 meson compile -C _build
 sudo meson install -C _build --skip-subprojects

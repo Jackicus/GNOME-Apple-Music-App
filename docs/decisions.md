@@ -52,6 +52,17 @@ changes, change it here, with the date. The plan they came from is in
   happens. The alternative, skipping the revocation when the engine is down, is quicker but
   leaves the token valid until Apple expires it. Every job that writes the cache is stopped
   first (the cache's generation), so nothing is written after the wipe.
+- **Discord presence, off by default** (2026-09-30). A switch in Preferences sends the playing
+  track to the Discord desktop app as rich presence, over its local IPC socket, with no
+  library: the protocol is a handshake and one command, and a dependency would be the app's
+  only one outside GNOME's stack. Off until the user turns it on, since it publishes what they
+  listen to. The application id is the project's own Discord application, public by nature
+  (rich presence needs no token). The activity names itself "Apple Music", so the card reads
+  "Listening to Apple Music" as it reads "Listening to Spotify": it names the service being
+  listened to, not this app, which keeps to the rule on Apple's marks. The artist is the
+  status line under the user's name, and the album is the cover's caption, which Discord
+  prints as the card's third line. The cover is Apple's own public URL, which Discord fetches;
+  nothing is uploaded anywhere.
 
 ## Engine
 

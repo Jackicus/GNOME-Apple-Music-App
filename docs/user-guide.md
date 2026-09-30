@@ -22,6 +22,12 @@ do when something goes wrong, what it sends where, and where it keeps your data.
 - Closing the window quits the app and stops Chrome. To keep the music playing with the window
   closed, turn on background playback in Preferences (<kbd>Ctrl</kbd>+<kbd>,</kbd>); the
   system's media controls bring the window back.
+- Preferences › General › Playback › Show what you are listening to on Discord puts the song
+  playing on your Discord profile, as "Listening to Apple Music" with the title, the artist,
+  the album and its cover, and the artist in the status under your name. It is off until you
+  turn it on, and it needs the Discord desktop app running on the same computer (the web
+  client cannot be reached). Discord shows it only while something plays: pausing stops the
+  clock, and when playback ends or the app quits it is taken off.
 - <kbd>Ctrl</kbd>+<kbd>?</kbd> lists every keyboard shortcut.
 - Because the sound comes from Chrome, the system's per-app volume controls list it as Chrome.
 
@@ -50,6 +56,11 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   then click **Retry**.
 - **"Your Apple Music sign-in has expired."** Apple ended the session: click **Sign In** on
   that banner, or **Sign In Again** in the account menu at the bottom of the sidebar.
+- **Discord shows nothing.** Check that the setting is on and that the Discord desktop app is
+  running (Discord installed as a Flatpak or a Snap is found too), and that Discord's own
+  Settings › Activity Privacy › Share your detected activities with others is on. Discord
+  learns of a track when it starts or changes, so after starting Discord, give it until the
+  next track.
 - **Something else.** Run `music-sleeve --debug` from a terminal and look at what it logs (no
   password or tokens are logged). Preferences › Engine shows whether the engine is running;
   turning off **Run the browser hidden** shows Chrome's window at the next start.
@@ -61,6 +72,11 @@ do when something goes wrong, what it sends where, and where it keeps your data.
 - The app itself talks only to Apple: the music.apple.com page in its Chrome (and the Apple
   services that page uses), and artwork it downloads directly from Apple's servers. No
   telemetry, analytics or crash reports.
+- With Discord presence on, and only then, the app also tells the Discord app running on your
+  computer what is playing: the title, the artist, the album and the address of the album's
+  cover on Apple's servers. Discord shows these on your profile, to the people who can see your
+  activity there, and fetches the cover itself. Nothing of your account is sent: no Apple ID,
+  no library, no playlists.
 - Chrome, as the engine, also talks to Google the way any Chrome does, for example to update
   its components (the Widevine module among them) and for Safe Browsing. The app does not turn
   these off.
