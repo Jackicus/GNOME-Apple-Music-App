@@ -1,8 +1,11 @@
 # Releasing and packaging
 
-Releases are native: `meson install` with the release profile, and the AUR package
-`music-sleeve`, whose PKGBUILD lives in `build-aux/aur/`. The Flatpak manifest is for
-development only, and Flathub is out of scope (`docs/decisions.md`).
+Releases are native: `meson install` with the release profile. **For now a release is a git
+tag and a GitHub release, and nothing else** — the AUR package is not published yet, so people
+install by building from source or by running `makepkg -si` over `build-aux/aur/PKGBUILD`
+themselves. Publishing to the AUR is a later step, whenever the maintainer is ready for it
+(#146). The Flatpak manifest is for development only, and Flathub is out of scope
+(`docs/decisions.md`).
 
 An agent may carry out a release end to end once the owner has said to release, and that
 includes the tag and the GitHub release. The exception is the AUR upload, which needs the
@@ -30,12 +33,15 @@ new version instead.
 6. Pin the metainfo's screenshot URLs to the tag: `/main/` becomes `/v<version>/` in each
    `<image>`, so an installed copy keeps showing the shots it was released with whatever
    later happens to the files on `main`.
-7. Commit, then tag `v<version>` (annotated) and push the tag. The PKGBUILD downloads
-   GitHub's archive of that tag.
-8. Update the PKGBUILD: `pkgver`, `pkgrel=1`, then `updpkgsums` (it fills in the checksum once
-   the tag exists) and `makepkg --printsrcinfo > .SRCINFO`. Set the `# Maintainer:` line's
-   contact to the one the owner wants public on the AUR (the repository's copy points at the
-   GitHub profile). Test it as below, then publish to the AUR.
+7. Commit, then tag `v<version>` (annotated) and push the tag. Branch protection does not
+   apply to tags. Once anyone has installed it the tag is fixed: never move or delete it.
+8. Publish the GitHub release for that tag (`gh release create`), with the metainfo's notes as
+   the body and `meson dist -C build`'s tarball attached. **This is the release.**
+9. Later, when the AUR is wanted: update the PKGBUILD (`pkgver`, `pkgrel=1`), `updpkgsums`
+   (it fills in the checksum once the tag exists), `makepkg --printsrcinfo > .SRCINFO`, and set
+   the `# Maintainer:` line to the contact to be public there. Test it as below. Publishing
+   itself needs an AUR account and an SSH key registered with aur.archlinux.org, so it is the
+   maintainer's to do; README's install section says "once published" until then.
 
 ## Installing from source
 
