@@ -126,7 +126,7 @@ class DocsTest(unittest.TestCase):
         keys = app_keys() | OTHER_KEYS
         self.assertIn('Ctrl+Shift+N', keys)
         unknown = []
-        for path in DOCS + [ROOT / 'data' / 'io.github.jackicus.AppleMusic.metainfo.xml.in']:
+        for path in DOCS + [ROOT / 'data' / 'io.github.jackicus.MusicSleeve.metainfo.xml.in']:
             text = re.sub(r'</?kbd>', '', path.read_text(encoding='utf-8'))
             for key in KEY_RE.findall(text):
                 if key not in keys:

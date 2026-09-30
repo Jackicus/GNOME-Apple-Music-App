@@ -60,7 +60,7 @@ def sign_in_title(expired):
     return _('Sign in to see your library')
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/window.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/window.ui')
 class Window(Adw.ApplicationWindow):
     __gtype_name__ = 'AppleMusicWindow'
 

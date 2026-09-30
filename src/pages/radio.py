@@ -18,7 +18,7 @@ from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_metho
 HERO_COUNT = 4
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/radio.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/radio.ui')
 class RadioPage(Adw.NavigationPage):
     """library.radio: the stations the user played recently, most recent first (the sync
     asks Apple for /v1/me/recent/radio-stations; each an Item of kind station, no groups).

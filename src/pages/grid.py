@@ -90,7 +90,7 @@ SORTS = {
 }
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/grid.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/grid.ui')
 class GridPage(Adw.NavigationPage):
     """A destination's grid, or a shelf's (See All).
 

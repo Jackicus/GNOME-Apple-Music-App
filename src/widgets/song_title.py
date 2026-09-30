@@ -9,7 +9,7 @@ from gi.repository import Gtk
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/song_title.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/song_title.ui')
 class SongTitle(Gtk.Box):
     """A track's 32 px thumbnail (its own, else its album's), its title and, for explicit
     tracks, an "E" badge.

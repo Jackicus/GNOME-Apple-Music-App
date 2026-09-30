@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping with Apple Music for GNOME. Everyone taking part is expected to follow the
+Thanks for helping with Music Sleeve. Everyone taking part is expected to follow the
 [GNOME Code of Conduct](https://conduct.gnome.org).
 
 ## Build and test

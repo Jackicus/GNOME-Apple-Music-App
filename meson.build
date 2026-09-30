@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 project(
-  'apple-music',
+  'music-sleeve',
   version: '0.9.0',
   meson_version: '>= 1.2.0',  # get_option('python.bytecompile') (src/meson.build)
   license: 'GPL-2.0-or-later',
@@ -13,8 +13,8 @@ i18n = import('i18n')
 gnome = import('gnome')
 python = import('python')
 
-base_id = 'io.github.jackicus.AppleMusic'
-resource_path = '/io/github/jackicus/AppleMusic'
+base_id = 'io.github.jackicus.MusicSleeve'
+resource_path = '/io/github/jackicus/MusicSleeve'
 
 if get_option('profile') == 'development'
   application_id = base_id + '.Devel'

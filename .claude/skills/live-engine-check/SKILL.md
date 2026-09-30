@@ -31,7 +31,7 @@ Ground rules:
    MusicKit is authorized, and stops it.
 2. Start the app with a DevTools port for this check only and its log in the scratch directory:
    `APPLE_MUSIC_DEBUG_PORT=<free port> scripts/run.sh --debug 2> <scratch>/app.log` (the .Devel
-   build; a release install is `apple-music --debug`). Its window opens on the desktop: say so
+   build; a release install is `music-sleeve --debug`). Its window opens on the desktop: say so
    first, or run the app and every command below inside one `scripts/headless.sh bash -c '…'`,
    so that they share its private display and session bus (the session-bus checks in step 4
    then see that bus, not the desktop's; Chrome alone is on the desktop's bus, for its
@@ -40,7 +40,7 @@ Ground rules:
    any local program can drive the signed-in session, so set it on that command line alone,
    never in a shell profile. The log warns about it at every engine start.
 3. Drive it without synthesised input:
-   - app actions from a shell: `gapplication action io.github.jackicus.AppleMusic.Devel sync`
+   - app actions from a shell: `gapplication action io.github.jackicus.MusicSleeve.Devel sync`
      (also `play-pause`, `next`, `previous`, `now-playing`, `quit`);
    - the page's state through the port: `scripts/am.py --attach <port> now-playing`,
      `scripts/am.py --attach <port> events` (bridge events until Ctrl+C),
@@ -51,14 +51,14 @@ Ground rules:
      `--demo`, into the scratch directory only. It reads the release build's cache; for the
      .Devel build's, prefix `APPLE_MUSIC_CACHE=$XDG_CACHE_HOME/apple-music-devel`.
 4. MPRIS on the session bus (the .Devel name shown; drop `.Devel` for a release build):
-   - `gdbus introspect --session --dest org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel --object-path /org/mpris/MediaPlayer2`
-   - `gdbus monitor --session --dest org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel`
+   - `gdbus introspect --session --dest org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve.Devel --object-path /org/mpris/MediaPlayer2`
+   - `gdbus monitor --session --dest org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve.Devel`
      shows PropertiesChanged and Seeked;
    - before playing, turn the engine down:
-     `gdbus call --session --dest org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel --object-path /org/mpris/MediaPlayer2 --method org.freedesktop.DBus.Properties.Set org.mpris.MediaPlayer2.Player Volume "<0.2>"`;
+     `gdbus call --session --dest org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve.Devel --object-path /org/mpris/MediaPlayer2 --method org.freedesktop.DBus.Properties.Set org.mpris.MediaPlayer2.Player Volume "<0.2>"`;
    - `busctl --user list | grep -i mpris` lists the app's name and no Chrome instance for the
      engine's pid (the user's own Chrome may have one: compare the pid).
-5. Finish: `gapplication action io.github.jackicus.AppleMusic.Devel quit` (it stops Chrome),
+5. Finish: `gapplication action io.github.jackicus.MusicSleeve.Devel quit` (it stops Chrome),
    then check that `pgrep -af 'user-data-dir=.*apple-music'` finds nothing and that
    `ss -ltn | grep <port>` shows the port closed. Report each check as passed or failed with
    where its evidence is, and confirm the account is as it was.

@@ -58,7 +58,7 @@ NOT_SUPPORTED_ERROR = 'org.freedesktop.DBus.Error.NotSupported'
 
 # Where a track's object path lives; the spec's path for "no track" is never sent, since
 # without a track the Metadata is empty.
-TRACK_PATH_PREFIX = '/io/github/jackicus/AppleMusic/track/'
+TRACK_PATH_PREFIX = '/io/github/jackicus/MusicSleeve/track/'
 
 # Seconds after a seek asked for here during which stale positions are ignored (the Player
 # drops the previous item's position after a track change itself; SEEK_JUMP, how far a
@@ -232,7 +232,7 @@ ROOT_GETTERS = {
     'CanSetFullscreen': lambda service: GLib.Variant('b', False),
     'CanRaise': lambda service: GLib.Variant('b', True),
     'HasTrackList': lambda service: GLib.Variant('b', False),
-    'Identity': lambda service: GLib.Variant('s', _('Apple Music')),
+    'Identity': lambda service: GLib.Variant('s', _('Music Sleeve')),
     'DesktopEntry': lambda service: GLib.Variant('s', service._app.get_application_id()),
     'SupportedUriSchemes': lambda service: GLib.Variant('as', []),
     'SupportedMimeTypes': lambda service: GLib.Variant('as', []),

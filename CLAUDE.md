@@ -1,9 +1,9 @@
-# Apple Music for GNOME
+# Music Sleeve
 
 A native GNOME client for Apple Music: Python and PyGObject, GTK 4 and libadwaita, Blueprint for
-the UI, Meson, gettext. GPL-2.0-or-later. App ID `io.github.jackicus.AppleMusic`
-(`io.github.jackicus.AppleMusic.Devel` with `-Dprofile=development`), resource base path
-`/io/github/jackicus/AppleMusic`. It should feel like a GNOME core app (Music, Nautilus, Settings)
+the UI, Meson, gettext. GPL-2.0-or-later. App ID `io.github.jackicus.MusicSleeve`
+(`io.github.jackicus.MusicSleeve.Devel` with `-Dprofile=development`), resource base path
+`/io/github/jackicus/MusicSleeve`. It should feel like a GNOME core app (Music, Nautilus, Settings)
 while laying out its pages like the Apple Music web player.
 
 Developed on GTK 4.22, libadwaita 1.9, Python 3.14 and PyGObject 3.56. The minimums are Python

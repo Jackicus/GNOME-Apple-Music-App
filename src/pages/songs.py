@@ -67,7 +67,7 @@ def songs_state(total, library_state, songs_ready, song_count, syncing=False):
     return 'empty'
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/songs.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/songs.ui')
 class SongsPage(Adw.NavigationPage):
     """The Songs destination: library.songs, which it asks the library to build when it is
     first shown."""

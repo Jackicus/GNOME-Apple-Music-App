@@ -29,5 +29,5 @@ fi
 # Before the unit tests: the widget tests (tests/gtk.py) load build/src's gresource.
 meson compile -C build
 python3 -m unittest discover -s tests
-meson test -C build --print-errorlogs --suite apple-music --no-suite unit  # the data files
+meson test -C build --print-errorlogs --suite music-sleeve --no-suite unit  # the data files
 echo "check: ok"

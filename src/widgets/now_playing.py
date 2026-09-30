@@ -38,7 +38,7 @@ COVER_SIZE_COMPACT = 240
 COVER_SIZE_SHORT = 96          # beside the titles, in a short window
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/now_playing.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/now_playing.ui')
 class NowPlayingSheet(Adw.Bin):
     """The Now Playing sheet. See the module."""
 

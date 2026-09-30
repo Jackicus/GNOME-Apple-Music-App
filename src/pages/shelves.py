@@ -45,7 +45,7 @@ def expired(answer, now=None):
     return (now - when).total_seconds() > ANSWER_MAX_AGE
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/shelves.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/shelves.ui')
 class ShelvesPage(Adw.NavigationPage):
     """ShelvesPage(title, fetch, …): `fetch(refresh)` is a coroutine function answering
     {shelves: [{key, title, items}], cached} (an Engine method), called when the page is first

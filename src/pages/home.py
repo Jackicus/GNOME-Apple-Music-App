@@ -9,7 +9,7 @@ from ..widgets.shelf import ShelfColumn
 from ..widgets.util import HeaderTitle, MappedHandlers
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/home.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/home.ui')
 class HomePage(Adw.NavigationPage):
     """Every shelf of the library with items in it, in library.json's order (Apple's
     recommendations, then Heavy Rotation, Recently Added…), the first as large cards, each

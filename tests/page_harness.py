@@ -91,7 +91,7 @@ def classes():
 
     class App(Adw.Application):
         def __init__(self):
-            super().__init__(application_id='io.github.jackicus.AppleMusic.PageTest',
+            super().__init__(application_id='io.github.jackicus.MusicSleeve.PageTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.engine = Engine()
             self.settings = Gio.Settings.new(SCHEMA_ID)

@@ -252,7 +252,7 @@ def bare():
     gi.require_version('Adw', '1')
     from gi.repository import Adw, Gio, GLib
 
-    app = Adw.Application(application_id='io.github.jackicus.AppleMusic.BenchBare',
+    app = Adw.Application(application_id='io.github.jackicus.MusicSleeve.BenchBare',
                           flags=Gio.ApplicationFlags.NON_UNIQUE)
     result = {}
 

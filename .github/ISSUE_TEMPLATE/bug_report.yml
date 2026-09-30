@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in Apple Music for GNOME does not work as it should.
+description: Something in Music Sleeve does not work as it should.
 labels: [bug]
 body:
   - type: markdown
@@ -26,7 +26,7 @@ body:
     attributes:
       label: How did you install it?
       options:
-        - AUR package (gnome-apple-music)
+        - AUR package (music-sleeve)
         - Built from source with Meson
         - Flatpak (development manifest)
         - Other (say below)
@@ -75,7 +75,7 @@ body:
     attributes:
       label: Debug log
       description: |
-        Quit the app, run `apple-music --debug` in a terminal (or set `APPLE_MUSIC_DEBUG=1`),
+        Quit the app, run `music-sleeve --debug` in a terminal (or set `APPLE_MUSIC_DEBUG=1`),
         reproduce the problem and paste the output. **Remove account data first**: names,
         emails, playlist and song titles, library IDs and anything that looks like a token.
       render: shell

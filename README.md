@@ -1,4 +1,4 @@
-# Apple Music for GNOME
+# Music Sleeve
 
 A native GNOME app for Apple Music, built with GTK 4 and libadwaita. The pages
 are laid out like Apple's web player: Home, New, Radio and Search, then your
@@ -54,18 +54,18 @@ sudo meson install -C _build --skip-subprojects
 The install byte-compiles the app's Python modules. `--skip-subprojects` only
 matters when Meson had to download `blueprint-compiler`: without it, that
 subproject would install a file of its own. To uninstall, run
-`sudo ninja -C _build uninstall`, then `sudo rm -r /usr/share/apple-music` to
+`sudo ninja -C _build uninstall`, then `sudo rm -r /usr/share/music-sleeve` to
 remove the compiled bytecode as well. (The repository's scripts keep a
 development build in `build/`; a system install uses a directory of its own.)
 
 ### Arch Linux (once published)
 
-The package `gnome-apple-music` is meant for the AUR; until it is published
+The package `music-sleeve` is meant for the AUR; until it is published
 there, build it from `build-aux/aur/PKGBUILD` with `makepkg -si`. Google Chrome
 comes from the AUR as `google-chrome`:
 
 ```bash
-yay -S gnome-apple-music google-chrome     # once published; or your AUR helper of choice
+yay -S music-sleeve google-chrome     # once published; or your AUR helper of choice
 ```
 
 ## First run and signing in
@@ -114,7 +114,7 @@ on background playback in Preferences (<kbd>Ctrl</kbd>+<kbd>,</kbd>).
 - **"Your Apple Music sign-in has expired."** Apple ended the session: click
   **Sign In** on that banner, or **Sign In Again** in the account menu at the
   bottom of the sidebar.
-- **Something else.** Run `apple-music --debug` from a terminal and look at what
+- **Something else.** Run `music-sleeve --debug` from a terminal and look at what
   it logs (no password or tokens are logged). Preferences › Engine
   shows whether the engine is running; turning off **Run the browser hidden**
   shows Chrome's window at the next start.
@@ -144,7 +144,7 @@ on background playback in Preferences (<kbd>Ctrl</kbd>+<kbd>,</kbd>).
 |---|---|
 | The library snapshot, artwork, lyrics and cached pages | `~/.cache/apple-music/` |
 | Chrome's profile, which holds your Apple sign-in | `~/.local/share/apple-music/chrome/` |
-| Settings | GSettings schema `io.github.jackicus.AppleMusic` |
+| Settings | GSettings schema `io.github.jackicus.MusicSleeve` |
 
 The development build uses `~/.local/share/apple-music/chrome-devel/` and
 `~/.cache/apple-music-devel/` instead, and settings of its own for the account.
@@ -157,7 +157,7 @@ The development build uses `~/.local/share/apple-music/chrome-devel/` and
 
   ```bash
   rm -r ~/.cache/apple-music ~/.local/share/apple-music
-  gsettings reset-recursively io.github.jackicus.AppleMusic
+  gsettings reset-recursively io.github.jackicus.MusicSleeve
   ```
 
 ## Development
@@ -194,12 +194,12 @@ To make a release tarball, run `meson dist -C build`.
 The strings are in gettext's usual form. To start a translation, say German:
 
 ```bash
-meson compile -C build apple-music-pot      # the template, apple-music.pot, from the sources
-cd po && msginit -l de -i apple-music.pot -o de.po
+meson compile -C build music-sleeve-pot    # the template, music-sleeve.pot, from the sources
+cd po && msginit -l de -i music-sleeve.pot -o de.po
 ```
 
 then add `de` to `po/LINGUAS`, translate `de.po` and rebuild; `meson compile -C build
-apple-music-update-po` merges new strings into every translation.
+music-sleeve-update-po` merges new strings into every translation.
 Source strings are in British English.
 
 ## License

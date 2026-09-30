@@ -51,7 +51,7 @@ from .timing import PROCESS_START, StartupMarks  # noqa: E402, F401  (bench.py r
 
 log = logging.getLogger(__name__)
 
-RESOURCE_PATH = '/io/github/jackicus/AppleMusic'
+RESOURCE_PATH = '/io/github/jackicus/MusicSleeve'
 
 # How long quitting waits for the sync and the engine to stop before Chrome is killed outright
 # and the app quits anyway; the engine's stop, Browser.close (up to 2 s) then SIGTERM, is

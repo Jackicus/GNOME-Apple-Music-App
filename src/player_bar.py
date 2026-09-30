@@ -32,7 +32,7 @@ from .widgets.transport import (HeartControl, ModeControl, PlayButton, RemoteCov
                                 TrackTitles, VolumeControl, track_subtitle)
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/player_bar.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/player_bar.ui')
 class PlayerBar(Adw.Bin):
     """The transport bar under the content. See the module."""
 

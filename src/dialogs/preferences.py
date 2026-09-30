@@ -95,7 +95,7 @@ BINDINGS = (
 )
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/preferences.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/preferences.ui')
 class PreferencesDialog(Adw.PreferencesDialog):
     __gtype_name__ = 'AppleMusicPreferencesDialog'
 

@@ -94,7 +94,7 @@ class _Row(Gtk.Box):
         self.track_row.unbind()
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/detail.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/detail.ui')
 class DetailPage(Adw.NavigationPage):
     """An album's or a playlist's page.
 

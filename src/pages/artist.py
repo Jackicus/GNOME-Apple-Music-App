@@ -36,7 +36,7 @@ def stand_in(artist, group):
     return Item(data)
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/artist.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/artist.ui')
 class ArtistPage(Adw.NavigationPage):
     """An artist Item's page: a round portrait, the name and details, Play (a catalog
     artist's top songs, actions.can_play()) and the artist's menu, then the albums as tiles,

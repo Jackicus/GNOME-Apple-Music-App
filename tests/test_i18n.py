@@ -56,7 +56,7 @@ class SetupTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.localedir = pathlib.Path(self.tmp.name)
-        write_mo(self.localedir / 'xx' / 'LC_MESSAGES' / 'apple-music.mo', {
+        write_mo(self.localedir / 'xx' / 'LC_MESSAGES' / 'music-sleeve.mo', {
             'Home': 'Accueil',
             ('{} song', '{} songs'): ('{} chanson', '{} chansons'),
         })
@@ -85,11 +85,11 @@ class SetupTest(unittest.TestCase):
     @unittest.skipUnless(hasattr(locale, 'bindtextdomain'), 'no libintl binding here')
     def test_libintl_reads_the_same_domain(self):
         i18n.setup(str(self.localedir))
-        self.assertEqual(locale.textdomain(None), 'apple-music')
-        self.assertEqual(locale.bindtextdomain('apple-music', None), str(self.localedir))
+        self.assertEqual(locale.textdomain(None), 'music-sleeve')
+        self.assertEqual(locale.bindtextdomain('music-sleeve', None), str(self.localedir))
 
     def test_the_launcher_binds_through_it(self):
-        launcher = (SRC / 'apple-music.in').read_text(encoding='utf-8')
+        launcher = (SRC / 'music-sleeve.in').read_text(encoding='utf-8')
         self.assertIn('i18n.setup(localedir)', launcher)
         self.assertLess(launcher.index('i18n.setup(localedir)'),
                         launcher.index('from applemusic import main'))

@@ -15,7 +15,7 @@ never at the top of the file. Each widget test must finish in under a second.
 Settings never reach the desktop's: tests/__init__.py calls use_test_settings() before any
 test module can touch GSettings, so every test process uses the memory backend and sees this
 tree's schema (data/*.gschema.xml, compiled into a temporary directory), and
-`Gio.Settings.new('io.github.jackicus.AppleMusic')` works in a test.
+`Gio.Settings.new('io.github.jackicus.MusicSleeve')` works in a test.
 
 pump() runs what is pending on the default main context; wait_for() runs it until a
 condition holds; iterate() is one iteration of it, for a test that pumps the loop itself.
@@ -34,10 +34,10 @@ import warnings
 
 from tests import ROOT
 
-SCHEMA_ID = 'io.github.jackicus.AppleMusic'
+SCHEMA_ID = 'io.github.jackicus.MusicSleeve'
 RESOURCES = (
     ROOT / 'build' / 'src' / 'applemusic.gresource',
-    ROOT / 'build' / 'install' / 'share' / 'apple-music' / 'applemusic.gresource',
+    ROOT / 'build' / 'install' / 'share' / 'music-sleeve' / 'applemusic.gresource',
 )
 
 _schema_dir = None

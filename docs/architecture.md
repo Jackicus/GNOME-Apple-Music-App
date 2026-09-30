@@ -1,6 +1,6 @@
 # Architecture
 
-How Apple Music for GNOME is put together, for someone about to change it. Each module's
+How Music Sleeve is put together, for someone about to change it. Each module's
 docstring has the detail; this page is the map and the flows between the parts.
 
 ## Why there is a browser inside
@@ -123,7 +123,7 @@ touches widgets.
 |---|---|
 | library.json, artwork, lyrics, the engine's kept answers | `$XDG_CACHE_HOME/apple-music/` (`apple-music-devel/` for the development build) |
 | Chrome's profile, which holds the sign-in | `$XDG_DATA_HOME/apple-music/chrome/` (`chrome-devel/` for the development build) |
-| Settings | GSettings, `io.github.jackicus.AppleMusic` |
+| Settings | GSettings, `io.github.jackicus.MusicSleeve` |
 
 Nothing records which Chrome is the app's: Chrome's own lock in the profile (`SingletonLock`)
 names the process that holds it.
