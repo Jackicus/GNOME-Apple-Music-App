@@ -9,8 +9,8 @@ changes, change it here, with the date. The plan they came from is in
 - **Distribution: native first** (2026-09-27). Releases are `meson install` and an AUR package
   (`build-aux/aur/PKGBUILD`). The Flatpak manifest is for development only: from the sandbox,
   the app runs the host's Chrome through `flatpak-spawn --host`. Flathub is out of scope: it
-  would refuse an app that depends on the host's Chrome, and the name and ID carry Apple's
-  trademark.
+  would refuse an app that depends on the host's Chrome. (It was also out of scope while the
+  app carried Apple's name; that half no longer applies, but the Chrome dependency still does.)
 - **A profile of its own** (2026-09-27). The app's Chrome uses its own profile
   (`$XDG_DATA_HOME/apple-music/chrome`, the development build `chrome-devel`), so it never
   fights another Chrome, such as the GNOME Shell extension's, over a profile lock. The cost is
@@ -147,13 +147,13 @@ changes, change it here, with the date. The plan they came from is in
   library, and pages opened and closed leave at most 5 MB behind (`docs/notes.md`).
 - **Comments describe the code** (2026-09-28), as it is and why: no phase numbers, review IDs,
   plans or history, which belong in commit messages.
-- **An item reaches MPRIS once** (2026-09-30). A new item's Metadata and Can*s wait for its
-  artwork file, at most 200 ms (`ART_GRACE_MS`), rather than go out at once and again with
-  `mpris:artUrl`: two changes made GNOME Shell's card blink through its no-cover icon at every
-  track change (#182). The wait ends the moment the file is there, which is at once for the
-  next song of one album (the same URL, nothing fetched) and a moment for a file on disk; a
-  slower download publishes the item first and its artwork after, since a card that is right
-  late is worse than one that fills in twice.
+- **A name of the app's own** (2026-09-30). The app is **Music Sleeve**, app ID
+  `io.github.jackicus.MusicSleeve`. "Apple Music" as the display name was Apple's trademark
+  used as a product name, which their guidelines for third parties do not allow. The service
+  is still named where it has to be — the metainfo summary and description, the desktop file's
+  `Keywords=` (so the app is still found by searching for "apple music"), and strings like
+  "Sign in to Apple Music" — always less prominent than the app's own name. The full rule is in
+  `.claude/rules/packaging.md` (#145).
 - **An icon of the app's own** (2026-09-30). A record coming out of its sleeve, in GNOME's
   palette: the old icon was a red rounded square with a white double note, near enough to Apple
   Music's own logo to confuse users and to invite a complaint. Apple's guidelines for third
@@ -161,10 +161,23 @@ changes, change it here, with the date. The plan they came from is in
   enough to carry the project's own identity. The symbolic icon is the record alone: at 16 px
   the sleeve behind it only muddies the silhouette. The development build's icon is the same
   artwork under a band of stripes, and the metainfo's brand colours follow it.
+- **The accent is the user's** (2026-09-30). The app sets no accent of its own: libadwaita
+  hands it whichever of GNOME's accent colours the user chose in Settings, and everything
+  tinted (the Play button, the seek slider, the filled heart, links) follows. It had been
+  pinned first to Apple Music's red, then to the new icon's purple; both were wrong for the
+  same reason, that a GNOME app wears the user's colour, not its own. The metainfo's
+  `<branding>` stays purple and keeps following the icon: that marks the app in a software
+  centre, where it sits among other apps, and is not the user's choice to make (#195).
 
+- **An item reaches MPRIS once** (2026-09-30). A new item's Metadata and Can*s wait for its
+  artwork file, at most 200 ms (`ART_GRACE_MS`), rather than go out at once and again with
+  `mpris:artUrl`: two changes made GNOME Shell's card blink through its no-cover icon at every
+  track change (#182). The wait ends the moment the file is there, which is at once for the
+  next song of one album (the same URL, nothing fetched) and a moment for a file on disk; a
+  slower download publishes the item first and its artwork after, since a card that is right
+  late is worse than one that fills in twice.
 ## Open
 
-- The display name "Apple Music" is Apple's trademark used as the product name, which Apple's
-  guidelines for third parties do not allow and Flathub rejects. A name of the app's own, with
-  "Apple Music" kept to the summary, the description and the desktop file's keywords, is the
-  owner's call (#145).
+- Nothing. The questions that were open here are settled above; what is left before the
+  first release is in `TODO.md` and the open issues.
+

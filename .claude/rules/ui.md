@@ -99,7 +99,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `AdwDialog`, `AdwPreferencesDialog`; `card`, `flat`, `circular`, `heading`, `title-1` to
   `title-4`, `caption`, `boxed-list`, `dimmed`; not the older alias `dim-label`). CSS only in
   `src/style.css`, with no per-widget CSS providers.
-- No hard-coded colours except the accent and text drawn on an item's own colour.
+- No hard-coded colours except text drawn on an item's own colour. The accent is the user's,
+  from Settings: libadwaita supplies it, and the app never overrides `--accent-bg-color`
+  (the metainfo's `<branding>` is separate — that is the app's identity, not the user's choice).
 - Every page fits a 360 px wide window (a `max-width: 400sp` breakpoint narrows margins where
   two tiles would not fit).
 - Bundled icons are `src/icons/*-symbolic.svg`, found by icon name through the gresource alias.
