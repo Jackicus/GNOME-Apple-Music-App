@@ -208,6 +208,17 @@ class EngineStatusTest(unittest.IsolatedAsyncioTestCase):
         self.app.engine.authorized = True
         self.assertEqual(self.page.retries, 1)
 
+    async def test_without_an_application_there_is_nothing_to_watch(self):
+        # A widget test that shows a page without an application (pages.app() is None) still
+        # maps and unmaps it, and neither may raise: GTK aborts on a widget left mapped.
+        page = Page()
+        status = EngineStatus(None, page.show, page.retry, TEXTS)
+        status.watch()
+        status.unwatch()
+        status.unwatch()
+        self.assertEqual(page.shown, [])
+        self.assertIsNone(status.status)
+
     async def test_the_page_is_held_weakly(self):
         import gc
         import weakref

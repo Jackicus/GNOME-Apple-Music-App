@@ -35,6 +35,10 @@ Each of these was checked against the toolkit (or found the hard way). The sideb
 
 ## Layout and widgets
 
+- A Python `do_map` or `do_unmap` that raises leaves GTK a widget in a state it cannot leave:
+  an exception before `do_unmap` chains up keeps the widget mapped, and unrealizing it then
+  aborts the process (`Gtk:ERROR … gtk_widget_real_unrealize: assertion failed (!priv->mapped)`),
+  so what these vfuncs reach for has to be there whether or not a page has an application.
 - A Python `do_measure` on a widget with a layout manager (an `Adw.Bin`) is never called: set
   the layout manager to None and implement both `do_measure` and `do_size_allocate`.
 - A `Gtk.Overlay` gives an overlay child its natural size, and a `Gtk.Picture`'s natural size is
