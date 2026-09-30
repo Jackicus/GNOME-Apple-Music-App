@@ -87,7 +87,13 @@ paths:
   true, so the Shell keeps the player). SetPosition drops a stale trackid or a position outside
   the track; Seek clamps to 0 and goes to the next item past the end; PlayPause with nothing to
   play answers NotSupported. The artwork file is found through `remote.fetch_remote`, never a
-  stat on the main loop.
+  stat on the main loop; a new item's own properties (`ITEM_PROPERTIES`: Metadata and the
+  Can*s) wait for it and go out together, for `ART_GRACE_MS` (200) at most (`art_grace_ms`,
+  0: no wait), so a client sees one Metadata change per item. Metadata without `mpris:artUrl`
+  followed by the same Metadata with it made GNOME Shell's card blink through its no-cover
+  icon at every track change; the wait ends the moment the file is there, an item passed
+  through by a second skip never reaches the bus, and a download slower than the grace
+  publishes the item and follows with its artwork.
 - GNOME Shell lists a player while `CanPlay` is true (so "Not Playing" shows nothing) and finds
   its icon through `<DesktopEntry>.desktop` in the Shell's data directories: a system install
   shows the icon, the dev build in build/install shows only the Identity.
@@ -96,7 +102,8 @@ paths:
   under the test's control for both; no `asyncio.sleep(> 0)` inside it. The `FakeEngine` has
   per-command gates (`engine.gate(name)`) to hold an answer back. test_mpris.py's
   `SEQUENCES` table replays the event sequences seen live through a Player and the service
-  together (`play` and `answer` steps put a pending play request around them): add a
-  sequence there when a new one is recorded. One test runs the service on a dbus-daemon of
+  together (`play` and `answer` steps put a pending play request around them; each step lets
+  the loop run, so a new item's artwork lands inside its grace and its properties go out
+  once): add a sequence there when a new one is recorded. One test runs the service on a dbus-daemon of
   its own and talks to it through GDBus (never `Gio.TestDBus`, which is for a process of its
   own). Checks on the session bus are in the `live-engine-check` skill.
