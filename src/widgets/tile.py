@@ -42,7 +42,7 @@ FOLDER = ('folder-symbolic', 72)
 ART_SIZE = 160
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/tile.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/tile.ui')
 class Tile(Gtk.Box):
     """A 160 px square cover over a title and a dim subtitle; with artist=True, a round portrait
     over a centred name, on two lines when it needs them.

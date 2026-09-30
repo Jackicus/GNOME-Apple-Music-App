@@ -15,7 +15,7 @@ from tests import ROOT
 LICENSE = 'SPDX-License-Identifier: GPL-2.0-or-later'
 HOLDER = 'SPDX-FileCopyrightText: 2026 Jack Tully'
 PATTERNS = ('*.py', '*.blp', '*.js', '*.css', '*.sh', 'meson.build', 'meson.options',
-            'apple-music.in')
+            'music-sleeve.in')
 DIRECTORIES = ('src', 'scripts', 'tests', 'build-aux', 'data', 'po')
 COMMENT = {'.blp': '// {}', '.js': '// {}', '.css': '/* {} */'}
 

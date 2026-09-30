@@ -16,7 +16,7 @@ from .util import connect_weak
 SUBTITLE_OPACITY = 0.75
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/hero_tile.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/hero_tile.ui')
 class HeroTile(Gtk.Box):
     """A 260 px cover over a two-line caption, the title and the subtitle, on a band of the
     Item's art_color (Apple's colour for the artwork's background) in white or black text,

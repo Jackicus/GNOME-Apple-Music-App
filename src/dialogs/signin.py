@@ -21,7 +21,7 @@ from ..widgets.util import connect_weak
 log = logging.getLogger(__name__)
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/signin.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/signin.ui')
 class SignInDialog(Adw.Dialog):
     __gtype_name__ = 'AppleMusicSignInDialog'
 

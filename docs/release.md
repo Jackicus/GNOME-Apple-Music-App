@@ -1,7 +1,7 @@
 # Releasing and packaging
 
 Releases are native: `meson install` with the release profile, and the AUR package
-`gnome-apple-music`, whose PKGBUILD lives in `build-aux/aur/`. The Flatpak manifest is for
+`music-sleeve`, whose PKGBUILD lives in `build-aux/aur/`. The Flatpak manifest is for
 development only, and Flathub is out of scope (`docs/decisions.md`). Tagging a release,
 publishing it on GitHub and uploading the package to the AUR are the owner's steps: an agent
 prepares everything up to them and stops there.
@@ -42,12 +42,12 @@ keeps the development profile, so the install would put the `.Devel` build into 
 
 `--skip-subprojects` matters when Meson fell back to the blueprint-compiler wrap: that
 subproject would otherwise install its own `reference_docs.json` into the prefix. To
-uninstall: `sudo ninja -C _build uninstall`, then remove `/usr/share/apple-music`, since the
+uninstall: `sudo ninja -C _build uninstall`, then remove `/usr/share/music-sleeve`, since the
 byte-compiled `__pycache__` directories are not in Meson's install log.
 
 ## Byte-compiling
 
-The app's modules install as data under `share/apple-music/applemusic`, outside
+The app's modules install as data under `share/music-sleeve/applemusic`, outside
 site-packages, so Meson's own `python.bytecompile` never reaches them. `src/meson.build` runs
 `build-aux/meson/compile-python.py` at install time instead: `compileall` over the installed
 package, level 0, plus `-O` or `-OO` when `python.bytecompile` is 1 or 2 (arch-meson sets 1),
@@ -81,7 +81,7 @@ committing.
 
 ## The Flatpak manifest
 
-`build-aux/flatpak/io.github.jackicus.AppleMusic.Devel.json` builds the development profile
+`build-aux/flatpak/io.github.jackicus.MusicSleeve.Devel.json` builds the development profile
 for GNOME Builder or flatpak-builder. It talks to `org.freedesktop.Flatpak` so the app can run
 the host's Chrome, and has no audio socket, because the host's Chrome makes the sound; the MPRIS
 name, `org.mpris.MediaPlayer2.<app id>`, is one Flatpak lets an app own without asking. Its

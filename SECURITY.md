@@ -47,7 +47,7 @@ your user.
 |---|---|
 | Library snapshot, artwork, lyrics and cached pages | `$XDG_CACHE_HOME/apple-music/` (usually `~/.cache/apple-music/`; `apple-music-devel/` for the development build) |
 | Chrome's profile, which holds your Apple sign-in | `$XDG_DATA_HOME/apple-music/chrome/` (`chrome-devel/` for the development build) |
-| Settings | GSettings schema `io.github.jackicus.AppleMusic` |
+| Settings | GSettings schema `io.github.jackicus.MusicSleeve` |
 
 Sign Out stops Chrome and deletes the Chrome profile and the cache; Preferences › Clear Cache
 deletes the cache only.

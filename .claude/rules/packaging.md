@@ -4,7 +4,7 @@ paths:
   - "meson.options"
   - "src/meson.build"
   - "src/applemusic.gresource.xml"
-  - "src/apple-music.in"
+  - "src/music-sleeve.in"
   - "data/**"
   - "po/**"
   - "build-aux/**"
@@ -26,10 +26,10 @@ paths:
   the version with the git revision, and a `DEMO_DIR` pointing at the source tree's build/demo.
   A release build hides `--demo` from `--help`, and there it needs `APPLE_MUSIC_CACHE`.
   Both profiles install the same GSettings schema ID and resource path.
-- The launcher (`src/apple-music.in`) calls `i18n.setup(localedir)` before anything is
+- The launcher (`src/music-sleeve.in`) calls `i18n.setup(localedir)` before anything is
   translated (it binds the domain for both Python's gettext and GtkBuilder), loads the
   gresource from pkgdatadir and calls `main.main()`. The modules install as data under
-  `share/apple-music/applemusic`, outside site-packages, so `build-aux/meson/compile-python.py`
+  `share/music-sleeve/applemusic`, outside site-packages, so `build-aux/meson/compile-python.py`
   byte-compiles them at install time (its level follows `python.bytecompile`).
 - `data/meson.build` validates the desktop file, the metainfo (`appstreamcli validate
   --no-net`) and the schema (`glib-compile-schemas --strict`) as Meson tests, which check.sh

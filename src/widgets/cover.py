@@ -8,7 +8,7 @@ from gi.repository import GObject, Gtk
 from . import artwork
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/cover.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/cover.ui')
 class Cover(Gtk.Overlay):
     """Artwork `size` px square: the first of set_paths()' paths that decodes, over a placeholder
     card with a music note until then, and for good when none does.

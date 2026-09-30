@@ -15,8 +15,8 @@ from gettext import gettext as _
 import gi
 from gi.repository import Adw, GLib, Gtk
 
-METAINFO = '/io/github/jackicus/AppleMusic/metainfo.xml'
-DEBUG_INFO_FILENAME = 'apple-music-debug-info.txt'
+METAINFO = '/io/github/jackicus/MusicSleeve/metainfo.xml'
+DEBUG_INFO_FILENAME = 'music-sleeve-debug-info.txt'
 
 
 def release_version(version):
@@ -40,7 +40,7 @@ def debug_info(app, browser=None):
     adw = f'{Adw.get_major_version()}.{Adw.get_minor_version()}.{Adw.get_micro_version()}'
     glib = f'{GLib.MAJOR_VERSION}.{GLib.MINOR_VERSION}.{GLib.MICRO_VERSION}'
     lines = [
-        f'Apple Music {app.version} ({app.get_application_id()})',
+        f'Music Sleeve {app.version} ({app.get_application_id()})',
         f'Python {platform.python_version()}, PyGObject {gi.__version__}',
         f'GTK {gtk}, libadwaita {adw}, GLib {glib}',
         f'Engine: {engine_state}',

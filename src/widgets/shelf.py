@@ -34,7 +34,7 @@ def text_scale(settings):
     return dpi / (96 * 1024) if dpi > 0 else 1.0
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/shelf.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/shelf.ui')
 class Shelf(Gtk.Box):
     """A shelf of Items (a library.ShelfModel, or any object with `key`, `title` and `items`,
     bound with bind_shelf()) as a row of tiles under its title, with paging arrows while the

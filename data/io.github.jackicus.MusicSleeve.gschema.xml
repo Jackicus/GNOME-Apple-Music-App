@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<schemalist gettext-domain="apple-music">
-  <schema id="io.github.jackicus.AppleMusic" path="/io/github/jackicus/AppleMusic/">
+<schemalist gettext-domain="music-sleeve">
+  <schema id="io.github.jackicus.MusicSleeve" path="/io/github/jackicus/MusicSleeve/">
     <key name="window-width" type="i">
       <default>1100</default>
       <summary>Window width</summary>

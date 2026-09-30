@@ -8,7 +8,7 @@ from gi.repository import Gtk
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/track_row.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/track_row.ui')
 class TrackRow(Gtk.Box):
     """A leading track number (albums) or 40 px thumbnail (playlists), the title with an
     explicit badge, the artist under it when it says something, and the duration.

@@ -270,7 +270,7 @@ def _get_json(url, timeout):
     import urllib.request
 
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    request = urllib.request.Request(url, headers={'User-Agent': 'AppleMusicGNOME/1.0'})
+    request = urllib.request.Request(url, headers={'User-Agent': 'MusicSleeve/1.0'})
     with opener.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode('utf-8'))
 

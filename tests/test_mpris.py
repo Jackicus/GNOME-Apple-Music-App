@@ -30,7 +30,7 @@ from applemusic.mpris import (NOT_SUPPORTED_ERROR, OBJECT_PATH, PLAYER_INTERFACE
                               metadata, playback_status, repeat_mode, track_path)
 from applemusic.player import NowPlaying, Player
 
-APP_ID = 'io.github.jackicus.AppleMusic.Test'
+APP_ID = 'io.github.jackicus.MusicSleeve.Test'
 
 # An invented track, as the bridge's formatTrack shapes it.
 TRACK = {
@@ -39,7 +39,7 @@ TRACK = {
     'discNumber': 1, 'durationMs': 214000, 'durationLabel': '3:34', 'explicit': False,
     'artUrl': 'https://example.invalid/art/256x256bb.jpg', 'index': 2,
 }
-TRACK_PATH = '/io/github/jackicus/AppleMusic/track/2/i_2edemo0001'
+TRACK_PATH = '/io/github/jackicus/MusicSleeve/track/2/i_2edemo0001'
 
 
 class FakeEngine(GObject.Object):
@@ -317,15 +317,15 @@ class MetadataTest(unittest.TestCase):
         data = metadata(bare)
         self.assertEqual(list(data), ['mpris:trackid'])
         self.assertEqual(data['mpris:trackid'].get_string(),
-                         '/io/github/jackicus/AppleMusic/track/0/x')
+                         '/io/github/jackicus/MusicSleeve/track/0/x')
 
     def test_track_paths(self):
         self.assertEqual(track_path('i.demo0001', 2), TRACK_PATH)
-        self.assertEqual(track_path('a_b'), '/io/github/jackicus/AppleMusic/track/0/a_5fb')
+        self.assertEqual(track_path('a_b'), '/io/github/jackicus/MusicSleeve/track/0/a_5fb')
         self.assertEqual(track_path('1000000001', 7),
-                         '/io/github/jackicus/AppleMusic/track/7/1000000001')
-        self.assertEqual(track_path(''), '/io/github/jackicus/AppleMusic/track/0/_')
-        self.assertEqual(track_path(None, -1), '/io/github/jackicus/AppleMusic/track/0/_')
+                         '/io/github/jackicus/MusicSleeve/track/7/1000000001')
+        self.assertEqual(track_path(''), '/io/github/jackicus/MusicSleeve/track/0/_')
+        self.assertEqual(track_path(None, -1), '/io/github/jackicus/MusicSleeve/track/0/_')
         for track_id in ('i.demo0001', 'a b/c-d.é', '', 'ra.978194965'):
             for index in (0, 3, -1):
                 self.assertTrue(GLib.Variant.is_object_path(track_path(track_id, index)),
@@ -390,7 +390,7 @@ class ServiceTest(unittest.TestCase):
     def test_root_properties(self):
         self.make()
         get = self.connection.get
-        self.assertEqual(get(ROOT_INTERFACE, 'Identity').unpack(), 'Apple Music')
+        self.assertEqual(get(ROOT_INTERFACE, 'Identity').unpack(), 'Music Sleeve')
         self.assertEqual(get(ROOT_INTERFACE, 'DesktopEntry').unpack(), APP_ID)
         for name, expected in (('CanQuit', True), ('CanRaise', True), ('Fullscreen', False),
                                ('CanSetFullscreen', False), ('HasTrackList', False)):
@@ -548,7 +548,7 @@ class ServiceTest(unittest.TestCase):
                 self.assertEqual(len(metadata_changes), 1)
                 self.assertEqual(metadata_changes[0]['mpris:length'], 180_000_000)
                 self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
-                    'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/3/i_2edemo0002')
+                    'mpris:trackid'], '/io/github/jackicus/MusicSleeve/track/3/i_2edemo0002')
                 await self.app.settle()
         asyncio.run(go())
 
@@ -639,7 +639,7 @@ class ServiceTest(unittest.TestCase):
             call(PLAYER_INTERFACE, 'SetPosition',
                  GLib.Variant('(ox)', (TRACK_PATH, 30_000_000)))
             call(PLAYER_INTERFACE, 'SetPosition',  # not the entry playing: dropped
-                 GLib.Variant('(ox)', ('/io/github/jackicus/AppleMusic/track/3/i_2edemo0001',
+                 GLib.Variant('(ox)', ('/io/github/jackicus/MusicSleeve/track/3/i_2edemo0001',
                                        1)))
             call(PLAYER_INTERFACE, 'SetPosition',  # before the start: dropped, not clamped
                  GLib.Variant('(ox)', (TRACK_PATH, -5_000_000)))
@@ -730,7 +730,7 @@ class ServiceTest(unittest.TestCase):
                 self.assertEqual([keys for keys in changes if 'Metadata' in keys],
                                  [['Metadata']])
                 self.assertEqual(self.connection.get(PLAYER_INTERFACE, 'Metadata').unpack()[
-                    'mpris:trackid'], '/io/github/jackicus/AppleMusic/track/3/i_2edemo0001')
+                    'mpris:trackid'], '/io/github/jackicus/MusicSleeve/track/3/i_2edemo0001')
                 self.assertEqual(self.artwork.urls, [TRACK['artUrl']])  # the same art: kept
                 # The new entry starts from 0, which the Metadata change told: no seek.
                 emit('event', 'playbackTimeDidChange', {'position': 0, 'duration': 214})
@@ -857,7 +857,7 @@ class ServiceTest(unittest.TestCase):
 
 TRACK_B = dict(TRACK, id='i.demo0002', catalogId='1000000002', title='Pilot Light',
                durationMs=180000, index=3)
-B_PATH = '/io/github/jackicus/AppleMusic/track/3/i_2edemo0002'
+B_PATH = '/io/github/jackicus/MusicSleeve/track/3/i_2edemo0002'
 ALL_CANS = ['CanGoNext', 'CanGoPrevious', 'CanPause', 'CanPlay', 'CanSeek']
 
 # The event sequences seen live (docs/history/build-plan.md, phases 9, 12, 13 and 17),

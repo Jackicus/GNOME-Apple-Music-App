@@ -3,7 +3,7 @@
 > maintained: CLAUDE.md, `.claude/rules/` and `docs/` describe the app as it is. The
 > reusable prompts at the end live on as skills in `.claude/skills/`.
 
-# Plan: Apple Music for GNOME
+# Plan: Music Sleeve
 
 One phase per Claude Code session. Paste the phase's prompt; `CLAUDE.md` is loaded automatically.
 When a phase is done, tick it in the list below (`[x]`, with the date) and note anything the next
@@ -40,7 +40,7 @@ running and better than before.
    AUR PKGBUILD since this is an Arch-family machine). The Flatpak manifest stays for development
    only, with `--talk-name=org.freedesktop.Flatpak` so the sandboxed app can `flatpak-spawn --host`
    the host's Chrome. Flathub is out of scope: it would refuse both the host-Chrome dependency and
-   the trademark in the name/ID. The ID `io.github.jackicus.AppleMusic` stays.
+   the trademark in the name/ID. The ID `io.github.jackicus.MusicSleeve` stays.
 2. **Chrome profile.** Recommendation: the app gets its own profile and port (`$XDG_DATA_HOME/
    apple-music/chrome`, 9228; the `.Devel` build `chrome-devel`, 9229), so it never fights the
    extension's Chrome over a profile lock. Cost: signing in again, once per profile, and two Chromes
@@ -1108,7 +1108,7 @@ Phase 10 of prompts.md: Engine in the app, sign-in and account. Read CLAUDE.md f
 src/backend/{chrome.py,client.py,errors.py}, scripts/am.py, and the signin/status/item command
 bodies in src/backend/am.py (reference).
 
-1. GSettings keys (add to data/io.github.jackicus.AppleMusic.gschema.xml with summaries):
+1. GSettings keys (add to data/io.github.jackicus.MusicSleeve.gschema.xml with summaries):
    browser-command (s, 'google-chrome-stable'), engine-port (i, 9228), engine-headless (b, true),
    engine-autostart (b, true), signed-in (b, false), account-name (s, ''). The .Devel profile uses
    profile directory chrome-devel and port 9229 by default so it can run beside a release build
@@ -1196,7 +1196,7 @@ verified up to the visible Chrome on Apple's page, then cancelled). Notes for la
   about 10 s and `status()` answered; a groupless album and artist showed the not-signed-in
   state (and the engine-down one under `--demo`); `scripts/run.sh --debug` with `signed-in`
   set autostarted one headless Chrome (stderr relayed at DEBUG), `gapplication action
-  io.github.jackicus.AppleMusic.Devel quit` stopped it; after `kill -9` of the app the
+  io.github.jackicus.MusicSleeve.Devel quit` stopped it; after `kill -9` of the app the
   relaunch reclaimed the surviving Chrome; sign-out (on throwaway copies of the profile and
   cache) stopped the engine, wiped both, cleared the keys and emptied the library. The real
   settings were put back (`signed-in` false). Unit tests: `tests/test_engine.py` (33: the
@@ -1518,7 +1518,7 @@ phase 12 and commit.
 helper), `build-aux/flatpak/*.json` (`--own-name`), `tests/test_mpris.py` (metadata/variant
 construction only).
 
-**Done when.** `gdbus introspect --session --dest org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel
+**Done when.** `gdbus introspect --session --dest org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve.Devel
 --object-path /org/mpris/MediaPlayer2` lists both interfaces; the shell shows the app with artwork
 and the play/pause/next keys work; `busctl --user list | grep mpris` shows exactly one entry for this
 app and none for chromium while the engine runs.
@@ -1549,7 +1549,7 @@ mpris must show only this app. If a chromium.instance entry appears despite
 features in src/backend/chrome.py and confirm playback still works; record the outcome under
 this phase in prompts.md.
 
-Add --own-name=org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel to the Flatpak
+Add --own-name=org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve.Devel to the Flatpak
 manifest's finish-args. tests/test_mpris.py checks the metadata dict and variant types for a
 sample track and for None.
 
@@ -1563,7 +1563,7 @@ Tick phase 13 and commit.
 **Done 2026-09-28. Notes for later phases.**
 
 - Chrome's own player is absent: with the dev engine playing, `busctl --user list | grep -i
-  mpris` listed `org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic.Devel` (the app's
+  mpris` listed `org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve.Devel` (the app's
   process) and no `chromium.instance<pid>` for the engine's Chrome pid, so
   `--disable-features=HardwareMediaKeyHandling` is enough and `MediaSessionService` was not
   added to `chrome.py`. The user's everyday Chrome (a PWA window) does publish
@@ -1598,7 +1598,7 @@ Tick phase 13 and commit.
   resets `duration` *after* the track's notify, and not at all for a track without
   `duration_ms`, so until then it is the previous item's; the first cut used it and sent
   each new track once with the old length, then twice more). So a track change is one
-  Metadata change, seen live. `mpris:trackid` is `/io/github/jackicus/AppleMusic/track/<id with every non-
+  Metadata change, seen live. `mpris:trackid` is `/io/github/jackicus/MusicSleeve/track/<id with every non-
   alphanumeric byte as _XX>`; a queue with the same song twice gives both entries one path.
   The artwork is asked from `Artwork.fetch_remote` at the cover size (the bar's call and this
   one share the download) and Metadata goes out again with `mpris:artUrl` when the file is
@@ -2483,9 +2483,9 @@ phase 20 and commit.
   release). Nothing is tagged, there is no GitHub release, and nothing is on the AUR. When the
   testing passes:
   1. If fixes went in or the day moved, update `<release version="0.9.0" date="…">` in
-     `data/io.github.jackicus.AppleMusic.metainfo.xml.in` (and its notes), commit and push.
+     `data/io.github.jackicus.MusicSleeve.metainfo.xml.in` (and its notes), commit and push.
   2. Tag and push the tag:
-     `git tag -a v0.9.0 -m 'Apple Music for GNOME 0.9.0' && git push origin v0.9.0`
+     `git tag -a v0.9.0 -m 'Music Sleeve 0.9.0' && git push origin v0.9.0`
   3. `cd build-aux/aur && updpkgsums && makepkg --printsrcinfo > .SRCINFO`, then commit the
      checksum (the PKGBUILD has `SKIP` until GitHub serves the tag's archive), and
      `makepkg -si` there to install it (blueprint-compiler is a makedepend).
@@ -2532,7 +2532,7 @@ phase 20 and commit.
   `--dry-run`). From the repo root, with APPLE_MUSIC_CACHE unset, that install's
   `bin/apple-music --demo --debug` read `./build/demo` (the new fallback), painted its first
   frame at 975 ms, reached library-ready at 1,024 ms with no traceback, and owned
-  `org.mpris.MediaPlayer2.io.github.jackicus.AppleMusic`. The installed .pyc were byte-identical
+  `org.mpris.MediaPlayer2.io.github.jackicus.MusicSleeve`. The installed .pyc were byte-identical
   after the run, so Python used them rather than recompiling. Stopped by pid.
 - The demo path: the launcher's `DEMO_DIR` is the source tree's `build/demo` only in the
   development profile, so `scripts/demo.sh` is unchanged (checked: it read build/demo). A

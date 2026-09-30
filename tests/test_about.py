@@ -33,7 +33,7 @@ class App:
         self.engine = Engine()
 
     def get_application_id(self):
-        return 'io.github.jackicus.AppleMusic.Devel'
+        return 'io.github.jackicus.MusicSleeve.Devel'
 
 
 class AboutTest(unittest.TestCase):
@@ -45,7 +45,7 @@ class AboutTest(unittest.TestCase):
     def test_debug_info(self):
         app = App()
         text = about.debug_info(app, 'HeadlessChrome/154.0.0.0')
-        self.assertIn('Apple Music 0.9.0-1a2b3c4 (io.github.jackicus.AppleMusic.Devel)', text)
+        self.assertIn('Music Sleeve 0.9.0-1a2b3c4 (io.github.jackicus.MusicSleeve.Devel)', text)
         self.assertIn('PyGObject', text)
         self.assertIn('libadwaita', text)
         self.assertIn('Engine: up, headless, signed in', text)
@@ -61,7 +61,7 @@ class AboutTest(unittest.TestCase):
         from gi.repository import Adw
 
         dialog = Adw.AboutDialog.new_from_appdata(about.METAINFO, '0.9.0')
-        self.assertEqual(dialog.get_application_name(), 'Apple Music')
+        self.assertEqual(dialog.get_application_name(), 'Music Sleeve')
         self.assertEqual(dialog.get_release_notes_version(), '0.9.0')
         self.assertTrue(dialog.get_release_notes())
         self.assertTrue(dialog.get_issue_url().startswith('https://github.com/'))

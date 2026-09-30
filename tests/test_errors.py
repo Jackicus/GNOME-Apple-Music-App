@@ -34,8 +34,8 @@ class ErrorMessageTest(unittest.TestCase):
     def test_every_code_has_a_sentence_and_its_action_exists(self):
         from applemusic import main
 
-        app = main.Application('0', 'io.github.jackicus.AppleMusic.ErrorsTest',
-                               'io.github.jackicus.AppleMusic', 'default')
+        app = main.Application('0', 'io.github.jackicus.MusicSleeve.ErrorsTest',
+                               'io.github.jackicus.MusicSleeve', 'default')
         for code in CODES:
             title, button, action = error_message(code)
             self.assertTrue(title, code)

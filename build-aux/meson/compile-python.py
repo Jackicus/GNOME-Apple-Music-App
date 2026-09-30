@@ -6,7 +6,7 @@
 
     compile-python.py MODULEDIR [LEVEL]
 
-MODULEDIR is the package's directory relative to the prefix (share/apple-music/applemusic),
+MODULEDIR is the package's directory relative to the prefix (share/music-sleeve/applemusic),
 found under $MESON_INSTALL_DESTDIR_PREFIX (a package's staging directory) and compiled with
 tracebacks naming it under $MESON_INSTALL_PREFIX. LEVEL is the python.bytecompile option: 0
 plain bytecode, 1 also -O, 2 also -OO. The modules are installed with install_data, outside

@@ -12,11 +12,11 @@
     "own without asking. Written without a GNOME 50 runtime or flatpak-builder to test it on:",
     "not built yet."
   ],
-  "id": "io.github.jackicus.AppleMusic.Devel",
+  "id": "io.github.jackicus.MusicSleeve.Devel",
   "runtime": "org.gnome.Platform",
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
-  "command": "apple-music",
+  "command": "music-sleeve",
   "desktop-file-name-suffix": " (Development)",
   "finish-args": [
     "--share=network",
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "name": "apple-music",
+      "name": "music-sleeve",
       "builddir": true,
       "buildsystem": "meson",
       "config-opts": ["-Dprofile=development"],

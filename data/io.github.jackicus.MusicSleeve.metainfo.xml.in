@@ -4,8 +4,8 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
 
-  <name>Apple Music</name>
-  <summary>Play your library, playlists and radio</summary>
+  <name>Music Sleeve</name>
+  <summary>Play your Apple Music library, playlists and radio</summary>
   <description>
     <p>
       A GNOME app for Apple Music: your library, playlists, radio and
@@ -38,10 +38,10 @@
   <url type="contribute">https://github.com/Jackicus/GNOME-Apple-Music-App/blob/main/CONTRIBUTING.md</url>
   <url type="translate">https://github.com/Jackicus/GNOME-Apple-Music-App#translating</url>
 
-  <translation type="gettext">apple-music</translation>
+  <translation type="gettext">music-sleeve</translation>
 
   <provides>
-    <binary>apple-music</binary>
+    <binary>music-sleeve</binary>
   </provides>
 
   <!-- Songs and lyrics marked explicit are played and shown as they are. -->

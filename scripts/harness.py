@@ -7,7 +7,7 @@ settings, on the demo library.
 screenshot.py, a11y_check.py, scroll_test.py and bench.py each run the installed build (meson
 install -C build, or scripts/run.sh, first) in-process. make_app() does what they all need:
 
-- the installed modules on sys.path (build/install/share/apple-music) and the translations
+- the installed modules on sys.path (build/install/share/music-sleeve) and the translations
   bound (i18n.setup, as the launcher does);
 - GSettings on the memory backend with the installed schema, so nothing the script sets (window
   size, last-page, signed-in) reaches the desktop's settings; engine-autostart off, so a script
@@ -15,7 +15,7 @@ install -C build, or scripts/run.sh, first) in-process. make_app() does what the
 - the demo library: build/demo, generated first when it is missing, unless APPLE_MUSIC_CACHE
   names another (the app's --demo reads it), passed as --demo by run_app();
 - gi's versions, the gresource registered, main.Application under an app ID of its own
-  (io.github.jackicus.AppleMusic.<suffix>, NON_UNIQUE: beside a running app), asyncio on the
+  (io.github.jackicus.MusicSleeve.<suffix>, NON_UNIQUE: beside a running app), asyncio on the
   GLib loop (main.use_glib_event_loop());
 - at startup: the colour scheme forced dark (or light), animations off unless asked for, and
   with `stock_look` stock GNOME's icon theme and font (Adwaita, Adwaita Sans 11) instead of the
@@ -36,13 +36,13 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PREFIX = os.path.join(ROOT, 'build', 'install')
-PKGDATADIR = os.path.join(PREFIX, 'share', 'apple-music')
+PKGDATADIR = os.path.join(PREFIX, 'share', 'music-sleeve')
 GRESOURCE = os.path.join(PKGDATADIR, 'applemusic.gresource')
 SCHEMA_DIR = os.path.join(PREFIX, 'share', 'glib-2.0', 'schemas')
 LOCALEDIR = os.path.join(PREFIX, 'share', 'locale')
 ICONS = os.path.join(PREFIX, 'share', 'icons')
 DEMO_DIR = os.path.join(ROOT, 'build', 'demo')  # what the development launcher passes
-BASE_ID = 'io.github.jackicus.AppleMusic'
+BASE_ID = 'io.github.jackicus.MusicSleeve'
 
 # invented_playing_state()'s artwork URL: the album's cover is copied to where
 # remote.fetch_remote would put this URL's 640 px image, so nothing is fetched.

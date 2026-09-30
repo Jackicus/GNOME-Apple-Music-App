@@ -20,7 +20,7 @@ from applemusic import main
 from applemusic.backend import config
 from applemusic.sync import LibrarySync
 
-BASE_ID = 'io.github.jackicus.AppleMusic'
+BASE_ID = 'io.github.jackicus.MusicSleeve'
 
 
 class FakeEngine(GObject.Object):

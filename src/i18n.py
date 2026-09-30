@@ -13,7 +13,7 @@ importing the app, and the developer scripts through scripts/harness.py.
 import gettext
 import locale
 
-DOMAIN = 'apple-music'
+DOMAIN = 'music-sleeve'
 
 
 def setup(localedir, domain=DOMAIN):

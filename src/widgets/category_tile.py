@@ -13,7 +13,7 @@ from .util import connect_weak
 ART_SIZE = 84
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/category_tile.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/category_tile.ui')
 class CategoryTile(Gtk.Overlay):
     """The category's name over its colour (`art_color`, Apple's colour for the curator's
     artwork, drawn in do_snapshot as the hero cards' bands are; white or black text by

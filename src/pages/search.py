@@ -98,7 +98,7 @@ def _song_filter():
                             match_mode=Gtk.StringFilterMatchMode.SUBSTRING, ignore_case=False)
 
 
-@Gtk.Template(resource_path='/io/github/jackicus/AppleMusic/search.ui')
+@Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/search.ui')
 class SearchPage(Adw.NavigationPage):
     """The Search destination (see the module). Every change of mode or text numbers a new
     request, so an answer that arrives after it (a suggestion, a search, the landing, or its

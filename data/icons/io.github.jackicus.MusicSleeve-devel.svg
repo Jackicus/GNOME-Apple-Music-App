@@ -2,7 +2,7 @@
   <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
   <!-- SPDX-FileCopyrightText: 2026 Jack Tully -->
   <!-- The development build's icon: the release icon under a band of stripes.
-       Keep it in step with io.github.jackicus.AppleMusic.svg. -->
+       Keep it in step with io.github.jackicus.MusicSleeve.svg. -->
   <!-- A record coming out of its sleeve, in GNOME's palette: a physical object, as the HIG
        asks of an app icon, and one that says "music" without another player's mark. Both
        objects stand on a darker side, so the icon sits among GNOME's own. -->

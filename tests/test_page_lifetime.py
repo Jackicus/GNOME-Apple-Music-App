@@ -174,7 +174,7 @@ def _classes():
             return name  # the release build's keys
 
         def __init__(self):
-            super().__init__(application_id='io.github.jackicus.AppleMusic.LifetimeTest',
+            super().__init__(application_id='io.github.jackicus.MusicSleeve.LifetimeTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.set_default()  # the pages' app, whichever application another test made first
             self.engine = Engine()

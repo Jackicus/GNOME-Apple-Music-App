@@ -75,8 +75,8 @@ if get_option('profile') == 'development'
 endif
 
 configure_file(
-  input: 'apple-music.in',
-  output: 'apple-music',
+  input: 'music-sleeve.in',
+  output: 'music-sleeve',
   configuration: {
     'PYTHON': python3.full_path(),
     'VERSION': version,
