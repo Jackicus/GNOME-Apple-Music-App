@@ -41,6 +41,7 @@ from .backend import config, normalize  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .background import BackgroundPlayback  # noqa: E402
 from .engine import Engine  # noqa: E402
+from .discord import Presence  # noqa: E402
 from .errors import error_message  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
@@ -99,6 +100,7 @@ class Application(Adw.Application):
         self.engine = None  # created in do_startup
         self.player = None  # created in do_startup, after the engine
         self.mpris = None  # created in do_startup, after the player; released in do_shutdown
+        self.presence = None  # Discord rich presence, while its setting is on
         self.library_sync = None  # created in do_startup
         self.background = None  # created in do_startup: the window closed, the music on
         self._tasks = set()  # strong references: asyncio only keeps weak ones
@@ -227,12 +229,16 @@ class Application(Adw.Application):
         if not self.demo:
             self.mpris = Mpris(self)
             self.mpris.start()
+            self.presence = Presence(self)
+            self.presence.start()
 
     def do_shutdown(self):
         if self._first_load is not None:  # never activated: the read is dropped
             self.library.resume_reading()
             self._first_load.close()
             self._first_load = None
+        if self.presence is not None:
+            self.presence.stop()  # the activity cleared before the loop stops
         if self.mpris is not None:
             self.mpris.stop()  # the name released before the bus connection goes
         if self.engine is not None and self.engine.pid:

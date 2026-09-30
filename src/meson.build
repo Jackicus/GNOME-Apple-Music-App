@@ -98,6 +98,7 @@ install_data(
   'actions.py',
   'background.py',
   'cache.py',
+  'discord.py',
   'engine.py',
   'errors.py',
   'i18n.py',
