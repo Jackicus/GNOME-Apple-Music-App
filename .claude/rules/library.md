@@ -96,6 +96,10 @@ them before changing either. What matters most:
   comes up or is authorized, when the library has been read. After a failure it waits
   `RETRY_DELAY`; failed thumbnails are retried once. A change to library.json's shape that
   old files lack bumps `LIBRARY_VERSION` (and demo_library.py's), so they are synced again.
+- After a library write (Add to Library) the app runs a **quick pass**,
+  `app.start_sync(quick=True)`: the songs, the playlist listing and the shelves, keeping last
+  time's playlist tracks, folders, videos and stations. It is what makes an added song appear
+  in Songs and Recently Added without a full pass (#192); it stamps no last-sync.
 - A cancelled sync's task ends only after its build thread has (`sync_library()` waits it
   out), so once `await app.library_sync.cancel()` returns nothing more of it is written.
   Clear Cache (account.py) bumps the cache's generation, cancels, then wipes; sign-out cancels

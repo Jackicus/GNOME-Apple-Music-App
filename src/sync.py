@@ -7,6 +7,7 @@
     task = app.library_sync.start()          # a sync as a task, unless one runs
     await app.library_sync.cancel()          # stopped, and nothing more of it written
     counts = await sync_library(app.engine, app.library, progress)   # the sync itself
+    app.library_sync.start(quick=True)       # the short pass after a library write
 
 fetches, in this order, the library's songs (with their albums, which is what the Albums and
 Artists sections are built from), the playlists and each one's tracks, the playlist folders,
@@ -23,6 +24,13 @@ for a playlist's tracks or a folder's children means there are none. A failure i
 EngineError; a sync cancelled, or whose cache was wiped under it, raises store.Cancelled.
 The listings are read with `unique` (api_pages): an item met twice while the library changed
 under the read is kept once.
+
+A `quick` pass (sync_library(quick=True), LibrarySync.start(quick=True)) is the one after a
+library write, where a full pass would re-read everything to find one song: it fetches the
+songs, the playlist listing and the shelves, and keeps last time's playlist tracks, folders,
+videos and stations, none of which adding to the library changes. It writes library.json and
+reloads the models as a full pass does, but stamps no last-sync and says nothing when it ends:
+it is no substitute for the full one the clock waits for.
 
 What the web player asks for, found by watching its requests (2026-09-28):
 
@@ -208,9 +216,15 @@ def install_scaler():
     normalize.load_art_sizes(str(config.cache_dir()))
 
 
-async def sync_library(engine, library, progress=None):
+async def sync_library(engine, library, progress=None, quick=False):
     """The whole sync (see the module). Returns the counts: {albums, artists, playlists,
-    loose, videos, radio, folders, shelves, art: {wanted, fetched, failed}}."""
+    loose, videos, radio, folders, shelves, art: {wanted, fetched, failed}}.
+
+    `quick`: the pass after a library write. It reads the songs, the playlist listing and the
+    shelves, and leaves the rest of last time's file alone — the playlists' tracks, the
+    folders, the videos and the stations, none of which adding to the library changes. A song
+    added is then in Songs and in Recently Added without the per-playlist reads a full pass
+    makes. It is not a sync: the caller does not stamp last-sync for it."""
     report = progress or (lambda section, done, total: None)
     generation = store.cache_generation()  # a wipe from here on leaves this sync's files out
     status = await engine.status()
@@ -234,10 +248,18 @@ async def sync_library(engine, library, progress=None):
     report('playlists', 0, None)
     raw['playlists'] = await engine.api_pages(PLAYLISTS_ENDPOINT, PLAYLIST_PARAMS, page=PAGE,
                                               unique=True)
-    raw['tracks'] = await _fetch_playlist_tracks(engine, raw['playlists'], report)
+    # A quick pass keeps every playlist's tracks: _playlists() takes last time's groups and
+    # counts for a playlist whose tracks are not here, which is the expensive read skipped.
+    raw['tracks'] = {} if quick else await _fetch_playlist_tracks(engine, raw['playlists'],
+                                                                  report)
 
     # 3. The playlist folders; 4. the music videos; 5. the stations; 6. the shelves. None of
-    # these stops the sync: what fails is None here, and keeps last time's entry.
+    # these stops the sync: what fails is None here, and keeps last time's entry — which is
+    # also how a quick pass leaves the three a library write cannot have changed.
+    if quick:
+        raw['folders'] = raw['videos'] = raw['stations'] = None
+        raw['shelves'] = await _fetch_shelves(engine, report)
+        return await _build(cache_dir, storefront, raw, library, report, generation)
     try:
         raw['folders'] = await _fetch_folders(engine, report)
     except EngineError as error:
@@ -259,11 +281,15 @@ async def sync_library(engine, library, progress=None):
         raw['stations'] = None
     report('radio', 1, 1)
     raw['shelves'] = await _fetch_shelves(engine, report)
+    return await _build(cache_dir, storefront, raw, library, report, generation)
 
-    # 7. Everything into the Item shapes, the missing thumbnails fetched, the file written and
-    # the caches pruned: all in a thread, the artwork's progress relayed to this loop. The
-    # thread cannot be stopped from here: cancelled, the sync tells it to give up and waits
-    # for it, so that once the sync's task has ended nothing more of it is written.
+
+async def _build(cache_dir, storefront, raw, library, report, generation):
+    """The end of either pass: everything into the Item shapes, the missing thumbnails
+    fetched, the file written and the caches pruned, all in a thread with the artwork's
+    progress relayed to this loop; then the models follow, in place. The thread cannot be
+    stopped from here: cancelled, the sync tells it to give up and waits for it, so that once
+    the sync's task has ended nothing more of it is written."""
     loop = asyncio.get_running_loop()
     stop = {'cancelled': False}
 
@@ -735,10 +761,12 @@ class LibrarySync(GObject.Object):
 
     # -- running one -----------------------------------------------------------------------
 
-    def start(self, retry=False):
+    def start(self, retry=False, quick=False):
         """Sync the library through the engine, starting it if it is down, unless a sync is
         running already or held. Returns the task, or None. Signed out, nothing starts and
-        the sign-in is offered (app.report). `retry`: the one retry after thumbnails failed."""
+        the sign-in is offered (app.report). `retry`: the one retry after thumbnails failed.
+        `quick`: the pass after a library write (sync_library), which neither stamps
+        last-sync nor says it synced, being no substitute for a full one."""
         app = self._app
         if app.refuse_in_demo():
             return None
@@ -752,7 +780,7 @@ class LibrarySync(GObject.Object):
             log.debug('a sync is running already')
             return None
         self.running = True
-        task = self._task = app.spawn(self._run(retry))
+        task = self._task = app.spawn(self._run(retry, quick))
         task.add_done_callback(self._on_done)
         return task
 
@@ -769,7 +797,7 @@ class LibrarySync(GObject.Object):
             task.cancel()
             await asyncio.wait([task])
 
-    async def _run(self, retry=False):
+    async def _run(self, retry=False, quick=False):
         app = self._app
         engine = app.engine
         started = time.monotonic()
@@ -785,7 +813,7 @@ class LibrarySync(GObject.Object):
         try:
             progress('', 0, None)  # the banner, while Chrome may take seconds to come up
             await engine.start()  # a start under way is joined; a running engine is kept
-            counts = await sync_library(engine, app.library, progress)
+            counts = await sync_library(engine, app.library, progress, quick=quick)
         except store.Cancelled as error:
             log.info('sync stopped: %s', error)  # the cache was cleared under it
             return
@@ -806,6 +834,11 @@ class LibrarySync(GObject.Object):
             live[0] = False
             app.library.syncing = False
         self._failed_at = None
+        if quick:
+            # No last-sync stamp and no toast: the write's own toast has been shown, and a
+            # quick pass must not put off the full one the clock is waiting for.
+            log.info('quick sync done in %.0f s', time.monotonic() - started)
+            return
         app.settings.set_string(app.account_key('last-sync'),
                                 datetime.now(UTC).isoformat(timespec='seconds'))
         log.info('sync done in %.0f s', time.monotonic() - started)

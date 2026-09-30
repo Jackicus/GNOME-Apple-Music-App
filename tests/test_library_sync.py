@@ -148,6 +148,45 @@ class CancelTest(SyncTestCase):
         self.assertFalse(os.path.exists(self.library_json))
 
 
+class QuickPassTest(SyncTestCase):
+    """sync_library(quick=True): the pass after a library write (#192)."""
+
+    async def test_it_leaves_out_what_a_library_write_cannot_change(self):
+        engine = FakeEngine(answers())
+        await app_sync.sync_library(engine, self.library)  # a full pass writes the file first
+        full = [path for path, _ in engine.calls]
+        self.assertTrue(any(path.endswith('/tracks') for path in full))
+        engine.calls.clear()
+
+        await app_sync.sync_library(engine, self.library, quick=True)
+        quick = [path for path, _ in engine.calls]
+        # Read: the songs (where an added song lands), the playlist listing, the shelves.
+        self.assertIn(app_sync.SONGS_ENDPOINT, quick)
+        self.assertIn(app_sync.PLAYLISTS_ENDPOINT, quick)
+        self.assertIn('/v1/me/library/recently-added', quick)
+        # Left alone: every playlist's tracks, the folders, the videos, the stations.
+        self.assertEqual([path for path in quick if path.endswith('/tracks')], [])
+        self.assertEqual([path for path in quick if path.startswith(app_sync.FOLDERS_ENDPOINT)],
+                         [])
+        self.assertNotIn(app_sync.VIDEOS_ENDPOINT, quick)
+        self.assertNotIn(app_sync.RADIO_ENDPOINT, quick)
+        self.assertLess(len(quick), len(full))
+
+    async def test_the_playlists_keep_the_tracks_of_the_pass_before(self):
+        engine = FakeEngine(answers())
+        await app_sync.sync_library(engine, self.library)
+        with open(self.library_json, encoding='utf-8') as file:
+            before = json.load(file)['sections']['playlists']
+        await app_sync.sync_library(engine, self.library, quick=True)
+        with open(self.library_json, encoding='utf-8') as file:
+            after = json.load(file)['sections']['playlists']
+        self.assertEqual([playlist['id'] for playlist in after],
+                         [playlist['id'] for playlist in before])
+        for old_playlist, new_playlist in zip(before, after, strict=True):
+            self.assertEqual(new_playlist.get('groups'), old_playlist.get('groups'))
+            self.assertEqual(new_playlist.get('trackCount'), old_playlist.get('trackCount'))
+
+
 class LibrarySyncTest(SyncTestCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
@@ -172,6 +211,17 @@ class LibrarySyncTest(SyncTestCase):
         self.assertTrue(self.app.settings.get_string('last-sync'))
         self.assertTrue(self.app.toasts[-1][0].startswith('Library synced'))
         self.assertTrue(os.path.exists(self.library_json))
+
+    async def test_a_quick_pass_neither_stamps_last_sync_nor_says_it_synced(self):
+        # It is no substitute for a full pass: stamping would put the clock's own off, and
+        # the write that asked for it has toasted already (#192).
+        task = self.sync.start(quick=True)
+        await task
+        await asyncio.sleep(0)
+        self.assertEqual(self.app.settings.get_string('last-sync'), '')
+        self.assertEqual([toast for toast in self.app.toasts
+                          if toast[0].startswith('Library synced')], [])
+        self.assertTrue(os.path.exists(self.library_json))  # it still wrote the library
 
     async def test_cancel_returns_after_the_thread_and_no_report_follows(self):
         self.slow = True
@@ -236,7 +286,7 @@ class LibrarySyncTest(SyncTestCase):
         self.assertFalse(self.library.props.syncing)
 
     async def test_an_unexpected_failure_is_toasted_with_retry(self):
-        async def broken(engine, library, progress=None):
+        async def broken(engine, library, progress=None, quick=False):
             raise OSError(28, 'No space left on device')
 
         with mock.patch.object(app_sync, 'sync_library', broken), \
@@ -370,9 +420,11 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.counts = {'albums': 1, 'playlists': 1, 'art': {'wanted': 1, 'fetched': 1,
                                                             'failed': 0}}
         self.runs = []
+        self.quick_runs = []
 
-        async def fake_sync(engine, library, progress=None):
+        async def fake_sync(engine, library, progress=None, quick=False):
             self.runs.append(engine)
+            self.quick_runs.append(quick)
             return self.counts
 
         patcher = mock.patch.object(app_sync, 'sync_library', fake_sync)
@@ -476,7 +528,7 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.app.reported, [])  # nothing offered the sign-in either
 
     async def test_a_failed_sync_waits_before_the_next(self):
-        async def failing(engine, library, progress=None):
+        async def failing(engine, library, progress=None, quick=False):
             self.runs.append(engine)
             raise EngineError('api', 'invented failure')
 

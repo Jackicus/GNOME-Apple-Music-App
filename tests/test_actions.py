@@ -365,6 +365,7 @@ class FakeApp:
         self.tasks = []
         self.reported = []
         self.toasts = []
+        self.syncs = []  # (quick,) per start_sync
 
     def spawn(self, coro):
         task = asyncio.get_running_loop().create_task(coro)
@@ -376,6 +377,10 @@ class FakeApp:
 
     def toast(self, title):
         self.toasts.append(title)
+
+    def start_sync(self, quick=False):
+        self.syncs.append(quick)
+        return None
 
     def refuse_in_demo(self):
         if self.demo:
@@ -479,6 +484,19 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         await self.run_action('item-add-to-library', 'album', 'l.alb1')
         self.assertEqual(len(self.app.engine.calls), 1)
         self.assertEqual(self.app.toasts[-1], 'This is in your library already')
+
+    async def test_add_to_library_shows_what_it_added(self):
+        # Apple answers the write with no body, so the item is read back: a quick sync, as
+        # add_to_playlist fetches the playlist it wrote to. Without it the song is in the
+        # account and nowhere in the app until the next full sync.
+        await self.run_action('item-add-to-library', 'album', '1000000002')
+        self.assertEqual(self.app.syncs, [True])
+
+    async def test_nothing_is_synced_when_the_add_fails(self):
+        self.app.engine.fail = EngineError('api', 'HTTP 403 Forbidden')
+        await self.run_action('item-add-to-library', 'album', '1000000002')
+        self.assertEqual(self.app.reported, ['api'])
+        self.assertEqual(self.app.syncs, [])
 
     async def test_add_to_playlist_and_refresh_it(self):
         self.app.engine.items[('playlist', 'p.pl1')] = PLAYLIST_ANSWER
