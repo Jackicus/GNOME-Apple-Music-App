@@ -146,6 +146,32 @@ is 158 MB on the desktop, 105 of it file-backed; 192 MB headless, 64 of it anony
   name is no sign of a working keyring, so the check asks for the activation and waits 5 s.
   dbus-daemon does not end a child it activated when the activation fails or the daemon exits.
 
+## The sync
+
+- What Apple's library API offers a sync that wants only the changes (2026-09-30, from the
+  documented endpoints and the answers the fixtures mirror): nothing general. The library
+  listings (`/v1/me/library/songs`, `albums`, `playlists`, `music-videos`) take `limit`,
+  `offset`, `include`, `extend` and `fields`; no `filter` by date, no `sort`, no changes
+  feed or cursor. `meta.total` counts the listing, which an addition plus a removal, or an
+  edit, leaves as it was, so it cannot stand for "unchanged". A conditional read (`ETag`,
+  `If-None-Match`) is out of reach whatever Apple sends: the bridge's `api()` is MusicKit's
+  `music()`, which hands back the parsed body alone, and the app never sees a header.
+  `/v1/me/library/recently-added` covers additions only. What a listing does carry, per
+  library playlist, is `lastModifiedDate` (and, as seen on the real answers, `trackCount`):
+  enough to keep a playlist's tracks while both hold, which is what the sync does.
+- The requests of a full pass against an invented library shaped like the one in #193 (793
+  songs, 34 playlists holding 1,053 tracks, 5 folders), counted through the tests' fake
+  engine with 0.3 s a request (scratch script, not in the repo): 59 requests, 36 of them the
+  playlists' tracks, whatever changed, before; after, a refresh with nothing changed makes
+  23 (no tracks read) and one with one playlist changed 24, the first sync still 59 and a
+  listing without dates still 59. With the fake's latency: 8.5 s to 5.8 s and 6.1 s (the
+  fake reads the songs' pages and the tracks a few at a time, as the engine does).
+  Measured live on the maintainer's library (#192, #194) a full pass was 33 s and a quick
+  pass (no tracks, folders, videos or stations) 18.5 s, so the tracks are at most 14.5 s of
+  the 33: the songs listing, which nothing above can narrow, is the rest. The log's
+  `sync done in N s (engine …, songs …, playlists …)` line now gives each phase's seconds
+  (`phase_text()`), for the next live measurement.
+
 ## MPRIS and GNOME Shell
 
 - GNOME Shell's media section lists a player only while its `CanPlay` is true, and looks the app

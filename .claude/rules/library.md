@@ -100,6 +100,12 @@ them before changing either. What matters most:
   `app.start_sync(quick=True)`: the songs, the playlist listing and the shelves, keeping last
   time's playlist tracks, folders, videos and stations. It is what makes an added song appear
   in Songs and Recently Added without a full pass (#192); it stamps no last-sync.
+- A full pass reads a playlist's tracks again only when its listing's `lastModifiedDate` or
+  `trackCount` differs from what the Item recorded when they were last read (`modified`, and
+  its `trackCount`: `playlist_unchanged()`); kept tracks keep their stamp, so a pass that
+  did not read them cannot make them look current. A playlist listed without a date, or from
+  a file without the key, is read every time. Nothing narrows the songs listing: Apple's API
+  has no changes feed, since filter or conditional read the bridge could use (docs/notes.md).
 - A cancelled sync's task ends only after its build thread has (`sync_library()` waits it
   out), so once `await app.library_sync.cancel()` returns nothing more of it is written.
   Clear Cache (account.py) bumps the cache's generation, cancels, then wipes; sign-out cancels

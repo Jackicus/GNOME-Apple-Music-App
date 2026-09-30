@@ -1872,6 +1872,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
             'explicit': playlist_explicit,
             'catalogId': playlist_cat_id,
             'url': playlist_url,
+            'modified': '2026-01-01T09:00:00Z',  # as the sync stamps a playlist (README)
             'play': {'kind': 'playlist', 'id': playlist_id},
             'groups': [
                 {
@@ -1934,6 +1935,7 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         'explicit': any(t['explicit'] for t in favourite_tracks),
         'catalogId': None,
         'url': None,
+        'modified': '2026-01-01T09:00:00Z',
         'play': favourites_play,
         'attributes': {'isFavourites': True},
         'groups': [{'name': 'Tracks', 'play': favourites_play, 'entries': favourite_tracks}],
