@@ -5,12 +5,13 @@ using Gtk 4.0;
 using Adw 1;
 
 // The transport bar at the bottom of the window (player_bar.py): the AdwBottomSheet's bottom
-// bar. Transport on the left; the item playing (artwork, title with its explicit badge,
-// artist) with the seek slider under it in the middle; the heart, shuffle, repeat and the
-// volume on the right. With nothing playing the seek slider and the heart are hidden and
-// "Not Playing" centres beside the cover. The window's breakpoint sets `compact` below
-// 600sp, which hides the volume, the heart, shuffle, repeat (the Now Playing sheet has
-// those two) and the times around the slider.
+// bar, which the window reveals only while something plays (window.py). Transport on the
+// left; the item playing (artwork, title with its explicit badge, artist) with the seek
+// slider under it in the middle; the heart, shuffle, repeat and the volume on the right.
+// With nothing playing (the bar on its way out) the seek slider and the heart are hidden
+// and "Not Playing" centres beside the cover. The window's breakpoint sets `compact` below
+// 600sp, which hides the right-hand box (the Now Playing sheet has shuffle and repeat) and
+// the times around the slider, and shrinks the cover, so the title has the room at 360 px.
 template $AppleMusicPlayerBar: Adw.Bin {
   child: Box {
     spacing: 12;
@@ -177,7 +178,8 @@ template $AppleMusicPlayerBar: Adw.Bin {
       }
     }
 
-    Box {
+    // Hidden whole in `compact`: its spacing would come off the title too.
+    Box controls_box {
       spacing: 6;
       valign: center;
 

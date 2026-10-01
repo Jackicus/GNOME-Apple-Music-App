@@ -82,9 +82,10 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
     }
   }
 
-  // The player bar is the bottom sheet's bottom bar, always shown under the content and the
-  // window's full width (not full-width, it floats over the content as a pill the width of
-  // its controls, which covers the tiles); the sheet over it is Now Playing
+  // The player bar is the bottom sheet's bottom bar, under the content and the window's full
+  // width (not full-width, it floats over the content as a pill the width of its controls,
+  // which covers the tiles), revealed only while something plays (window.py
+  // _reveal_player_bar); the sheet over it is Now Playing
   // (widgets/now_playing.blp), which the bar's click, a swipe and app.now-playing open.
   // Toasts go over the content, above the bar, or into the sheet while it is open.
   content: Adw.BottomSheet bottom_sheet {

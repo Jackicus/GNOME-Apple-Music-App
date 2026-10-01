@@ -25,7 +25,12 @@ changes, change it here, with the date. The plan they came from is in
 - **The player at the bottom** (2026-09-27). A full-width bar at the bottom of the window, as
   in GNOME Music, with Now Playing as an `AdwBottomSheet` that slides up over the content and
   holds Lyrics and Up Next. The web player puts its player at the top; the bottom keeps the
-  header bar for titles and back buttons, which is what GNOME users expect.
+  header bar for titles and back buttons, which is what GNOME users expect. Shown only while
+  something plays (2026-10-01), as GNOME Music's is: with nothing playing the window ends at
+  the content rather than carrying a dead "Not Playing" bar, and the bar slides in with the
+  first item (`src/window.py` reveals it from the Player's track, after the Player's grace
+  between queues, so a change of queue shows no blink). Ctrl+Shift+N still opens Now
+  Playing; Ctrl+3 with no bar leaves the focus and says "Not Playing" to a screen reader.
 - **Playlist folders in the sidebar** (2026-09-27). Folders are sidebar items with a folder icon
   and a disclosure arrow; activating one shows or hides its playlists and opens the folder's
   page (in the narrow layout's page mode it only opens the page). `AdwSidebar` cannot indent,

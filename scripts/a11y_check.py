@@ -508,20 +508,25 @@ async def walkthrough(window):
     window.navigation_view.pop()  # back to the album, as the steps below expect
     await asyncio.sleep(0.6)
     print('-- the idle player bar')
+    check('with nothing playing there is no bar',
+          not window.bottom_sheet.get_reveal_bottom_bar() and not window.player_bar.get_mapped())
+    resting = window.get_focus()
     await key(window, '<primary>3')
-    bar = window.get_focus()
-    check('Ctrl+3 with nothing playing puts the focus on the bar',
-          isinstance(bar, Gtk.Button) and window.player_bar.is_ancestor(bar), describe(bar))
-    await key(window, 'Return')
-    await until(window.bottom_sheet.get_open)
-    check('Enter on it opens Now Playing', window.bottom_sheet.get_open())
+    check('Ctrl+3 with nothing playing leaves the focus where it is',
+          window.get_focus() is resting and not window.bottom_sheet.get_open(),
+          describe(window.get_focus()))
+    await key(window, '<primary><shift>n', 0.8)
+    check('Ctrl+Shift+N opens Now Playing all the same (Nothing Queued)',
+          window.bottom_sheet.get_open())
     await key(window, 'Escape')
-    await until(lambda: not window.bottom_sheet.get_open() and window.get_focus() is bar)
-    check('Escape closes it, the focus back on the bar',
-          not window.bottom_sheet.get_open() and window.get_focus() is bar,
+    await until(lambda: not window.bottom_sheet.get_open() and window.get_focus() is resting)
+    check('Escape closes it, the focus back where it was',
+          not window.bottom_sheet.get_open() and window.get_focus() is resting,
           describe(window.get_focus()))
     app.player.apply(harness.invented_playing_state(app, lyrics=True))
-    await asyncio.sleep(0.4)
+    await until(window.player_bar.get_mapped)
+    check('an item playing reveals the bar',
+          window.bottom_sheet.get_reveal_bottom_bar() and window.player_bar.get_mapped())
     print('-- player bar')
     await key(window, '<primary>3')
     check('Ctrl+3 puts the focus on the play button',
@@ -549,6 +554,13 @@ async def walkthrough(window):
     check('Escape closes it, the focus back on the play button',
           not any(each.get_visible() for each in popover)
           and window.get_focus() is window.player_bar.play_button, describe(window.get_focus()))
+    app.player.apply(None)  # the music stops: the bar goes, with the focus on it
+    await until(lambda: not window.player_bar.get_mapped())
+    check('the item going hides the bar and moves the focus into the page',
+          not window.bottom_sheet.get_reveal_bottom_bar()
+          and inside(window.get_focus(), window.navigation_view), describe(window.get_focus()))
+    app.player.apply(harness.invented_playing_state(app, lyrics=True))
+    await until(window.player_bar.get_mapped)
     print('-- Now Playing')
     sheet = window.now_playing
     tabs = sheet.tab_stack.get_prev_sibling()  # the Lyrics / Up Next switcher

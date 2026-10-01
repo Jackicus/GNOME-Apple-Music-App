@@ -34,12 +34,16 @@ list and the script together.
    track. Alt+Left (or Escape inside the page) goes back. On an artist: Play, More Options,
    the latest release, then (past the Top Songs arrows and See All) the top songs, where the
    arrows move from song to song and Enter plays the top songs from the one focused.
-4. Ctrl+3 puts the focus on the player bar's play button (with nothing playing, on the bar,
-   which Enter opens as Now Playing). Space presses the focused button, switch, check box or
-   boxed-list row, as anywhere in GNOME; on a tile, a list item, the seek slider or nothing, it
-   plays or pauses, but never in an entry, in a menu or in a dialog. Ctrl+Right and Ctrl+Left
-   skip. Menu or Shift+F10 opens the item playing's menu (Go to Album, Go to Artist…); Escape
-   closes it, the focus back on the button.
+4. The player bar shows only while something plays. With nothing playing there is no bar:
+   Ctrl+3 leaves the focus where it is and a screen reader hears "Not Playing", while
+   Ctrl+Shift+N still opens Now Playing (Nothing Queued), and Escape closes it with the focus
+   back where it was. An item playing reveals the bar, and Ctrl+3 puts the focus on its play
+   button. Space presses the focused button, switch, check box or boxed-list row, as anywhere
+   in GNOME; on a tile, a list item, the seek slider or nothing, it plays or pauses, but never
+   in an entry, in a menu or in a dialog. Ctrl+Right and Ctrl+Left skip. Menu or Shift+F10
+   opens the item playing's menu (Go to Album, Go to Artist…); Escape closes it, the focus
+   back on the button. When the music stops and the bar goes, a focus it held moves into the
+   page.
 5. Ctrl+Shift+N opens Now Playing with the focus on its play button; Tab goes through the controls,
    the Lyrics and Up Next toggle (Left and Right move between the two, Space or Enter
    switches) and into the list (arrows move, Enter seeks to a line or plays an entry, Menu
