@@ -544,11 +544,11 @@ class EventTest(unittest.TestCase):
                               {'code': 'CONTENT_UNAVAILABLE', 'message': 'x'})
             self.engine.event('mediaPlaybackError', {'code': 'BOGUS', 'message': 'y'})
             self.engine.event('mediaPlaybackError', {})
-        self.assertEqual(errors[0], "This isn't available in your country or region")
+        self.assertEqual(errors[0], 'This isn’t available in your country or region')
         self.assertEqual(errors[1], 'This could not be played')  # an unknown code
         self.assertEqual(errors[2], 'This could not be played')
         self.assertIn('CONTENT_UNAVAILABLE: x', logged.output[0])  # the raw text, logged
-        for code, sentence in (('GEO_BLOCK', "This isn't available in your country or region"),
+        for code, sentence in (('GEO_BLOCK', 'This isn’t available in your country or region'),
                                ('CONTENT_RESTRICTED', 'This content is restricted'),
                                ('SUBSCRIPTION_ERROR',
                                 'An Apple Music subscription is needed to play this'),

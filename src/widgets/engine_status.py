@@ -29,8 +29,8 @@ The states, from the error's code and the app's:
 - 'demo': the demo library has no engine. Nothing is wrong, the page just has no source: no
   button.
 - 'not-signed-in': the account is not signed in (an engine-down while the sign-in setting is
-  off is this too: starting the engine could not help). Sign In opens the sign-in; once the
-  engine is authorized, retry().
+  off is this too: starting the engine could not help). Sign In… opens the sign-in (hence
+  the ellipsis: a window follows); once the engine is authorized, retry().
 - 'engine-down': the engine is not running. While it is starting (autostart, a sign-in, a
   play elsewhere) the spinner shows; once it is up, retry(); if it falls back to down, the
   state shows again. Start Engine starts it through app.start_engine(), which quitting
@@ -97,7 +97,7 @@ class EngineStatus:
             self._set('failed', code)
 
     def activate(self):
-        """The status page's button: Sign In, Start Engine or Try Again."""
+        """The status page's button: Sign In…, Start Engine or Try Again."""
         if self.status == 'not-signed-in':
             self._app.activate_action('sign-in', None)
         elif self.status == 'engine-down':
@@ -175,7 +175,7 @@ class EngineStatus:
                 title, description = text
             else:
                 title, description = _('Sign In to Apple Music'), text or ''
-            button = _('Sign In')
+            button = _('Sign In…')
         elif status == 'engine-down':
             title = _('Engine Not Running')
             description = self._texts.get('engine-down') or ''

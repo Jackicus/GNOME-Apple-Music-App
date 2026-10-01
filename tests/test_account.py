@@ -323,7 +323,7 @@ class SignInTest(AccountTestCase):
         self.assertTrue(app.settings.get_boolean('signed-in'))
         self.assertEqual(app.toasts, ['Signed in'])
         self.assertEqual(self.statuses, ['Starting Chrome…',
-                                         'Sign in with your Apple ID in the Chrome window',
+                                         'Sign in with your Apple Account in the Chrome window',
                                          'Signed in'])
         self.assertTrue(app.signing_in)  # the rest runs on
         await self.settle()

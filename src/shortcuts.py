@@ -9,7 +9,8 @@ sections(); keyboard.py parses PLAYBACK into its PLAYBACK_KEYS and MAIN_MENU int
 F10, widgets/context_menu.py binds CONTEXT_MENU, and sidebar_view.py binds FOLDER_OPEN and
 FOLDER_CLOSE on the sidebar (keys for the focused row, only with the focus in the sidebar).
 tests/test_shortcuts.py checks that the dialog lists every one of them. Keys that are none of
-these are listed as they are: Escape (the Now Playing sheet's, the dialogs').
+these are listed as they are: Escape (the dialogs', the Now Playing sheet's), under General
+with the other keys that act on windows.
 
 The playback keys are not accelerators: GTK 4 runs application accelerators in the window's
 capture phase, before the focus widget, so a bare Space would fire while typing in an entry
@@ -69,6 +70,7 @@ def sections():
             (_('Preferences'), 'app.preferences'),
             (_('Refresh Library'), 'app.sync'),
             (_('Keyboard Shortcuts'), 'app.shortcuts'),
+            (_('Close Dialog or Now Playing'), CLOSE),
             (_('Close Window'), 'window.close'),
             (_('Quit'), 'app.quit'),
         ]),
@@ -87,6 +89,5 @@ def sections():
             (_('Next'), 'next'),
             (_('Previous'), 'previous'),
             (_('Show or Hide Now Playing'), 'app.now-playing'),
-            (_('Close Now Playing or a Dialog'), CLOSE),
         ]),
     ]

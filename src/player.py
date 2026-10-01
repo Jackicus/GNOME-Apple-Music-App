@@ -761,7 +761,7 @@ def playback_error_text(code):
     mediaPlaybackError's, or EngineError.musickit_code of a refused play): what it means
     for them, never the code or MusicKit's own text, which go to the log."""
     if code in ('CONTENT_UNAVAILABLE', 'GEO_BLOCK'):
-        return _("This isn't available in your country or region")
+        return _('This isn’t available in your country or region')
     if code == 'CONTENT_RESTRICTED':
         return _('This content is restricted')
     if code == 'SUBSCRIPTION_ERROR':

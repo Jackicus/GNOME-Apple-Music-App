@@ -58,11 +58,10 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   Chrome, or name its command in Preferences › Engine › Browser program.
 - **"The playback engine stopped."** Chrome exited or its page stopped answering. Click
   **Restart** in the message, or just play something.
-- **"The keyring is not available, so starting would lose the Apple Music sign-in."** Chrome
-  keeps the key that encrypts its sign-in in your keyring (GNOME Keyring or KWallet's Secret
-  Service), and none answered on the session bus, so the app did not start Chrome: without
-  that key, Chrome would delete the sign-in. Make sure the keyring is running and unlocked,
-  then click **Retry**.
+- **"Unlock the keyring, then start the engine."** Chrome keeps the key that encrypts its
+  sign-in in your keyring (GNOME Keyring or KWallet's Secret Service), and none answered on
+  the session bus, so the app did not start Chrome: without that key, Chrome would delete
+  the sign-in. Make sure the keyring is running and unlocked, then click **Start**.
 - **"Your Apple Music sign-in has expired."** Apple ended the session: click **Sign In** on
   that banner, or **Sign In Again** in the account menu at the bottom of the sidebar.
 - **Discord shows nothing.** Check that the setting is on and that the Discord desktop app is

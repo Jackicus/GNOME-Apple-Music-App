@@ -475,6 +475,8 @@ class DetailPage(Adw.NavigationPage):
         groups keep their names."""
         if item.kind == 'album':
             disc = group.entries.get_item(0).disc_number or number
+            # Translators: the heading over one disc's songs on an album's page: {number}
+            # is the disc's number ("Disc 2").
             return _('Disc {number}').format(number=disc)
         return group.name
 

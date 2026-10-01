@@ -375,11 +375,12 @@ class Window(Adw.ApplicationWindow):
     # -- the account and the banners -------------------------------------------------------
 
     def _update_account(self, *_args):
-        """The account button and the sign-in banner: Sign In while signed out; the name
-        over a menu with Sign Out once signed in; and, when the engine is up but Apple no
+        """The account button and the sign-in banner: Sign In… while signed out; the name
+        over a menu with Sign Out… once signed in; and, when the engine is up but Apple no
         longer takes the sign-in (the session expired: signed in here, not authorized
-        there), the banner says so with Sign In and the menu offers Sign In Again, until
-        the account is signed in again or out."""
+        there), the banner says so with Sign In and the menu offers Sign In Again…, until
+        the account is signed in again or out. The menu's items end in an ellipsis: each
+        opens a window (the sign-in's, or the question before signing out)."""
         app = self.get_application()
         signed_in = self._settings.get_boolean(self.account_key('signed-in'))
         name = self._settings.get_string(self.account_key('account-name'))
@@ -393,10 +394,10 @@ class Window(Adw.ApplicationWindow):
         self._account_menu.remove_all()
         if expired:
             section = Gio.Menu()
-            section.append(_('Sign _In Again'), 'app.sign-in')
+            section.append(_('Sign _In Again…'), 'app.sign-in')
             self._account_menu.append_section(None, section)
         section = Gio.Menu()
-        section.append(_('Sign _Out'), 'app.sign-out')
+        section.append(_('Sign _Out…'), 'app.sign-out')
         self._account_menu.append_section(None, section)
         self.sign_in_banner.set_title(sign_in_title(expired))
         self.sign_in_banner.set_revealed((not signed_in or expired) and not app.demo)

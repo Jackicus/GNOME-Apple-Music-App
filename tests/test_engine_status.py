@@ -171,7 +171,7 @@ class EngineStatusTest(unittest.IsolatedAsyncioTestCase):
         status.watch()
         status.fail(EngineError('engine-down'))
         self.assertEqual(self.last(), ('not-signed-in', 'Sign In to Apple Music',
-                                       'This appears once you sign in', 'Sign In'))
+                                       'This appears once you sign in', 'Sign In…'))
         status.activate()
         self.assertEqual(self.app.actions, ['sign-in'])
         self.app.engine.state = 'up'  # the sign-in's engine: not authorized yet
@@ -184,7 +184,7 @@ class EngineStatusTest(unittest.IsolatedAsyncioTestCase):
         status._texts = dict(TEXTS, **{'not-signed-in': ('Sign In to Search', 'Search once in')})
         status.fail(EngineError('not-signed-in'))
         self.assertEqual(self.last(), ('not-signed-in', 'Sign In to Search', 'Search once in',
-                                       'Sign In'))
+                                       'Sign In…'))
 
     async def test_another_failure_says_the_apps_sentence_and_tries_again(self):
         status = self.make()

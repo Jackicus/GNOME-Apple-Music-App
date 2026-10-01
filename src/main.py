@@ -329,7 +329,8 @@ class Application(Adw.Application):
             return
         if not self.engine.authorized:
             log.warning('the engine is up but Apple Music is not signed in')
-            self.toast(_('Apple Music is no longer signed in'), _('Sign In'), 'app.sign-in')
+            # The sign-in banner's words for the same state, with its button.
+            self.toast(_('Your Apple Music sign-in has expired'), _('Sign In'), 'app.sign-in')
             return
         # The engine up started a sync if one was due (LibrarySync.schedule()).
         if not self.settings.get_string(self.account_key('account-name')):

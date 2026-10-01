@@ -56,7 +56,7 @@ async def sign_in(app, on_status):
         on_status(_('Starting Chrome…'))
         await engine.restart(visible=True)
         signing = True
-        on_status(_('Sign in with your Apple ID in the Chrome window'))
+        on_status(_('Sign in with your Apple Account in the Chrome window'))
         await engine.signin()
         app.settings.set_boolean(app.account_key('signed-in'), True)
         committed = True

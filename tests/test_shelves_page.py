@@ -84,7 +84,7 @@ class ShelvesPageTest(PageTestCase):
         page = await self.show_root(self.page(self.app.engine.browse))  # engine-down
         await self.settle()
         self.assertEqual(page.status_page.get_title(), 'Sign In to Apple Music')
-        self.assertEqual(page.status_button.get_label(), 'Sign In')
+        self.assertEqual(page.status_button.get_label(), 'Sign In…')
         page.status_button.emit('clicked')
         self.assertEqual(self.app.actions, ['sign-in'])
         self.assertNotIn('start', self.app.engine.calls)
