@@ -29,7 +29,9 @@ the artist, in the one-line status under the user's name.
 
 While the music plays the timestamps carry the start and end of the track in wall-clock
 seconds, so Discord counts down by itself and nothing has to be sent for the progress to stay
-right; paused, they are left out, which stops the counter where it is.
+right; paused, they are left out, which stops the counter where it is. A pause that lasts
+PAUSED_TIMEOUT clears the activity, as a stop does: the user has stopped listening, and the
+profile says so. Playing again brings it back.
 
 Only what Discord shows is sent: the title, the artist, the album and the catalogue's own
 cover URL, which is public. No library id, no token, nothing of the account's.
@@ -97,8 +99,12 @@ SETTLING_STATES = ('loading', 'waiting', 'stalled', 'seeking')
 
 # Playback is over, whatever item the Player still holds: nobody is listening, so the profile
 # says nothing. Paused is not here — a paused track is still what you are listening to, and
-# Discord shows it with the clock stopped.
+# Discord shows it with the clock stopped, until the pause has lasted PAUSED_TIMEOUT.
 FINISHED_STATES = ('none', 'stopped', 'ended', 'completed')
+
+# How long a paused track stays on the profile (seconds): a short pause keeps it there, a
+# long one means nobody is listening, and the activity is cleared until the music plays.
+PAUSED_TIMEOUT = 5 * 60
 
 # The start is worked out from the position each time, so it drifts by a moment between
 # updates. A difference that small is not a seek and must not cost a frame.
@@ -305,9 +311,11 @@ class Connection:
 class Presence:
     """Follows the Player and the `discord-presence` setting, and keeps Discord in step."""
 
-    def __init__(self, app, application_id=APPLICATION_ID):
+    def __init__(self, app, application_id=APPLICATION_ID, paused_timeout=PAUSED_TIMEOUT):
         self.app = app
         self.application_id = application_id
+        self.paused_timeout = paused_timeout
+        self._paused_since = None  # time.monotonic() when the pause began, while paused
         self._connection = None
         self._handlers = []
         self._sent = None  # the last activity that went, so an unchanged one is not resent
@@ -367,6 +375,25 @@ class Presence:
         # Let the track change settle: _update_soon cancels this task if another change
         # arrives, so everything within the grace goes out as one frame.
         await asyncio.sleep(UPDATE_GRACE_MS / 1000)
+        # Paused, the task stays to clear the activity once the pause has lasted; any change
+        # (playing again, a new track) cancels it with the rest.
+        while (wait := await self._publish()) is not None:
+            await asyncio.sleep(wait)
+
+    def _paused_for(self, state):
+        """Seconds left before a pause clears the activity: None when not paused, 0 or less
+        once it has lasted PAUSED_TIMEOUT."""
+        if state != 'paused':
+            self._paused_since = None
+            return None
+        now = time.monotonic()
+        if self._paused_since is None:
+            self._paused_since = now
+        return self.paused_timeout - (now - self._paused_since)
+
+    async def _publish(self):
+        """Send what the Player holds, if it is not what Discord has. Returns the seconds
+        until a pause will clear it, or None."""
         player = self.app.player
         # `resting`, not `state`: it sees through a seek, and through the pause and stop
         # MusicKit puts the queue through while it loads the next one, which otherwise
@@ -378,26 +405,32 @@ class Presence:
                 or (state == 'playing' and player.duration <= 0)):
             await asyncio.sleep(DURATION_GRACE_MS / 1000)
             state = player.resting
-        activity = activity_for(player.track, state, player.position, player.duration)
+        left = self._paused_for(state if player.track is not None else None)
+        if left is not None and left <= 0:
+            activity, left = None, None  # paused long enough: nobody is listening
+        else:
+            activity = activity_for(player.track, state, player.position, player.duration)
         if same_activity(activity, self._sent) and self._connection is not None:
-            return
+            return left
         if not self.application_id:
             if not self._warned:
                 self._warned = True
                 log.info('discord: no application id is set, so rich presence is off')
-            return
+            return None
         if self._connection is None or not self._connection.open:
             if activity is None:
-                return  # nothing to say, so nothing to connect for
+                return None  # nothing to say, so nothing to connect for
             self._connection = Connection(self.application_id)
             if not await self._connection.connect():
                 self._connection = None
-                return  # Discord is not running; try again at the next track
+                return None  # Discord is not running; try again at the next track
         if await self._connection.set_activity(activity):
             self._sent = activity
         else:
             self._connection = None
             self._sent = None
+            return None
+        return left
 
 
 async def _clear_and_close(connection):
