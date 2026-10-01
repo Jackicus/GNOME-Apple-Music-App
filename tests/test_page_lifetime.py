@@ -29,6 +29,7 @@ import tempfile
 import time
 import unittest
 import weakref
+from datetime import UTC, datetime
 from unittest import mock
 
 from tests.gtk import SCHEMA_ID, pump, requires_gtk
@@ -194,6 +195,10 @@ def _classes():
             self.actions = []
             self.reported = []
             self.cleared = 0
+            # app.sync, which Preferences' Refresh button runs by its action name.
+            sync = Gio.SimpleAction.new('sync', None)
+            sync.connect('activate', lambda *_args: self.actions.append('sync'))
+            self.add_action(sync)
 
         def spawn(self, coro):
             task = asyncio.get_running_loop().create_task(coro)
@@ -737,6 +742,16 @@ class HandlerTest(WidgetTestCase):
             try:
                 dialog.interval_row.set_selected(0)
                 self.assertEqual(self.app.settings.get_int('sync-interval'), INTERVALS[0])
+                # Last Refreshed follows the last-sync setting and the sync's running.
+                self.assertEqual(dialog.last_refreshed_row.get_subtitle(), 'Never')
+                self.app.settings.set_string('last-sync', datetime.now(UTC).isoformat())
+                self.assertTrue(await self.until(
+                    lambda: dialog.last_refreshed_row.get_subtitle() == 'Just now'))
+                self.app.library_sync.props.running = True
+                self.assertEqual(dialog.last_refreshed_row.get_subtitle(), 'Refreshing…')
+                self.app.library_sync.props.running = False
+                self.assertEqual(dialog.last_refreshed_row.get_subtitle(), 'Just now')
+                dialog.refresh_button.emit('clicked')  # app.sync
                 dialog.engine_button.emit('clicked')
                 dialog.sign_out_row.emit('activated')
                 dialog.clear_button.emit('clicked')  # asks first
@@ -747,10 +762,11 @@ class HandlerTest(WidgetTestCase):
                 del alert
                 await self.settle()
                 self.assertEqual(self.app.engine.calls, ['start'])
-                self.assertEqual(self.app.actions, ['sign-out'])
+                self.assertEqual(self.app.actions, ['sync', 'sign-out'])
                 self.assertEqual(self.app.cleared, 1)
             finally:
                 self.app.settings.reset('sync-interval')
+                self.app.settings.reset('last-sync')
                 await self.asyncTearDown()  # the dialogs closed with the cache still patched
 
     async def test_sign_in_cancel(self):

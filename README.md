@@ -41,7 +41,7 @@ music videos with a picture (they play as audio); creating, renaming or reorderi
 
 - An Apple Music subscription.
 - Google Chrome, found as `google-chrome-stable`, `google-chrome` or
-  `/opt/google/chrome/chrome`; Preferences › Engine › Browser Program can name another
+  `/opt/google/chrome/chrome`; Preferences › Engine › Browser program can name another
   command.
 - GTK 4.20, libadwaita 1.9, GLib 2.84, Python 3.12 and PyGObject 3.50, or newer: the
   libraries of GNOME 50. Any distribution that ships them will do. Fedora 44, Ubuntu 26.04,
