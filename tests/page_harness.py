@@ -155,12 +155,16 @@ def classes():
     class ItemActions:
         def __init__(self):
             self.asked = []
+            self.went = []  # (obj, kind) per go_to()
 
-        def menu_for(self, obj):
+        def menu_for(self, obj, queued=False):
             self.asked.append(obj)
             menu = Gio.Menu()
             menu.append('Invented Action', 'win.invented')
             return menu
+
+        def go_to(self, obj, kind):
+            self.went.append((obj, kind))
 
     class Window(Adw.Window):
         def __init__(self):

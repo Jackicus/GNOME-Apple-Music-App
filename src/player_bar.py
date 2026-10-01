@@ -15,6 +15,10 @@ failure is toasted by the app. The play button, the seek slider, the toggles, th
 the heart and the artwork are the pieces widgets/transport.py holds, shared with the Now
 Playing sheet.
 
+A right click, a long press or the Menu key on the bar opens the item playing's menu (its
+`context_item`: context_menu on the bar's button), as the Now Playing sheet's More Options
+button does.
+
 For assistive technology: the bar announces each new item (Gtk.Accessible.announce, "Now
 playing …"); the button Adw.BottomSheet puts around the bar (a click on the bar opens the
 sheet) is named "Now Playing" and described by the item playing, where it would otherwise be
@@ -27,6 +31,8 @@ from gettext import gettext as _
 
 from gi.repository import Adw, GObject, Gtk
 
+from .actions import now_playing_track
+from .widgets import context_menu
 from .widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .widgets.transport import (HeartControl, ModeControl, PlayButton, RemoteCover, SeekControl,
                                 TrackTitles, VolumeControl, track_subtitle)
@@ -37,6 +43,9 @@ class PlayerBar(Adw.Bin):
     """The transport bar under the content. See the module."""
 
     __gtype_name__ = 'AppleMusicPlayerBar'
+
+    # The item playing's menu is a queued one: no Play (context_menu).
+    context_queued = True
 
     play_button = Gtk.Template.Child()
     cover = Gtk.Template.Child()
@@ -108,8 +117,15 @@ class PlayerBar(Adw.Bin):
         button = self._bar_button()
         if button is not None:
             button.update_property([Gtk.AccessibleProperty.LABEL], [self._strings['now-playing']])
+            context_menu.attach(button)  # on the button: the Menu key reaches it, focused
         player.connect('notify::track', lambda *_: self._update_track())
         self._update_track()
+
+    @property
+    def context_item(self):
+        """The item playing, as the Track its menu is for (actions.now_playing_track), or
+        None."""
+        return now_playing_track(self._player.track if self._player is not None else None)
 
     def _bar_button(self):
         """The button Adw.BottomSheet puts around the bar (a click on it opens the sheet),

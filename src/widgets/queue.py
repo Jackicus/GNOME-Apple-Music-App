@@ -10,8 +10,9 @@ the list shows what its name says: the entry playing first, marked with a play i
 of its number and a bold title, then what comes next. Rows are like a playlist's track rows
 (a number, the title with its explicit badge, the artist, the duration). Activating a row (a
 double click, or Enter) plays that entry (player.queue_jump, with the slice's offset put
-back). An empty queue shows a compact status page. The list is named "Up Next" for assistive
-technology and each row by labels.track_label.
+back). A right click, a long press or the Menu key opens a row's menu (widgets/context_menu.py:
+the entry's, without Play). An empty queue shows a compact status page. The list is named "Up
+Next" for assistive technology and each row by labels.track_label.
 """
 
 from gettext import gettext as _
@@ -19,7 +20,9 @@ from gettext import pgettext as C_
 
 from gi.repository import Adw, GLib, Gtk, Pango
 
+from ..actions import now_playing_track
 from ..player import format_time
+from . import context_menu
 from .labels import track_label
 
 
@@ -38,11 +41,15 @@ def slice_size(offset):
 
 class QueueRow(Gtk.Box):
     """One queue entry: number or play icon, title (and its explicit badge) and artist,
-    duration."""
+    duration. The entry, as a Track, is its `context_item` (its menu: context_menu)."""
+
+    # The entry's menu is a queued one: no Play (activating the row plays it).
+    context_queued = True
 
     def __init__(self):
         super().__init__(spacing=12)
         self.list_item = None  # the Gtk.ListItem bound (its accessible description)
+        self._entry = None  # the NowPlaying bound
         self.number_label = Gtk.Inscription(min_chars=2, nat_chars=2, xalign=1,
                                             valign=Gtk.Align.CENTER)
         self.number_label.add_css_class('numeric')
@@ -88,7 +95,13 @@ class QueueRow(Gtk.Box):
         self.duration_label.add_css_class('dimmed')
         self.append(self.duration_label)
 
+    @property
+    def context_item(self):
+        """The entry bound, as the Track its menu is for (actions.now_playing_track)."""
+        return now_playing_track(self._entry)
+
     def bind(self, entry, position, current):
+        self._entry = entry
         self.number_label.set_text(str(position + 1))
         self.title_label.set_label(entry.title or _('Unknown Title'))
         self.explicit_badge.set_visible(entry.explicit)
@@ -97,6 +110,9 @@ class QueueRow(Gtk.Box):
         self.duration_label.set_text(
             format_time(entry.duration_ms / 1000) if entry.duration_ms else '')
         self.set_current(current)
+
+    def unbind(self):
+        self._entry = None
 
     def set_current(self, current):
         self.playing_icon.set_visible(current)  # a stack shows only a visible child
@@ -137,6 +153,7 @@ class QueueView(Gtk.Stack):
         self.list_view.add_css_class('queue-list')
         self.list_view.update_property([Gtk.AccessibleProperty.LABEL], [_('Up Next')])
         self.list_view.connect('activate', self._on_activate)
+        context_menu.attach(self.list_view)
         self.scrolled = Gtk.ScrolledWindow(child=self.list_view,
                                            hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.add_named(self.scrolled, 'list')
@@ -208,6 +225,7 @@ class QueueView(Gtk.Stack):
         position = list_item.get_position()
         row = list_item.get_child()
         row.list_item = None
+        row.unbind()
         if self._rows.get(position) is row:
             del self._rows[position]
 

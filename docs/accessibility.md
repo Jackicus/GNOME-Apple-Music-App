@@ -38,11 +38,14 @@ list and the script together.
    which Enter opens as Now Playing). Space presses the focused button, switch, check box or
    boxed-list row, as anywhere in GNOME; on a tile, a list item, the seek slider or nothing, it
    plays or pauses, but never in an entry, in a menu or in a dialog. Ctrl+Right and Ctrl+Left
-   skip.
+   skip. Menu or Shift+F10 opens the item playing's menu (Go to Album, Go to Artist…); Escape
+   closes it, the focus back on the button.
 5. Ctrl+Shift+N opens Now Playing with the focus on its play button; Tab goes through the controls,
    the Lyrics and Up Next toggle (Left and Right move between the two, Space or Enter
-   switches) and into the list (arrows move, Enter seeks to a line or plays an entry), then
-   the close button. Escape closes the sheet and the focus goes back to where it was.
+   switches) and into the list (arrows move, Enter seeks to a line or plays an entry, Menu
+   opens an entry's menu), then the close button and the header bar's buttons, More Options
+   among them (the item playing's menu). Escape closes a menu, then the sheet, and the focus
+   goes back to where it was.
 6. Ctrl+F shows Search with the cursor in the entry, over any page opened from its results;
    Tab reaches the Apple Music / Your Library toggle; Escape in the entry clears it. On the
    Songs page, Ctrl+F puts the cursor in the page's own filter instead.

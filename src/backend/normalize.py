@@ -1715,6 +1715,8 @@ def artist_view_items(view, resources, cache_dir):
         if item is None:
             continue
         attrs = resource.get('attributes') or {}
+        if attrs.get('artistName') and item['kind'] in ('album', 'video', 'song'):
+            item['artistName'] = attrs['artistName']  # its subtitle may be a year: Go to Artist
         if view in OWN_RELEASES and item['kind'] in ('album', 'video'):
             item['subtitle'] = str(item['year']) if item.get('year') else ''
         if view == 'featured-albums':
@@ -1762,6 +1764,33 @@ def _link_item(resource):
         'play': {},
         'groups': [],
     }
+
+
+def related(raw, cache_dir):
+    """Engine.related()'s answer from a catalog song's, music video's or album's resource read
+    with its relationships (api.RELATED_ENDPOINTS): {album, artists}, `album` the first of its
+    albums (None for an album, or a song on none) and `artists` its artists in Apple's order,
+    each an Item without groups, shaped as a search's hits are. A relationship entry without
+    its attributes (one Apple did not include) is left out."""
+    data = raw.get('data') if isinstance(raw, dict) else None
+    resource = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+    relationships = resource.get('relationships')
+    relationships = relationships if isinstance(relationships, dict) else {}
+
+    def items(name, resource_types):
+        relationship = relationships.get(name)
+        entries = relationship.get('data') if isinstance(relationship, dict) else None
+        found = []
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict) and entry.get('type') in resource_types:
+                item = _shelf_item(entry, cache_dir, curators=False)
+                if item is not None:
+                    found.append(item)
+        return found
+
+    albums = items('albums', ('albums',)) if resource.get('type') != 'albums' else []
+    return {'album': albums[0] if albums else None,
+            'artists': items('artists', ('artists',))}
 
 
 def artist_cache_path(cache_dir, artist_id):

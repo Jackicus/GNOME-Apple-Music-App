@@ -9,12 +9,14 @@ Gtk.ColumnView of tiles or rows, a Gtk.FlowBox or Gtk.ListBox, or a single widge
     context_menu.popup(widget, obj, x, y)  # the menu for obj, at (x, y) in widget
 
 A widget offering a menu has a `context_item` attribute: the Item or Track it shows, or None
-(an unbound row). The controllers sit on the view, not on each recycled tile: the right click
-and the long press in the capture phase, so they come before the rows' own click gestures
-(which would select or activate), the shortcuts for the focused row. What was pressed is
-found by picking the widget under the pointer and going up to the one with a context_item, or,
-from a row or tile of the view (a list item, a column view's row, a FlowBoxChild), down into it:
-a click on a Songs row's album column finds its title cell.
+(an unbound row), and `context_queued` true when that is an entry of the player's queue (the
+player bar's item, Up Next's rows: a menu without Play, actions.build_menu). The controllers
+sit on the view, not on each recycled tile: the right click and the long press in the capture
+phase, so they come before the rows' own click gestures (which would select or activate), the
+shortcuts for the focused row. What was pressed is found by picking the widget under the
+pointer and going up to the one with a context_item, or, from a row or tile of the view (a
+list item, a column view's row, a FlowBoxChild), down into it: a click on a Songs row's album
+column finds its title cell.
 
 The menu is the window's (window.item_actions.menu_for(obj): see actions.py), shown in a
 Gtk.PopoverMenu parented to that widget, without an arrow, pointing at the pointer, or beside
@@ -86,11 +88,14 @@ def owner(widget):
     return None
 
 
-def popup(widget, obj, x=None, y=None):
+def popup(widget, obj, x=None, y=None, queued=None):
     """Show the menu for obj in a popover parented to widget, pointing at (x, y) in its
-    coordinates, or at the whole widget. The popover, or None when obj has no menu."""
+    coordinates, or at the whole widget; `queued` as widget's `context_queued` says unless
+    given. The popover, or None when obj has no menu."""
     actions = getattr(widget.get_root(), 'item_actions', None)
-    menu = actions.menu_for(obj) if actions is not None else None
+    if queued is None:
+        queued = bool(getattr(widget, 'context_queued', False))
+    menu = actions.menu_for(obj, queued=queued) if actions is not None else None
     if menu is None:
         return None
     popover = Gtk.PopoverMenu.new_from_model(menu)
@@ -152,12 +157,15 @@ def popup_focused(view):
     if focus is None or not (focus is view or focus.is_ancestor(view)):
         return False
     found = find(view, focus)
-    if found is None and focus is not view:
-        found = _descendant(focus)
+    if found is None and (focus is not view or not isinstance(view, LIST_TYPES)):
+        found = _descendant(focus)  # the focused row's item, or a single widget's (the bar)
     if found is None:
         return False
     widget, obj = found
-    return popup(widget, obj) is not None
+    # A button inside the widget with the menu (the player bar's): the menu hangs from it,
+    # and the focus goes back to it when the menu closes.
+    anchor = focus if focus is not widget and focus.is_ancestor(widget) else widget
+    return popup(anchor, obj, queued=bool(getattr(widget, 'context_queued', False))) is not None
 
 
 def _on_menu_key(view, _arguments):

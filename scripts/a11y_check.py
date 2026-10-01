@@ -542,6 +542,13 @@ async def walkthrough(window):
         action.disconnect(handler)
     check('Space, Ctrl+Right, Ctrl+Left: play-pause, next, previous',
           actions == ['play-pause', 'next', 'previous'], actions)
+    await key(window, 'Menu', 0.6)
+    popover = harness.popovers(window.player_bar)
+    check("Menu on the bar opens the item playing's menu", bool(popover))
+    await key(window, 'Escape', 0.4)
+    check('Escape closes it, the focus back on the play button',
+          not any(each.get_visible() for each in popover)
+          and window.get_focus() is window.player_bar.play_button, describe(window.get_focus()))
     print('-- Now Playing')
     sheet = window.now_playing
     tabs = sheet.tab_stack.get_prev_sibling()  # the Lyrics / Up Next switcher
@@ -572,9 +579,24 @@ async def walkthrough(window):
     await key(window, 'Tab', 0.1)
     check('Tab: the close button', window.get_focus() is sheet.close_button,
           describe(window.get_focus()))
+    for _ in range(4):  # on through the header bar's buttons
+        if window.get_focus() is sheet.more_button or inside(window.get_focus(),
+                                                             sheet.more_button):
+            break
+        await key(window, 'Tab', 0.1)
+    check('Tab reaches More Options', inside(window.get_focus(), sheet.more_button),
+          describe(window.get_focus()))
+    await key(window, 'Return', 0.6)
+    popover = sheet.more_button.get_popover()
+    check("Enter on it opens the item playing's menu", popover is not None
+          and popover.get_visible())
+    await key(window, 'Escape', 0.4)
+    check('Escape closes the menu, not the sheet',
+          window.bottom_sheet.get_open() and not popover.get_visible())
+    sheet.close_button.grab_focus()
     await key(window, 'Return')
     await until(lambda: not window.bottom_sheet.get_open())
-    check('Enter on it closes the sheet', not window.bottom_sheet.get_open())
+    check('Enter on the close button closes the sheet', not window.bottom_sheet.get_open())
     await key(window, '<primary><shift>n', 0.8)
     for _ in range(3):  # Next, Repeat, the tabs
         await key(window, 'Tab', 0.1)
@@ -583,6 +605,14 @@ async def walkthrough(window):
     await until(lambda: sheet.tab_stack.get_visible_child_name() == 'queue')
     await key(window, 'Tab', 0.1)
     check('Tab reaches Up Next', inside(window.get_focus(), sheet.queue_view.list_view),
+          describe(window.get_focus()))
+    await key(window, 'Menu', 0.6)
+    popover = harness.popovers(sheet.queue_view)
+    check("Menu opens the focused entry's menu", bool(popover))
+    await key(window, 'Escape', 0.4)
+    check('Escape closes it, the focus back in Up Next',
+          not any(each.get_visible() for each in popover) and window.bottom_sheet.get_open()
+          and inside(window.get_focus(), sheet.queue_view.list_view),
           describe(window.get_focus()))
     jumps = []
     undo = watch('queue_jump', jumps)
