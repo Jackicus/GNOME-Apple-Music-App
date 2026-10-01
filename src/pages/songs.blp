@@ -54,18 +54,23 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
       // the page (songs.py makes the page its key-capture widget); Escape or the button
       // closes it, which clears the entry and so the filter.
       [top]
+      // The entry at a readable width, centred, as GNOME's search bars have it.
       SearchBar search_bar {
         search-mode-enabled: bind search_button.active bidirectional;
 
-        child: SearchEntry filter_entry {
-          placeholder-text: _("Filter Songs");
-          hexpand: true;
-          search-changed => $on_filter_changed();
-          stop-search => $on_stop_search();
+        child: Adw.Clamp {
+          maximum-size: 400;
 
-          accessibility {
-            label: _("Filter Songs");
-          }
+          child: SearchEntry filter_entry {
+            placeholder-text: _("Filter Songs");
+            hexpand: true;
+            search-changed => $on_filter_changed();
+            stop-search => $on_stop_search();
+
+            accessibility {
+              label: _("Filter Songs");
+            }
+          };
         };
       }
 
