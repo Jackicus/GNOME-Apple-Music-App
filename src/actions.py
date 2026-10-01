@@ -479,7 +479,7 @@ class ItemActions:
         obj, kind, item_id = self._unpack(parameter)
         if isinstance(obj, Track):
             if obj.play.get('kind') and obj.play.get('id'):
-                self.window.play_request(obj.play, start_with=obj.index)
+                self.window.play_request(obj.play, start_with=obj.index, start_id=obj.id)
             else:
                 self.window.play_request({'kind': 'song', 'id': _song_id(obj)})
         elif isinstance(obj, Item):

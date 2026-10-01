@@ -169,6 +169,7 @@ def classes():
             self.opened = []
             self.shelves_opened = []
             self.played = []
+            self.started_with = []  # each play request's start_id
             self.songs_opened = []
 
         def content_width(self):
@@ -183,8 +184,9 @@ def classes():
         def open_songs(self, text=''):
             self.songs_opened.append(text)
 
-        def play_request(self, play, start_with=None, shuffle=None):
+        def play_request(self, play, start_with=None, shuffle=None, start_id=None):
             self.played.append((play, start_with, shuffle))
+            self.started_with.append(start_id)
 
     _stand_ins.update(Engine=Engine, App=App, Window=Window)
     return _stand_ins

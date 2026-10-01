@@ -236,7 +236,7 @@ def _classes():
         def open_shelf(self, shelf):
             self.shelves_opened.append(shelf)
 
-        def play_request(self, play, start_with=None, shuffle=False):
+        def play_request(self, play, start_with=None, shuffle=False, start_id=None):
             self.played.append((play, start_with, shuffle))
 
     _stand_ins.update(Engine=Engine, App=App, Window=Window)
