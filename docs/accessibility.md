@@ -25,7 +25,7 @@ list and the script together.
    page, and Left on a playlist inside a folder moves to the folder. A screen reader hears
    whether a folder is expanded and how deep an item is nested.
 2. Ctrl+2 puts the focus in the page: the first tile of a grid, the Songs table, the Search
-   entry, an album's Play; from the page's header bar (Back, Sort By, a filter) too. Arrows
+   entry, an album's Play; from the page's header bar (Back, Filter Songs, Sort By) too. Arrows
    move between tiles and rows, Tab leaves a grid, shelf or list after one item, Enter opens a
    tile or plays a row, Menu or Shift+F10 opens the focused item's context menu and Escape
    closes it.
@@ -52,7 +52,9 @@ list and the script together.
    goes back to where it was.
 6. Ctrl+F shows Search with the cursor in the entry, over any page opened from its results;
    Tab reaches the Apple Music / Your Library toggle; Escape in the entry clears it. On the
-   Songs page, Ctrl+F puts the cursor in the page's own filter instead.
+   Songs page, Ctrl+F shows the page's own filter bar instead, with the cursor in its entry;
+   typing on the page (in the table, or on the header bar's buttons) shows it too, with what
+   was typed; Escape closes it, clears the filter and puts the focus back in the table.
 7. F10 opens the main menu, from a page in the narrow layout too (the sidebar comes back with
    it). Ctrl+, opens Preferences: Tab through the rows, Alt and the underlined letter for its
    buttons, Escape closes it. Ctrl+? lists every shortcut.

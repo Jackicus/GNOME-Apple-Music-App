@@ -198,7 +198,8 @@ class TrackRow(Gtk.Box):
 
 class TrackTableHeader(Gtk.Box):
     """The column titles over a playlist's table (Title, Artist, Album, Time), laid out as its
-    rows are (TrackRow with `table`), so that each title is over its column."""
+    rows are (TrackRow with `table`), so that each title is over its column, and in the
+    look of the Songs table's Gtk.ColumnView header (style.css's `.track-table-header`)."""
 
     def __init__(self, **kwargs):
         super().__init__(spacing=12, **kwargs)
@@ -221,6 +222,5 @@ class TrackTableHeader(Gtk.Box):
 
     @staticmethod
     def _title(label):
-        label.add_css_class('caption-heading')
-        label.add_css_class('dimmed')
+        label.add_css_class('caption-heading')  # the header's colour is the box's (style.css)
         return label
