@@ -27,7 +27,8 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   the album and its cover, and the artist in the status under your name. It is off until you
   turn it on, and it needs the Discord desktop app running on the same computer (the web
   client cannot be reached). Discord shows it only while something plays: pausing stops the
-  clock, and when playback ends or the app quits it is taken off.
+  clock, a pause of five minutes takes it off until the music plays again, and so does
+  playback ending or the app quitting.
 - <kbd>Ctrl</kbd>+<kbd>?</kbd> lists every keyboard shortcut.
 - Because the sound comes from Chrome, the system's per-app volume controls list it as Chrome.
 
