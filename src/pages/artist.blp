@@ -9,11 +9,25 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow: the portrait goes above the name, and the hero centres.
+    // Narrower than a release card beside two columns of songs: the release goes above the
+    // songs.
+    Adw.Breakpoint {
+      condition ("max-width: 900sp")
+
+      setters {
+        top_row.orientation: vertical;
+        release_box.margin-end: 24;
+      }
+    }
+
+    // Narrow: the portrait goes above the name, and the hero centres. The last breakpoint
+    // that matches is the one applied, so each repeats the ones above it.
     Adw.Breakpoint {
       condition ("max-width: 600sp")
 
       setters {
+        top_row.orientation: vertical;
+        release_box.margin-end: 24;
         hero_row.orientation: vertical;
         avatar.halign: center;
         name_label.xalign: 0.5;
@@ -24,22 +38,23 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
       }
     }
 
-    // Narrower still (a phone): two album tiles a row need narrower margins, or they would
-    // make the page wider than the window. The last breakpoint that matches is the one
-    // applied, so this repeats the one above.
+    // Narrower still (a phone): a narrower margin for the centred name, which wraps; the
+    // sections keep the shelves' 24 px.
     Adw.Breakpoint {
       condition ("max-width: 400sp")
 
       setters {
+        top_row.orientation: vertical;
+        release_box.margin-end: 24;
         hero_row.orientation: vertical;
+        hero_row.margin-start: 12;
+        hero_row.margin-end: 12;
         avatar.halign: center;
         name_label.xalign: 0.5;
         name_label.justify: center;
         caption_label.xalign: 0.5;
         caption_label.justify: center;
         buttons_box.halign: center;
-        content_box.margin-start: 12;
-        content_box.margin-end: 12;
       }
     }
 
@@ -47,21 +62,26 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
       [top]
       Adw.HeaderBar header_bar {}
 
-      // A box of a few tens of tiles, not a Gtk.GridView: an artist has tens of albums, and a
-      // flow box can sit under the hero in one scrolled window.
+      // The hero, then the sections music.apple.com gives an artist, one under another: the
+      // shelves each scroll sideways in their own scrolled window (artist.py places them).
+      // On the view background, as Home's shelves are.
       content: ScrolledWindow scrolled_window {
         hscrollbar-policy: never;
 
+        styles [
+          "view",
+        ]
+
         child: Box content_box {
           orientation: vertical;
-          spacing: 18;
-          margin-start: 24;
-          margin-end: 24;
+          spacing: 24;
           margin-top: 24;
           margin-bottom: 24;
 
           Box hero_row {
             spacing: 24;
+            margin-start: 24;
+            margin-end: 24;
 
             // Decorative: the name follows it.
             Adw.Avatar avatar {
@@ -96,7 +116,7 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
                 ]
               }
 
-              // Play (a catalog artist's top songs) and the artist's own menu.
+              // Play (the artist's top songs, from the catalog) and the artist's own menu.
               Box buttons_box {
                 spacing: 12;
                 margin-top: 12;
@@ -132,38 +152,123 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
             }
           }
 
-          Label albums_label {
-            label: _("Albums");
-            xalign: 0;
-            margin-top: 12;
+          // The latest (or featured) release beside the top songs, as on music.apple.com;
+          // one above the other in a narrower window.
+          Box top_row {
+            spacing: 18;
+            visible: false;
+
+            Box release_box {
+              orientation: vertical;
+              spacing: 6;
+              margin-start: 24;
+              visible: false;
+
+              Label release_title {
+                xalign: 0;
+                ellipsize: end;
+
+                styles [
+                  "title-2",
+                  "shelf-header",
+                ]
+              }
+
+              Button release_button {
+                halign: start;
+
+                styles [
+                  "flat",
+                  "release-card",
+                ]
+
+                child: Box {
+                  spacing: 12;
+
+                  $AppleMusicCover release_cover {
+                    size: 140;
+                    accessible-role: presentation;
+                    valign: start;
+                  }
+
+                  Box {
+                    orientation: vertical;
+                    valign: center;
+                    spacing: 4;
+                    width-request: 120;
+
+                    Label release_date {
+                      xalign: 0;
+
+                      styles [
+                        "caption",
+                        "dimmed",
+                      ]
+                    }
+
+                    Label release_name {
+                      xalign: 0;
+                      wrap: true;
+                      wrap-mode: word_char;
+                      lines: 3;
+                      ellipsize: end;
+                      max-width-chars: 18;
+
+                      styles [
+                        "heading",
+                      ]
+                    }
+
+                    Label release_count {
+                      xalign: 0;
+
+                      styles [
+                        "caption",
+                        "dimmed",
+                      ]
+                    }
+                  }
+                };
+              }
+            }
+
+            $AppleMusicSongShelf top_songs {
+              hexpand: true;
+              visible: false;
+            }
+          }
+
+          // What stands in for the sections Apple has not answered: the spinner while it is
+          // asked, or what stopped it (artist.py sets the texts).
+          Adw.StatusPage status_page {
+            icon-name: "media-optical-cd-audio-symbolic";
+            visible: false;
+
+            child: Button status_button {
+              halign: center;
+
+              styles [
+                "pill",
+              ]
+            };
 
             styles [
-              "title-2",
+              "compact",
             ]
           }
 
-          // Each tile at the start of its cell, the first on the page's margin (and a
-          // child's 3 px padding), 12 px apart, as Radio's.
-          FlowBox flow_box {
-            homogeneous: true;
-            selection-mode: none;
-            activate-on-single-click: true;
-            min-children-per-line: 2;
-            max-children-per-line: 12;
-            column-spacing: 12;
-            valign: start;
-          }
-
-          // The biography after the albums, three lines at most: More shows it whole.
-          Box summary_box {
+          // About, before Similar Artists, as Apple's: the biography (three lines, More shows
+          // it whole) and where the artist is from, when born or formed, and the genre.
+          Box about_box {
             orientation: vertical;
-            spacing: 6;
-            margin-top: 12;
+            spacing: 12;
+            margin-start: 24;
+            margin-end: 24;
             visible: false;
 
-            Label {
-              label: _("About");
+            Label about_title {
               xalign: 0;
+              wrap: true;
 
               styles [
                 "title-2",
@@ -175,6 +280,7 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
               wrap: true;
               lines: 3;
               ellipsize: end;
+              visible: false;
 
               styles [
                 "dimmed",
@@ -190,24 +296,69 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
                 "flat",
               ]
             }
-          }
 
-          // In place of the albums: an artist that came without them (a shelf's) while the
-          // engine fetches them, or what stopped the fetch (artist.py sets the texts).
-          Adw.StatusPage status_page {
-            icon-name: "media-optical-cd-audio-symbolic";
-            visible: false;
+            Adw.WrapBox facts_box {
+              child-spacing: 36;
+              line-spacing: 12;
+              visible: false;
 
-            child: Button status_button {
-              halign: center;
-              styles [
-                "pill",
-              ]
-            };
+              Box origin_fact {
+                orientation: vertical;
+                visible: false;
 
-            styles [
-              "compact",
-            ]
+                Label origin_heading {
+                  xalign: 0;
+
+                  styles [
+                    "caption-heading",
+                    "dimmed",
+                  ]
+                }
+
+                Label origin_label {
+                  xalign: 0;
+                  wrap: true;
+                }
+              }
+
+              Box born_fact {
+                orientation: vertical;
+                visible: false;
+
+                Label born_heading {
+                  xalign: 0;
+
+                  styles [
+                    "caption-heading",
+                    "dimmed",
+                  ]
+                }
+
+                Label born_label {
+                  xalign: 0;
+                }
+              }
+
+              Box genre_fact {
+                orientation: vertical;
+                visible: false;
+
+                Label {
+                  label: _("Genre");
+                  xalign: 0;
+
+                  styles [
+                    "caption-heading",
+                    "dimmed",
+                  ]
+                }
+
+                Label genre_label {
+                  xalign: 0;
+                  wrap: true;
+                }
+              }
+            }
           }
         };
       };

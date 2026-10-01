@@ -9,7 +9,7 @@
                           [--banner sign-in|expired] [--signed-in [NAME]]
                           [--now-playing [lyrics|queue]] [--playing] [--search TERM]
                           [--context-menu] [--preferences [general|engine]]
-                          [--dialog about|shortcuts]
+                          [--dialog about|shortcuts] [--scroll PX]
 
 Builds nothing itself: run meson install -C build (or scripts/demo.sh) first. Run it
 through scripts/headless.sh, so the window opens on a private display and never on
@@ -55,6 +55,9 @@ own window (a fixed-size window that is neither maximized nor tiled gets one), a
 --size when that is narrower than 640 px.
 --dialog opens the About (app.about) or Keyboard Shortcuts (app.shortcuts) dialog and
 shoots it as --preferences does.
+--scroll PX scrolls the page shown down by PX pixels before the shot (its first
+scrolled window that scrolls vertically): the rest of a page taller than the
+virtual monitor, which a --size cannot show.
 """
 
 import argparse
@@ -96,6 +99,8 @@ parser.add_argument('--preferences', metavar='PAGE', nargs='?', const='general',
                     help='open Preferences on PAGE and shoot the dialog')
 parser.add_argument('--dialog', choices=['about', 'shortcuts'],
                     help='open the About or Keyboard Shortcuts dialog and shoot it')
+parser.add_argument('--scroll', metavar='PX', type=int, default=0,
+                    help='scroll the page shown down by PX pixels before the shot')
 args = parser.parse_args()
 if args.search:
     args.page = 'search'
@@ -141,6 +146,7 @@ sheet_opened = False
 searched = False
 menu_opened = False
 banner_shown = False
+scrolled = False
 failed = False  # a step raised: the app quits and the script exits 1
 preferences = None  # the Preferences dialog, once --preferences has opened it
 dialog = None  # the --dialog dialog, once opened
@@ -259,6 +265,27 @@ def draw_popovers(window, snapshot):
         snapshot.restore()
 
 
+def scroll_page(window):
+    """Scroll the visible page's first vertically scrolling scrolled window by args.scroll."""
+    def find(widget):
+        if isinstance(widget, Gtk.ScrolledWindow) and \
+                widget.props.vscrollbar_policy != Gtk.PolicyType.NEVER:
+            return widget
+        child = widget.get_first_child()
+        while child is not None:
+            found = find(child)
+            if found is not None:
+                return found
+            child = child.get_next_sibling()
+        return None
+
+    scrolled_window = find(window.navigation_view.get_visible_page())
+    if scrolled_window is None:
+        sys.exit('screenshot: the page shown does not scroll')
+    adjustment = scrolled_window.get_vadjustment()
+    adjustment.set_value(min(args.scroll, adjustment.get_upper() - adjustment.get_page_size()))
+
+
 def artwork_settled():
     """Whether the artwork has arrived: ARTWORK_QUIET polls in a row with no decode in
     flight, or ARTWORK_POLLS polls in all."""
@@ -288,6 +315,7 @@ def shoot():
 
 def _shoot():
     global opened, sheet_opened, searched, menu_opened, banner_shown, preferences, dialog
+    global scrolled
     if app.library.props.state == 'loading':
         GLib.timeout_add(100, shoot)  # pages show what loaded, not "Loading…"
         return GLib.SOURCE_REMOVE
@@ -340,6 +368,11 @@ def _shoot():
         window.sign_in_banner.set_title(sign_in_title(args.banner == 'expired'))
         window.sign_in_banner.set_revealed(True)
         GLib.timeout_add(600, shoot)  # laid out under the header bar
+        return GLib.SOURCE_REMOVE
+    if args.scroll and not scrolled:
+        scrolled = True
+        scroll_page(window)
+        GLib.timeout_add(1200, shoot)  # what scrolled into view bound, its artwork decoded
         return GLib.SOURCE_REMOVE
     if not artwork_settled():
         GLib.timeout_add(ARTWORK_POLL, shoot)

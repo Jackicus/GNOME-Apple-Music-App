@@ -187,6 +187,16 @@ class ShelfColumnTest(PageTestCase):
                   if child.get_parent() is self.box and not child.get_visible()]
         self.assertEqual(len(hidden), 4)  # kept, hidden, for later
 
+    async def test_a_shelf_named_a_hero_shows_large_cards_wherever_it_is(self):
+        column = self.column()
+        shelves = [model(f's{n}', 2) for n in range(3)]
+        column.show(shelves, heroes=[shelves[1]])  # an artist's Essential Albums
+        self.assertEqual([widget.props.hero for widget in column.widgets],
+                         [False, True, False])
+        column.show(shelves)  # no longer a hero: a widget of the other kind
+        self.assertEqual([widget.props.hero for widget in column.widgets],
+                         [False, False, False])
+
 
 if __name__ == '__main__':
     unittest.main()

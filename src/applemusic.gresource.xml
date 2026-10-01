@@ -16,6 +16,7 @@
     <file preprocess="xml-stripblanks">cover.ui</file>
     <file preprocess="xml-stripblanks">track_row.ui</file>
     <file preprocess="xml-stripblanks">shelf.ui</file>
+    <file preprocess="xml-stripblanks">song_shelf.ui</file>
     <file preprocess="xml-stripblanks">hero_tile.ui</file>
     <file preprocess="xml-stripblanks">now_playing.ui</file>
     <file preprocess="xml-stripblanks">search.ui</file>

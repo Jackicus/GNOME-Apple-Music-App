@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """AppleMusicShelf: a titled, horizontally scrolling row of tiles; ShelfColumn: a page's
-shelves, one under another."""
+shelves, one under another; PagedRow: the paging arrows and See All, which song_shelf.py's
+grid of songs shares."""
 
 from gi.repository import Adw, Gio, GObject, Gtk
 
@@ -34,8 +35,75 @@ def text_scale(settings):
     return dpi / (96 * 1024) if dpi > 0 else 1.0
 
 
+class PagedRow:
+    """A shelf's row controls, for a widget with `scrolled_window` (scrolling sideways only),
+    `previous_button`, `next_button`, `see_all_button`, `_see_all` (See All offered) and its
+    row's view as `_row`: See All while the row does not show everything (`_truncated()`,
+    or wider than the window); the arrows while it overflows, on a shelf wider than
+    ARROWS_MIN_WIDTH, each sensitive while there is more that way; a click on one scrolls
+    a width and focuses the first item wholly shown."""
+
+    _animation = None
+
+    def _truncated(self):
+        return False
+
+    def _update_controls(self):
+        adjustment = self.scrolled_window.get_hadjustment()
+        value, upper = adjustment.get_value(), adjustment.get_upper()
+        page = adjustment.get_page_size()
+        overflows = page > 0 and upper - page > 1
+        self.see_all_button.set_visible(self._see_all and (self._truncated() or overflows))
+        # The shelf's own width (already allocated while its row is): the page's, as a page
+        # breakpoint would measure it. Not the adjustment's page, which leaves out the list's
+        # CSS padding.
+        arrows = overflows and self.get_width() > ARROWS_MIN_WIDTH * text_scale(
+            self.get_settings())
+        self.previous_button.set_visible(arrows)
+        self.next_button.set_visible(arrows)
+        self.previous_button.set_sensitive(value > 1)
+        self.next_button.set_sensitive(value < upper - page - 1)
+
+    def _on_adjustment_changed(self, _adjustment, _pspec):
+        self._update_controls()
+
+    def _on_page_clicked(self, _button, direction):
+        """Scroll the row one width that way, then focus the first item wholly shown."""
+        adjustment = self.scrolled_window.get_hadjustment()
+        page = adjustment.get_page_size()
+        target = min(max(adjustment.get_value() + direction * page, adjustment.get_lower()),
+                     adjustment.get_upper() - page)
+        if self._animation is not None:
+            self._animation.skip()
+        animation = Adw.TimedAnimation.new(
+            self.scrolled_window, adjustment.get_value(), target, PAGE_DURATION,
+            Adw.PropertyAnimationTarget.new(adjustment, 'value'))
+        animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+        connect_weak(animation, 'done', self._on_paged)
+        self._animation = animation
+        animation.play()
+
+    def _on_paged(self, _animation):
+        self._animation = None
+        child = self._row.get_first_child()
+        while child is not None:
+            found, bounds = child.compute_bounds(self.scrolled_window)
+            if child.get_visible() and found and bounds.get_x() >= -1:
+                child.grab_focus()
+                return
+            child = child.get_next_sibling()
+
+    def _connect_controls(self):
+        """Connect the controls (weakly: a page drops its shelves)."""
+        connect_weak(self.previous_button, 'clicked', self._on_page_clicked, -1)
+        connect_weak(self.next_button, 'clicked', self._on_page_clicked, 1)
+        adjustment = self.scrolled_window.get_hadjustment()
+        for signal in ('notify::value', 'notify::upper', 'notify::page-size'):
+            connect_weak(adjustment, signal, self._on_adjustment_changed)
+
+
 @Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/shelf.ui')
-class Shelf(Gtk.Box):
+class Shelf(PagedRow, Gtk.Box):
     """A shelf of Items (a library.ShelfModel, or any object with `key`, `title` and `items`,
     bound with bind_shelf()) as a row of tiles under its title, with paging arrows while the
     row overflows (on a shelf wider than ARROWS_MIN_WIDTH) and a "See All" button
@@ -73,7 +141,6 @@ class Shelf(Gtk.Box):
     _hero = False
     _see_all = False
     _followed = ()  # (object, handler id) pairs on the shelf shown
-    _animation = None
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -86,11 +153,8 @@ class Shelf(Gtk.Box):
         self.list_view.set_factory(factory)
         connect_weak(self.list_view, 'activate', self._on_activate)
         connect_weak(self.see_all_button, 'clicked', self._on_see_all_clicked)
-        connect_weak(self.previous_button, 'clicked', self._on_page_clicked, -1)
-        connect_weak(self.next_button, 'clicked', self._on_page_clicked, 1)
-        adjustment = self.scrolled_window.get_hadjustment()
-        for signal in ('notify::value', 'notify::upper', 'notify::page-size'):
-            connect_weak(adjustment, signal, self._on_adjustment_changed)
+        self._connect_controls()
+        self._row = self.list_view
         context_menu.attach(self.list_view)
 
     def _get_hero(self):
@@ -159,55 +223,10 @@ class Shelf(Gtk.Box):
     def _on_items_changed(self, _items, _position, _removed, _added):
         self._update_controls()
 
-    def _on_adjustment_changed(self, _adjustment, _pspec):
-        self._update_controls()
-
-    def _update_controls(self):
-        """See All while the row does not show everything (and the shelf offers it); the
-        arrows while the row overflows on a shelf wider than ARROWS_MIN_WIDTH, each sensitive
-        while there is more that way."""
-        adjustment = self.scrolled_window.get_hadjustment()
-        value, upper = adjustment.get_value(), adjustment.get_upper()
-        page = adjustment.get_page_size()
-        overflows = page > 0 and upper - page > 1
-        truncated = self.shelf is not None and (
-            self.shelf.items.get_n_items() > ROW_LIMIT or overflows)
-        self.see_all_button.set_visible(self._see_all and truncated)
-        # The shelf's own width (already allocated while its row is): the page's, as a page
-        # breakpoint would measure it. Not the adjustment's page, which leaves out the list's
-        # CSS padding.
-        arrows = overflows and self.get_width() > ARROWS_MIN_WIDTH * text_scale(
-            self.get_settings())
-        self.previous_button.set_visible(arrows)
-        self.next_button.set_visible(arrows)
-        self.previous_button.set_sensitive(value > 1)
-        self.next_button.set_sensitive(value < upper - page - 1)
-
-    def _on_page_clicked(self, _button, direction):
-        """Scroll the row one width that way, then focus the first tile wholly shown."""
-        adjustment = self.scrolled_window.get_hadjustment()
-        page = adjustment.get_page_size()
-        target = min(max(adjustment.get_value() + direction * page, adjustment.get_lower()),
-                     adjustment.get_upper() - page)
-        if self._animation is not None:
-            self._animation.skip()
-        animation = Adw.TimedAnimation.new(
-            self.scrolled_window, adjustment.get_value(), target, PAGE_DURATION,
-            Adw.PropertyAnimationTarget.new(adjustment, 'value'))
-        animation.set_easing(Adw.Easing.EASE_OUT_CUBIC)
-        connect_weak(animation, 'done', self._on_paged)
-        self._animation = animation
-        animation.play()
-
-    def _on_paged(self, _animation):
-        self._animation = None
-        child = self.list_view.get_first_child()
-        while child is not None:
-            found, bounds = child.compute_bounds(self.scrolled_window)
-            if child.get_visible() and found and bounds.get_x() >= -1:
-                child.grab_focus()
-                return
-            child = child.get_next_sibling()
+    def _truncated(self):
+        """More items than the row shows (ROW_LIMIT), or more that Apple has (`more`)."""
+        return self.shelf is not None and (self.shelf.items.get_n_items() > ROW_LIMIT
+                                           or bool(getattr(self.shelf, 'more', False)))
 
     def _on_setup(self, _factory, list_item):
         list_item.set_child(HeroTile() if self._hero else Tile())
@@ -244,8 +263,9 @@ class ShelfColumn:
     """The shelves of a page, one under another in `box` after `anchor` (a child of the box
     before them, such as the page's title, or None), each an AppleMusicShelf.
 
-    show(shelves, hero_first) shows ShelfModels in that order, the first as hero cards with
-    `hero_first`. A shelf shown before keeps its widget, moved into place (nothing rebuilt,
+    show(shelves, hero_first, heroes) shows ShelfModels in that order, the first as hero cards
+    with `hero_first`, and those in `heroes` too (an artist's Essential Albums). A shelf shown
+    before keeps its widget, moved into place (nothing rebuilt,
     its row's scroll position kept); the others are bound to spare or new widgets, the first
     FIRST_SHELVES at once and the rest one a frame (next_frame()), placed as they are bound,
     so the column never shows a shelf twice or one that went. Widgets left over are hidden
@@ -267,12 +287,13 @@ class ShelfColumn:
         """The widgets showing shelves, in the column's order."""
         return [self._widgets[shelf] for shelf in self.shelves if shelf in self._widgets]
 
-    def show(self, shelves, hero_first=False):
+    def show(self, shelves, hero_first=False, heroes=()):
         if self._task is not None and not self._task.done():
             self._task.cancel()
         self._task = None
         shelves = list(shelves)
-        heroes = {shelf: hero_first and position == 0 for position, shelf in enumerate(shelves)}
+        heroes = {shelf: (hero_first and position == 0) or shelf in heroes
+                  for position, shelf in enumerate(shelves)}
         for shelf, widget in list(self._widgets.items()):
             if shelf not in heroes or widget.props.hero != heroes[shelf]:
                 del self._widgets[shelf]

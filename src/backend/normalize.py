@@ -1612,6 +1612,164 @@ def save_library(library_data, cache_dir, indent=2, generation=None):
 
 
 # ---------------------------------------------------------------------------
+# An artist's page
+# ---------------------------------------------------------------------------
+
+# The shelves of an artist's page, in the order music.apple.com shows them, each one of the
+# artist's views (api.ARTIST_VIEWS) titled as Apple titles it. The release and top-songs are
+# the page's top row, not shelves; the page puts About before similar-artists, as Apple's.
+ARTIST_SHELVES = (
+    'featured-albums', 'full-albums', 'music-videos', 'playlists', 'radio-shows', 'singles',
+    'live-albums', 'compilation-albums', 'appears-on-albums', 'more-to-hear', 'more-to-see',
+    'similar-artists',
+)
+
+# The views of the artist's own releases: their cards name the year under the title, where
+# another's (Appears On) names its artist.
+OWN_RELEASES = {'featured-release', 'latest-release', 'full-albums', 'singles', 'live-albums',
+                'compilation-albums', 'music-videos'}
+
+# What a view of an artist may hold beyond what a shelf can (SHELF_RESOURCE_TYPES): videos
+# about the artist, which the app opens on music.apple.com, having no player for them.
+LINK_RESOURCE_TYPES = {'uploaded-videos', 'music-movies'}
+
+
+def artist_page(raw, cache_dir):
+    """An artist's page (api.ARTIST_ENDPOINT's answer) as
+    {id, artist, latest, topSongs, shelves}:
+
+    - `artist`: the artist as an Item without groups, its `summary` the biography
+      (artistBio, else the editorial notes), with `origin` (the hometown), `bornOrFormed`
+      (Apple's own words: "13 December 1989") and `isGroup` (formed, not born) where Apple
+      has them.
+    - `latest`: {key, title, item}: the featured release where the artist has one, else the
+      latest, as an Item with its `releaseDate`; or None.
+    - `topSongs`: {key, title, items, more}: the top songs as song Items, each with its
+      `album` (and the album's year), Apple's `index` order.
+    - `shelves`: [{key, title, items, more}] in ARTIST_SHELVES's order, `more` True when
+      Apple has more than it sent (artist_view() has the rest); a view with nothing the app
+      can show is left out, and so is one with the same title as an earlier one.
+
+    Items are shaped as a search's are (artist_view_items)."""
+    data = raw.get('data') if isinstance(raw, dict) else None
+    resource = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+    attrs = resource.get('attributes') or {}
+    artist = normalize_artist(resource, cache_dir, albums=[])
+    _settle_search_art(artist, resource)
+    artist['summary'] = strip_html(attrs.get('artistBio')) or artist.get('summary')
+    for key in ('origin', 'bornOrFormed'):
+        if isinstance(attrs.get(key), str) and attrs[key].strip():
+            artist[key] = attrs[key].strip()
+    if isinstance(attrs.get('isGroup'), bool):
+        artist['isGroup'] = attrs['isGroup']
+
+    views = resource.get('views') if isinstance(resource.get('views'), dict) else {}
+
+    def view(name):
+        found = views.get(name)
+        if not isinstance(found, dict):
+            return None
+        title = (found.get('attributes') or {}).get('title')
+        return {'key': name, 'title': title if isinstance(title, str) else '',
+                'items': artist_view_items(name, found.get('data'), cache_dir),
+                'more': bool(found.get('next'))}
+
+    release = None
+    for name in ('featured-release', 'latest-release'):
+        found = view(name)
+        if found is not None and found['items']:
+            release = {'key': name, 'title': found['title'], 'item': found['items'][0]}
+            break
+    top = view('top-songs')
+    shelves = []
+    for name in ARTIST_SHELVES:
+        shelf = view(name)
+        if shelf is not None and shelf['items'] and not any(
+                shelf['title'] and kept['title'] == shelf['title'] for kept in shelves):
+            shelves.append(shelf)
+    return {
+        'id': str(resource.get('id') or ''),
+        'artist': artist,
+        'latest': release,
+        'topSongs': top if top and top['items'] else None,
+        'shelves': shelves,
+    }
+
+
+def artist_view_items(view, resources, cache_dir):
+    """The Items of one of an artist's views (api.ARTIST_VIEWS), as a search's are, without
+    groups: an album, a single or a video of the artist's own subtitled with its year, one it
+    appears on with its artist, an essential album (featured-albums) with Apple's line about
+    it; a song with its `album` (top-songs: the album's name) and
+    year; a radio episode with its show's name (Apple's notes carry it); a video about the
+    artist as a `link` Item opening its page (`url`), subtitled with its length. What the
+    app cannot show is left out."""
+    items = []
+    for resource in resources if isinstance(resources, list) else []:
+        if not isinstance(resource, dict):
+            continue
+        if resource.get('type') in LINK_RESOURCE_TYPES:
+            item = _link_item(resource)
+        else:
+            item = _shelf_item(resource, cache_dir, curators=False)
+        if item is None:
+            continue
+        attrs = resource.get('attributes') or {}
+        if view in OWN_RELEASES and item['kind'] in ('album', 'video'):
+            item['subtitle'] = str(item['year']) if item.get('year') else ''
+        if view == 'featured-albums':
+            notes = attrs.get('editorialNotes') or {}
+            line = strip_html(notes.get('short')) if isinstance(notes, dict) else None
+            if line:
+                item['subtitle'] = line
+        if view in ('featured-release', 'latest-release') and isinstance(
+                attrs.get('releaseDate'), str):
+            item['releaseDate'] = attrs['releaseDate']
+        if item['kind'] == 'song':
+            item['album'] = attrs.get('albumName') or ''
+        if item['kind'] == 'station':
+            notes = attrs.get('plainEditorialNotes') or attrs.get('editorialNotes') or {}
+            show = notes.get('standard') if isinstance(notes, dict) else None
+            if isinstance(show, str) and show.strip() and len(show) <= 80:
+                item['subtitle'] = show.strip()
+        items.append(item)
+    return items
+
+
+def _link_item(resource):
+    """A video about an artist (an interview, a film) as an Item the app opens on
+    music.apple.com: kind `link`, its page as `url`, its length as the subtitle, nothing to
+    play. None without a name or a page."""
+    attrs = resource.get('attributes') or {}
+    url = attrs.get('postUrl') or attrs.get('url')
+    name = attrs.get('name')
+    if not (isinstance(url, str) and url.startswith('https://') and isinstance(name, str)
+            and name):
+        return None
+    duration = attrs.get('durationInMilliseconds') or attrs.get('durationInMillis')
+    artwork = (attrs.get('artwork') or {}).get('url')
+    small = ART_SIZES['thumb']
+    return {
+        'id': str(resource.get('id') or url),
+        'kind': 'link',
+        'title': name,
+        'subtitle': (format_duration(duration) if isinstance(duration, int) and duration > 0
+                     else ''),
+        'year': _extract_year(attrs, resource),
+        'art': template_artwork_url(artwork, small, small) if artwork else None,
+        'thumb': None,
+        'url': url,
+        'play': {},
+        'groups': [],
+    }
+
+
+def artist_cache_path(cache_dir, artist_id):
+    """Where an artist's page (artist_page) is kept for a day."""
+    return os.path.join(cache_dir, 'artists', f'{_safe_id(artist_id)}.json')
+
+
+# ---------------------------------------------------------------------------
 # The other caches: artwork the pages fetch on their own, and answers kept
 # ---------------------------------------------------------------------------
 
@@ -1661,9 +1819,10 @@ def prune_caches(cache_dir, now=None, remote_bytes=REMOTE_ART_BUDGET, lyrics_kee
     """Trim the caches nothing else trims (in a thread, at startup and after a sync):
     remote-art/ to `remote_bytes` (prune_remote_art), lyrics/ to the
     `lyrics_keep` played last (by mtime: a cache hit touches the file), the kept answers
-    (categories/, landing, New, Made for You) stamped longer than `answer_age` ago (by mtime,
-    when they were written), an items/ folder older versions kept, and the temporary files
-    of writes a crash cut short (store.is_stale_temp) in the cache and its folders. Returns
+    (categories/, artists/, landing, New, Made for You) stamped longer than `answer_age` ago
+    (by mtime, when they were written), an items/ folder older versions kept, and the
+    temporary files of writes a crash cut short (store.is_stale_temp) in the cache and its
+    folders. Returns
     {what: how many went}. art/ and thumb/ are the library's: prune_art keeps them."""
     now = time.time() if now is None else now
     gone = {'remote-art': prune_remote_art(cache_dir, remote_bytes), 'lyrics': 0,
@@ -1680,7 +1839,8 @@ def prune_caches(cache_dir, now=None, remote_bytes=REMOTE_ART_BUDGET, lyrics_kee
             return []
 
     for folder in (cache_dir, *(os.path.join(cache_dir, name) for name in
-                                ('art', 'thumb', 'remote-art', 'lyrics', 'categories'))):
+                                ('art', 'thumb', 'remote-art', 'lyrics', 'categories',
+                                 'artists'))):
         for entry in files(folder):
             if store.is_stale_temp(entry.path, now) and _remove(entry.path):
                 gone['temps'] += 1
@@ -1692,7 +1852,8 @@ def prune_caches(cache_dir, now=None, remote_bytes=REMOTE_ART_BUDGET, lyrics_kee
         if _remove(entry.path):
             gone['lyrics'] += 1
 
-    answers = [entry for entry in files(os.path.join(cache_dir, 'categories'))
+    answers = [entry for folder in ('categories', 'artists')
+               for entry in files(os.path.join(cache_dir, folder))
                if not store.is_temp(entry.name)]
     answers += [entry for entry in files(cache_dir) if entry.name in KEPT_ANSWERS]
     for entry in answers:

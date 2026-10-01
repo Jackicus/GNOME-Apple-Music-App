@@ -134,6 +134,28 @@ listview.shelf-list > row {
   min-height: 34px;
 }
 
+/* An artist's Top Songs (widgets/song_shelf.blp): the songs in columns three high, the covers
+   on the shelves' 24px margin (18px of the grid's padding, 6px of a row's), each row with a
+   rounded highlight; a column 18px from the next. */
+gridview.song-shelf {
+  padding: 0 18px;
+  background: none;
+}
+
+gridview.song-shelf > child {
+  margin: 0 9px 0 0;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+/* An artist's latest release (pages/artist.blp): the cover and its caption as one button,
+   flush with the page's margin. */
+button.release-card {
+  padding: 6px;
+  margin-left: -6px;
+  border-radius: 12px;
+}
+
 /* Hero cards (widgets/hero_tile.blp): one rounded card, the cover square at the top and the
    caption band under it, in the artwork's colour (drawn by hero_tile.py over this background)
    with text that reads on it. Without a colour, a tint that shows on the page in both

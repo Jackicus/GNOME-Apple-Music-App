@@ -471,12 +471,42 @@ async def walkthrough(window):
           and window.get_focus().__gtype__.name == 'GtkListItemWidget')
     requests = []
     play_request = window.play_request
-    window.play_request = lambda play, start_with=None, shuffle=None: requests.append(
-        start_with)
+    window.play_request = lambda play, start_with=None, shuffle=None, start_id=None: (
+        requests.append((start_with, start_id)))
     await key(window, 'Down')
     await key(window, 'Return')
     window.play_request = play_request
-    check('Down, Enter plays the second track', requests == [1], requests)
+    second = detail.item.groups[0].entries.get_item(1)
+    check('Down, Enter plays the second track', requests == [(1, second.id)], requests)
+    print('-- artist')
+    window.open_item(app.library.artists.get_item(0))
+    await asyncio.sleep(1.5)  # its page answered from the demo's invented one
+    artist = window.navigation_view.get_visible_page()
+    check('an artist opens with the focus on Play', inside(window.get_focus(), artist.play_button),
+          describe(window.get_focus()))
+    await key(window, 'Tab')
+    check('Tab: More Options', inside(window.get_focus(), artist.more_button))
+    await key(window, 'Tab')
+    check('Tab: the latest release', window.get_focus() is artist.release_button,
+          describe(window.get_focus()))
+    for _ in range(4):  # the Top Songs arrows and See All, then the songs
+        if inside(window.get_focus(), artist.top_songs.grid_view):
+            break
+        await key(window, 'Tab')
+    check('Tab reaches the first top song', inside(window.get_focus(), artist.top_songs.grid_view)
+          and window.get_focus().__gtype__.name == 'GtkListItemWidget',
+          describe(window.get_focus()))
+    requests = []
+    window.play_request = lambda play, start_with=None, shuffle=None, start_id=None: (
+        requests.append((play.get('kind'), start_with, start_id)))
+    await key(window, 'Down')
+    await key(window, 'Return')
+    window.play_request = play_request
+    song = artist.top_songs.shelf.items.get_item(1)
+    check('Down, Enter plays the top songs from the second', requests == [('songs', 1, song.id)],
+          requests)
+    window.navigation_view.pop()  # back to the album, as the steps below expect
+    await asyncio.sleep(0.6)
     print('-- the idle player bar')
     await key(window, '<primary>3')
     bar = window.get_focus()

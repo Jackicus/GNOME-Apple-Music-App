@@ -1,0 +1,91 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2026 Jack Tully
+
+using Gtk 4.0;
+
+// A shelf's title row over a grid of songs three rows high that scrolls sideways, as an
+// artist's Top Songs on music.apple.com: the songs run down each column, then on to the next.
+template $AppleMusicSongShelf: Box {
+  orientation: vertical;
+
+  Box {
+    spacing: 6;
+    margin-start: 24;
+    margin-end: 14;
+
+    styles [
+      "shelf-header",
+    ]
+
+    Label title_label {
+      xalign: 0;
+      valign: center;
+      hexpand: true;
+      ellipsize: end;
+
+      styles [
+        "title-2",
+      ]
+    }
+
+    // As a shelf's (shelf.blp): shown while the grid overflows, in a window wide enough.
+    Button previous_button {
+      icon-name: "go-previous-symbolic";
+      tooltip-text: _("Scroll Left");
+      valign: center;
+      visible: false;
+
+      styles [
+        "flat",
+        "circular",
+      ]
+    }
+
+    Button next_button {
+      icon-name: "go-next-symbolic";
+      tooltip-text: _("Scroll Right");
+      valign: center;
+      visible: false;
+
+      styles [
+        "flat",
+        "circular",
+      ]
+    }
+
+    Button see_all_button {
+      label: _("See All");
+      valign: center;
+      visible: false;
+
+      accessibility {
+        described-by: [
+          title_label,
+        ];
+      }
+
+      styles [
+        "flat",
+      ]
+    }
+  }
+
+  ScrolledWindow scrolled_window {
+    hscrollbar-policy: automatic;
+    vscrollbar-policy: never;
+
+    // A horizontal Gtk.GridView: its "columns" are rows, so three of them lay the songs
+    // out three high, each column a song wide. Recycled, as the scrolled window's own child.
+    child: GridView grid_view {
+      orientation: horizontal;
+      min-columns: 3;
+      max-columns: 3;
+      single-click-activate: true;
+      tab-behavior: item;
+
+      styles [
+        "song-shelf",
+      ]
+    };
+  }
+}

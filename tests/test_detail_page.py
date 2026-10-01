@@ -8,7 +8,7 @@ their Item."""
 import asyncio
 import unittest
 
-from tests.page_harness import PageTestCase, album, artist
+from tests.page_harness import PageTestCase, album, artist, artist_answer
 
 from applemusic.backend.errors import EngineError
 
@@ -162,24 +162,104 @@ def _controllers(widget):
 
 
 class ArtistPageTest(PageTestCase):
-    async def test_an_artist_without_albums_is_asked_for_once(self):
+    """The artist page over the catalog's answer (Engine.artist_page), and without it."""
+
+    async def artist_page(self, data, answer=None):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage
 
-        self.app.engine.answers['item'] = artist([])
-        page = await self.push(ArtistPage(self.library, Item(artist([]))))
+        if answer is not None:
+            self.app.engine.answers['artist_page'] = answer
+        page = await self.push(ArtistPage(self.library, Item(data)))
         await self.settle()
         await self.turn()
-        self.assertEqual(self.app.engine.calls, ['item'])
+        return page
+
+    async def test_the_catalog_answers_the_page(self):
+        page = await self.artist_page(dict(artist([album(1)]), catalogId='42'),
+                                      artist_answer())
+        self.assertEqual(self.app.engine.calls, ['artist_page'])
+        self.assertEqual(page.release_title.get_label(), 'Latest Release')
+        self.assertEqual(page.release_name.get_label(), 'Invented album 99')
+        self.assertTrue(page.release_date.get_label().endswith('2026'))
+        self.assertTrue(page.top_songs.get_visible())
+        self.assertEqual(page.top_songs.shelf.items.get_n_items(), 4)
+        # Apple's shelves in its order, About before Similar Artists; the library's albums
+        # are not shown beside the catalog's.
+        self.assertEqual([shelf.key for shelf in page._column.shelves],
+                         ['featured-albums', 'full-albums'])
+        self.assertEqual([shelf.key for shelf in page._after.shelves], ['similar-artists'])
+        self.assertTrue(page._column.widgets[0].props.hero)  # Essential Albums: large cards
+        self.assertFalse(page.status_page.get_visible())
+        self.assertEqual(page.about_title.get_label(), 'About Invented Artist')
+        self.assertEqual(page.summary_label.get_label(), 'An invented biography.')
+        self.assertEqual(page.origin_label.get_label(), 'Invented Town, Nowhere')
+        self.assertEqual(page.born_heading.get_label(), 'Born')
+        self.assertTrue(page.play_button.get_visible())  # the catalog artist's top songs
+
+    async def test_a_group_was_formed(self):
+        page = await self.artist_page(dict(artist([]), catalogId='42'),
+                                      artist_answer(group=True))
+        self.assertEqual(page.born_heading.get_label(), 'Formed')
+
+    async def test_a_library_artist_is_found_through_its_songs(self):
+        data = artist([album(1), album(2)])
+        for group in data['groups']:
+            for number, entry in enumerate(group['entries']):
+                entry['catalogId'] = f'{group["play"]["id"]}.{number}'
+        asked = []
+
+        def catalog_artist(name, song_ids):
+            asked.append((name, song_ids))
+            return '42'
+
+        self.app.engine.answers['catalog_artist'] = catalog_artist
+        await self.artist_page(data, artist_answer())
+        self.assertEqual(self.app.engine.calls, ['catalog_artist', 'artist_page'])
+        # One song an album, as the engine reads each with its artists.
+        self.assertEqual(asked, [('Invented Artist', ['l.album001.0', 'l.album002.0'])])
+
+    async def test_an_artist_with_nothing_to_find_shows_no_albums(self):
+        page = await self.artist_page(artist([]))
+        self.assertEqual(self.app.engine.calls, [])  # no catalog id, no songs to ask about
+        self.assertTrue(page.status_page.get_visible())
         self.assertEqual(page.status_page.get_title(), 'No Albums')
 
-    async def test_an_album_the_library_lacks_is_fetched_when_opened(self):
-        from applemusic.library import Item
-        from applemusic.pages.artist import ArtistPage
+    async def test_without_the_catalog_the_library_albums_show(self):
+        page = await self.artist_page(dict(artist([album(1), album(2)]), catalogId='42'))
+        self.assertEqual(self.app.engine.calls, ['artist_page'])  # the engine is down
+        self.assertEqual([shelf.key for shelf in page._column.shelves], ['library'])
+        self.assertEqual(page._column.widgets[0].shelf.items.get_n_items(), 2)
+        self.assertTrue(page.status_page.get_visible())  # Start Engine, under the albums
+        self.assertTrue(page.status_button.get_visible())
 
-        page = await self.push(ArtistPage(self.library, Item(artist([album(1), album(2)]))))
-        self.assertEqual(page._albums.get_n_items(), 2)
-        stand_in = page._albums.get_item(0)
+    async def test_a_top_song_plays_the_songs_from_it(self):
+        page = await self.artist_page(dict(artist([]), catalogId='42'), artist_answer())
+        page.top_songs.grid_view.emit('activate', 2)
+        window = page.get_root()
+        self.assertEqual(window.played[-1],
+                         ({'kind': 'songs', 'id': '900,901,902,903'}, 2, None))
+        self.assertEqual(window.started_with[-1], '902')
+
+    async def test_see_all_fetches_the_rest_of_a_shelf(self):
+        page = await self.artist_page(dict(artist([]), catalogId='42'), artist_answer())
+        albums = page._column.shelves[1]
+        first = albums.items.get_item(0)
+        self.assertTrue(albums.more)
+        rest = artist_answer()['shelves'][1]['items'] + [
+            dict(artist_answer()['shelves'][1]['items'][0], id=f'album{n}',
+                 title=f'Invented album {n}') for n in range(4, 8)]
+        self.app.engine.answers['artist_view'] = rest
+        await albums.complete()
+        self.assertEqual(albums.items.get_n_items(), 7)
+        self.assertIs(albums.items.get_item(0), first)  # what was shown stays
+        self.assertFalse(albums.more)
+
+    async def test_an_album_the_library_lacks_is_fetched_when_opened(self):
+        page = await self.artist_page(artist([album(1), album(2)]))
+        albums = page._library_shelf.items
+        self.assertEqual(albums.get_n_items(), 2)
+        stand_in = albums.get_item(0)
         self.assertEqual(stand_in.kind, 'album')
         self.assertEqual(stand_in.groups, [])  # its page asks the engine for the whole album
         self.assertEqual(stand_in.subtitle, 'Invented Artist')
@@ -191,7 +271,26 @@ class ArtistPageTest(PageTestCase):
         item = Item(artist([album(1)]))
         page = await self.push(ArtistPage(self.library, item))
         item.merge(artist([album(1), album(2), album(3)]), replace=True)
-        self.assertEqual(page._albums.get_n_items(), 3)
+        self.assertEqual(page._library_shelf.items.get_n_items(), 3)
+
+
+class ArtistWordsTest(PageTestCase):
+    def test_a_release_date_in_the_readers_words(self):
+        from applemusic.pages.artist import release_date
+
+        self.assertRegex(release_date('2026-09-24'), r'^24 \w+ 2026$')
+        self.assertEqual(release_date(''), '')
+        self.assertEqual(release_date('soon'), '')
+        self.assertEqual(release_date('2026-13-40'), '')
+
+    def test_a_catalog_artist_and_a_library_one(self):
+        from applemusic.library import Item
+        from applemusic.pages.artist import catalog_id
+
+        self.assertEqual(catalog_id(Item({'id': '42', 'kind': 'artist'})), '42')
+        self.assertEqual(catalog_id(Item({'id': 'l.art001', 'kind': 'artist',
+                                          'catalogId': '43'})), '43')
+        self.assertIsNone(catalog_id(Item({'id': 'l.art_abc', 'kind': 'artist'})))
 
 
 if __name__ == '__main__':

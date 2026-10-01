@@ -100,7 +100,7 @@ syncs an older file again at once.
 
 Item = {
   "id": "l.…",                  // library id, or catalog id when not in the library
-  "kind": "album" | "playlist" | "artist" | "station" | "video" | "song",
+  "kind": "album" | "playlist" | "artist" | "station" | "video" | "song" | "link",
   "title": "…", "subtitle": "…", "year": 2007, "genre": "…", "summary": "…" /* or null */,
   "art": "<cache>/art/<sha1>.jpg" /* or null */,     // 640 px, the pages' hero
   "thumb": "<cache>/thumb/<sha1>.jpg" /* or null */, // 320 px, tiles and rows
@@ -124,6 +124,16 @@ Track = {"id": "i.…", "catalogId": "…" /* or null */, "title": "…", "artis
                                          // 'song' or 'musicVideo' instead)
 ```
 
+An artist's page (`Engine.artist_page()`, `normalize.artist_page()`) is
+`{id, artist, latest: {key, title, item} | null, topSongs: {key, title, items, more} | null,
+shelves: [{key, title, items, more}]}`: `artist` an Item without groups whose `summary` is
+the biography, with `origin`, `bornOrFormed` (Apple's own words) and `isGroup` where Apple
+has them; `latest` the featured or latest release, with its `releaseDate`; the top songs
+song Items with their `album`; each shelf one of the artist's views in music.apple.com's
+order, titled as Apple titles it, `more` when `Engine.artist_view()` has more of it. A
+video about the artist (an interview, a film) is a `link` Item: its `url` is its page,
+its subtitle its length, and it has nothing to play.
+
 The app shows none of the data's own words: a missing name is '', the app names shelves by
 key, writes the captions from the counts and titles an album's discs from `discNumber`. A song without an album of its own sits under a stand-in album
 (`l.alb_…`) that plays `{"kind": "songs", "id": "<id>,<id>…"}`; a video plays as MusicKit's
@@ -142,7 +152,7 @@ generation, so a write after Clear Cache or sign-out lands nowhere.
 | `art/`, `thumb/`, `art/.sizes` | the sync (thumbnails), the pages (covers) | the artwork loader | pruned against library.json after every sync |
 | `remote-art/` | `src/remote.py`, `Engine.item()` | the pages, MPRIS | trimmed to 32 MB, oldest first |
 | `lyrics/<id>.json` | `Engine.lyrics()` | the same | fetched again after 30 days; the 2,000 played last |
-| `landing.json`, `categories/`, `browse.json`, `made-for-you.json` | `Engine._kept_answer()` | the same, `cache.read_kept()` | a day; an older one only when Apple cannot be asked (`stale: True`) |
+| `landing.json`, `categories/`, `browse.json`, `made-for-you.json`, `artists/` | `Engine._kept_answer()` | the same, `cache.read_kept()` | a day; an older one only when Apple cannot be asked (`stale: True`); in demo mode, only what the demo library invented (marked `demo`), at any age |
 
 `normalize.prune_caches()` runs after the library's first load and after every sync; it also
 removes what older versions kept (`items/`) and temporary files over an hour old.
