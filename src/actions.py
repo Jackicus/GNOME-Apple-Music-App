@@ -594,19 +594,20 @@ class ItemActions:
 
     def go_to(self, obj, kind):
         """Open the page of the album obj is on (`kind` 'album') or of the artist it is by
-        ('artist'): the library's (related.library_album, library_artist) at once, else the
-        catalog's, which the engine looks up (started first if need be, as for the other
-        actions). Nothing is opened when that page is the one shown. A toast says when there
-        is none. The engine's task, or None."""
+        ('artist'). An artist's is Apple Music's while the engine is up and obj has a catalog
+        id (the engine names the artist exactly; their page shows the library's albums of
+        theirs too); else, and for an album, the library's (related.library_album,
+        library_artist) at once, else the catalog's, which the engine looks up (started first
+        if need be, as for the other actions). Nothing is opened when that page is the one
+        shown. A toast says when there is none. The engine's task, or None."""
         if obj is None:
             self.app.toast(not_found_message(kind))
             return None
-        found = (related.library_album(self.library, obj) if kind == 'album'
-                 else related.library_artist(self.library, obj))
-        if found is not None:
-            self._show_page(found)
-            return None
         target = related.catalog_target(obj)
+        if kind == 'artist' and target is not None and self._engine_ready():
+            return self.app.spawn(self._go_to_catalog(obj, kind, target))
+        if self._go_to_library(obj, kind):
+            return None
         if target is None or (kind == 'album' and target[0] == 'album'):
             self.app.toast(not_found_message(kind))
             return None
@@ -619,16 +620,26 @@ class ItemActions:
             await self.app.player.ensure_engine()
             answer = await self.engine.related(*target)
         except EngineError as error:
-            if error.status == 404:  # gone from the storefront's catalog: nowhere to go
+            if self._go_to_library(obj, kind):
+                pass  # the library's page, rather than nothing
+            elif error.status == 404:  # gone from the storefront's catalog: nowhere to go
                 self.app.toast(not_found_message(kind))
             else:
                 self.app.report(error)
             return
         found = related.from_answer(self.library, answer, kind, related.artist_name(obj))
-        if found is None:
+        if found is not None:
+            self._show_page(found)
+        elif not self._go_to_library(obj, kind):
             self.app.toast(not_found_message(kind))
-            return
-        self._show_page(found)
+
+    def _go_to_library(self, obj, kind):
+        """Show the library's album or artist of obj's: True when it has one."""
+        found = (related.library_album(self.library, obj) if kind == 'album'
+                 else related.library_artist(self.library, obj))
+        if found is not None:
+            self._show_page(found)
+        return found is not None
 
     def _show_page(self, item):
         """Show item's page, unless it is the page shown already."""

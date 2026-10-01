@@ -127,8 +127,9 @@ class DetailPage(Adw.NavigationPage):
     the fetch is cancelled when the page is hidden (do_hidden), and asked again when it
     shows.
 
-    The hero: an album's artist links to their page (resolve_artist(), else the catalog's,
-    which window.item_actions.go_to() looks up, the engine permitting), a More Options menu
+    The hero: an album's artist links to their page when the library has them
+    (resolve_artist()) or the catalog can say (links_catalog_artist()), opened as Go to Artist
+    opens it (window.item_actions.go_to()), a More Options menu
     button offers the item's own menu (window.item_actions), and the notes show three lines,
     with More for the whole text. The header bar shows the title once the hero's has scrolled
     away (HeaderTitle). Tab from the hero's last button goes on into the tracks, and Shift+Tab
@@ -193,7 +194,7 @@ class DetailPage(Adw.NavigationPage):
         self._fetched = None  # the Item this page asked the engine for (once: should_fetch)
         self._fetch_task = None
         self._shown_groups = None  # item.groups when the tracks were shown: a new list is new
-        self._artist = None  # the library's artist Item the subtitle links to
+        self._artist = None  # the library's artist Item the subtitle names, if any
         self._painted = None  # (frame clock, handler): the notes' More follows each paint
         self._focused = False  # the page has put the focus on Play once, as it was pushed
         # What the status box says when the engine cannot answer, and what its button does.
@@ -574,9 +575,9 @@ class DetailPage(Adw.NavigationPage):
     # The hero's links and menus.
 
     def _on_artist_clicked(self, _button):
-        if self._artist is not None:
-            self.get_root().open_item(self._artist)
-        elif self.item is not None:
+        # As Go to Artist does: Apple Music's artist page when the engine can say, the
+        # library's otherwise.
+        if self.item is not None:
             self.get_root().item_actions.go_to(self.item, 'artist')
 
     def _on_more_popup(self, button):

@@ -207,9 +207,11 @@ class AnswerTest(unittest.TestCase):
                          '1000000171')
         self.assertEqual(from_answer(self.library, answer, 'artist', 'Someone').id,
                          '1000000170')  # none of that name: the first
-        # The library's own of the same name.
+        # The catalog's even when the library has one of that name: Apple Music's page,
+        # which shows the library's albums of theirs too.
         answer['artists'][0]['title'] = 'Mara Lind'
-        self.assertIs(from_answer(self.library, answer, 'artist'), MARA)
+        found = from_answer(self.library, answer, 'artist')
+        self.assertEqual((found.id, found.title), ('1000000170', 'Mara Lind'))
         self.assertIsNone(from_answer(self.library, {'artists': [{}]}, 'artist'))
 
 

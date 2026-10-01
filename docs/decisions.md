@@ -202,9 +202,12 @@ changes, change it here, with the date. The plan they came from is in
   three rows high), Essential Albums as large cards, the shelves, About (biography, From,
   Born or Formed, Genre) before Similar Artists. It replaces fetching every album with its
   tracks, which took one read an album. A library artist is the sync's own invention (no
-  catalog id), so its catalog artist is found through one of its songs; the library's albums
-  show only when the catalog cannot answer, because a library album carries no catalog id to
-  tell it from the catalog's. Videos about the artist open on music.apple.com: the engine is
+  catalog id), so its catalog artist is found through one of its songs (the library album's,
+  since the artist's copy of the tracks is dropped at load). The library's albums of the
+  artist's show first, as In Your Library, beside the catalog's shelves: a library album
+  carries no catalog id to tell it from the catalog's, so an album may be on both, which is
+  the price of keeping what is in the library on the page (#236); Go to Artist opens the
+  catalog artist's page while the engine is up. Videos about the artist open on music.apple.com: the engine is
   headless and has no picture to show. The demo engine answers with the artist pages the
   demo library invents (marked `demo`), and with none of Apple's (#226).
 
