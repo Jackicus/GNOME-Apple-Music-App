@@ -26,8 +26,11 @@ In all, a click re-sorts the table in 30 to 50 ms and a keystroke refilters it i
 rebinding included.
 
 Clicking a column header, or choosing in the header's Sort By menu (the keyboard's way: the
-headers take no focus), re-sorts; typing in the header's entry refilters (after the entry's own
-short delay), and the new count is announced. A sync that changes the songs brings the rows up
+headers take no focus), re-sorts. The filter is a Gtk.SearchBar under the header bar, as
+GNOME's apps have one: the header's Filter Songs button, Ctrl+F (focus_filter()) and typing on
+the page (the page is the bar's key-capture widget) show it, Escape or the button closes it,
+which clears its entry and so the filter; typing in it refilters (after the entry's own short
+delay), and the new count is announced. A sync that changes the songs brings the rows up
 to date with the fewest splices (library.apply_diff), so the table keeps its scroll position;
 only a new sort or filter starts it again from the top. Activating a row (Enter, a click: the
 view's single-click-activate, docs/decisions.md) asks the window to play it; a right click, a
@@ -85,6 +88,8 @@ class SongsPage(Adw.NavigationPage):
     __gtype_name__ = 'AppleMusicSongsPage'
 
     header_bar = Gtk.Template.Child()
+    search_button = Gtk.Template.Child()
+    search_bar = Gtk.Template.Child()
     filter_entry = Gtk.Template.Child()
     sort_button = Gtk.Template.Child()
     stack = Gtk.Template.Child()
@@ -116,6 +121,10 @@ class SongsPage(Adw.NavigationPage):
 
         self.title_label.set_label(title)
         self._header_title = HeaderTitle(self.header_bar, self.title_label)  # while loading
+        # The filter bar's entry is its own (Escape in it closes the bar), and a key typed
+        # anywhere on the page (a row, a header button) shows the bar and lands in the entry.
+        self.search_bar.connect_entry(self.filter_entry)
+        self.search_bar.set_key_capture_widget(self)
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(_('No Songs'))
         self.empty_page.set_description(_('Songs in your library appear here'))
@@ -305,8 +314,13 @@ class SongsPage(Adw.NavigationPage):
         name = songs_state(total, library.state, library.songs_ready,
                            library.songs.get_n_items(), library.syncing)
         self.stack.set_visible_child_name(name)
-        self.filter_entry.set_visible(name == 'items')
+        self.search_button.set_visible(name == 'items')
         self.sort_button.set_visible(name == 'items')
+        if name == 'empty':
+            # No songs to filter any more (a sign-out): the bar goes with its button. Not
+            # while loading, which a filter set before the songs are built (set_filter)
+            # waits through.
+            self.search_bar.set_search_mode(False)
         if name != 'items':
             return
         shown = len(self._matches)
@@ -318,16 +332,20 @@ class SongsPage(Adw.NavigationPage):
         self.count_label.set_label(label.format(shown=f'{shown:n}', total=f'{total:n}'))
 
     def set_filter(self, text):
-        """Filter the table by `text` at once, as typing it in the header's entry would after
-        its short delay (See All from a search's songs: the whole table must not show first)."""
+        """Filter the table by `text` at once, as typing it in the filter bar would after the
+        entry's short delay (See All from a search's songs: the whole table must not show
+        first), the bar shown with the text in it; closed, and the filter cleared, for no
+        text."""
+        self.search_bar.set_search_mode(bool(text))
         self.filter_entry.set_text(text)
         self.on_filter_changed(self.filter_entry)
 
     def focus_filter(self):
-        """Put the cursor in the filter with its text selected (Ctrl+F on this page); False
-        when the page has no filter to show yet (no songs)."""
-        if not self.filter_entry.get_visible():
+        """Show the filter bar with the cursor in its entry and its text selected (Ctrl+F on
+        this page); False when the page has no songs to filter yet."""
+        if not self.search_button.get_visible():
             return False
+        self.search_bar.set_search_mode(True)
         self.filter_entry.grab_focus()
         self.filter_entry.select_region(0, -1)
         return True
@@ -349,8 +367,16 @@ class SongsPage(Adw.NavigationPage):
             root.announce(self.count_label.get_label(), Gtk.AccessibleAnnouncementPriority.LOW)
 
     @Gtk.Template.Callback()
-    def on_stop_search(self, entry):
-        entry.set_text('')
+    def on_stop_search(self, _entry):
+        """Escape in the entry: the bar closes and clears the entry (Gtk.SearchBar's doing,
+        which brings every row back); the focus goes to the table, from an idle, once it
+        shows again."""
+        GLib.idle_add(self._focus_table)
+
+    def _focus_table(self):
+        if self.get_mapped() and self.results_stack.get_visible_child_name() == 'table':
+            self.column_view.grab_focus()
+        return GLib.SOURCE_REMOVE
 
     @Gtk.Template.Callback()
     def on_activate(self, _column_view, position):
@@ -360,7 +386,9 @@ class SongsPage(Adw.NavigationPage):
                                          start_id=track.id)
 
     # Cells. The time is a Gtk.Inscription: its size comes from its line count, not its text,
-    # so rebinding it redraws it without laying it out again. The title, the artist and the
+    # so rebinding it redraws it without laying it out again; in tabular figures, so that
+    # the digits line up, and on the left, under its column's title, which a Gtk.ColumnView
+    # cannot align (Nautilus's list view does the same). The title, the artist and the
     # album are one-line labels (the badge follows the title's text, a link is only its
     # text), which a single line keeps cheap to measure again.
 
@@ -376,7 +404,7 @@ class SongsPage(Adw.NavigationPage):
         def setup(_factory, cell):
             # Centred at its one line's height: given the row's height, it would wrap text
             # too long for the column onto a second line.
-            inscription = Gtk.Inscription(xalign=1 if numeric else 0, valign=Gtk.Align.CENTER,
+            inscription = Gtk.Inscription(xalign=0, valign=Gtk.Align.CENTER,
                                           text_overflow=Gtk.InscriptionOverflow.ELLIPSIZE_END)
             if numeric:
                 inscription.add_css_class('numeric')

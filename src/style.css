@@ -135,11 +135,19 @@ listview.track-list > header {
   padding: 0;
 }
 
-/* A playlist's column titles (widgets/track_row.py's TrackTableHeader): a list header's text is
-   bold, which would make its Time column, measured in the rows' font, wider than theirs. The
-   titles are caption-heading, bold of their own. */
+/* A playlist's column titles (widgets/track_row.py's TrackTableHeader), as a Gtk.ColumnView's
+   header shows the Songs table's: caption-heading (the titles' own class) at 40% of the text
+   colour, libadwaita's `columnview > header > button > box`. A list header's own text is
+   bold, which would make its Time column, measured in the rows' font, wider than theirs. */
 listview.track-list > header > .track-table-header {
   font-weight: normal;
+  color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+@media (prefers-contrast: more) {
+  listview.track-list > header > .track-table-header {
+    color: color-mix(in srgb, currentColor 60%, transparent);
+  }
 }
 
 /* Shelves (widgets/shelf.blp): tiles 18px apart, the first on the page title's 24px margin

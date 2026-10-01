@@ -659,12 +659,37 @@ async def walkthrough(window):
     check('Ctrl+F over a page pushed on Search pops it and focuses the visible entry',
           window.navigation_view.get_visible_page() is search
           and inside(window.get_focus(), search.search_entry), describe(window.get_focus()))
+    print('-- the Songs filter')
     window.select_page('songs')
     await asyncio.sleep(0.8)
     songs = window.navigation_view.get_visible_page()
+    await key(window, '<primary>2', 0.6)
+    check('Ctrl+2 puts the focus in the Songs table',
+          inside(window.get_focus(), songs.column_view), describe(window.get_focus()))
+    if keyboard is not None:
+        # Typing on the page shows the filter bar (Gtk.SearchBar's key capture forwards the
+        # key's event, which an emulated press has none of).
+        keyboard.type_text('a')
+        await asyncio.sleep(0.6)
+        check('typing on the page shows the filter bar with the letter in its entry',
+              songs.search_bar.get_search_mode() and songs.filter_entry.get_text() == 'a'
+              and inside(window.get_focus(), songs.filter_entry),
+              (songs.search_bar.get_search_mode(), songs.filter_entry.get_text(),
+               describe(window.get_focus())))
+        await key(window, 'Escape', 0.6)
+        check('Escape closes it, clears the filter and puts the focus back in the table',
+              not songs.search_bar.get_search_mode() and songs.filter_entry.get_text() == ''
+              and inside(window.get_focus(), songs.column_view),
+              (songs.search_bar.get_search_mode(), songs.filter_entry.get_text(),
+               describe(window.get_focus())))
     await key(window, '<primary>f', 0.6)
-    check("Ctrl+F on Songs puts the cursor in the page's filter",
-          inside(window.get_focus(), songs.filter_entry), describe(window.get_focus()))
+    check("Ctrl+F on Songs shows the page's filter bar with the cursor in its entry",
+          songs.search_bar.get_search_mode() and inside(window.get_focus(), songs.filter_entry),
+          describe(window.get_focus()))
+    await key(window, 'Escape', 0.6)
+    check('Escape closes the filter bar, the focus back in the table',
+          not songs.search_bar.get_search_mode()
+          and inside(window.get_focus(), songs.column_view), describe(window.get_focus()))
     print('-- menus')
     await key(window, 'F10', 0.6)
     menu = window.primary_menu_button.get_popover()

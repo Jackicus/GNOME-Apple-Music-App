@@ -30,6 +30,9 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   Discord shows it only while something plays: pausing stops the clock and, five seconds
   later, takes it off until the music plays again, as playback ending or the app quitting
   does.
+- On the Songs page, just start typing to filter the songs (or press
+  <kbd>Ctrl</kbd>+<kbd>F</kbd>, or click the search button in the header bar);
+  <kbd>Esc</kbd> clears the filter. Click a column title to sort by it, or use **Sort By**.
 - In a wide window a playlist's songs are a table, as the Songs page is: click an artist
   or an album there to open its page.
 - Right-click a song, an album or a playlist (or press and hold it, or press
