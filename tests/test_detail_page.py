@@ -8,7 +8,7 @@ their Item."""
 import asyncio
 import unittest
 
-from tests.page_harness import PageTestCase, album, artist, artist_answer
+from tests.page_harness import PageTestCase, album, artist, artist_answer, playing, track
 
 from applemusic.backend.errors import EngineError
 
@@ -23,6 +23,57 @@ class DetailPageTest(PageTestCase):
 
     def rows(self, page):
         return page.list_view.get_model().get_n_items()
+
+    def bound_row(self, page, track_id):
+        """The bound list item showing the track with track_id."""
+        return next(item for item in page._bound if item.get_item().id == track_id)
+
+    def marked(self, page):
+        """The ids of the tracks whose bound rows are marked as playing."""
+        return sorted(item.get_item().id for item in page._bound
+                      if item.get_child().track_row.playing)
+
+    async def test_the_track_playing_is_marked(self):
+        page = await self.push(self.page(album(1, tracks=3)))
+        self.assertTrue(await self.until(lambda: len(page._bound) == 3))
+        self.assertTrue(page.list_view.get_single_click_activate())  # a click plays
+        self.assertEqual(self.marked(page), [])
+        second = track('l.album001', 1)
+        self.app.player.track = playing(second)
+        self.assertEqual(self.marked(page), [second['id']])
+        marked = self.bound_row(page, second['id'])
+        row = marked.get_child().track_row
+        self.assertEqual(row.number_stack.get_visible_child_name(), 'playing')
+        self.assertEqual(marked.get_accessible_description(), 'Playing')
+        other = self.bound_row(page, 'l.album001.t1.0')
+        self.assertEqual(other.get_accessible_description(), '3:00')
+        # The same song played from the catalog: its row is found by its catalog id.
+        self.item.groups[0].entries.get_item(2).raw['catalogId'] = '123'
+        self.app.player.track = playing(dict(track('l.album001', 2), id='123',
+                                             catalogId='123'))
+        self.assertEqual(self.marked(page), ['l.album001.t1.2'])
+        self.assertEqual(marked.get_accessible_description(), '3:00')
+        # Nothing playing: no row marked.
+        self.app.player.track = None
+        self.assertEqual(self.marked(page), [])
+        self.assertEqual(self.bound_row(page, 'l.album001.t1.2').get_accessible_description(),
+                         '3:00')
+
+    async def test_the_mark_catches_up_when_shown_again(self):
+        from applemusic.library import Item
+        from applemusic.pages.detail import DetailPage
+
+        item = Item(album(1, tracks=3))
+        page = await self.show_root(DetailPage(self.library, find=lambda: item, root=True,
+                                               title='Invented Root'))
+        self.assertTrue(await self.until(lambda: len(page._bound) == 3))
+        self.window.navigation_view.replace([self.window.root_page])  # hidden
+        self.assertTrue(await self.until(lambda: not page.get_mapped()))
+        self.app.player.track = playing(track('l.album001', 0))
+        self.assertEqual(self.marked(page), [])  # not followed while hidden
+        self.window.navigation_view.replace([page])
+        self.assertTrue(await self.until(page.get_mapped))
+        self.assertEqual(self.marked(page), ['l.album001.t1.0'])
 
     def test_should_fetch(self):
         from applemusic.library import Item

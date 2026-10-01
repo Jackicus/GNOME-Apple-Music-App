@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from tests.gtk import SCHEMA_ID, pump, requires_gtk
-from tests.page_harness import artist_answer
+from tests.page_harness import Player, artist_answer
 
 from gi.repository import Gio, GObject
 
@@ -187,6 +187,7 @@ def _classes():
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.set_default()  # the pages' app, whichever application another test made first
             self.engine = Engine()
+            self.player = Player()  # the pages follow its item while shown
             self.library_sync = LibrarySync()
             self.settings = Gio.Settings.new(SCHEMA_ID)
             self.demo = False
@@ -640,6 +641,20 @@ class HandlerTest(WidgetTestCase):
         page = page.weak_ref()
         page = _again(page)
         self.assertTrue(keys.emit('key-pressed', Gdk.KEY_Tab, 0, Gdk.ModifierType(0)))
+
+    async def test_detail_page_follows_the_player(self):
+        from applemusic.library import Item
+        from applemusic.pages.detail import DetailPage
+        from applemusic.player import NowPlaying
+        from applemusic.widgets.track_row import TrackRow
+
+        item = Item(_album(4, tracks=3))
+        page = await self.shown(DetailPage(self.library, item), TrackRow)
+        self.assertTrue(await self.until(lambda: len(page._bound) == 3))
+        self.addCleanup(setattr, self.app.player, 'track', None)
+        self.app.player.track = NowPlaying(_track('l.album004', 1))
+        self.assertEqual([list_item.get_item().id for list_item in page._bound
+                          if list_item.get_child().track_row.playing], ['l.album004.t1'])
 
     def signed_in(self):
         """The account signed in (the engine-down pages offer Start Engine, not Sign In)."""

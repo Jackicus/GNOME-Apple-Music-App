@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """The Search page over the stand-in engine (tests/page_harness.py): stale Apple Music answers
-never take over, Your Library follows the library's state, and the status pages offer Your
-Library."""
+never take over, Your Library follows the library's state (and marks the song playing), and
+the status pages offer Your Library."""
 
 import asyncio
 import unittest
 
-from tests.page_harness import PageTestCase, album
+from tests.page_harness import PageTestCase, album, playing, track
 
 from applemusic.backend.errors import EngineError
 
@@ -137,6 +137,25 @@ class SearchPageTest(PageTestCase):
             lambda: self.window.get_focus() is not None
             and self.window.get_focus().is_ancestor(page.search_entry)))
 
+    async def test_your_library_marks_the_song_playing(self):
+        from applemusic.library import Track
+
+        page = await self.search_page()
+        self.assertTrue(page.songs_list.get_single_click_activate())  # a click plays
+        songs = [track('l.album001', n) for n in range(3)]
+        self.library.songs_ready = True
+        self.library.songs.splice(0, 0, [Track(song) for song in songs])
+        page.set_mode('library')
+        self.type(page, 'song')
+        self.assertTrue(await self.until(lambda: len(page._bound_songs) == 3))
+        self.app.player.track = playing(songs[1])
+        rows = {item.get_item().id: item for item in page._bound_songs}
+        self.assertEqual([song_id for song_id, item in rows.items()
+                          if item.get_child().playing], [songs[1]['id']])
+        self.assertEqual(rows[songs[1]['id']].get_accessible_description(), 'Playing')
+        self.assertEqual(rows[songs[0]['id']].get_accessible_description(), '3:00')
+        self.app.player.track = None
+        self.assertFalse(any(item.get_child().playing for item in page._bound_songs))
 
     async def test_a_dropped_page_is_freed(self):
         # Sign-out drops the page (window.forget_account_pages()).

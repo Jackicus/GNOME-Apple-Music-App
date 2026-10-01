@@ -34,7 +34,7 @@ from ..widgets import context_menu, track_links
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.engine_status import EngineStatus
 from ..widgets.labels import track_label
-from ..widgets.track_row import TrackRow, TrackTableHeader
+from ..widgets.track_row import PlayingMark, TrackRow, TrackTableHeader
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
 from . import app, show_notes
 
@@ -100,9 +100,9 @@ class _Row(Gtk.Box):
             self.append(hero)
         self.track_row.set_visible(False)
 
-    def show_track(self, track, album_artist, table=False):
+    def show_track(self, track, album_artist, table=False, playing=False):
         self.track_row.set_visible(True)
-        self.track_row.bind(track, album_artist, table)
+        self.track_row.bind(track, album_artist, table, playing)
 
     def clear(self, hero):
         if hero.get_parent() is self:
@@ -125,7 +125,10 @@ class DetailPage(Adw.NavigationPage):
     `groups-changed` (the tracks), and do_map catches up with what changed while it was
     hidden. An Item that came without its tracks has them fetched once (should_fetch());
     the fetch is cancelled when the page is hidden (do_hidden), and asked again when it
-    shows.
+    shows. The Player is followed the same way (`notify::track`, while shown): the rows of
+    the track playing are marked (TrackRow's play icon and bold title, "Playing" as the
+    row's accessible description), every bound row again as the item changes. A click on a
+    track plays its group from it, as Enter does (the list's single-click-activate).
 
     The hero: an album's artist links to their page when the library has them
     (resolve_artist()) or the catalog can say (links_catalog_artist()), opened as Go to Artist
@@ -238,10 +241,14 @@ class DetailPage(Adw.NavigationPage):
         connect_weak(keys, 'key-pressed', self._on_list_key_pressed)
         self.list_view.add_controller(keys)
 
-        # The library, and the Item shown (_watch), followed while the page is shown.
+        # The library, the Item shown (_watch) and the Player's item, followed while the
+        # page is shown (a test's stand-in application may have no player).
         self._handlers = MappedHandlers(self)
         self._handlers.add(library, 'notify::state', self._follow)
         self._handlers.add(library, 'changed', self._follow)
+        self._playing = PlayingMark(getattr(app(), 'player', None))
+        if self._playing.player is not None:
+            self._handlers.add(self._playing.player, 'notify::track', self._on_track_changed)
 
         self._hero_section = Gio.ListStore(item_type=GObject.Object)
         self._hero_section.append(_Hero())
@@ -254,6 +261,7 @@ class DetailPage(Adw.NavigationPage):
     def do_map(self):
         Adw.NavigationPage.do_map(self)
         self._follow()  # what a reload changed while the page was hidden
+        self._update_playing()  # and the item playing now
         self._engine_status.watch()
         if should_fetch(self.item, self._fetched):
             self._fetch(self.item)  # a fetch cancelled when the page was hidden
@@ -501,13 +509,28 @@ class DetailPage(Adw.NavigationPage):
             list_item.set_accessible_description('')
 
     def _show_track(self, list_item, track):
-        """A track's row, in a table or not, and its name: the artist when the row shows one
-        (not an album's own: TrackRow's rule), the album too in a table."""
+        """A track's row, in a table or not, marked when its track is the one playing, and
+        its name: the artist when the row shows one (not an album's own: TrackRow's rule),
+        the album too in a table."""
         table = self._is_table()
-        list_item.get_child().show_track(track, self._album_artist, table)
+        playing = self._playing.matches(track)
+        list_item.get_child().show_track(track, self._album_artist, table, playing)
         show_artist = self._album_artist is None or track.artist != self._album_artist
         list_item.set_accessible_label(track_label(track, show_artist, show_album=table))
-        list_item.set_accessible_description(track.duration_label or '')
+        list_item.set_accessible_description(self._playing.description(track, playing))
+
+    def _on_track_changed(self, _player, _pspec):
+        self._update_playing()
+
+    def _update_playing(self):
+        """Mark the rows of the track playing now, and no other, when the item changed."""
+        if not self._playing.update():
+            return
+        for list_item in self._bound:
+            track = list_item.get_item()
+            playing = self._playing.matches(track)
+            list_item.get_child().track_row.set_playing(playing)
+            list_item.set_accessible_description(self._playing.description(track, playing))
 
     def _last_button(self):
         """The hero's last button that takes the focus: More Options, Shuffle or Play."""

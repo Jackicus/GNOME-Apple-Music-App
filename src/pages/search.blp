@@ -317,9 +317,10 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                   }
 
                   // A short list in the page's own scrolled window: at most SONG_LIMIT rows,
-                  // so the list need not recycle (it cannot, inside a box).
+                  // so the list need not recycle (it cannot, inside a box). A click plays a
+                  // song, as GNOME Music plays one (docs/decisions.md).
                   ListView songs_list {
-                    single-click-activate: false;
+                    single-click-activate: true;
                     tab-behavior: item;
 
                     styles [

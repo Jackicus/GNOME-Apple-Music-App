@@ -63,6 +63,16 @@ changes, change it here, with the date. The plan they came from is in
   status line under the user's name, and the album is the cover's caption, which Discord
   prints as the card's third line. The cover is Apple's own public URL, which Discord fetches;
   nothing is uploaded anywhere.
+- **A click plays a song** (2026-10-01). A track in an album's or a playlist's list, the Songs
+  table and Search's songs plays on a single click (`single-click-activate`), as GNOME Music
+  plays one: the first click of a double click selected nothing anyone used, and a row that
+  wants a second click is a file manager's. Enter plays the focused row as before; the
+  context menu, a drag to a sidebar playlist and a row's artist and album links
+  (`src/widgets/track_links.py`) claim their presses before the row sees them, so they are
+  unchanged. The Songs table keeps no selection any more (a `Gtk.NoSelection`, as the lists
+  have): GTK selects the hovered row of a single-click list, which would have followed the
+  pointer around. The track playing is marked in every row that shows it, as Up Next marks
+  its entry (#241).
 
 ## Engine
 

@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """AppleMusicTrackRow: a track of an album or playlist, as a detail page's list shows it, and
-the header over a playlist's table (TrackTableHeader)."""
+the header over a playlist's table (TrackTableHeader); is_playing(), how the pages tell the
+row of the track playing."""
 
 from gettext import gettext as _
 
@@ -14,6 +15,73 @@ from .track_links import TrackLink
 # The thumbnail's edge in a playlist's rows (track_row.blp's cover), which the header's first
 # column leaves room for.
 COVER_SIZE = 40
+
+_words = {}
+
+
+def playing_ids(now_playing):
+    """What marks the rows of the item playing (player.track, a NowPlaying): its library id
+    and its catalog id, each '' when it has none; None for nothing playing. A page computes
+    it once per track change and compares it in every bind (is_playing())."""
+    if now_playing is None:
+        return None
+    return now_playing.id or '', now_playing.catalog_id or ''
+
+
+def is_playing(track, playing):
+    """Whether `track` (a library Track) is the item playing, `playing` as playing_ids() gives
+    it: the same library id (a library song MusicKit plays by its own id), or the same catalog
+    id (the same song played from the catalog, or in another album or playlist)."""
+    if playing is None:
+        return False
+    playing_id, catalog_id = playing
+    if playing_id and track.id == playing_id:
+        return True
+    return bool(catalog_id) and track.catalog_id == catalog_id
+
+
+def playing_description():
+    """"Playing": a row's accessible description while its track is the one playing (the
+    play icon it shows is decoration). Looked up once: rows are bound by the thousand."""
+    if not _words:
+        _words['playing'] = _('Playing')
+    return _words['playing']
+
+
+class PlayingMark:
+    """What a page keeps to mark the rows of the track playing: the Player's item, as
+    playing_ids() reduces it, read again by update() (on the Player's `notify::track`, and
+    as the page maps) and compared in every bind by matches(). `player` may be None (a
+    test's stand-in application without one): nothing is playing then.
+
+        self._playing = PlayingMark(getattr(app(), 'player', None))
+        row.bind(track, playing=self._playing.matches(track))
+        list_item.set_accessible_description(self._playing.description(track, playing))
+        if self._playing.update():        # the item changed: mark the bound rows again
+    """
+
+    def __init__(self, player):
+        self.player = player
+        self.ids = None  # playing_ids() of the item playing, as last read
+
+    def update(self):
+        """Read the item playing again: True when it is not the one read before, so that a
+        page marks its bound rows again only then."""
+        ids = playing_ids(self.player.track) if self.player is not None else None
+        if ids == self.ids:
+            return False
+        self.ids = ids
+        return True
+
+    def matches(self, track):
+        """Whether track is the item playing, as last read."""
+        return is_playing(track, self.ids)
+
+    @staticmethod
+    def description(track, playing):
+        """A row's accessible description: "Playing" while its track is the one playing,
+        else the track's duration."""
+        return playing_description() if playing else (track.duration_label or '')
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/track_row.ui')
@@ -28,14 +96,22 @@ class TrackRow(Gtk.Box):
     drawn only while the row is on screen (Cover). Activating the row is the list's business:
     the page plays the track's group from the track (window.play_request). The Track bound is
     the row's `context_item`: the view's context menu and drag (widgets/context_menu.py).
+
+    The row of the track playing (`playing`, set by bind() or set_playing() as the page
+    follows the Player) shows a play icon in the number's slot, or over the thumbnail, and
+    its title bold (style.css's `.playing`): nothing that changes its size.
     """
 
     __gtype_name__ = 'AppleMusicTrackRow'
 
     _track = None
+    _playing = False
 
+    number_stack = Gtk.Template.Child()
     number_label = Gtk.Template.Child()
+    cover_slot = Gtk.Template.Child()
     cover = Gtk.Template.Child()
+    playing_scrim = Gtk.Template.Child()
     columns = Gtk.Template.Child()
     title_label = Gtk.Template.Child()
     explicit_badge = Gtk.Template.Child()
@@ -56,16 +132,22 @@ class TrackRow(Gtk.Box):
         """The Track shown, for its context menu and its drag (widgets/context_menu.py)."""
         return self._track
 
-    def bind(self, track, album_artist=None, table=False):
+    @property
+    def playing(self):
+        """Whether the row is marked as the track playing."""
+        return self._playing
+
+    def bind(self, track, album_artist=None, table=False, playing=False):
         """Show track. album_artist given: an album's row, numbered, with the artist shown only
         when it is not the album's; None: a playlist's row, with thumbnail and artist, under
-        the title, or with `table`, in a column of its own beside the album's."""
+        the title, or with `table`, in a column of its own beside the album's. `playing`:
+        the track is the one playing (is_playing())."""
         self._track = track
         album = album_artist is not None
         table = table and not album
         self._set_table(table)
-        self.number_label.set_visible(album)
-        self.cover.set_visible(not album)
+        self.number_stack.set_visible(album)
+        self.cover_slot.set_visible(not album)
         if album:
             self.number_label.set_text(str(track.track_number) if track.track_number else '')
             show_artist = bool(track.artist) and track.artist != album_artist
@@ -80,6 +162,21 @@ class TrackRow(Gtk.Box):
             self.artist_link.show(track)
             self.album_link.show(track)
         self.duration_label.set_text(track.duration_label)
+        self.set_playing(playing)
+
+    def set_playing(self, playing):
+        """Mark the row as the track playing, or not (only when it changes: a style change
+        has the title measured again)."""
+        playing = bool(playing)
+        if playing == self._playing:
+            return
+        self._playing = playing
+        self.number_stack.set_visible_child_name('playing' if playing else 'number')
+        self.playing_scrim.set_opacity(1 if playing else 0)
+        if playing:
+            self.add_css_class('playing')
+        else:
+            self.remove_css_class('playing')
 
     def _set_table(self, table):
         """The table's columns, or the list's title and artist (only when it changes: a row

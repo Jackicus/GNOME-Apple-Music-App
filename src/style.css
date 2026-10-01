@@ -88,6 +88,19 @@ label.track-link:hover {
   font-weight: bold;
 }
 
+/* The row of the track playing (widgets/track_row.py and song_title.py, marked by the album,
+   playlist, Songs and Search pages as the Player's item changes): its title bold, as Up
+   Next's is, and a play icon in place of its number, or over its thumbnail on libadwaita's
+   translucent on-screen-display wash (`osd`, which reads on any artwork) with the
+   thumbnail's corners. */
+.playing .track-title {
+  font-weight: bold;
+}
+
+.playing-scrim {
+  border-radius: 4px;
+}
+
 /* Artwork over its placeholder (widgets/cover.blp): rounded by size. */
 .cover > .card,
 .cover > picture {

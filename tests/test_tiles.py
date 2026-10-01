@@ -129,7 +129,7 @@ class CoverTest(WidgetTestCase):
         from applemusic.widgets.track_row import TrackRow
 
         row = self.show(TrackRow())
-        row.cover.set_visible(True)
+        row.cover_slot.set_visible(True)  # a playlist's row: the thumbnail's slot shows
         row.cover.set_paths('/a/thumb')
         pump()
         self.assertEqual(self.loader.requests, [('/a/thumb', 40 * self.scale(row))])
@@ -145,7 +145,135 @@ class CoverTest(WidgetTestCase):
         self.assert_freed(ref)
 
 
+class PlayingMarkTest(WidgetTestCase):
+    """How the pages tell the rows of the track playing (widgets/track_row.py)."""
+
+    def test_a_track_matches_the_item_playing_by_either_id(self):
+        from tests.page_harness import Player, playing
+
+        from applemusic.library import Track
+        from applemusic.widgets.track_row import PlayingMark, is_playing, playing_ids
+
+        player = Player()
+        mark = PlayingMark(player)
+        library_song = Track({'id': 'i.1', 'catalogId': 100, 'durationLabel': '3:00'})
+        another = Track({'id': 'i.2', 'catalogId': None})
+        self.assertFalse(mark.update())  # nothing playing, as before
+        self.assertFalse(mark.matches(library_song))
+        player.track = playing({'id': 'i.1', 'catalogId': '100'})  # played from the library
+        self.assertTrue(mark.update())
+        self.assertFalse(mark.update())  # the same item read again
+        self.assertTrue(mark.matches(library_song))
+        self.assertFalse(mark.matches(another))
+        player.track = playing({'id': '100', 'catalogId': '100'})  # played from the catalog
+        self.assertTrue(mark.update())
+        self.assertTrue(mark.matches(library_song))
+        self.assertFalse(mark.matches(another))
+        player.track = playing({'id': '', 'catalogId': None})  # a station's segment: no ids
+        self.assertTrue(mark.update())
+        self.assertFalse(mark.matches(another))  # an empty id never matches
+        self.assertEqual(mark.description(library_song, True), 'Playing')
+        self.assertEqual(mark.description(library_song, False), '3:00')
+        self.assertEqual(mark.description(another, False), '')
+        player.track = None
+        self.assertTrue(mark.update())
+        self.assertFalse(mark.matches(library_song))
+        self.assertFalse(PlayingMark(None).update())  # an application without a player
+        self.assertIsNone(playing_ids(None))
+        self.assertFalse(is_playing(library_song, None))
+
+
+class TrackRowTest(WidgetTestCase):
+    """The mark of the track playing changes nothing of a recycled row's size."""
+
+    def frames(self, widget, count=2):
+        """Let `count` frames of widget's clock pass: a style change is laid out on the
+        next one."""
+        seen = []
+        widget.add_tick_callback(lambda *_: seen.append(True) or len(seen) < count)
+        self.assertTrue(wait_for(lambda: len(seen) >= count))
+
+    def sizes(self, row):
+        placed, title = row.title_label.compute_bounds(row)
+        self.assertTrue(placed)
+        return (row.get_width(), row.get_height(), row.number_stack.get_width(),
+                row.number_stack.get_height(), row.cover.get_width(), row.cover.get_height(),
+                title.get_x(), title.get_y())
+
+    def test_an_album_row_shows_the_mark_in_the_numbers_slot(self):
+        from applemusic.library import Track
+        from applemusic.widgets.track_row import TrackRow
+
+        row = TrackRow(width_request=400)
+        row.bind(Track({'id': 'i.1', 'title': 'Invented Song', 'trackNumber': 3,
+                        'durationLabel': '3:00'}), album_artist='Invented Artist')
+        self.show(row)
+        self.assertTrue(wait_for(lambda: row.title_label.get_width() > 0))
+        self.frames(row)
+        self.assertFalse(row.playing)
+        self.assertEqual(row.number_stack.get_visible_child_name(), 'number')
+        before = self.sizes(row)
+        row.set_playing(True)
+        self.frames(row)
+        self.assertTrue(row.playing)
+        self.assertTrue(row.has_css_class('playing'))
+        self.assertEqual(row.number_stack.get_visible_child_name(), 'playing')
+        self.assertEqual(self.sizes(row), before)
+        # Bound again, to a track that is not playing, the mark goes.
+        row.bind(Track({'id': 'i.2', 'title': 'Another Song', 'trackNumber': 4,
+                        'durationLabel': '3:00'}), album_artist='Invented Artist')
+        self.assertFalse(row.playing)
+        self.assertFalse(row.has_css_class('playing'))
+        self.assertEqual(row.number_stack.get_visible_child_name(), 'number')
+
+    def test_a_playlist_row_shows_the_mark_over_its_thumbnail(self):
+        from applemusic.library import Track
+        from applemusic.widgets.track_row import TrackRow
+
+        row = TrackRow(width_request=400)
+        row.bind(Track({'id': 'i.1', 'title': 'Invented Song', 'thumb': '/a/thumb',
+                        'durationLabel': '3:00'}), playing=True)
+        self.show(row)
+        self.assertTrue(wait_for(lambda: row.title_label.get_width() > 0))
+        self.frames(row)
+        self.assertTrue(row.playing)
+        self.assertEqual(row.playing_scrim.get_opacity(), 1)
+        self.assertEqual((row.playing_scrim.get_width(), row.playing_scrim.get_height()),
+                         (40, 40))  # the whole thumbnail
+        before = self.sizes(row)
+        row.set_playing(False)
+        self.frames(row)
+        self.assertEqual(row.playing_scrim.get_opacity(), 0)
+        self.assertEqual(self.sizes(row), before)
+
+
 class SongTitleTest(WidgetTestCase):
+    def test_the_mark_keeps_the_cells_size(self):
+        from applemusic.library import Track
+        from applemusic.widgets.song_title import SongTitle
+
+        cell = SongTitle(width_request=400)
+        cell.bind(Track({'id': 'i.1', 'title': 'Invented Song', 'thumb': '/a/thumb'}))
+        self.show(cell)
+        self.assertTrue(wait_for(lambda: cell.label.get_width() > 0))
+        TrackRowTest.frames(self, cell)
+        self.assertFalse(cell.playing)
+        self.assertEqual(cell.playing_scrim.get_opacity(), 0)
+        before = (cell.get_width(), cell.get_height(), cell.cover.get_width(),
+                  cell.label.compute_bounds(cell)[1].get_x())
+        cell.set_playing(True)
+        TrackRowTest.frames(self, cell)
+        self.assertTrue(cell.playing)
+        self.assertTrue(cell.has_css_class('playing'))
+        self.assertEqual(cell.playing_scrim.get_opacity(), 1)
+        self.assertEqual((cell.playing_scrim.get_width(), cell.playing_scrim.get_height()),
+                         (32, 32))
+        self.assertEqual((cell.get_width(), cell.get_height(), cell.cover.get_width(),
+                          cell.label.compute_bounds(cell)[1].get_x()), before)
+        cell.bind(Track({'id': 'i.2', 'title': 'Another Song', 'thumb': '/a/thumb'}))
+        self.assertFalse(cell.playing)
+        self.assertEqual(cell.playing_scrim.get_opacity(), 0)
+
     def test_the_thumbnail_keeps_its_size_and_the_title_follows_it(self):
         from applemusic.library import Track
         from applemusic.widgets.song_title import SongTitle

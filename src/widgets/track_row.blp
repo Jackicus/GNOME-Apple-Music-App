@@ -11,29 +11,72 @@ template $AppleMusicTrackRow: Box {
   spacing: 12;
 
   // Albums: the track number, in a column as wide as two digits, and three when there is
-  // room (a box set's hundredth track).
-  Inscription number_label {
-    min-chars: 2;
-    nat-chars: 3;
-    xalign: 1;
+  // room (a box set's hundredth track); a play icon in its place while the track is the one
+  // playing. Both pages stay visible, so the stack keeps one size whichever it shows.
+  Stack number_stack {
     valign: center;
     visible: false;
 
-    styles [
-      "numeric",
-      "dimmed",
-    ]
+    StackPage {
+      name: "number";
+
+      child: Inscription number_label {
+        min-chars: 2;
+        nat-chars: 3;
+        xalign: 1;
+
+        styles [
+          "numeric",
+          "dimmed",
+        ]
+      };
+    }
+
+    StackPage {
+      name: "playing";
+
+      child: Image playing_icon {
+        icon-name: "media-playback-start-symbolic";
+        accessible-role: presentation;
+
+        styles [
+          "accent",
+        ]
+      };
+    }
   }
 
-  // Playlists: the track's own thumbnail.
-  $AppleMusicCover cover {
-    size: 40;
+  // Playlists: the track's own thumbnail, with a play icon laid over it while the track is
+  // the one playing (shown by opacity: nothing in a recycled row changes size).
+  Overlay cover_slot {
     valign: center;
     visible: false;
 
-    styles [
-      "small",
-    ]
+    child: $AppleMusicCover cover {
+      size: 40;
+
+      styles [
+        "small",
+      ]
+    };
+
+    [overlay]
+    Box playing_scrim {
+      opacity: 0;
+      can-target: false;
+      accessible-role: presentation;
+
+      styles [
+        "osd",
+        "playing-scrim",
+      ]
+
+      Image {
+        icon-name: "media-playback-start-symbolic";
+        hexpand: true;
+        accessible-role: presentation;
+      }
+    }
   }
 
   // The title (and, in a list, the artist under it); in a table the artist and the album
@@ -55,6 +98,10 @@ template $AppleMusicTrackRow: Box {
           xalign: 0;
           ellipsize: end;
           single-line-mode: true;
+
+          styles [
+            "track-title",
+          ]
         }
 
         Label explicit_badge {
