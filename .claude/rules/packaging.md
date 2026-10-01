@@ -23,7 +23,9 @@ paths:
   copied in by src/meson.build, which the About dialog is built from); `po/POTFILES.in`
   (every `.py` and `.blp` with `_()`, `ngettext` or `C_`).
 - `-Dprofile=development` gives the `.Devel` app ID (desktop file, icons, metainfo, MPRIS name),
-  the version with the git revision, and a `DEMO_DIR` pointing at the source tree's build/demo.
+  the name with " (Development)" after it (`NAME_SUFFIX` in the desktop file and the metainfo;
+  the Flatpak manifest adds none), the version with the git revision, and a `DEMO_DIR`
+  pointing at the source tree's build/demo.
   A release build hides `--demo` from `--help`, and there it needs `APPLE_MUSIC_CACHE`.
   Both profiles install the same GSettings schema ID and resource path.
 - The launcher (`src/music-sleeve.in`) calls `i18n.setup(localedir)` before anything is

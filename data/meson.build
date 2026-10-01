@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
+# The development build is "Music Sleeve (Development)" in the desktop file and the metainfo,
+# as GNOME's development builds are, so it is told from a release install beside it. The
+# Flatpak manifest adds no suffix of its own.
+name_suffix = get_option('profile') == 'development' ? ' (Development)' : ''
+data_configuration = {'APP_ID': application_id, 'NAME_SUFFIX': name_suffix}
+
 desktop_file = i18n.merge_file(
   input: configure_file(
     input: base_id + '.desktop.in',
     output: application_id + '.desktop.in',
-    configuration: {'APP_ID': application_id},
+    configuration: data_configuration,
   ),
   output: application_id + '.desktop',
   type: 'desktop',
@@ -18,7 +24,7 @@ metainfo_file = i18n.merge_file(
   input: configure_file(
     input: base_id + '.metainfo.xml.in',
     output: application_id + '.metainfo.xml.in',
-    configuration: {'APP_ID': application_id},
+    configuration: data_configuration,
   ),
   output: application_id + '.metainfo.xml',
   po_dir: '../po',

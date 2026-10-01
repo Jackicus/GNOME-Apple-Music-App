@@ -27,9 +27,6 @@
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/music-note-symbolic.svg">icons/music-note-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/playlist-symbolic.svg">icons/playlist-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/broadcast-symbolic.svg">icons/broadcast-symbolic.svg</file>
-    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/media-playlist-shuffle-symbolic.svg">icons/media-playlist-shuffle-symbolic.svg</file>
-    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/media-playlist-repeat-symbolic.svg">icons/media-playlist-repeat-symbolic.svg</file>
-    <file preprocess="xml-stripblanks" alias="icons/scalable/actions/media-playlist-repeat-song-symbolic.svg">icons/media-playlist-repeat-song-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/heart-outline-symbolic.svg">icons/heart-outline-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/heart-filled-symbolic.svg">icons/heart-filled-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="icons/scalable/actions/transport-play-symbolic.svg">icons/transport-play-symbolic.svg</file>

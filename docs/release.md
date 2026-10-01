@@ -102,8 +102,9 @@ a text chunk before committing: `grep -c -a -E 'tEXt|iTXt|zTXt' data/screenshots
 `build-aux/flatpak/io.github.jackicus.MusicSleeve.Devel.json` builds the development profile
 for GNOME Builder or flatpak-builder. It talks to `org.freedesktop.Flatpak` so the app can run
 the host's Chrome, and has no audio socket, because the host's Chrome makes the sound; the MPRIS
-name, `org.mpris.MediaPlayer2.<app id>`, is one Flatpak lets an app own without asking. Its
-desktop entry's name ends in " (Development)". In the sandbox, `chrome.find_chrome()` asks the host for the
+name, `org.mpris.MediaPlayer2.<app id>`, is one Flatpak lets an app own without asking. The
+" (Development)" after its name comes from the development profile (`data/meson.build`), so
+the manifest adds none of its own. In the sandbox, `chrome.find_chrome()` asks the host for the
 binary through `flatpak-spawn --host`, and `chrome_args()` prefixes
 `flatpak-spawn --host --watch-bus --forward-fd=3 --forward-fd=4`, which passes the DevTools pipe
 on to the host's Chrome. The pid the engine holds is flatpak-spawn's, which relays SIGTERM to
