@@ -3,7 +3,7 @@
 
 """The Songs page (pages/songs.py): what it shows while the songs are on their way, and a
 sync that changes the songs keeps the table's place; the Sort By menu sorts as a header does;
-a row plays its own song.
+a row plays its own song, on a click; the row of the song playing is marked.
 Over an invented library.json in a temporary cache (tests/page_harness.py's window)."""
 
 import json
@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.page_harness import PageTestCase, track
+from tests.page_harness import PageTestCase, playing, track
 
 
 def library_json(cache, tracks):
@@ -93,6 +93,8 @@ class SongsPageTest(PageTestCase):
         self.assertEqual(page.count_label.get_label(), '1 of 12 songs')
 
     async def test_a_row_plays_its_album_from_its_own_song(self):
+        from gi.repository import Gtk
+
         page = await self.songs_page(5)
         page.activate_action('songs.sort-order', _variant('descending'))
         page.on_activate(page.column_view, 1)
@@ -100,6 +102,24 @@ class SongsPageTest(PageTestCase):
         track = page._rows.get_item(1)
         self.assertEqual(window.played[-1], (track.play, track.index, None))
         self.assertEqual(window.started_with[-1], track.id)
+        # On a click; with no selection, which GTK would move to the hovered row.
+        self.assertTrue(page.column_view.get_single_click_activate())
+        self.assertIsInstance(page.column_view.get_model(), Gtk.NoSelection)
+
+    async def test_the_song_playing_is_marked(self):
+        page = await self.songs_page(5)
+        self.assertTrue(await self.until(lambda: len(page._title_cells) == 5))
+        cells = {cell.get_item().id: cell.get_child() for cell in page._title_cells}
+        rows = {row.get_item().id: row for row in page._row_items}
+        self.assertEqual(len(rows), 5)
+        self.app.player.track = playing(track('l.album001', 2))
+        self.assertEqual([song_id for song_id, cell in cells.items() if cell.playing],
+                         ['l.album001.t1.2'])
+        self.assertEqual(rows['l.album001.t1.2'].get_accessible_description(), 'Playing')
+        self.assertEqual(rows['l.album001.t1.1'].get_accessible_description(), '3:00')
+        self.app.player.track = None
+        self.assertFalse(any(cell.playing for cell in cells.values()))
+        self.assertEqual(rows['l.album001.t1.2'].get_accessible_description(), '3:00')
 
 
 def _variant(text):

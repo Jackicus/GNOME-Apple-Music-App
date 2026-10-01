@@ -28,8 +28,22 @@ from tests.gtk import SCHEMA_ID, pump, requires_gtk
 from gi.repository import Gio, GObject
 
 from applemusic.backend.errors import EngineError
+from applemusic.player import NowPlaying
 
 _stand_ins = {}
+
+
+class Player(GObject.Object):
+    """What the pages follow of app.player: the item playing (a NowPlaying, or None), which a
+    test sets (`playing(track)` makes one from a track's dict)."""
+
+    track = GObject.Property(type=NowPlaying, default=None)
+
+
+def playing(data):
+    """A NowPlaying for a track dict (page_harness.track()), as the Player reports the
+    item: the same keys as the bridge's Track shape (id, catalogId, title…)."""
+    return NowPlaying(dict(data))
 
 
 def classes():
@@ -104,6 +118,7 @@ def classes():
             super().__init__(application_id='io.github.jackicus.MusicSleeve.PageTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.engine = Engine()
+            self.player = Player()
             self.settings = Gio.Settings.new(SCHEMA_ID)
             self.demo = False
             self.tasks = []
@@ -113,6 +128,7 @@ def classes():
 
         def reset(self):
             self.engine = Engine()
+            self.player.track = None
             self.demo = False
             self.tasks = []
             self.actions = []

@@ -61,12 +61,14 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
         StackPage {
           name: "item";
 
-          // The hero and every track in one list, the hero its first row (see detail.py).
+          // The hero and every track in one list, the hero its first row (see detail.py). A
+          // click plays a track, as GNOME Music plays one (docs/decisions.md): the links,
+          // the context menu and a drag claim their presses before the row sees them.
           child: ScrolledWindow scrolled_window {
             hscrollbar-policy: never;
 
             child: ListView list_view {
-              single-click-activate: false;
+              single-click-activate: true;
               tab-behavior: item;
 
               styles [

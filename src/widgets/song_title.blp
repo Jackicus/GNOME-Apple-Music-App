@@ -7,14 +7,36 @@ template $AppleMusicSongTitle: Box {
   spacing: 12;
 
   // The thumbnail. A cover keeps to its own size (it does not expand), so the title starts
-  // right after it whatever the column's width.
-  $AppleMusicCover cover {
-    size: 32;
+  // right after it whatever the column's width. The track playing has a play icon laid over
+  // it (shown by opacity: nothing in a recycled row changes size).
+  Overlay {
     valign: center;
 
-    styles [
-      "small",
-    ]
+    child: $AppleMusicCover cover {
+      size: 32;
+
+      styles [
+        "small",
+      ]
+    };
+
+    [overlay]
+    Box playing_scrim {
+      opacity: 0;
+      can-target: false;
+      accessible-role: presentation;
+
+      styles [
+        "osd",
+        "playing-scrim",
+      ]
+
+      Image {
+        icon-name: "media-playback-start-symbolic";
+        hexpand: true;
+        accessible-role: presentation;
+      }
+    }
   }
 
   Box {
@@ -26,6 +48,10 @@ template $AppleMusicSongTitle: Box {
       xalign: 0;
       ellipsize: end;
       single-line-mode: true;
+
+      styles [
+        "track-title",
+      ]
     }
 
     Label explicit_badge {

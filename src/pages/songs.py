@@ -29,10 +29,17 @@ Clicking a column header, or choosing in the header's Sort By menu (the keyboard
 headers take no focus), re-sorts; typing in the header's entry refilters (after the entry's own
 short delay), and the new count is announced. A sync that changes the songs brings the rows up
 to date with the fewest splices (library.apply_diff), so the table keeps its scroll position;
-only a new sort or filter starts it again from the top. Activating a row (Enter, double-click)
-asks the window to play it; a right click, a long press or the Menu key opens its context
-menu, and a row drags onto a sidebar playlist (widgets/context_menu.py). The artist and the
-album are links to their pages (widgets/track_links.py).
+only a new sort or filter starts it again from the top. Activating a row (Enter, a click: the
+view's single-click-activate, docs/decisions.md) asks the window to play it; a right click, a
+long press or the Menu key opens its context menu, and a row drags onto a sidebar playlist
+(widgets/context_menu.py). The artist and the album are links to their pages
+(widgets/track_links.py). The table keeps no selection (a Gtk.NoSelection): GTK selects the
+hovered row of a single-click list, which would have followed the pointer around.
+
+The row of the song playing is marked (SongTitle's play icon and bold title, "Playing" as
+the row's accessible description): the page follows the Player's `notify::track` while it is
+shown, through the title cells and the rows it has bound (widgets/track_row.py's
+PlayingMark), and catches up as it maps.
 """
 
 from gettext import gettext as _
@@ -45,6 +52,7 @@ from ..widgets import context_menu, track_links
 from ..widgets.labels import track_label
 from ..widgets.song_title import SongTitle
 from ..widgets.track_links import TrackLink
+from ..widgets.track_row import PlayingMark
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak
 from . import app, mark_bound
 
@@ -103,6 +111,8 @@ class SongsPage(Adw.NavigationPage):
         self._prepare_task = None  # the SongOrder being prepared
         self._quiet = False  # the page is changing the sort itself
         self._bound = False  # a row has been bound (the startup timing's mark)
+        self._title_cells = set()  # the title cells bound: marked again as the item playing changes
+        self._row_items = set()  # and the rows bound (their descriptions)
 
         self.title_label.set_label(title)
         self._header_title = HeaderTitle(self.header_bar, self.title_label)  # while loading
@@ -131,14 +141,14 @@ class SongsPage(Adw.NavigationPage):
         self.time_column.set_factory(self._text_factory('duration_label', numeric=True))
 
         # Each row reads its title, artist and album to assistive technology (labels.py),
-        # the time as its description.
+        # the time (or "Playing") as its description.
         row_factory = Gtk.SignalListItemFactory()
         row_factory.connect('bind', self._bind_row)
+        row_factory.connect('unbind', self._unbind_row)
         self.column_view.set_row_factory(row_factory)
 
         self._rows = Gio.ListStore(item_type=Track)
-        self._selection = Gtk.SingleSelection(model=self._rows, autoselect=False)
-        self.column_view.set_model(self._selection)
+        self.column_view.set_model(Gtk.NoSelection(model=self._rows))
         # Every cell of a row finds the row's Track in its title cell (SongTitle.context_item).
         context_menu.attach(self.column_view, drag=True)
         track_links.attach(self.column_view)
@@ -160,11 +170,15 @@ class SongsPage(Adw.NavigationPage):
         self._handlers.add(library, 'notify::state', self._update_state)
         self._handlers.add(library, 'notify::songs-ready', self._update_state)
         self._handlers.add(library, 'notify::syncing', self._update_state)
+        # The item playing (a test's stand-in application may have no player).
+        self._playing = PlayingMark(getattr(app(), 'player', None))
+        if self._playing.player is not None:
+            self._handlers.add(self._playing.player, 'notify::track', self._on_track_changed)
         self._update_state()
 
-    # The library outlives the window, so the page listens to it only while it is shown
-    # (self._handlers), and to the songs store, which the rows must follow even while the page
-    # is hidden, while it is realized.
+    # The library and the player outlive the window, so the page listens to them only while
+    # it is shown (self._handlers), and to the songs store, which the rows must follow even
+    # while the page is hidden, while it is realized.
 
     def do_realize(self):
         Adw.NavigationPage.do_realize(self)
@@ -183,6 +197,7 @@ class SongsPage(Adw.NavigationPage):
         if not self._library.songs_ready:
             app().spawn(self._library.build_songs())
         self._update_state()
+        self._update_playing()  # the item playing now, changed or not while hidden
 
     # Order and filter.
 
@@ -384,17 +399,41 @@ class SongsPage(Adw.NavigationPage):
 
     def _bind_row(self, _factory, row):
         track = row.get_item()
+        self._row_items.add(row)
         row.set_accessible_label(track_label(track))
-        row.set_accessible_description(track.duration_label or '')
+        row.set_accessible_description(
+            self._playing.description(track, self._playing.matches(track)))
+
+    def _unbind_row(self, _factory, row):
+        self._row_items.discard(row)
 
     def _setup_title(self, _factory, cell):
         cell.set_child(SongTitle())
 
     def _bind_title(self, _factory, cell):
-        cell.get_child().bind(cell.get_item())
+        track = cell.get_item()
+        self._title_cells.add(cell)
+        cell.get_child().bind(track, self._playing.matches(track))
         if not self._bound:
             self._bound = True
             mark_bound(self)
 
     def _unbind_title(self, _factory, cell):
+        self._title_cells.discard(cell)
         cell.get_child().unbind()
+
+    # The song playing.
+
+    def _on_track_changed(self, _player, _pspec):
+        self._update_playing()
+
+    def _update_playing(self):
+        """Mark the row of the song playing now, and no other, when the item changed."""
+        if not self._playing.update():
+            return
+        for cell in self._title_cells:
+            cell.get_child().set_playing(self._playing.matches(cell.get_item()))
+        for row in self._row_items:
+            track = row.get_item()
+            row.set_accessible_description(
+                self._playing.description(track, self._playing.matches(track)))

@@ -32,7 +32,7 @@ from ..widgets.cover import Cover
 from ..widgets.engine_status import EngineStatus
 from ..widgets.shelf import ShelfColumn  # also registers $AppleMusicShelf for the template
 from ..widgets.labels import accessible_label, flow_child, track_label
-from ..widgets.track_row import TrackRow
+from ..widgets.track_row import PlayingMark, TrackRow
 from ..widgets.util import MappedHandlers, connect_weak, weak_method
 from . import app
 
@@ -199,10 +199,15 @@ class SearchPage(Adw.NavigationPage):
         self.songs_list.set_model(Gtk.NoSelection(model=self._songs_shown))
         context_menu.attach(self.songs_list, drag=True)
         context_menu.attach(self.suggestions_list)  # the top hits' rows
-        # The library outlives the window: followed only while the page is shown.
+        self._bound_songs = set()  # the song rows bound: marked again as the item playing changes
+        # The library and the player outlive the window: followed only while the page is
+        # shown (a test's stand-in application may have no player).
         self._handlers = MappedHandlers(self)
         self._handlers.add(library, 'notify::state', self._on_library_results_changed)
         self._handlers.add(library, 'notify::songs-ready', self._on_library_results_changed)
+        self._playing = PlayingMark(getattr(app(), 'player', None))
+        if self._playing.player is not None:
+            self._handlers.add(self._playing.player, 'notify::track', self._on_track_changed)
 
     @property
     def mode(self):
@@ -231,6 +236,7 @@ class SearchPage(Adw.NavigationPage):
         Adw.NavigationPage.do_map(self)
         if self._stale():
             self._refresh()
+        self._update_playing()  # the item playing now, changed or not while hidden
         self._engine_status.watch()
         if self._focus_on_map:
             self._focus_on_map = False
@@ -575,11 +581,28 @@ class SearchPage(Adw.NavigationPage):
 
     def _on_song_bind(self, _factory, list_item):
         track = list_item.get_item()
-        list_item.get_child().bind(track)
+        playing = self._playing.matches(track)
+        self._bound_songs.add(list_item)
+        list_item.get_child().bind(track, playing=playing)
         list_item.set_accessible_label(track_label(track, show_album=False))
+        list_item.set_accessible_description(self._playing.description(track, playing))
 
     def _on_song_unbind(self, _factory, list_item):
+        self._bound_songs.discard(list_item)
         list_item.get_child().unbind()
+
+    def _on_track_changed(self, _player, _pspec):
+        self._update_playing()
+
+    def _update_playing(self):
+        """Mark the song rows of the track playing now, and no other, when the item changed."""
+        if not self._playing.update():
+            return
+        for list_item in self._bound_songs:
+            track = list_item.get_item()
+            playing = self._playing.matches(track)
+            list_item.get_child().set_playing(playing)
+            list_item.set_accessible_description(self._playing.description(track, playing))
 
     def _on_song_activated(self, _list_view, position):
         track = self._songs_shown.get_item(position)

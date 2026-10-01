@@ -119,10 +119,13 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
                 child: ScrolledWindow {
                   hscrollbar-policy: never;
 
+                  // A click plays a song, as GNOME Music plays one (docs/decisions.md): the
+                  // links, the context menu and a drag claim their presses before the row
+                  // sees them.
                   child: ColumnView column_view {
                     show-row-separators: true;
                     tab-behavior: item;
-                    single-click-activate: false;
+                    single-click-activate: true;
                     activate => $on_activate();
 
                     styles [
