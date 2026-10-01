@@ -15,9 +15,12 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
       condition ("min-width: 720sp")
     }
 
-    // Narrow: the cover goes above the text, and the hero centres.
+    // Narrow: the cover goes above the text, and the hero centres. The cover beside the text
+    // needs 650 px: the cover, their 24 px gap, the buttons row (318 px, 12 px apart) and the
+    // row's 24 px inset each side (style.css's track-list rows); narrower, the page would ask
+    // for more than it has.
     Adw.Breakpoint {
-      condition ("max-width: 600sp")
+      condition ("max-width: 650sp")
 
       setters {
         hero_row.orientation: vertical;
@@ -31,6 +34,31 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
         caption_label.xalign: 0.5;
         caption_label.justify: center;
         buttons_box.halign: center;
+        summary_label.xalign: 0.5;
+        summary_label.justify: center;
+        more_notes_button.halign: center;
+      }
+    }
+
+    // Narrower still (a phone): the buttons 6 px apart, as one group, since the row's inset
+    // leaves 312 px at the 360 px minimum. The last breakpoint that matches is the one
+    // applied, so this repeats the one above.
+    Adw.Breakpoint {
+      condition ("max-width: 400sp")
+
+      setters {
+        hero_row.orientation: vertical;
+        cover.halign: center;
+        info_box.valign: start;
+        title_label.xalign: 0.5;
+        title_label.justify: center;
+        subtitle_label.xalign: 0.5;
+        subtitle_label.justify: center;
+        artist_button.halign: center;
+        caption_label.xalign: 0.5;
+        caption_label.justify: center;
+        buttons_box.halign: center;
+        buttons_box.spacing: 6;
         summary_label.xalign: 0.5;
         summary_label.justify: center;
         more_notes_button.halign: center;
@@ -162,6 +190,9 @@ Box hero {
         ]
       }
 
+      // Play, Shuffle and More Options. The labels may ellipsize (can-shrink): a language
+      // whose words are long keeps the row within the 360 px minimum rather than pushing the
+      // page past it; the English ones fit whole (tests/test_detail_page.py).
       Box buttons_box {
         spacing: 12;
         margin-top: 12;
@@ -170,6 +201,7 @@ Box hero {
           child: Adw.ButtonContent {
             icon-name: "media-playback-start-symbolic";
             label: _("Play");
+            can-shrink: true;
           };
 
           styles [
@@ -182,6 +214,7 @@ Box hero {
           child: Adw.ButtonContent {
             icon-name: "media-playlist-shuffle-symbolic";
             label: _("Shuffle");
+            can-shrink: true;
           };
 
           styles [
