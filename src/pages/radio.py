@@ -13,6 +13,7 @@ from ..widgets.labels import accessible_label, flow_child
 from ..widgets.shelf import Shelf  # noqa: F401  registers $AppleMusicShelf for the template
 from ..widgets.tile import Tile
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
+from . import SignInOffer
 
 # How many of the stations the cards at the top show.
 HERO_COUNT = 4
@@ -48,6 +49,7 @@ class RadioPage(Adw.NavigationPage):
         self._library = library
         self.title_label.set_label(title)
         self.empty_page.set_icon_name(icon_name)
+        self._sign_in = SignInOffer(self.empty_page)  # Sign In… while signed out
         self.hero_shelf.bind_shelf(SimpleNamespace(
             key='radio', title=_('Recently Played'),
             items=Gtk.SliceListModel(model=library.radio, offset=0, size=HERO_COUNT)))

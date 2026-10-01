@@ -7,6 +7,7 @@ from gi.repository import Adw, Gtk
 
 from ..widgets.shelf import ShelfColumn
 from ..widgets.util import HeaderTitle, MappedHandlers
+from . import SignInOffer
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/home.ui')
@@ -37,6 +38,7 @@ class HomePage(Adw.NavigationPage):
         self._column = ShelfColumn(self.shelves_box, anchor=self.title_label)
         self.title_label.set_label(title)
         self.empty_page.set_icon_name(icon_name)
+        self._sign_in = SignInOffer(self.empty_page)  # Sign In… while signed out
         self._header_title = HeaderTitle(self.header_bar, self.title_label, self.scrolled_window)
         # The library outlives the window: the page follows it only while it is shown.
         self._handlers = MappedHandlers(self)

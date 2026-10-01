@@ -60,6 +60,20 @@ class SongsPageTest(PageTestCase):
         self.assertTrue(await self.until(lambda: page._rows.get_n_items() == tracks, 2))
         return page
 
+    async def test_a_library_without_songs_offers_sign_in_while_signed_out(self):
+        self.app.settings.set_boolean('signed-in', False)
+        page = await self.songs_page(0)
+        self.assertTrue(await self.until(
+            lambda: page.stack.get_visible_child_name() == 'empty'))
+        button = page.empty_page.get_child()
+        self.assertTrue(button.get_visible())
+        self.assertEqual(button.get_action_name(), 'app.sign-in')
+        self.assertEqual(page.empty_page.get_description(),
+                         'Sign in to Apple Music to see your library')
+        self.app.settings.set_boolean('signed-in', True)
+        self.assertFalse(button.get_visible())
+        self.assertEqual(page.empty_page.get_description(), 'Songs in your library appear here')
+
     async def test_a_sync_that_adds_a_song_keeps_the_scroll_position(self):
         page = await self.songs_page(300)
         adjustment = page.column_view.get_vadjustment()

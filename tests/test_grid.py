@@ -137,5 +137,82 @@ class FirstSyncTest(PageTestCase):
         self.assertEqual(page.stack.get_visible_child_name(), 'empty')
 
 
+SIGNED_OUT = 'Sign in to Apple Music to see your library'
+
+
+def offer(page):
+    """The Sign In… button on a page's empty state (pages.SignInOffer's)."""
+    return page.empty_page.get_child()
+
+
+class SignInOfferTest(PageTestCase):
+    """A library page's empty state while signed out (pages.SignInOffer): Sign In… and what
+    signing in does; the page's own words once signed in, and in the demo."""
+
+    async def empty_grid(self):
+        from gi.repository import Gio
+
+        from applemusic.library import Item
+        from applemusic.pages.grid import GridPage
+
+        page = GridPage(self.library, 'Albums', Gio.ListStore(item_type=Item),
+                        empty_title='No Albums',
+                        empty_description='Albums in your library appear here')
+        await self.show_root(page)
+        self.assertEqual(page.stack.get_visible_child_name(), 'empty')
+        return page
+
+    async def test_signed_out_offers_sign_in_and_says_what_it_does(self):
+        self.app.settings.set_boolean('signed-in', False)
+        page = await self.empty_grid()
+        button = offer(page)
+        self.assertTrue(button.get_visible())
+        self.assertEqual(button.get_label(), 'Sign In…')
+        self.assertEqual(button.get_action_name(), 'app.sign-in')
+        self.assertTrue(button.has_css_class('pill'))
+        self.assertTrue(button.has_css_class('suggested-action'))
+        self.assertEqual(page.empty_page.get_title(), 'No Albums')
+        self.assertEqual(page.empty_page.get_description(), SIGNED_OUT)
+        # Signed in: the page's own words, no button (a first sync is the loading state).
+        self.app.settings.set_boolean('signed-in', True)
+        self.assertFalse(button.get_visible())
+        self.assertEqual(page.empty_page.get_description(), 'Albums in your library appear here')
+
+    async def test_the_demo_has_no_account_to_sign_in_to(self):
+        self.app.demo = True
+        self.app.settings.set_boolean('signed-in', False)
+        page = await self.empty_grid()
+        self.assertFalse(offer(page).get_visible())
+        self.assertEqual(page.empty_page.get_description(), 'Albums in your library appear here')
+
+    async def test_a_page_shown_again_catches_up(self):
+        page = await self.empty_grid()
+        self.assertFalse(offer(page).get_visible())
+        self.window.navigation_view.replace([self.window.root_page])  # hidden: not following
+        self.assertTrue(await self.until(lambda: not page.get_mapped()))
+        self.app.settings.set_boolean('signed-in', False)
+        self.assertFalse(offer(page).get_visible())
+        self.window.navigation_view.replace([page])
+        self.assertTrue(await self.until(page.get_mapped))
+        self.assertTrue(offer(page).get_visible())
+        self.assertEqual(page.empty_page.get_description(), SIGNED_OUT)
+
+    async def test_every_library_page_offers_it(self):
+        from applemusic import pages
+        from applemusic.sections import sidebar_sections
+
+        self.app.settings.set_boolean('signed-in', False)
+        destinations = {destination.key: destination
+                        for section in sidebar_sections() for destination in section.destinations}
+        offered = {}
+        for key in ('home', 'radio', 'albums', 'artists', 'recently-added', 'songs',
+                    'all-playlists', 'favourite-songs', 'music-videos'):
+            page = await self.show_root(pages.create(destinations[key], self.library))
+            await self.turn()
+            self.assertEqual(page.stack.get_visible_child_name(), 'empty', key)
+            offered[key] = (offer(page).get_visible(), page.empty_page.get_description())
+        self.assertEqual(offered, dict.fromkeys(offered, (True, SIGNED_OUT)))
+
+
 if __name__ == '__main__':
     unittest.main()
