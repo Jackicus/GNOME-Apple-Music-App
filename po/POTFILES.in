@@ -15,6 +15,7 @@ src/window.blp
 src/player.py
 src/sync.py
 src/mpris.py
+src/search_provider.py
 src/player_bar.py
 src/player_bar.blp
 src/sections.py

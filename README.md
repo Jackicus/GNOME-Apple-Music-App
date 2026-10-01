@@ -29,6 +29,8 @@ The screenshots show an invented demo library.
 - Home, New, Radio and Search, with a page for every album, playlist and artist.
 - A player bar, and a Now Playing view with synced lyrics and the queue.
 - GNOME's media controls (MPRIS) and the keyboard's media keys.
+- Your library in the Activities overview's search: an album, artist, playlist or song
+  typed there opens, or plays, from the results.
 - If you turn it on in Preferences, what you are listening to shows on your Discord
   profile.
 - Light and dark styles; the window adapts down to 360 px wide.

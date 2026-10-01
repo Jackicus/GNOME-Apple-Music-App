@@ -112,6 +112,7 @@ install_data(
   'player_bar.py',
   'related.py',
   'remote.py',
+  'search_provider.py',
   'sections.py',
   'shortcuts.py',
   'sidebar.py',

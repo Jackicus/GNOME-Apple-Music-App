@@ -9,6 +9,6 @@ Categories=AudioVideo;Audio;Player;GTK;GNOME;
 # Translators: Search terms to find this application. Do NOT translate or localize the semicolons.
 Keywords=apple;apple music;music;songs;albums;playlists;radio;streaming;lyrics;player;
 StartupNotify=true
-DBusActivatable=false
+DBusActivatable=true
 X-GNOME-UsesNotifications=true
 X-Purism-FormFactor=Workstation;Mobile;

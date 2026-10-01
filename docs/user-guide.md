@@ -40,6 +40,12 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   favourites, open it on music.apple.com, and, for a song, **Go to Album** and **Go to
   Artist**. The song playing has the same menu: right-click the player bar, or use **More
   Options** in Now Playing; Up Next's songs have theirs too.
+- The Activities overview's search finds your albums, artists, playlists and songs (songs
+  once the running app has listed them: after a visit to Songs, or a library search in
+  the app): choosing one opens its page, or plays the song; the Music Sleeve heading above
+  the results opens the app's Search page with what you typed. A search while the app is not running starts it in the background,
+  without a window or Chrome, until you choose a result. Settings › Search lists Music
+  Sleeve among the providers: turn it off there to keep your library out of the overview.
 - <kbd>Ctrl</kbd>+<kbd>?</kbd> lists every keyboard shortcut.
 - Because the sound comes from Chrome, the system's per-app volume controls list it as Chrome.
 

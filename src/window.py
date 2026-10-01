@@ -11,6 +11,7 @@ The pages reach the window through get_root() and these seams, not its internals
     shown_item()                      the Item of the page shown, while no sheet covers it
     open_shelf(shelf)                 a shelf's items as a grid (See All)
     open_songs(text)                  the Songs page, filtered
+    search_library(text)              the Search page in Your Library mode, text typed
     play_request(play, start_with=None, shuffle=None, start_id=None)
                                       every "play this": the Player, the sign-in, the toasts
     add_toast(toast)                  a toast over the content, or in the open sheet
@@ -299,6 +300,19 @@ class Window(Adw.ApplicationWindow):
         page = self._roots.get('songs')
         if page is not None and hasattr(page, 'set_filter'):
             page.set_filter(search)
+
+    def search_library(self, text):
+        """Show the Search page in Your Library mode with `text` typed, the cursor in its
+        entry (the Shell's search provider's LaunchSearch: the overview's search carried
+        on here), over anything pushed, the Now Playing sheet closed first."""
+        self._close_sheet()
+        self._sidebar.select('search', pop=True)
+        page = self._roots.get('search')
+        if page is None or not hasattr(page, 'set_mode'):
+            return
+        page.search_entry.set_text(text)
+        page.set_mode('library')  # a mode change filters at once; the entry's own waits
+        self._show_content_then(page.focus_entry)
 
     def open_item(self, item):
         """Show an album, artist, playlist, folder, category, station, song or video: what
