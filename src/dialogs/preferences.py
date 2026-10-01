@@ -3,12 +3,13 @@
 
 """AppleMusicPreferencesDialog: app.preferences (Ctrl+,).
 
-General: background playback (background-playback); how often the library refreshes
-(sync-interval, with when it last did, or "Refreshing…" while it does); the cache's size,
-measured in a thread and again after each sync, with Clear (asked first:
-Application.clear_cache()); Refresh Now (app.sync, off while it cannot run). Engine: the
-engine's state with Start and Stop; the browser program (browser-command, kept when it is
-applied and found); whether Chrome runs hidden (engine-headless) and starts with the app
+General: Background Playback (background-playback) and Discord Presence (discord-presence);
+how often the library refreshes (sync-interval); Last Refreshed, saying when it last did
+(last-sync, as sync.last_sync_text() words it) or "Refreshing…" while it does, with Refresh
+(app.sync, off while it cannot run); the cache's size, measured in a thread and again after
+each sync, with Clear (asked first: Application.clear_cache()). Engine: the engine's state
+with Start and Stop; the browser program (browser-command, kept when it is applied and
+found); whether Chrome runs hidden (engine-headless) and starts with the app
 (engine-autostart); Sign In while signed out, Sign Out while signed in (app.sign-out).
 
 The switches are bound to their settings with Gio.Settings.bind, the browser program one way
@@ -105,7 +106,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
     background_row = Gtk.Template.Child()
     discord_row = Gtk.Template.Child()
     interval_row = Gtk.Template.Child()
-    refresh_row = Gtk.Template.Child()
+    last_refreshed_row = Gtk.Template.Child()
+    refresh_button = Gtk.Template.Child()
     cache_row = Gtk.Template.Child()
     clear_button = Gtk.Template.Child()
     engine_row = Gtk.Template.Child()
@@ -144,7 +146,7 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._handlers = [
             (settings, settings.connect('changed::sync-interval', self._update_interval)),
             (settings, settings.connect('changed::' + account_key('last-sync'),
-                                        self._on_last_sync)),
+                                        self._update_last_refreshed)),
             (settings, settings.connect('changed::' + account_key('signed-in'),
                                         self._update_account)),
             (settings, settings.connect('changed::' + account_key('account-name'),
@@ -170,10 +172,11 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self.connect('closed', self._on_closed)
 
         self._update_interval()
+        self._update_last_refreshed()
         self._update_engine()
         self._update_account()
         self._measure()
-        # "Last refreshed 5 minutes ago" moves on while the dialog is open.
+        # Last Refreshed's "5 minutes ago" moves on while the dialog is open.
         self._tick = GLib.timeout_add_seconds(60, self._on_tick)
 
     def _on_closed(self, _dialog):
@@ -199,14 +202,16 @@ class PreferencesDialog(Adw.PreferencesDialog):
         self._quiet = True
         self.interval_row.set_selected(interval_index(self._settings.get_int('sync-interval')))
         self._quiet = False
+
+    def _update_last_refreshed(self, *_args):
         if self._app.library_sync.props.running:
             subtitle = _('Refreshing…')
         else:
             subtitle = last_sync_text(self._settings.get_string(self._key('last-sync')))
-        self.interval_row.set_subtitle(subtitle)
+        self.last_refreshed_row.set_subtitle(subtitle)
 
     def _on_tick(self):
-        self._update_interval()
+        self._update_last_refreshed()
         return GLib.SOURCE_CONTINUE
 
     def _on_interval_selected(self, row, _pspec):
@@ -217,11 +222,8 @@ class PreferencesDialog(Adw.PreferencesDialog):
                 self._settings.get_int('sync-interval')):
             self._settings.set_int('sync-interval', INTERVALS[index])
 
-    def _on_last_sync(self, *_args):
-        self._update_interval()
-
     def _on_sync_running(self, library_sync, _pspec):
-        self._update_interval()
+        self._update_last_refreshed()
         if not library_sync.props.running and not self._clearing:
             self._measure()  # a sync has ended: the cache has grown
 

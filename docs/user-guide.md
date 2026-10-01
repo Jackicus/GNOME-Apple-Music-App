@@ -15,20 +15,21 @@ do when something goes wrong, what it sends where, and where it keeps your data.
 ## Everyday use
 
 - The app starts Chrome, its playback engine, whenever it starts. Preferences › Engine › Start
-  the engine with the app turns that off; the first thing you play then starts it.
+  Engine on Launch turns that off; the first thing you play then starts it.
 - While the engine runs, the library is refreshed when the last refresh is older than the
-  interval chosen in Preferences (every hour, every 6 hours, the default, every day, or
-  manually). <kbd>Ctrl</kbd>+<kbd>R</kbd> refreshes it at any time.
+  interval chosen in Preferences › General › Library › Refresh Library (every hour, every
+  6 hours, the default, every day, or manually). Last Refreshed beneath says when it last was;
+  its Refresh button, or <kbd>Ctrl</kbd>+<kbd>R</kbd>, refreshes it at any time.
 - Closing the window quits the app and stops Chrome. To keep the music playing with the window
-  closed, turn on background playback in Preferences (<kbd>Ctrl</kbd>+<kbd>,</kbd>); the
+  closed, turn on Background Playback in Preferences (<kbd>Ctrl</kbd>+<kbd>,</kbd>); the
   system's media controls bring the window back.
-- Preferences › General › Playback › Show what you are listening to on Discord puts the song
-  playing on your Discord profile, as "Listening to Apple Music" with the title, the artist,
-  the album and its cover, and the artist in the status under your name. It is off until you
-  turn it on, and it needs the Discord desktop app running on the same computer (the web
-  client cannot be reached). Discord shows it only while something plays: pausing stops the
-  clock and, five seconds later, takes it off until the music plays again, as playback
-  ending or the app quitting does.
+- Preferences › General › Playback › Discord Presence puts the song playing on your Discord
+  profile, as "Listening to Apple Music" with the title, the artist, the album and its cover,
+  and the artist in the status under your name. It is off until you turn it on, and it needs
+  the Discord desktop app running on the same computer (the web client cannot be reached).
+  Discord shows it only while something plays: pausing stops the clock and, five seconds
+  later, takes it off until the music plays again, as playback ending or the app quitting
+  does.
 - In a wide window a playlist's songs are a table, as the Songs page is: click an artist
   or an album there to open its page.
 - Right-click a song, an album or a playlist (or press and hold it, or press
@@ -54,7 +55,7 @@ do when something goes wrong, what it sends where, and where it keeps your data.
 ## Troubleshooting
 
 - **"Google Chrome is needed to play Apple Music."** No Chrome was found. Install Google
-  Chrome, or name its command in Preferences › Engine › Browser Program.
+  Chrome, or name its command in Preferences › Engine › Browser program.
 - **"The playback engine stopped."** Chrome exited or its page stopped answering. Click
   **Restart** in the message, or just play something.
 - **"The keyring is not available, so starting would lose the Apple Music sign-in."** Chrome
@@ -71,7 +72,7 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   next track.
 - **Something else.** Run `music-sleeve --debug` from a terminal and look at what it logs (no
   password or tokens are logged). Preferences › Engine shows whether the engine is running;
-  turning off **Run the browser hidden** shows Chrome's window at the next start.
+  turning off **Run Browser Hidden** shows Chrome's window at the next start.
 - **Starting over.** Sign Out deletes the sign-in and the cache; the commands under "Where your
   data lives" remove everything.
 

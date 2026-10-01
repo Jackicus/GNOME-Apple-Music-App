@@ -5,6 +5,8 @@ using Gtk 4.0;
 using Adw 1;
 
 // Preferences (app.preferences, Ctrl+,): each row bound to its setting in preferences.py.
+// Switch and action rows carry a short, header-capitalised title and say the rest in their
+// subtitle, as Settings does; an entry row's title is sentence-cased.
 template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
   Adw.PreferencesPage general_page {
     name: "general";
@@ -15,13 +17,13 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       title: _("Playback");
 
       Adw.SwitchRow background_row {
-        title: _("Keep playing when the window is closed");
-        subtitle: _("The music plays on in the background, and the system's media controls bring the window back");
+        title: _("Background Playback");
+        subtitle: _("Keep playing when the window is closed; the system’s media controls bring it back");
       }
 
       Adw.SwitchRow discord_row {
-        title: _("Show what you are listening to on Discord");
-        subtitle: _("The song playing, with its artist, album and cover, shows on your Discord profile while Discord is running");
+        title: _("Discord Presence");
+        subtitle: _("Show the song playing, with its artist, album and cover, on your Discord profile while Discord is running");
       }
     }
 
@@ -29,7 +31,7 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       title: _("Library");
 
       Adw.ComboRow interval_row {
-        title: _("Refresh library");
+        title: _("Refresh Library");
 
         model: StringList {
           strings [
@@ -41,23 +43,30 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
         };
       }
 
+      // The subtitle is when the library was last refreshed (sync.last_sync_text()), or
+      // "Refreshing…" while it is; Refresh runs app.sync, off while it cannot run.
+      Adw.ActionRow last_refreshed_row {
+        title: _("Last Refreshed");
+
+        [suffix]
+        Button refresh_button {
+          label: _("_Refresh");
+          use-underline: true;
+          valign: center;
+          action-name: "app.sync";
+        }
+      }
+
       Adw.ActionRow cache_row {
         title: _("Cache");
         subtitle: _("Calculating…");
 
         [suffix]
         Button clear_button {
-          label: _("C_lear");
+          label: _("C_lear…");
           use-underline: true;
           valign: center;
         }
-      }
-
-      Adw.ButtonRow refresh_row {
-        title: _("_Refresh Now");
-        use-underline: true;
-        start-icon-name: "view-refresh-symbolic";
-        action-name: "app.sync";
       }
     }
   }
@@ -88,17 +97,17 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       description: _("The browser program is a program name or path, without arguments. Changes here apply the next time the engine starts.");
 
       Adw.EntryRow browser_row {
-        title: _("Browser Program");
+        title: _("Browser program");
         show-apply-button: true;
       }
 
       Adw.SwitchRow headless_row {
-        title: _("Run the browser hidden");
+        title: _("Run Browser Hidden");
         subtitle: _("Turn off to show the Chrome window, for debugging");
       }
 
       Adw.SwitchRow autostart_row {
-        title: _("Start the engine with the app");
+        title: _("Start Engine on Launch");
         subtitle: _("Starts Chrome when the app opens, once you have signed in");
       }
     }
@@ -114,7 +123,7 @@ template $AppleMusicPreferencesDialog: Adw.PreferencesDialog {
       }
 
       Adw.ButtonRow sign_out_row {
-        title: _("Sign _Out");
+        title: _("Sign _Out…");
         use-underline: true;
 
         styles [

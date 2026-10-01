@@ -182,24 +182,27 @@ def library_ok(library):
 
 
 def last_sync_text(stamp, now=None):
-    """How long ago the last sync was, as Preferences words it."""
+    """How long ago the last sync was, as the subtitle of Preferences' Last Refreshed row."""
     last = parse_stamp(stamp)
     if last is None:
-        return _('Not refreshed yet')
+        # Translators: Preferences' Last Refreshed row, while the library never was.
+        return _('Never')
     now = now or datetime.now(UTC)
     minutes = int((now - last).total_seconds() // 60)
     if minutes < 1:
-        return _('Last refreshed just now')
+        # Translators: Preferences' Last Refreshed row, under a minute after a refresh.
+        return _('Just now')
     if minutes < 60:
-        return ngettext('Last refreshed {count} minute ago', 'Last refreshed {count} minutes ago',
+        # Translators: Preferences' Last Refreshed row: how long ago, in minutes.
+        return ngettext('{count} minute ago', '{count} minutes ago',
                         minutes).format(count=minutes)
     hours = minutes // 60
     if hours < 24:
-        return ngettext('Last refreshed {count} hour ago', 'Last refreshed {count} hours ago',
-                        hours).format(count=hours)
+        # Translators: Preferences' Last Refreshed row: how long ago, in hours.
+        return ngettext('{count} hour ago', '{count} hours ago', hours).format(count=hours)
     days = hours // 24
-    return ngettext('Last refreshed {count} day ago', 'Last refreshed {count} days ago',
-                    days).format(count=days)
+    # Translators: Preferences' Last Refreshed row: how long ago, in days.
+    return ngettext('{count} day ago', '{count} days ago', days).format(count=days)
 
 
 def scale_image(src_path, dest_path, size):
@@ -855,6 +858,8 @@ class LibrarySync(GObject.Object):
                 count=f'{playlists:n}'),
             ngettext('{count} song', '{count} songs', songs).format(count=f'{songs:n}'),
         ])
+        # Translators: the toast when a refresh of the library (Refresh Library) ends, with
+        # what the library holds: "Library synced: 120 albums, 8 playlists, 1,400 songs".
         app.toast(_('Library synced: {summary}').format(summary=summary))
 
     # -- the timed refresh -------------------------------------------------------------------

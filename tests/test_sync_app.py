@@ -522,18 +522,14 @@ class WhenToSyncTest(unittest.TestCase):
 
     def test_last_sync_text(self):
         text = app_sync.last_sync_text
-        self.assertEqual(text('', self.NOW), 'Not refreshed yet')
-        self.assertEqual(text('2026-09-28T11:59:40+00:00', self.NOW), 'Last refreshed just now')
-        self.assertEqual(text('2026-09-28T11:59:00+00:00', self.NOW),
-                         'Last refreshed 1 minute ago')
-        self.assertEqual(text('2026-09-28T11:15:00+00:00', self.NOW),
-                         'Last refreshed 45 minutes ago')
-        self.assertEqual(text('2026-09-28T09:00:00+00:00', self.NOW),
-                         'Last refreshed 3 hours ago')
-        self.assertEqual(text('2026-09-27T11:00:00+00:00', self.NOW),
-                         'Last refreshed 1 day ago')
+        self.assertEqual(text('', self.NOW), 'Never')
+        self.assertEqual(text('2026-09-28T11:59:40+00:00', self.NOW), 'Just now')
+        self.assertEqual(text('2026-09-28T11:59:00+00:00', self.NOW), '1 minute ago')
+        self.assertEqual(text('2026-09-28T11:15:00+00:00', self.NOW), '45 minutes ago')
+        self.assertEqual(text('2026-09-28T09:00:00+00:00', self.NOW), '3 hours ago')
+        self.assertEqual(text('2026-09-27T11:00:00+00:00', self.NOW), '1 day ago')
         self.assertEqual(text('2026-09-28T13:00:00+01:00', self.NOW),
-                         'Last refreshed just now')  # another zone, the same instant
+                         'Just now')  # another zone, the same instant
 
 
 if __name__ == '__main__':
