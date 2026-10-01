@@ -434,7 +434,7 @@ class PresenceTest(unittest.IsolatedAsyncioTestCase):
     def activities(self):
         return [f[1]['args']['activity'] for f in self.discord.frames if f[0] == discord.OP_FRAME]
 
-    async def test_a_long_pause_clears_the_activity_and_playing_brings_it_back(self):
+    async def test_a_pause_clears_the_activity_and_playing_brings_it_back(self):
         self.presence.paused_timeout = 0.3
         self.app.settings.set_boolean('discord-presence', True)
         self.presence.start()
@@ -443,13 +443,17 @@ class PresenceTest(unittest.IsolatedAsyncioTestCase):
         self.app.player.state = 'paused'
         await self.discord.wait_for(3)  # the clock stopped: no timestamps
         self.assertNotIn('timestamps', self.activities()[-1])
-        await self.discord.wait_for(4)  # the pause lasted: nothing on the profile
+        await self.discord.wait_for(4)  # PAUSED_TIMEOUT later: nothing on the profile
         self.assertIsNone(self.activities()[-1])
         self.app.player.state = 'playing'
         await self.discord.wait_for(5)
         self.assertEqual(self.activities()[-1]['details'], 'Low Tide Warning')
 
-    async def test_a_short_pause_keeps_the_track(self):
+    def test_a_pause_clears_within_seconds_as_spotifys_does(self):
+        self.assertEqual(discord.PAUSED_TIMEOUT, 5)
+        self.assertEqual(discord.Presence(self.app).paused_timeout, 5)
+
+    async def test_a_pause_shorter_than_that_keeps_the_track(self):
         self.presence.paused_timeout = 60
         self.app.settings.set_boolean('discord-presence', True)
         self.presence.start()
