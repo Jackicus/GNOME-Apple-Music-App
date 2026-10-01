@@ -3,7 +3,8 @@
 
 """The About dialog (app.about): built from the app's metainfo, which the gresource carries
 (metainfo.xml), so its name, developer, links, licence and release notes are the metainfo's;
-with the translators' credits, and the debug information a bug report wants (versions, the
+with the developer's and the translators' credits, a line on what the app is and the
+trademark notice as its details, and the debug information a bug report wants (versions, the
 engine's state, never anything of the account's).
 
     about.present(app, parent)
@@ -17,12 +18,23 @@ from gi.repository import Adw, GLib, Gtk
 
 METAINFO = '/io/github/jackicus/MusicSleeve/metainfo.xml'
 DEBUG_INFO_FILENAME = 'music-sleeve-debug-info.txt'
+DEVELOPERS = ['Jack Tully']
 
 
 def release_version(version):
     """The release a build's version belongs to, whose notes the dialog shows: '0.9.0' for
     the development build's '0.9.0-1a2b3c4'."""
     return version.partition('-')[0]
+
+
+def comments():
+    """The Details page's text: what the app is, then the trademark notice (which stays, with
+    the metainfo's: .claude/rules/packaging.md)."""
+    return '\n\n'.join((
+        _('Your Apple Music library, playlists, radio and recommendations in a native GNOME '
+          'app, played through Google Chrome in the background.'),
+        _('Not affiliated with Apple. Apple Music is a trademark of Apple Inc.'),
+    ))
 
 
 def debug_info(app, browser=None):
@@ -50,13 +62,14 @@ def debug_info(app, browser=None):
     return '\n'.join(lines) + '\n'
 
 
-def present(app, parent):
-    """Build the dialog and present it over `parent`; returns it."""
+def build(app):
+    """The dialog, from the metainfo and `app`, not yet shown."""
     about = Adw.AboutDialog.new_from_appdata(METAINFO, release_version(app.version))
     about.set_version(app.version)  # the build's, with the development build's revision
     about.set_application_icon(app.get_application_id())
+    about.set_developers(DEVELOPERS)
     about.set_copyright('© 2026 Jack Tully')
-    about.set_comments(_('Not affiliated with Apple. Apple Music is a trademark of Apple Inc.'))
+    about.set_comments(comments())
     # Translators: your names, one per line (with an address if you like), for the About
     # dialog's credits.
     credits = _('translator-credits')
@@ -64,6 +77,12 @@ def present(app, parent):
         about.set_translator_credits(credits)
     about.set_debug_info(debug_info(app))
     about.set_debug_info_filename(DEBUG_INFO_FILENAME)
+    return about
+
+
+def present(app, parent):
+    """Build the dialog and present it over `parent`; returns it."""
+    about = build(app)
     about.present(parent)
     if not app.demo and app.engine.state == 'up':
         app.spawn(_add_browser(app, about))

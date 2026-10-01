@@ -4,7 +4,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
 
-  <name>Music Sleeve</name>
+  <name>Music Sleeve@NAME_SUFFIX@</name>
   <summary>Play your Apple Music library, playlists and radio</summary>
   <description>
     <p>
@@ -34,6 +34,7 @@
   <launchable type="desktop-id">@APP_ID@.desktop</launchable>
   <url type="homepage">https://github.com/Jackicus/GNOME-Music-Sleeve</url>
   <url type="bugtracker">https://github.com/Jackicus/GNOME-Music-Sleeve/issues</url>
+  <url type="help">https://github.com/Jackicus/GNOME-Music-Sleeve/blob/main/docs/user-guide.md</url>
   <url type="vcs-browser">https://github.com/Jackicus/GNOME-Music-Sleeve</url>
   <url type="contribute">https://github.com/Jackicus/GNOME-Music-Sleeve/blob/main/CONTRIBUTING.md</url>
   <url type="translate">https://github.com/Jackicus/GNOME-Music-Sleeve/blob/main/CONTRIBUTING.md#translating</url>

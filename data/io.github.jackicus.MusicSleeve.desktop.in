@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Music Sleeve
+Name=Music Sleeve@NAME_SUFFIX@
 Comment=Play your Apple Music library, playlists and radio
 Exec=music-sleeve
 Icon=@APP_ID@
@@ -10,3 +10,5 @@ Categories=AudioVideo;Audio;Player;GTK;GNOME;
 Keywords=apple;apple music;music;songs;albums;playlists;radio;streaming;lyrics;player;
 StartupNotify=true
 DBusActivatable=false
+X-GNOME-UsesNotifications=true
+X-Purism-FormFactor=Workstation;Mobile;

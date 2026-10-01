@@ -121,8 +121,11 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   two tiles would not fit).
 - Bundled icons are `src/icons/*-symbolic.svg`, found by icon name through the gresource alias.
   Use a `#222` fill (GTK recolours fills and strokes), Adwaita's 2 px weight at 16 px, and an
-  outline as a ring with `fill-rule="evenodd"` (compare `non-starred-symbolic`). Bundle any icon
-  the installed Adwaita theme lacks (`emblem-favorite-symbolic` is gone).
+  outline as a ring with `fill-rule="evenodd"` (compare `heart-outline-symbolic`), and an arc
+  as a filled, round-capped band (`broadcast-symbolic`), never a stroke thinner than 2 px.
+  Bundle any icon the installed Adwaita theme lacks (`emblem-favorite-symbolic` is gone), not
+  one it ships (the shuffle and repeat icons are Adwaita's); `transport-play/pause` are
+  bundled on purpose, a theme's 24 px glyph having sat off-centre in the play button.
 
 ## Accessibility
 

@@ -17,7 +17,6 @@
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
   "command": "music-sleeve",
-  "desktop-file-name-suffix": " (Development)",
   "finish-args": [
     "--share=network",
     "--share=ipc",
