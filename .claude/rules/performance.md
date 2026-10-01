@@ -32,10 +32,10 @@ bench.py checks all but scrolling. The numbers behind these rules are in docs/no
 
 - A `Gtk.GridView`, `ListView` or `ColumnView` binds each item many times while it scrolls, so
   bind must be cheap: text in `Gtk.Inscription` (a wrapping `Gtk.Label` is measured again at
-  every rebind; SongTitle's and QueueRow's single-line labels are deliberate), no `_()` in
-  bind (look strings up once; the model's `count-label` is made once), no costly children in
-  widgets made by the hundred (a tile makes an `Adw.Avatar` only for an artist), and fixed
-  column widths (`fixed-width` plus `expand`) in tables.
+  every rebind; SongTitle's, QueueRow's and TrackLink's single-line labels are deliberate), no
+  `_()` in bind (look strings up once; the model's `count-label` is made once), no costly
+  children in widgets made by the hundred (a tile makes an `Adw.Avatar` only for an artist),
+  and fixed column widths (`fixed-width` plus `expand`) in tables.
 - Nothing in a recycled row may change size when its artwork arrives or goes: a `Gtk.Picture`
   whose paintable changes intrinsic size relayouts the whole list, and so does a child shown or
   hidden. Show `artwork.empty(size)` for no texture and fade the placeholder icon instead.

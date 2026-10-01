@@ -9,6 +9,12 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
+    // Wide: a playlist's tracks as a table (detail.py follows its apply and unapply: a
+    // setter may only change what is inside the bin). Disjoint from the narrow one below.
+    Adw.Breakpoint table_breakpoint {
+      condition ("min-width: 720sp")
+    }
+
     // Narrow: the cover goes above the text, and the hero centres.
     Adw.Breakpoint {
       condition ("max-width: 600sp")

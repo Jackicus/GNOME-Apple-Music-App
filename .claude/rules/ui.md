@@ -93,7 +93,13 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `window.open_shelf` runs). The library's albums show only while the catalog cannot answer.
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
-  The item actions take their object as a `(ss)` target (kind, id), not as state.
+  The item actions take their object as a `(ss)` target (kind, id), not as state. Go to Album
+  and Go to Artist go where `related.py` says, through `window.item_actions.go_to(obj, kind)`;
+  a row's artist and album links are `widgets.track_links.TrackLink`s, clicked through
+  `track_links.attach(view)` (the Songs table, a playlist's table).
+- A playlist's page is a table from 720sp (`DetailPage.table`, set by detail.blp's
+  breakpoint): TrackRow's table rows under a `TrackTableHeader` (the tracks' section header);
+  an album's tracks stay a numbered list.
 - The window's keyed actions (`win.back`, `win.search`, `win.focus-*`) are disabled while a
   dialog is open over the window (`Window._update_actions`); add a new keyed window action
   there.

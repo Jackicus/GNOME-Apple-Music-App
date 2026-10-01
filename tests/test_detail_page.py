@@ -159,6 +159,52 @@ class DetailPageTest(PageTestCase):
         page = await self.push(self.page(album(3)))
         self.assertFalse(page.artist_button.get_visible())
 
+    async def test_a_wide_playlist_is_a_table(self):
+        # The stand-in window is 1000 px wide: the page's breakpoint makes it a table, its
+        # column titles the tracks' header and each row's artist and album links.
+        page = await self.push(self.page(album(1, tracks=3, kind='playlist')))
+        self.assertTrue(await self.until(lambda: page.table and len(page._bound) == 3))
+        self.assertIs(page.list_view.get_header_factory(), page._table_header_factory)
+        rows = [item.get_child().track_row for item in page._bound]
+        for row in rows:
+            self.assertTrue(row.artist_link.get_visible())
+            self.assertEqual(row.artist_link.get_text(), 'Invented Artist')
+            self.assertEqual(row.album_link.get_text(), 'l.playlist001')
+            self.assertFalse(row.artist_label.get_visible())
+            self.assertTrue(row.columns.get_homogeneous())
+        # Narrower: the list's rows again, the artist under the title.
+        page.table = False
+        self.assertIsNone(page.list_view.get_header_factory())
+        for row in rows:
+            self.assertFalse(row.artist_link.get_visible())
+            self.assertTrue(row.artist_label.get_visible())
+            self.assertFalse(row.columns.get_homogeneous())
+
+    async def test_an_album_is_never_a_table(self):
+        page = await self.push(self.page(album(1, tracks=3)))
+        self.assertTrue(await self.until(lambda: page.table and len(page._bound) == 3))
+        self.assertIsNone(page.list_view.get_header_factory())
+        self.assertFalse(any(item.get_child().track_row.artist_link.get_visible()
+                             for item in page._bound))
+
+    async def test_a_link_opens_its_page(self):
+        from applemusic.widgets import track_links
+
+        page = await self.push(self.page(album(1, tracks=3, kind='playlist')))
+        self.assertTrue(await self.until(lambda: page.table and len(page._bound) == 3))
+        row = next(iter(page._bound)).get_child().track_row
+        await self.until(lambda: row.album_link.get_width() > 0)
+        self.assertTrue(row.album_link.active)
+        found, centre = row.album_link.compute_bounds(page.list_view)
+        self.assertTrue(found)
+        x = centre.get_x() + centre.get_width() / 2
+        y = centre.get_y() + centre.get_height() / 2
+        self.assertIs(track_links.link_at(page.list_view, x, y), row.album_link)
+        self.assertIsNone(track_links.link_at(page.list_view, x + centre.get_width(), y))
+        self.assertTrue(track_links.open_link(page.list_view, row.album_link))
+        self.assertEqual(self.window.item_actions.went,
+                         [(row.context_item, 'album')])
+
     async def test_the_more_options_menu_is_the_items(self):
         page = await self.push(self.page(album(1)))
         page.more_button.popup()
