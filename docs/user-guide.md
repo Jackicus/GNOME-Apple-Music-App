@@ -29,6 +29,11 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   client cannot be reached). Discord shows it only while something plays: pausing stops the
   clock and, five seconds later, takes it off until the music plays again, as playback
   ending or the app quitting does.
+- Right-click a song, an album or a playlist (or press and hold it, or press
+  <kbd>Menu</kbd>) for its menu: play it next or later, add it to a playlist or your
+  favourites, open it on music.apple.com, and, for a song, **Go to Album** and **Go to
+  Artist**. The song playing has the same menu: right-click the player bar, or use **More
+  Options** in Now Playing; Up Next's songs have theirs too.
 - <kbd>Ctrl</kbd>+<kbd>?</kbd> lists every keyboard shortcut.
 - Because the sound comes from Chrome, the system's per-app volume controls list it as Chrome.
 

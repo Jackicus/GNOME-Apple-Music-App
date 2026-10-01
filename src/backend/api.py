@@ -66,6 +66,18 @@ ARTIST_VIEW_LIMIT = 100
 # songs' names, finds the catalog artist it stands for.
 SONG_ARTISTS_ENDPOINT = '/v1/catalog/{storefront}/songs/{id}'
 SONG_ARTISTS_PARAMS = {'include': 'artists'}
+# A catalog song or music video with its album and artists, or an album with its artists, by
+# kind: where Go to Album and Go to Artist go when the library cannot say (Engine.related).
+RELATED_ENDPOINTS = {
+    'song': '/v1/catalog/{storefront}/songs/{id}',
+    'video': '/v1/catalog/{storefront}/music-videos/{id}',
+    'album': '/v1/catalog/{storefront}/albums/{id}',
+}
+RELATED_PARAMS = {
+    'song': {'include': 'albums,artists'},
+    'video': {'include': 'albums,artists'},
+    'album': {'include': 'artists'},
+}
 
 
 def is_library_id(item_id):

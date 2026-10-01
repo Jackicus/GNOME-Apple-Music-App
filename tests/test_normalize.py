@@ -1111,6 +1111,9 @@ class TestArtistPage(unittest.TestCase):
                          'The invented band’s finest hour.')
         self.assertEqual([album['subtitle'] for album in self.shelf('full-albums')['items']],
                          ['2026', '2023'])  # the artist's own: the year
+        # Its artist kept beside the year, for Go to Artist (related.artist_name).
+        self.assertEqual({album['artistName'] for album in self.shelf('full-albums')['items']},
+                         {'Paper Parachutes'})
         self.assertEqual(self.shelf('music-videos')['items'][0]['subtitle'], '2026')
         self.assertEqual(self.shelf('appears-on-albums')['items'][0]['subtitle'],
                          'Mara Lind & The Tide')  # another's: its artist

@@ -5,8 +5,8 @@ using Gtk 4.0;
 using Adw 1;
 
 // Now Playing (widgets/now_playing.py): the AdwBottomSheet's sheet. A header bar with the
-// close button at the start (the sheet's drag handle sits over it) and the heart and the
-// volume at the end, then, in a clamp, the item playing (artwork, title, artist, transport,
+// close button at the start (the sheet's drag handle sits over it) and More Options, the
+// heart and the volume at the end, then, in a clamp, the item playing (artwork, title, artist, transport,
 // seek) and the Lyrics / Up Next tabs (an inline view switcher over a view stack whose pages
 // now_playing.py builds). `wide` (the window's 900sp breakpoint) puts the two side by side;
 // `compact` (600sp) shrinks the artwork; `short` (the window's height breakpoints) puts a
@@ -34,6 +34,24 @@ template $AppleMusicNowPlayingSheet: Adw.Bin {
         icon-name: "go-down-symbolic";
         tooltip-text: _("Close");
         clicked => $on_close_clicked();
+      }
+
+      // The item playing's menu (Go to Album, Go to Artist, Add to Playlist…), made as it
+      // opens (now_playing.py).
+      [end]
+      MenuButton more_button {
+        icon-name: "view-more-symbolic";
+        tooltip-text: _("More Options");
+        sensitive: false;
+        valign: center;
+
+        accessibility {
+          label: _("More Options");
+        }
+
+        styles [
+          "flat",
+        ]
       }
 
       // Whether the item playing is loved: a click loves or unloves it (widgets/transport.py).

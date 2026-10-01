@@ -133,6 +133,32 @@ class DetailPageTest(PageTestCase):
         playlist = Item(album(4, kind='playlist'))  # its subtitle is its curator
         self.assertIsNone(resolve_artist(library, playlist))
 
+    async def test_the_artist_links_to_their_page(self):
+        from applemusic.library import Item
+
+        # The library's artist opens at once.
+        self.library.artists.append(Item(artist([])))
+        page = await self.push(self.page(album(1)))
+        self.assertTrue(page.artist_button.get_visible())
+        self.assertFalse(page.subtitle_label.get_visible())
+        page.artist_button.emit('clicked')
+        self.assertEqual([item.id for item in self.window.opened], ['l.artist001'])
+
+    async def test_a_catalog_albums_artist_is_looked_up(self):
+        # Not the library's: a catalog album's artist is linked, and found on a click.
+        page = await self.push(self.page(dict(album(1), id='1000000300')))
+        self.assertTrue(page.artist_button.get_visible())
+        page.artist_button.emit('clicked')
+        self.assertEqual(self.window.item_actions.went, [(self.item, 'artist')])
+        # Nor in the demo, or for the library's own album of an artist it lacks.
+        self.app.demo = True
+        page = await self.push(self.page(dict(album(2), id='1000000301')))
+        self.assertFalse(page.artist_button.get_visible())
+        self.assertTrue(page.subtitle_label.get_visible())
+        self.app.demo = False
+        page = await self.push(self.page(album(3)))
+        self.assertFalse(page.artist_button.get_visible())
+
     async def test_the_more_options_menu_is_the_items(self):
         page = await self.push(self.page(album(1)))
         page.more_button.popup()

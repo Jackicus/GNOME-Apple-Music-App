@@ -22,6 +22,7 @@ from gi.repository import Adw, Gdk, Gio, GObject, Gtk, Pango
 
 from ..backend.errors import EngineError
 from ..library import Track
+from ..related import catalog_target
 from ..remote import fetch_cover
 from ..widgets import context_menu
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
@@ -51,6 +52,15 @@ def resolve_artist(library, item):
     name = item.subtitle.casefold()
     return next((artist for artist in library.artists if artist.title.casefold() == name),
                 None)
+
+
+def links_catalog_artist(item):
+    """Whether an album's subtitle links to its catalog artist, which the engine looks up
+    (related.catalog_target): a catalog album with an artist's name, outside the demo."""
+    application = app()
+    return (item is not None and item.kind == 'album' and bool(item.subtitle)
+            and catalog_target(item) is not None
+            and application is not None and not application.demo)
 
 
 def should_fetch(item, fetched):
@@ -111,7 +121,8 @@ class DetailPage(Adw.NavigationPage):
     the fetch is cancelled when the page is hidden (do_hidden), and asked again when it
     shows.
 
-    The hero: an album's artist links to their page (resolve_artist()), a More Options menu
+    The hero: an album's artist links to their page (resolve_artist(), else the catalog's,
+    which window.item_actions.go_to() looks up, the engine permitting), a More Options menu
     button offers the item's own menu (window.item_actions), and the notes show three lines,
     with More for the whole text. The header bar shows the title once the hero's has scrolled
     away (HeaderTitle). Tab from the hero's last button goes on into the tracks, and Shift+Tab
@@ -158,7 +169,7 @@ class DetailPage(Adw.NavigationPage):
         self._fetched = None  # the Item this page asked the engine for (once: should_fetch)
         self._fetch_task = None
         self._shown_groups = None  # item.groups when the tracks were shown: a new list is new
-        self._artist = None  # the artist Item the subtitle links to
+        self._artist = None  # the library's artist Item the subtitle links to
         self._painted = None  # (frame clock, handler): the notes' More follows each paint
         self._focused = False  # the page has put the focus on Play once, as it was pushed
         # What the status box says when the engine cannot answer, and what its button does.
@@ -325,10 +336,11 @@ class DetailPage(Adw.NavigationPage):
             app().spawn(self._fetch_cover(item))
         self.title_label.set_label(item.title)
         self._artist = resolve_artist(self._library, item)
+        linked = self._artist is not None or links_catalog_artist(item)
         self.subtitle_label.set_label(item.subtitle)
-        self.subtitle_label.set_visible(bool(item.subtitle) and self._artist is None)
+        self.subtitle_label.set_visible(bool(item.subtitle) and not linked)
         self.artist_label.set_label(item.subtitle)
-        self.artist_button.set_visible(self._artist is not None)
+        self.artist_button.set_visible(linked)
         details = [item.genre, str(item.year) if item.year else None, item.count_label]
         self.caption_label.set_label(' · '.join(detail for detail in details if detail))
         self.caption_label.set_visible(any(details))
@@ -494,6 +506,8 @@ class DetailPage(Adw.NavigationPage):
     def _on_artist_clicked(self, _button):
         if self._artist is not None:
             self.get_root().open_item(self._artist)
+        elif self.item is not None:
+            self.get_root().item_actions.go_to(self.item, 'artist')
 
     def _on_more_popup(self, button):
         """The item's menu, made as it opens: whether it is a favourite is asked then."""

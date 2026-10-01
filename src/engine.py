@@ -52,6 +52,8 @@ UI awaits.
     await engine.artist_view(id, 'full-albums')   # [Item…]: one of an artist's views whole
     await engine.catalog_artist(name, song_ids)   # the catalog artist a library one stands
                                                   # for, found through its songs, or None
+    await engine.related('song', id)  # {album, artists}: a catalog song's (or music video's)
+                                      # album and artists, or an album's artists
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
@@ -324,6 +326,7 @@ class Engine(GObject.Object):
         self.probe_timeout = PROBE_TIMEOUT
         self.api_retry_delay = API_RETRY_DELAY
         self._catalog_artists = {}  # a library artist's name, folded -> its catalog id, or None
+        self._related = {}  # (kind, catalog id) -> related()'s answer
         # While set (a reason), start() refuses with 'engine-down': sign-out sets it while it
         # stops Chrome and deletes the profile, which a Chrome started meanwhile would rewrite.
         self.refuse_starts = None
@@ -1542,6 +1545,29 @@ class Engine(GObject.Object):
             if found:
                 break
         self._catalog_artists[key] = found
+        return found
+
+    async def related(self, kind, item_id):
+        """Where Go to Album and Go to Artist go for a catalog song, music video or album
+        (`kind` 'song', 'video' or 'album') the library cannot place: {album, artists}
+        (normalize.related), its album (None for an album) and its artists as Items without
+        groups, from one read of it with its relationships (api.RELATED_ENDPOINTS).
+        Remembered for the session. A library id is EngineError('usage')."""
+        item_id = str(item_id or '')
+        endpoint = api.RELATED_ENDPOINTS.get(kind)
+        if endpoint is None or not item_id or is_library_id(item_id):
+            raise EngineError('usage', f'related needs a catalog song, video or album: '
+                                       f'{kind} {item_id}'.strip())
+        key = (kind, item_id)
+        if key in self._related:
+            return self._related[key]
+        client = await self._require_signed_in('look items up')
+        storefront = await self._current_storefront()
+        answer = await self._api(client, endpoint.format(storefront=storefront, id=item_id),
+                                 api.RELATED_PARAMS[kind], timeout=READ_TIMEOUT)
+        # Off the loop: a hit's artwork is looked for on disk, as a search's are.
+        found = await asyncio.to_thread(normalize.related, answer, str(self.cache_dir))
+        self._related[key] = found
         return found
 
     async def made_for_you(self, refresh=False):

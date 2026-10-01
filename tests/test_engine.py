@@ -1411,6 +1411,54 @@ class ArtistTest(EngineFixture):
         self.assertIsNone(await self.engine.catalog_artist('nobody', ['4']))
         self.assertEqual(len(self.page.api_calls), 3)
 
+    async def test_related_reads_a_song_with_its_album_and_artists(self):
+        await self.up()
+        path = '/v1/catalog/us/songs/1724049201'
+        self.page.api_answers[path] = {'data': [{'id': '1724049201', 'type': 'songs',
+                                                 'relationships': {
+            'albums': {'data': [{'id': '1724049100', 'type': 'albums', 'attributes': {
+                'name': 'Ladders of Rain', 'artistName': 'Paper Parachutes'}}]},
+            'artists': {'data': [
+                {'id': '1724049001', 'type': 'artists',
+                 'attributes': {'name': 'Paper Parachutes'}},
+                {'id': '1724049002', 'type': 'artists'}]}}}]}  # one Apple did not include
+        found = await self.engine.related('song', '1724049201')
+        self.assertEqual(self.page.api_calls, [path])
+        self.assertEqual(self.page.api_params[0], {'include': 'albums,artists'})
+        self.assertEqual((found['album']['id'], found['album']['title'],
+                          found['album']['subtitle']),
+                         ('1724049100', 'Ladders of Rain', 'Paper Parachutes'))
+        self.assertEqual([(artist['id'], artist['kind'], artist['title'])
+                          for artist in found['artists']],
+                         [('1724049001', 'artist', 'Paper Parachutes')])
+        # Remembered for the session.
+        self.assertEqual(await self.engine.related('song', '1724049201'), found)
+        self.assertEqual(len(self.page.api_calls), 1)
+
+    async def test_related_of_an_album_and_what_it_refuses(self):
+        await self.up()
+        path = '/v1/catalog/us/albums/1724049100'
+        self.page.api_answers[path] = {'data': [{'id': '1724049100', 'type': 'albums',
+                                                 'attributes': {'name': 'Ladders of Rain'},
+                                                 'relationships': {'artists': {'data': [
+            {'id': '1724049001', 'type': 'artists',
+             'attributes': {'name': 'Paper Parachutes'}}]}}}]}
+        found = await self.engine.related('album', '1724049100')
+        self.assertEqual(self.page.api_params[0], {'include': 'artists'})
+        self.assertIsNone(found['album'])
+        self.assertEqual([artist['id'] for artist in found['artists']], ['1724049001'])
+        for kind, item_id in (('song', 'i.abc'), ('playlist', 'pl.1'), ('song', '')):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.related(kind, item_id)
+            self.assertEqual(raised.exception.code, 'usage')
+        self.assertEqual(len(self.page.api_calls), 1)
+
+    async def test_related_needs_a_sign_in(self):
+        await self.up(authorized=False)
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.related('song', '1724049201')
+        self.assertEqual(raised.exception.code, 'not-signed-in')
+
     async def test_the_demo_answers_from_its_own_cache(self):
         demo = engine_module.Engine(demo=True)
         path = pathlib.Path(normalize.artist_cache_path(str(self.cache), '1724049001'))
@@ -1426,7 +1474,8 @@ class ArtistTest(EngineFixture):
                                      'cached': '2020-01-01T00:00:00Z'}), encoding='utf-8')
         for coro in (demo.artist_page('1724049002'), demo.artist_page('1724049003'),
                      demo.browse(),
-                     demo.catalog_artist('Paper Parachutes', ['1'])):
+                     demo.catalog_artist('Paper Parachutes', ['1']),
+                     demo.related('song', '1724049201')):
             with self.assertRaises(EngineError) as raised:
                 await coro
             self.assertEqual(raised.exception.code, 'engine-down')

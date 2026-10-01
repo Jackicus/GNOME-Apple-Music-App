@@ -8,6 +8,7 @@ The pages reach the window through get_root() and these seams, not its internals
 
     open_item(item)                   show an album, artist, playlist, folder or category;
                                       play a station, song or video
+    shown_item()                      the Item of the page shown, while no sheet covers it
     open_shelf(shelf)                 a shelf's items as a grid (See All)
     open_songs(text)                  the Songs page, filtered
     play_request(play, start_with=None, shuffle=None, start_id=None)
@@ -33,6 +34,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from . import keyboard, pages
 from .actions import ItemActions
 from .backend.errors import EngineError
+from .library import Item
 from .player import playback_error_text
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
@@ -48,6 +50,8 @@ log = logging.getLogger(__name__)
 # recently shown is dropped (and freed), and built again if it is shown again. The fixed
 # destinations' pages are kept for good.
 ROOT_LIMIT = 8
+# The kinds open_item shows a page for: it uncovers the content for them first.
+PAGE_KINDS = ('album', 'playlist', 'artist', 'folder', 'category')
 # The fixed destinations whose pages show the engine's answers for the account signed in,
 # forgotten at sign-out (forget_account_pages).
 ACCOUNT_PAGES = ('new', 'made-for-you', 'search')
@@ -248,13 +252,17 @@ class Window(Adw.ApplicationWindow):
 
         Albums and playlists push a DetailPage, artists an ArtistPage, playlist folders their
         grid of folders and playlists (the page follows the folder Item: a rename, a
-        deletion), search categories their page of shelves, over the page shown. A station,
+        deletion), search categories their page of shelves, over the page shown, which the
+        Now Playing sheet then uncovers (its Go to Album and Go to Artist). A station,
         a song (a search hit, a Best New Songs tile) or a music video has no page: it plays,
         as on music.apple.com (a video as its audio, in the headless engine, as the context
         menu's Play does). A link (an interview on an artist's page) opens its page on
         music.apple.com in the browser. Anything else is named in a toast.
         """
         visible = self.navigation_view.get_visible_page()
+        if item.kind in PAGE_KINDS:
+            self._close_sheet()
+            self.split_view.set_show_content(True)
         if getattr(visible, 'item', None) is item:
             return  # a double activation
         if item.kind in ('album', 'playlist') and not item.groups:
@@ -287,6 +295,16 @@ class Window(Adw.ApplicationWindow):
             self.get_application().toast(item.title)
             return
         self.navigation_view.push(page)
+
+    def shown_item(self):
+        """The Item the page shown shows (an album's, a playlist's, an artist's), or None:
+        also while the Now Playing sheet covers it, or the sidebar does (collapsed)."""
+        if self.bottom_sheet.get_open():
+            return None
+        if self.split_view.get_collapsed() and not self.split_view.get_show_content():
+            return None
+        item = getattr(self.navigation_view.get_visible_page(), 'item', None)
+        return item if isinstance(item, Item) else None
 
     def open_shelf(self, shelf):
         """Show a shelf's items as a grid, pushed over the page shown: a shelf's See All.

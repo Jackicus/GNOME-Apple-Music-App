@@ -14,11 +14,12 @@ from gi.repository import Gio, GLib, GObject
 from tests import ROOT  # noqa: F401  registers src/ as applemusic
 
 from applemusic.actions import (ItemActions, build_menu, fill_sidebar_menu, is_apple_music_url,
-                                is_shareable, library_target, mnemonic_escaped, playlist_song,
-                                playlist_track, queue_target, rating_target, share_url,
-                                web_url)
+                                is_shareable, library_target, mnemonic_escaped,
+                                now_playing_track, playlist_song, playlist_track, queue_target,
+                                rating_target, share_url, web_url)
 from applemusic.backend.errors import EngineError
 from applemusic.library import Item, PlaylistTree, Track, TrackRef
+from applemusic.player import NowPlaying
 
 # Invented items, in the library's shapes.
 LIBRARY_ALBUM = Item({'id': 'l.alb1', 'kind': 'album', 'title': 'Tidewater',
@@ -58,6 +59,10 @@ UPLOAD_TRACK = Track({'id': 'i.song2', 'title': 'Demo Take', 'index': 0},
 VIDEO_TRACK = Track({'id': 'i.vid1', 'catalogId': '1000000011', 'title': 'Harbour Lights (Live)',
                      'type': 'library-music-videos', 'index': 3},
                     play={'kind': 'playlist', 'id': 'p.pl1'})
+
+# The library's artist of LIBRARY_ALBUM, as the library makes artists up from albums.
+BAND = Item({'id': 'l.art_00000000band', 'kind': 'artist', 'title': 'The Invented Band',
+             'play': {}})
 
 # What the engine's item() answers for a playlist: the Item's shape with its groups.
 PLAYLIST_ANSWER = {'id': 'p.pl1', 'kind': 'playlist', 'title': 'Road Trip', 'trackCount': 1,
@@ -118,8 +123,9 @@ def labels_of(menu):
 class MenuTest(unittest.TestCase):
     def test_library_album(self):
         self.assertEqual(names(build_menu(LIBRARY_ALBUM)), [
-            'win.item-play', 'win.item-play-next', 'win.item-play-later', 'win.item-love',
-            'win.item-unlove', 'win.item-open-in-browser', 'win.item-copy-link'])
+            'win.item-play', 'win.item-play-next', 'win.item-play-later',
+            'win.item-go-to-artist', 'win.item-love', 'win.item-unlove',
+            'win.item-open-in-browser', 'win.item-copy-link'])
         self.assertTrue(all(target == ('album', 'l.alb1')
                             for _action, target in actions_of(build_menu(LIBRARY_ALBUM))))
 
@@ -147,6 +153,8 @@ class MenuTest(unittest.TestCase):
             ('win.item-play', ('song', 'i.song1')),
             ('win.item-play-next', ('song', 'i.song1')),
             ('win.item-play-later', ('song', 'i.song1')),
+            ('win.item-go-to-album', ('song', 'i.song1')),
+            ('win.item-go-to-artist', ('song', 'i.song1')),
             ('win.item-love', ('song', 'i.song1')),
             ('win.item-unlove', ('song', 'i.song1')),
             ('win.item-add-to-playlist', ('p.pl1', 'song', 'i.song1')),
@@ -160,6 +168,58 @@ class MenuTest(unittest.TestCase):
         # No playlists: no submenu. A catalog track can be added to the library.
         self.assertNotIn('win.item-add-to-playlist', names(build_menu(LIBRARY_TRACK)))
         self.assertIn('win.item-add-to-library', names(build_menu(CATALOG_TRACK)))
+
+    def test_go_to_album_and_artist(self):
+        song = Track({'id': 'i.song3', 'title': 'Undertow', 'artist': 'The Invented Band',
+                      'album': 'Tidewater', 'type': 'library-songs'},
+                     play={'kind': 'playlist', 'id': 'p.pl1'})
+        self.assertEqual(names(build_menu(song))[3:5],
+                         ['win.item-go-to-album', 'win.item-go-to-artist'])
+        # A music video has an artist, but no album to go to.
+        self.assertNotIn('win.item-go-to-album', names(build_menu(VIDEO_TRACK)))
+        self.assertIn('win.item-go-to-artist', names(build_menu(VIDEO_TRACK)))
+        # An album goes to its artist; a playlist, a station, an artist nowhere.
+        self.assertNotIn('win.item-go-to-album', names(build_menu(CATALOG_ALBUM)))
+        for item in (PLAYLIST, STATION, CATALOG_ARTIST):
+            self.assertFalse({'win.item-go-to-album', 'win.item-go-to-artist'}
+                             & set(names(build_menu(item))), item.kind)
+        # A song with nothing to look up by (an upload without names) goes nowhere.
+        self.assertFalse({'win.item-go-to-album', 'win.item-go-to-artist'}
+                         & set(names(build_menu(UPLOAD_TRACK))))
+
+    def test_go_to_is_left_out_where_it_is_already(self):
+        # An album's own tracks on its page; an artist's songs on theirs.
+        self.assertNotIn('win.item-go-to-album', names(build_menu(LIBRARY_TRACK,
+                                                                  here=LIBRARY_ALBUM)))
+        self.assertIn('win.item-go-to-album', names(build_menu(LIBRARY_TRACK,
+                                                               here=CATALOG_ALBUM)))
+        song = Track({'id': '1000000013', 'title': 'Undertow', 'artist': 'the band'})
+        self.assertNotIn('win.item-go-to-artist', names(build_menu(song, here=LIBRARY_ARTIST)))
+        self.assertIn('win.item-go-to-artist', names(build_menu(song, here=CATALOG_ARTIST)))
+
+    def test_a_queued_item_has_no_play(self):
+        # The item playing's menu, Up Next's: Play would replace the queue.
+        menu = names(build_menu(LIBRARY_TRACK, queued=True))
+        self.assertNotIn('win.item-play', menu)
+        self.assertIn('win.item-play-next', menu)
+        self.assertIn('win.item-go-to-album', menu)
+
+    def test_the_item_playing_as_a_track(self):
+        playing = NowPlaying({'id': 'i.song1', 'catalogId': '1000000001', 'type': 'song',
+                              'title': 'Harbour Lights', 'artist': 'The Invented Band',
+                              'album': 'Tidewater', 'index': 4})
+        track = now_playing_track(playing)
+        self.assertEqual((track.id, track.catalog_id, track.kind, track.artist, track.album),
+                         ('i.song1', '1000000001', 'song', 'The Invented Band', 'Tidewater'))
+        self.assertEqual(track.play, {})
+        self.assertEqual(rating_target(track), ('song', '1000000001'))
+        video = now_playing_track(NowPlaying({'id': '1000000012', 'type': 'musicVideo',
+                                              'title': 'Pilot Light (Video)'}))
+        self.assertEqual(video.kind, 'video')
+        self.assertEqual(playlist_track(video), ('video', '1000000012'))
+        # A station's segment, an ad, nothing: no menu.
+        self.assertIsNone(now_playing_track(NowPlaying({'id': 'x', 'type': 'stations'})))
+        self.assertIsNone(now_playing_track(None))
 
     def test_what_has_no_menu(self):
         self.assertIsNone(build_menu(FOLDER))
@@ -279,6 +339,7 @@ class FakeEngine(GObject.Object):
         self.ratings = {}
         self.catalog_urls = {}
         self.items = {}  # (kind, id) -> the Item dict item() answers
+        self.related_answers = {}  # (kind, id) -> related()'s answer
 
     async def _record(self, name, *args):
         self.calls.append((name, *args))
@@ -309,6 +370,10 @@ class FakeEngine(GObject.Object):
         await self._record('catalog_url', kind, item_id)
         return self.catalog_urls.get(item_id)
 
+    async def related(self, kind, item_id):
+        await self._record('related', kind, item_id)
+        return self.related_answers.get((kind, item_id), {'album': None, 'artists': []})
+
     async def item(self, kind, item_id):
         await self._record('item', kind, item_id)
         answer = self.items.get((kind, item_id))
@@ -338,6 +403,8 @@ class FakeLibrary:
     def __init__(self, items):
         self.items = {(item.kind, item.id): item for item in items}
         self.playlists = [item for item in items if item.kind == 'playlist']
+        self.albums = [item for item in items if item.kind == 'album']
+        self.artists = [item for item in items if item.kind == 'artist']
 
     def by_id(self, kind, item_id):
         return self.items.get((kind, item_id))
@@ -360,7 +427,7 @@ class FakeApp:
         self.playlist = Item(dict(PLAYLIST.raw))
         self.favourites = Item(dict(FAVOURITES.raw))
         self.library = FakeLibrary([LIBRARY_ALBUM, CATALOG_ALBUM, self.playlist, READ_ONLY,
-                                    self.favourites])
+                                    self.favourites, BAND])
         self.demo = False
         self.tasks = []
         self.reported = []
@@ -400,7 +467,15 @@ class FakeWindow:
     def __init__(self):
         self.actions = {}
         self.played = []
+        self.opened = []
+        self.shown = None  # the Item of the page shown
         self.clipboard = FakeClipboard()
+
+    def open_item(self, item):
+        self.opened.append(item)
+
+    def shown_item(self):
+        return self.shown
 
     def add_action(self, action):
         self.actions[action.get_name()] = action
@@ -436,7 +511,7 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(self.window.actions), sorted([
             'item-play', 'item-play-next', 'item-play-later', 'item-love', 'item-unlove',
             'item-add-to-library', 'item-add-to-playlist', 'item-open-in-browser',
-            'item-copy-link']))
+            'item-copy-link', 'item-go-to-album', 'item-go-to-artist']))
         self.assertEqual(self.window.actions['item-love'].get_parameter_type().dup_string(),
                          '(ss)')
         self.assertEqual(
@@ -614,6 +689,69 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         self.app.engine.catalog_urls['l.alb1'] = 'http://evil.example/album'
         await self.run_action('item-open-in-browser', 'album', 'l.alb1')
         self.assertEqual(self.launched, ['https://music.apple.com/library/albums/l.alb1'])
+
+    async def test_go_to_the_library_album_and_artist(self):
+        # A track of the library's album: its group's album, then the album's artist by
+        # name; neither needs the engine.
+        song = Track({'id': 'i.song1', 'title': 'Harbour Lights', 'album': 'Tidewater',
+                      'artist': 'The Invented Band feat. Someone', 'type': 'library-songs'},
+                     play={'kind': 'playlist', 'id': 'p.pl1'})
+        self.actions.menu_for(song)
+        await self.run_action('item-go-to-album', 'song', 'i.song1')
+        await self.run_action('item-go-to-artist', 'song', 'i.song1')
+        self.assertEqual(self.window.opened, [LIBRARY_ALBUM, BAND])
+        self.assertEqual([call for call in self.app.engine.calls if call[0] != 'rating'], [])
+        # An album goes to its artist; the page shown is not opened again.
+        await self.run_action('item-go-to-artist', 'album', 'l.alb1')
+        self.window.shown = BAND
+        await self.run_action('item-go-to-artist', 'album', 'l.alb1')
+        self.assertEqual(self.window.opened, [LIBRARY_ALBUM, BAND, BAND])
+        self.assertEqual(self.app.toasts, [])
+
+    async def test_go_to_the_catalog_album_and_artist(self):
+        # The library has neither: the engine looks the catalog song up, once per kind of
+        # answer, and the page opens on the answer's Item.
+        song = Track({'id': '1000000009', 'catalogId': '1000000009', 'title': 'Shoreline',
+                      'album': 'Coastal', 'artist': 'Mara Lind & Others'})
+        self.app.engine.related_answers[('song', '1000000009')] = {
+            'album': {'id': '1000000020', 'kind': 'album', 'title': 'Coastal',
+                      'subtitle': 'Mara Lind', 'play': {'kind': 'album', 'id': '1000000020'}},
+            'artists': [{'id': '1000000021', 'kind': 'artist', 'title': 'Someone Else'},
+                        {'id': '1000000022', 'kind': 'artist', 'title': 'Mara Lind & Others'}]}
+        self.actions.menu_for(song)
+        await self.run_action('item-go-to-album', 'song', '1000000009')
+        await self.run_action('item-go-to-artist', 'song', '1000000009')
+        self.assertEqual([(item.kind, item.id) for item in self.window.opened],
+                         [('album', '1000000020'), ('artist', '1000000022')])
+        self.assertEqual([call for call in self.app.engine.calls if call[0] == 'related'],
+                         [('related', 'song', '1000000009')] * 2)
+        self.assertEqual(self.app.player.ensured, 2)
+        # The catalog's album the library has is the library's.
+        self.app.engine.related_answers[('song', '1000000009')]['album']['id'] = '1000000002'
+        await self.run_action('item-go-to-album', 'song', '1000000009')
+        self.assertIs(self.window.opened[-1], CATALOG_ALBUM)
+
+    async def test_go_to_finds_nothing(self):
+        song = Track({'id': '1000000009', 'catalogId': '1000000009', 'title': 'Shoreline',
+                      'album': 'Coastal'})
+        self.actions.menu_for(song)
+        await self.run_action('item-go-to-album', 'song', '1000000009')
+        self.assertEqual(self.app.toasts, ['Could not find the album'])
+        self.assertEqual(self.window.opened, [])
+        # Signed out: reported, so the sign-in opens.
+        self.app.engine.fail = EngineError('not-signed-in', 'sign in first')
+        await self.run_action('item-go-to-artist', 'song', '1000000009')
+        self.assertEqual(self.app.reported, ['not-signed-in'])
+        # The demo asks no engine.
+        self.app.engine.fail = None
+        self.app.demo = True
+        calls = len(self.app.engine.calls)
+        await self.run_action('item-go-to-album', 'song', '1000000009')
+        self.assertEqual(len(self.app.engine.calls), calls)
+        self.assertEqual(self.app.toasts[-1], 'Not available with the demo library')
+        # A target the actions know nothing of.
+        await self.run_action('item-go-to-album', 'song', 'i.forgotten')
+        self.assertEqual(self.app.toasts[-1], 'Could not find the album')
 
     async def test_the_menu_asks_whether_it_is_loved(self):
         self.app.engine.ratings[('song', '1000000001')] = 1
