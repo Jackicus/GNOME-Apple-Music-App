@@ -742,6 +742,11 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         self.app.engine.fail = EngineError('not-signed-in', 'sign in first')
         await self.run_action('item-go-to-artist', 'song', '1000000009')
         self.assertEqual(self.app.reported, ['not-signed-in'])
+        # Gone from the storefront's catalog (Apple's 404): not found, not an error.
+        self.app.engine.fail = EngineError('api', 'HTTP 404', status=404)
+        await self.run_action('item-go-to-album', 'song', '1000000009')
+        self.assertEqual(self.app.reported, ['not-signed-in'])
+        self.assertEqual(self.app.toasts[-1], 'Could not find the album')
         # The demo asks no engine.
         self.app.engine.fail = None
         self.app.demo = True

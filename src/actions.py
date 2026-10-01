@@ -619,7 +619,10 @@ class ItemActions:
             await self.app.player.ensure_engine()
             answer = await self.engine.related(*target)
         except EngineError as error:
-            self.app.report(error)
+            if error.status == 404:  # gone from the storefront's catalog: nowhere to go
+                self.app.toast(not_found_message(kind))
+            else:
+                self.app.report(error)
             return
         found = related.from_answer(self.library, answer, kind, related.artist_name(obj))
         if found is None:

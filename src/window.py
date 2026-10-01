@@ -31,7 +31,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from . import keyboard, pages
+from . import keyboard, pages, related
 from .actions import ItemActions
 from .backend.errors import EngineError
 from .library import Item
@@ -263,8 +263,8 @@ class Window(Adw.ApplicationWindow):
         if item.kind in PAGE_KINDS:
             self._close_sheet()
             self.split_view.set_show_content(True)
-        if getattr(visible, 'item', None) is item:
-            return  # a double activation
+        if related.same_page(getattr(visible, 'item', None), item):
+            return  # a double activation, or the page shown already (Go to from the sheet)
         if item.kind in ('album', 'playlist') and not item.groups:
             # One the library has (an artist page's, under the same id): the library's own,
             # whose page needs no fetch.

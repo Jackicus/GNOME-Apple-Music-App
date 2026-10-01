@@ -72,6 +72,18 @@ class LibraryTest(unittest.TestCase):
         held = track('Tidewater', 'Someone', id='i.s9', catalogId='1000000101')
         self.assertIs(library_album(self.library, held), TIDEWATER)
 
+    def test_the_best_of_same_titled_albums(self):
+        # Two "Live" albums: the exact artist over the first one credited, and the one
+        # holding the song over both.
+        lind = album('l.alb4', 'Live', 'Mara Lind')
+        trio = album('l.alb5', 'Live', 'Mara Lind & The Tide',
+                     [{'id': 'i.s5', 'title': 'Tide'}])
+        self.library.albums += [lind, trio]
+        self.assertIs(library_album(self.library, track('Live', 'Mara Lind & The Tide')), trio)
+        self.assertIs(library_album(self.library, track('Live', 'Mara Lind feat. Someone')),
+                      lind)
+        self.assertIs(library_album(self.library, track('Live', 'Mara Lind', id='i.s5')), trio)
+
     def test_a_compilation_holds_the_song(self):
         song = track('Summer Hits', 'Paper Parachutes', id='1000000103')
         self.assertIs(library_album(self.library, song), COMPILATION)
@@ -100,6 +112,12 @@ class LibraryTest(unittest.TestCase):
         self.assertIs(artist_named(self.library, 'Mara Lind Trio & Friends'), MARA_TRIO)
         self.assertIsNone(artist_named(self.library, 'Mara Lindqvist'))
         self.assertIsNone(artist_named(self.library, 'Mara Lind Tribute Band'))
+        # A word joiner after a space only: "Max" is not "Ma" and "x".
+        self.library.artists.append(artist('l.art_ma', 'Ma'))
+        self.assertIsNone(artist_named(self.library, 'Max'))
+        self.assertIsNone(artist_named(self.library, 'Mand'))
+        self.assertIs(artist_named(self.library, 'Ma x Max'), self.library.artists[-1])
+        self.assertIs(artist_named(self.library, 'Ma, Max'), self.library.artists[-1])
 
     def test_the_artist_of_each_kind(self):
         self.assertIs(library_artist(self.library, track('X', 'Mara Lind')), MARA)
@@ -147,6 +165,13 @@ class OfferTest(unittest.TestCase):
         self.assertTrue(shows(MARA, own, 'artist'))
         self.assertFalse(shows(BAND, own, 'artist'))
         self.assertFalse(shows(None, own, 'artist'))
+        # The item playing has no group: its album's page by name and artist, or holding it.
+        playing = track('tidewater', 'The Invented Band', id='i.s9')
+        self.assertTrue(shows(TIDEWATER, playing, 'album'))
+        self.assertFalse(shows(OTHER_TIDEWATER, playing, 'album'))
+        held = track('Tidewater', 'Someone', id='i.s9', catalogId='1000000101')
+        self.assertTrue(shows(TIDEWATER, held, 'album'))
+        self.assertFalse(shows(TIDEWATER, track('Tidewater', 'Someone', id='i.s9'), 'album'))
 
     def test_the_same_page(self):
         self.assertTrue(same_page(MARA, MARA))
