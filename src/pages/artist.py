@@ -166,6 +166,7 @@ class ArtistPage(Adw.NavigationPage):
     release_name = Gtk.Template.Child()
     release_count = Gtk.Template.Child()
     top_songs = Gtk.Template.Child()
+    status_spinner = Gtk.Template.Child()
     status_page = Gtk.Template.Child()
     status_button = Gtk.Template.Child()
     about_box = Gtk.Template.Child()
@@ -359,7 +360,13 @@ class ArtistPage(Adw.NavigationPage):
             self._show_status('empty', _('No Albums'), '', None)
             return
         quiet = self._status in ('empty', 'demo')
-        self.status_page.set_visible(self._status is not None and (nothing or not quiet))
+        self._set_status_shown(self._status is not None and (nothing or not quiet))
+
+    def _set_status_shown(self, shown):
+        """The spinner for 'loading', the status page for the states with words."""
+        loading = self._status == 'loading'
+        self.status_spinner.set_visible(shown and loading)
+        self.status_page.set_visible(shown and not loading)
 
     # Asking the catalog, once while the page is shown.
 
@@ -452,22 +459,18 @@ class ArtistPage(Adw.NavigationPage):
         return complete
 
     def _show_status(self, status, title, description, button):
-        """The status page: the spinner ('loading'), EngineStatus's states, or 'empty' (the
-        artist has no albums)."""
+        """The status page: EngineStatus's states or 'empty' (the artist has no albums), or
+        for 'loading' the spinner alone, as every page's loading state is."""
         self._status = status
-        if status == 'loading':
-            self.status_page.set_paintable(Adw.SpinnerPaintable.new(self.status_page))
-            title, description, button = _('Loading…'), '', None
-        else:
-            self.status_page.set_icon_name('media-optical-cd-audio-symbolic')
-        self.status_page.set_title(title)
-        self.status_page.set_description(description)
+        if status != 'loading':  # the spinner has no words
+            self.status_page.set_title(title)
+            self.status_page.set_description(description)
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
         if status != 'empty':
             self._update_status()
         else:
-            self.status_page.set_visible(True)
+            self._set_status_shown(True)
 
     def _on_status_clicked(self, _button):
         self._engine_status.activate()

@@ -138,14 +138,14 @@ template $AppleMusicSearchPage: Adw.NavigationPage {
                 }
 
                 // Your Library works whatever the engine: offered where Apple Music cannot
-                // answer (the engine down, signed out, the demo).
+                // answer (the engine down, signed out, the demo), as the plain second button
+                // under the suggested one.
                 Button status_library_button {
                   label: _("Search Your Library");
                   visible: false;
 
                   styles [
                     "pill",
-                    "flat",
                   ]
                 }
               };

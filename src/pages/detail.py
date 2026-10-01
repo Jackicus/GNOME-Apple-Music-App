@@ -463,15 +463,14 @@ class DetailPage(Adw.NavigationPage):
         self._show_status('empty', _('No Songs'), '', None)
 
     def _show_status(self, status, title, description, button):
-        """The status box: the spinner ('loading'), EngineStatus's states, or 'empty' (no
-        tracks at all)."""
+        """The status box: EngineStatus's states or 'empty' (no tracks at all), or for
+        'loading' the spinner alone, as every page's loading state is."""
         loading = status == 'loading'
-        if loading:
-            title, description, button = _('Loading…'), '', None
         self.status_spinner.set_visible(loading)
         self.status_icon.set_visible(not loading)
-        self.status_title.set_label(title)
-        self.status_description.set_label(description)
+        self.status_title.set_label(title or '')
+        self.status_title.set_visible(not loading)
+        self.status_description.set_label(description or '')
         self.status_description.set_visible(bool(description))
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))

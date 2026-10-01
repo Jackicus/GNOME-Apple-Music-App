@@ -4,10 +4,11 @@
 """AppleMusicGridPage: a root page showing a model of Items as a grid of tiles.
 
 The chain is the page's store → Gtk.SortListModel (the header's sort choice, or none) →
-Gtk.NoSelection → Gtk.GridView, whose factory recycles AppleMusicTiles. Sorting uses
-Gtk.StringSorter and Gtk.NumericSorter over Gtk.PropertyExpressions, which compute one key per
-item and sort in C: about 10 ms for 2,000 albums, against 25 ms for a Python Gtk.CustomSorter,
-whose cost grows with every comparison rather than every item.
+ReversedModel (that order backwards, for a descending text) → Gtk.NoSelection → Gtk.GridView,
+whose factory recycles AppleMusicTiles. Sorting uses Gtk.StringSorter and Gtk.NumericSorter
+over Gtk.PropertyExpressions, which compute one key per item and sort in C: about 10 ms for
+2,000 albums, against 25 ms for a Python Gtk.CustomSorter, whose cost grows with every
+comparison rather than every item.
 """
 
 from gettext import gettext as _
@@ -17,7 +18,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 from ..library import Item
 from ..widgets import context_menu
 from ..widgets.labels import bind_label, unbind_label
-from ..widgets.tile import ART_SIZE, Tile
+from ..widgets.tile import Tile
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak
 from . import SignInOffer, app, mark_bound
 
@@ -40,28 +41,17 @@ def _chain(*sorters):
 
 
 # The width of a grid column: a tile (tile.blp, 160 px) and the padding Adwaita gives a grid
-# view's child (3 px a side). Gtk.GridView divides its width, less its own CSS padding, by it.
+# view's child (3 px a side). Gtk.GridView divides its width by it, and a tile sits at the
+# start of its column, so the first column's cover is on the grid's margin (grid.blp: 21 px,
+# the page's 24 less the child's padding) whatever the width.
 COLUMN_WIDTH = 166
-# The grid view's own padding at each side (style.css: gridview.tile-grid).
-GRID_PADDING = 6
-# The title's margin at its start (grid.blp), which puts it on the page's 24 px column.
-TITLE_MARGIN = 24
 
 
 def columns_for(width):
-    """The columns a grid of tiles `width` px wide shows, or one more when its padding (left
-    out here) tips it: never fewer, so a grid told this many as max-columns lays out as it
-    would with no limit."""
+    """The columns a grid of tiles in a page `width` px wide shows, or one more when the
+    grid's margins (left out here) tip it: never fewer, so a grid told this many as
+    max-columns lays out as it would with no limit."""
     return max(2, width // COLUMN_WIDTH)
-
-
-def cover_start(width, max_columns):
-    """Where the first column's cover starts in a grid `width` px wide: the grid divides its
-    width (less its padding) among the columns that fit, and a tile is centred in its
-    column. The page's title starts there too."""
-    inner = width - 2 * GRID_PADDING
-    columns = max(2, min(max_columns, inner // COLUMN_WIDTH))
-    return GRID_PADDING + (inner / columns - ART_SIZE) / 2
 
 
 def estimate_columns():
@@ -80,14 +70,74 @@ def estimate_columns():
     return columns_for(width) if width and width > 0 else None
 
 
-# The sort orders a page can offer: key -> (label, sorter factory). Labels are looked up when a
-# page is built, after the launcher has set up gettext. An Item's subtitle is its artist.
+# The sort orders a page can offer: key -> (label, the Item properties compared in turn,
+# whether the key's own direction is descending). Labels are looked up when a page is built,
+# after the launcher has set up gettext. An Item's subtitle is its artist; Year is newest
+# first unless asked the other way.
 SORTS = {
-    'title': (lambda: _('Title'), lambda: _string('title')),
-    'artist': (lambda: _('Artist'),
-               lambda: _chain(_string('subtitle'), _number('year'), _string('title'))),
-    'year': (lambda: _('Year'), lambda: _chain(_number('year', descending=True), _string('title'))),
+    'title': (lambda: _('Title'), ('title',), False),
+    'artist': (lambda: _('Artist'), ('subtitle', 'year', 'title'), False),
+    'year': (lambda: _('Year'), ('year', 'title'), True),
 }
+# The properties compared as numbers; the rest are text.
+NUMBERS = frozenset({'year'})
+
+
+def make_sorter(key, descending=False):
+    """The Gtk.Sorter for SORTS[key] in one direction, and whether its order is to be shown
+    backwards. Descending turns the first property round and leaves the rest breaking ties as
+    they do ascending, as the Songs table's order does (library.SongOrder): a number's
+    Gtk.NumericSorter takes the direction, but Gtk.StringSorter sorts one way, so a text's
+    descending order is its ascending one shown backwards (ReversedModel), ties and all."""
+    names = SORTS[key][1]
+    backwards = descending and names[0] not in NUMBERS
+    sorters = [_number(name, descending and name == names[0]) if name in NUMBERS
+               else _string(name) for name in names]
+    return (_chain(*sorters) if len(sorters) > 1 else sorters[0]), backwards
+
+
+def _direction(descending):
+    return 'descending' if descending else 'ascending'
+
+
+class ReversedModel(GObject.Object, Gio.ListModel):
+    """`model`'s items in its own order or, set `backwards`, from the last to the first: a
+    grid's descending text order (make_sorter). Nothing is copied or sorted: a position here
+    maps to the model's, and the model's changes to positions here."""
+
+    def __init__(self, model):
+        super().__init__()
+        self._model = model
+        self._backwards = False
+        connect_weak(model, 'items-changed', self._on_items_changed)
+
+    @property
+    def backwards(self):
+        return self._backwards
+
+    def set_backwards(self, backwards):
+        if backwards == self._backwards:
+            return
+        self._backwards = backwards
+        count = self._model.get_n_items()
+        if count > 1:
+            self.items_changed(0, count, count)
+
+    def do_get_item_type(self):
+        return self._model.get_item_type()
+
+    def do_get_n_items(self):
+        return self._model.get_n_items()
+
+    def do_get_item(self, position):
+        if self._backwards:
+            position = self._model.get_n_items() - 1 - position
+        return self._model.get_item(position)
+
+    def _on_items_changed(self, model, position, removed, added):
+        if self._backwards:
+            position = model.get_n_items() - position - added
+        self.items_changed(position, removed, added)
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/grid.ui')
@@ -98,14 +148,17 @@ class GridPage(Adw.NavigationPage):
     whenever the library changes, for models that a load replaces, like a shelf's; None
     shows nothing, as the missing state: `missing_title`, `missing_description`, a folder
     that is gone). `sorts` are SORTS keys: the first is the initial order, and with more than
-    one the header's Sort By menu offers them (the page.sort action), the choice remembered
-    per root page in the grid-sort setting; none keeps the model's own order. `artist` makes
-    round portrait tiles. `root` is false for a page pushed over another. Root or pushed, the
-    header bar shows the title while the big one is out of view (HeaderTitle). The
-    in-content title follows the page's `title` and starts where the first column's cover
-    does. The loading and empty states follow the library's state (the first sync filling an
-    empty library is loading) and the model's item count. A playlist folder's page is one
-    too (pages.folder()): its folders are tiles with a folder icon.
+    one the header's Sort By menu offers them (the page.sort action) and Ascending or
+    Descending (page.sort-order): a key chosen comes its own way round (Year newest first,
+    the rest A to Z) and the direction turns it; the key is remembered per root page in the
+    grid-sort setting, the direction for the page's life. No keys keeps the model's own
+    order. `artist` makes round portrait tiles. `root` is false for a page pushed over
+    another. Root or pushed, the header bar shows the title while the big one is out of view
+    (HeaderTitle). The in-content title follows the page's `title`, on the page's margin,
+    where the first column's cover is. The loading and empty states follow the library's
+    state (the first sync filling an empty library is loading) and the model's item count. A
+    playlist folder's page is one too (pages.folder()): its folders are tiles with a folder
+    icon.
     """
 
     __gtype_name__ = 'AppleMusicGridPage'
@@ -140,9 +193,11 @@ class GridPage(Adw.NavigationPage):
         self._sign_in = SignInOffer(self.empty_page)  # Sign In… while signed out
 
         self._sort_keys = tuple(sorts)
-        self._sorters = {key: SORTS[key][1]() for key in sorts}
-        self._sorted = Gtk.SortListModel(
-            model=self._model(), sorter=self._sorters[sorts[0]] if sorts else None)
+        self._order = (sorts[0], SORTS[sorts[0]][2]) if sorts else None  # (key, descending)
+        sorter, backwards = make_sorter(*self._order) if sorts else (None, False)
+        self._sorted = Gtk.SortListModel(model=self._model(), sorter=sorter)
+        self._shown = ReversedModel(self._sorted)
+        self._shown.set_backwards(backwards)
         # Every signal of a child or of an object the page holds is connected weakly
         # (widgets/util.py): a bound method would keep the page alive once popped.
         connect_weak(self._sorted, 'items-changed', self._update_state)
@@ -158,20 +213,31 @@ class GridPage(Adw.NavigationPage):
         # width of its own (estimate_columns); _on_title_position keeps it fitting after.
         self._columns_idle = None
         self._set_columns(estimate_columns())
-        self.grid_view.set_model(Gtk.NoSelection(model=self._sorted))
+        self.grid_view.set_model(Gtk.NoSelection(model=self._shown))
         context_menu.attach(self.grid_view)
 
-        # Sort By: a menu of the orders, a stateful page.sort action.
+        # Sort By: a menu of the orders and of the directions, as radio items of the stateful
+        # page.sort and page.sort-order actions.
         self._sort_restored = False  # the remembered choice applied (once the page's tag is)
         self._sort_action = Gio.SimpleAction.new_stateful(
             'sort', GLib.VariantType.new('s'), GLib.Variant('s', sorts[0] if sorts else ''))
+        self._order_action = Gio.SimpleAction.new_stateful(
+            'sort-order', GLib.VariantType.new('s'), GLib.Variant('s', _direction(backwards)))
         connect_weak(self._sort_action, 'change-state', self._on_sort_chosen)
+        connect_weak(self._order_action, 'change-state', self._on_order_chosen)
         actions = Gio.SimpleActionGroup()
         actions.add_action(self._sort_action)
+        actions.add_action(self._order_action)
         self.insert_action_group('page', actions)
         menu = Gio.Menu()
+        keys = Gio.Menu()
         for key in sorts:
-            menu.append(SORTS[key][0](), f'page.sort::{key}')
+            keys.append(SORTS[key][0](), f'page.sort::{key}')
+        menu.append_section(None, keys)
+        directions = Gio.Menu()
+        directions.append(_('Ascending'), 'page.sort-order::ascending')
+        directions.append(_('Descending'), 'page.sort-order::descending')
+        menu.append_section(None, directions)
         self.sort_button.set_menu_model(menu)
 
         connect_weak(self.scrolled_window.get_vadjustment(), 'value-changed', self._on_scrolled)
@@ -232,6 +298,10 @@ class GridPage(Adw.NavigationPage):
             sorts[tag] = value.get_string()
             settings.set_value('grid-sort', GLib.Variant('a{ss}', sorts))
 
+    def _on_order_chosen(self, action, value):
+        self._sort(self._sort_action.get_state().get_string(),
+                   descending=value.get_string() == 'descending')
+
     def _restore_sort(self):
         """The order last chosen on this root page (its tag), if it still offers it."""
         tag = self.get_tag()
@@ -239,14 +309,22 @@ class GridPage(Adw.NavigationPage):
         if not tag or settings is None:
             return
         key = settings.get_value('grid-sort').unpack().get(tag)
-        if key in self._sort_keys and key != self._sort_action.get_state().get_string():
+        if key in self._sort_keys:
             self._sort(key)
 
-    def _sort(self, key):
-        if key not in self._sorters:
+    def _sort(self, key, descending=None):
+        """Show the items by `key`, `descending` or not (None: the key's own direction)."""
+        if key not in self._sort_keys:
             return
-        self._sort_action.set_state(GLib.Variant('s', key))
-        self._sorted.set_sorter(self._sorters[key])
+        if descending is None:
+            descending = SORTS[key][2]
+        if (key, descending) != self._order:
+            self._order = (key, descending)
+            self._sort_action.set_state(GLib.Variant('s', key))
+            self._order_action.set_state(GLib.Variant('s', _direction(descending)))
+            sorter, backwards = make_sorter(key, descending)
+            self._shown.set_backwards(backwards)
+            self._sorted.set_sorter(sorter)
         # Back to the top: the grid would otherwise follow the item it showed to wherever the
         # new order puts it.
         if self._sorted.get_n_items():
@@ -270,7 +348,7 @@ class GridPage(Adw.NavigationPage):
         unbind_label(list_item)
 
     def _on_activate(self, _grid_view, position):
-        item = self._sorted.get_item(position)
+        item = self._shown.get_item(position)
         if item is not None:
             self.get_root().open_item(item)
 
@@ -287,8 +365,8 @@ class GridPage(Adw.NavigationPage):
         return self.title_label.measure(Gtk.Orientation.VERTICAL, -1)[1]
 
     def _on_title_position(self, overlay, widget, allocation):
-        """Place the title at the top of the overlay, as far up as the grid has scrolled,
-        starting where the first column's cover does.
+        """Place the title at the top of the overlay, as far up as the grid has scrolled; its
+        own margins put it on the page's.
 
         Called at each layout of the overlay, so also where the page learns its width: the
         grid's max-columns follows it, so the grid makes tiles for the columns that fit
@@ -302,8 +380,8 @@ class GridPage(Adw.NavigationPage):
         elif columns < current and self._columns_idle is None:
             self._columns_idle = GLib.idle_add(self._set_columns, columns,
                                                priority=GLib.PRIORITY_HIGH_IDLE)
-        allocation.x = round(cover_start(width, self.grid_view.get_max_columns()) - TITLE_MARGIN)
+        allocation.x = 0
         allocation.y = -round(self._title_offset)
-        allocation.width = width - allocation.x
+        allocation.width = width
         allocation.height = self._title_height()
         return True
