@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """The album, playlist and artist pages over the stand-in engine (tests/page_harness.py): an
-item without tracks is fetched once, a popped page's fetch is cancelled, and the pages follow
-their Item."""
+item without tracks is fetched once, a popped page's fetch is cancelled, the pages follow
+their Item, and a detail page fits the width it has, from the 360 px minimum up."""
 
 import asyncio
 import unittest
@@ -263,6 +263,73 @@ class DetailPageTest(PageTestCase):
         self.assertTrue(await self.until(lambda: self.window.item_actions.asked))
         self.assertIs(self.window.item_actions.asked[-1], self.item)
         page.more_button.popdown()
+
+    async def shown_at(self, page, width):
+        """page shown width px wide: in a clamp of that width (which hands its child that
+        much, whatever the child's natural width) under the harness window's root page (its
+        navigation view is 1000 px wide), laid out, its rows built. The clamp, for the test
+        to remove."""
+        from gi.repository import Adw
+
+        clamp = Adw.Clamp(maximum_size=width, tightening_threshold=width,
+                          unit=Adw.LengthUnit.PX, vexpand=True)
+        clamp.set_child(page)
+        self.window.root_box.append(clamp)
+        self.assertTrue(await self.until(
+            lambda: page.get_width() == width and page.list_view.get_first_child() is not None),
+            f'{width} px')
+        return clamp
+
+    @staticmethod
+    def minimum_width(page):
+        """What the page asks of its width: its toolbar view's minimum, as the rows built so
+        far make it (the breakpoint bin around it answers its own width-request, 360,
+        whatever is inside)."""
+        from gi.repository import Gtk
+
+        toolbar_view = page.get_child().get_child()
+        return toolbar_view.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+
+    async def test_the_page_fits_the_width_it_has(self):
+        # The hero's buttons row, beside the cover or under it, and the rows around it never
+        # ask for more than the page has, from the 360 px minimum up (libadwaita would warn
+        # "exceeds AdwBreakpointBin width" and cut the page's right edge): at 360, the narrow
+        # breakpoints' stacked hero with the buttons' row whole; at 601sp, still the narrow
+        # one (the cover beside the text needs 650); at 651sp, the wide one, which fits there.
+        # Measured with the app's stylesheet (the rows' inset is its) and in GNOME's font, as
+        # the screenshots are (scripts/harness.py's stock look): the test process's own may
+        # be narrower. The setting reaches the widgets at the next style validation, which
+        # their Pango context shows.
+        from gi.repository import Gdk, Gtk
+
+        from applemusic.widgets.shelf import text_scale
+
+        provider = Gtk.CssProvider()
+        provider.load_from_resource('/io/github/jackicus/MusicSleeve/style.css')
+        display = Gdk.Display.get_default()
+        Gtk.StyleContext.add_provider_for_display(display, provider,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.addCleanup(Gtk.StyleContext.remove_provider_for_display, display, provider)
+        font = self.gtk_settings.props.gtk_font_name
+        self.addCleanup(self.gtk_settings.set_property, 'gtk-font-name', font)
+        self.gtk_settings.props.gtk_font_name = 'Adwaita Sans 11'
+        self.assertTrue(await self.until(
+            lambda: self.window.root_box.get_pango_context().get_font_description()
+            .get_family() == 'Adwaita Sans'), 'the font setting applied')
+        scale = text_scale(self.gtk_settings)  # the breakpoints are in sp
+        narrow = 650 * scale
+        for kind in ('album', 'playlist'):
+            for width in (360, round(600 * scale) + 1, round(narrow) + 1):
+                page = self.page(album(1, tracks=3, kind=kind))
+                clamp = await self.shown_at(page, width)
+                self.assertLessEqual(self.minimum_width(page), width, f'{kind} at {width}')
+                hero_row = page.cover.get_parent()
+                stacked = hero_row.get_orientation() == Gtk.Orientation.VERTICAL
+                self.assertEqual(stacked, width <= narrow, f'{kind} at {width}')
+                buttons = page.play_button.get_parent()
+                natural = buttons.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+                self.assertGreaterEqual(buttons.get_width(), natural, f'{kind} at {width}')
+                self.window.root_box.remove(clamp)
 
     async def test_shift_tab_from_the_first_track_goes_back_to_the_hero(self):
         from gi.repository import Gdk, Gtk
