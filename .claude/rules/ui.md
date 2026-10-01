@@ -73,7 +73,8 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `widgets.engine_status.EngineStatus` (no widget; tests/test_engine_status.py): the spinner
   while it starts, Sign In when signed out, Start Engine (through `app.start_engine()`, whose
   failure the app reports), Try Again, and "Not Available in the Demo" with no button (the
-  demo engine always answers `engine-down`). A state the page shows is not toasted too.
+  demo engine answers `engine-down`, but for the artist pages scripts/demo_library.py invents).
+  A state the page shows is not toasted too.
 - A page of shelves is a vertical `Gtk.Box` of a handful of `AppleMusicShelf`, each a horizontal
   `Gtk.ListView` in its own scrolled window, placed by a `widgets.shelf.ShelfColumn`: a shelf
   shown again keeps its widget (moved into place), new ones are bound a frame apart after
@@ -83,6 +84,13 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   the shelf measures itself: shelves are made at run time, out of a page breakpoint's reach),
   so the title has their room at 360 px. Anything unbounded gets a page of its own (See All), since a
   `Gtk.GridView` cannot sit under a shelf in the same scrolled window.
+- The artist page (pages/artist.py) is Apple's artist page over `Engine.artist_page`: the
+  release card beside Top Songs (`widgets.song_shelf.SongShelf`, a horizontal `Gtk.GridView`
+  three rows high, which plays the songs as one queue from the one activated), then two
+  `ShelfColumn`s, before About and after it (Similar Artists), Essential Albums as hero cards
+  (`show(heroes=…)`). Shelf titles are Apple's (`view_title()`, not `remote.shelf_title()`), and
+  a shelf Apple has more of fetches the rest on See All (its `complete`, which
+  `window.open_shelf` runs). The library's albums show only while the catalog cannot answer.
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
   The item actions take their object as a `(ss)` target (kind, id), not as state.

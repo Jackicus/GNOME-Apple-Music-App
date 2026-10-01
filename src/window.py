@@ -251,11 +251,16 @@ class Window(Adw.ApplicationWindow):
         deletion), search categories their page of shelves, over the page shown. A station,
         a song (a search hit, a Best New Songs tile) or a music video has no page: it plays,
         as on music.apple.com (a video as its audio, in the headless engine, as the context
-        menu's Play does). Anything else is named in a toast.
+        menu's Play does). A link (an interview on an artist's page) opens its page on
+        music.apple.com in the browser. Anything else is named in a toast.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'item', None) is item:
             return  # a double activation
+        if item.kind in ('album', 'playlist') and not item.groups:
+            # One the library has (an artist page's, under the same id): the library's own,
+            # whose page needs no fetch.
+            item = self._library.by_id(item.kind, item.id) or item
         if item.kind in ('album', 'playlist'):
             from .pages.detail import DetailPage
 
@@ -274,6 +279,10 @@ class Window(Adw.ApplicationWindow):
         elif item.kind in ('station', 'song', 'video'):
             self.play_request(item.play)
             return
+        elif item.kind == 'link' and item.url:
+            if not self.get_application().refuse_in_demo():
+                self.item_actions.launch(item.url)
+            return
         else:
             self.get_application().toast(item.title)
             return
@@ -283,7 +292,9 @@ class Window(Adw.ApplicationWindow):
         """Show a shelf's items as a grid, pushed over the page shown: a shelf's See All.
 
         A shelf of the library's is followed by its key, so the page shows what a later load
-        puts on it; any other (a search's results, a category's) is shown as it is.
+        puts on it; any other (a search's results, a category's) is shown as it is, and one
+        that knows where the rest of it is (an artist's: `complete`, a coroutine function)
+        fetches it, the grid following as it arrives.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'shelf', None) is shelf:
@@ -306,6 +317,9 @@ class Window(Adw.ApplicationWindow):
                         empty_description=_('This shelf is empty now'))
         page.shelf = shelf
         self.navigation_view.push(page)
+        complete = getattr(shelf, 'complete', None)
+        if complete is not None:
+            self.get_application().spawn(complete())
 
     def play_request(self, play, start_with=None, shuffle=None, start_id=None):
         """Play what play names ({kind, id}: an Item's or a Group's play target), from its entry at

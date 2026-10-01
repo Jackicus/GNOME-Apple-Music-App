@@ -31,7 +31,9 @@ list and the script together.
    closes it.
 3. On an album or playlist: Play, Tab to Shuffle and to More Options (the item's menu), Tab to
    the first track (Shift+Tab goes back to More Options), Down, and Enter plays from that
-   track. Alt+Left (or Escape inside the page) goes back.
+   track. Alt+Left (or Escape inside the page) goes back. On an artist: Play, More Options,
+   the latest release, then (past the Top Songs arrows and See All) the top songs, where the
+   arrows move from song to song and Enter plays the top songs from the one focused.
 4. Ctrl+3 puts the focus on the player bar's play button (with nothing playing, on the bar,
    which Enter opens as Now Playing). Space presses the focused button, switch, check box or
    boxed-list row, as anywhere in GNOME; on a tile, a list item, the seek slider or nothing, it

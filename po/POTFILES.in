@@ -40,6 +40,8 @@ src/pages/songs.blp
 src/widgets/engine_status.py
 src/widgets/shelf.py
 src/widgets/shelf.blp
+src/widgets/song_shelf.py
+src/widgets/song_shelf.blp
 src/widgets/song_title.blp
 src/widgets/track_row.blp
 src/widgets/lyrics.py

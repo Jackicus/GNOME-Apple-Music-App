@@ -196,6 +196,17 @@ changes, change it here, with the date. The plan they came from is in
   fallback on a session that has no such interface (a desktop one keeps it behind the
   remote-desktop portal, which asks the user first). It stays a tool to run here rather than a
   CI job: the container installs no mutter, and nothing in `check.sh` may need one (#169).
+- **Artist pages are Apple's views** (2026-10-01). An artist's page is one catalog read with
+  every view music.apple.com's views-based page asks for (`api.ARTIST_VIEWS`), kept for a day,
+  laid out in the order and under the titles Apple gives: the release beside Top Songs (a grid
+  three rows high), Essential Albums as large cards, the shelves, About (biography, From,
+  Born or Formed, Genre) before Similar Artists. It replaces fetching every album with its
+  tracks, which took one read an album. A library artist is the sync's own invention (no
+  catalog id), so its catalog artist is found through one of its songs; the library's albums
+  show only when the catalog cannot answer, because a library album carries no catalog id to
+  tell it from the catalog's. Videos about the artist open on music.apple.com: the engine is
+  headless and has no picture to show. The demo engine answers with the artist pages the
+  demo library invents (marked `demo`), and with none of Apple's (#226).
 
 ## Open
 

@@ -32,6 +32,7 @@ import weakref
 from unittest import mock
 
 from tests.gtk import SCHEMA_ID, pump, requires_gtk
+from tests.page_harness import artist_answer
 
 from gi.repository import Gio, GObject
 
@@ -133,6 +134,7 @@ def _classes():
         def __init__(self):
             super().__init__()
             self.calls = []
+            self.artist_answer = None  # what artist_page() answers: engine-down while None
 
         async def start(self, visible=None):
             self.calls.append('start')
@@ -148,6 +150,12 @@ def _classes():
         async def item(self, kind, item_id):
             self.calls.append('item')
             raise EngineError('engine-down')
+
+        async def artist_page(self, artist_id, refresh=False):
+            self.calls.append('artist_page')
+            if self.artist_answer is None:
+                raise EngineError('engine-down')
+            return self.artist_answer
 
     class LibrarySync(GObject.Object):
         """The app's sync as the dialogs see it: never running."""
@@ -462,6 +470,20 @@ class PageLifetimeTest(WidgetTestCase):
             ArtistPage(self.library, Item(_artist([_album(n) for n in range(4)]))), Tile)
         await self.assert_freed(*refs)
 
+    async def test_artist_page_with_the_catalog(self):
+        from applemusic.library import Item
+        from applemusic.pages.artist import ArtistPage
+        from applemusic.widgets.hero_tile import HeroTile
+        from applemusic.widgets.song_shelf import SongRow, SongShelf
+        from applemusic.widgets.tile import Tile
+
+        self.app.engine.artist_answer = artist_answer()
+        self.addCleanup(setattr, self.app.engine, 'artist_answer', None)
+        refs = await self.pushed_and_popped(
+            ArtistPage(self.library, Item(dict(_artist([_album(1)]), catalogId='42'))),
+            SongShelf, SongRow, HeroTile, Tile)
+        await self.assert_freed(*refs)
+
     async def test_shelves_page(self):
         from applemusic.pages.shelves import ShelvesPage
         from applemusic.widgets.shelf import Shelf
@@ -623,21 +645,36 @@ class HandlerTest(WidgetTestCase):
     async def test_artist_page_album_and_status(self):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage
+        from applemusic.widgets.shelf import Shelf
         from applemusic.widgets.tile import Tile
 
         self.signed_in()
 
-        page = await self.shown(
-            ArtistPage(self.library, Item(_artist([_album(n) for n in range(3)]))), Tile)
-        page.flow_box.emit('child-activated', page.flow_box.get_child_at_index(1))
+        # The engine down: the library's albums, newest first, and Start Engine under them.
+        page = await self.shown(ArtistPage(self.library, Item(dict(
+            _artist([_album(n) for n in range(3)]), catalogId='42'))), Tile)
+        _find(page, Shelf).list_view.emit('activate', 1)
         self.assertEqual([album.title for album in self.window.opened], ['Album 001'])
-        self.window.navigation_view.pop()
-
-        page = await self.shown(ArtistPage(self.library, Item(_artist([]))))  # engine down
         self.assertTrue(await self.until(lambda: page.status_button.get_visible()))
         page.status_button.emit('clicked')
         await self.settle()
-        self.assertEqual(self.app.engine.calls, ['item', 'start', 'item'])
+        self.assertEqual(self.app.engine.calls, ['artist_page', 'start', 'artist_page'])
+        self.window.navigation_view.pop()
+
+    async def test_artist_page_top_songs(self):
+        from applemusic.library import Item
+        from applemusic.pages.artist import ArtistPage
+        from applemusic.widgets.song_shelf import SongRow, SongShelf
+
+        self.app.engine.artist_answer = artist_answer()
+        self.addCleanup(setattr, self.app.engine, 'artist_answer', None)
+        page = await self.shown(ArtistPage(self.library, Item(dict(_artist([]), catalogId='42'))),
+                                SongRow)
+        _find(page, SongShelf).grid_view.emit('activate', 1)
+        self.assertEqual(self.window.played,
+                         [({'kind': 'songs', 'id': '900,901,902,903'}, 1, False)])
+        page.release_button.emit('clicked')
+        self.assertEqual([item.title for item in self.window.opened], ['Invented album 99'])
 
     async def test_shelf_activation_and_see_all(self):
         from applemusic.library import Item, ShelfModel

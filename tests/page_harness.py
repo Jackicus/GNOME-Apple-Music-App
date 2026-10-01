@@ -90,6 +90,15 @@ def classes():
         async def category(self, category_id, refresh=False):
             return await self._answer('category', category_id, refresh)
 
+        async def artist_page(self, artist_id, refresh=False):
+            return await self._answer('artist_page', artist_id)
+
+        async def artist_view(self, artist_id, view):
+            return await self._answer('artist_view', artist_id, view)
+
+        async def catalog_artist(self, name, song_ids):
+            return await self._answer('catalog_artist', name, song_ids)
+
     class App(Adw.Application):
         def __init__(self):
             super().__init__(application_id='io.github.jackicus.MusicSleeve.PageTest',
@@ -253,6 +262,40 @@ def artist(albums, artist_id='l.artist001'):
               for entry in albums]
     return {'id': artist_id, 'kind': 'artist', 'title': 'Invented Artist', 'art': None,
             'thumb': None, 'groups': groups, 'play': {}}
+
+
+def artist_answer(artist_id='42', songs=4, group=False):
+    """An invented catalog artist's page, as Engine.artist_page answers (normalize.artist_page):
+    a latest release, `songs` top songs, Essential Albums, Albums (with more to fetch) and
+    Similar Artists."""
+    def entry(kind, number, **extra):
+        data = {'id': f'{kind}{number}', 'kind': kind, 'title': f'Invented {kind} {number}',
+                'subtitle': '2026', 'year': 2026, 'art': None, 'thumb': None,
+                'play': {'kind': kind, 'id': f'{kind}{number}'}, 'groups': []}
+        data.update(extra)
+        return data
+
+    return {
+        'id': artist_id,
+        'artist': entry('artist', 0, id=artist_id, title='Invented Artist', subtitle='',
+                        summary='An invented biography.', genre='Pop',
+                        origin='Invented Town, Nowhere', bornOrFormed='1 May 2001',
+                        isGroup=group, play={'kind': 'artist', 'id': artist_id}),
+        'latest': {'key': 'latest-release', 'title': 'Latest Release',
+                   'item': entry('album', 99, releaseDate='2026-09-24', trackCount=12)},
+        'topSongs': {'key': 'top-songs', 'title': 'Top Songs', 'more': False,
+                     'items': [entry('song', 900 + n, id=str(900 + n), album='Invented Album',
+                                     play={'kind': 'song', 'id': str(900 + n)})
+                               for n in range(songs)]},
+        'shelves': [
+            {'key': 'featured-albums', 'title': 'Essential Albums', 'more': False,
+             'items': [entry('album', 1, subtitle='An invented line about it.')]},
+            {'key': 'full-albums', 'title': 'Albums', 'more': True,
+             'items': [entry('album', n) for n in range(1, 4)]},
+            {'key': 'similar-artists', 'title': 'Similar Artists', 'more': False,
+             'items': [entry('artist', 43, subtitle='')]},
+        ],
+    }
 
 
 @requires_gtk

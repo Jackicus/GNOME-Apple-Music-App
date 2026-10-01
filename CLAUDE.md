@@ -143,8 +143,8 @@ meson setup _build --prefix=/usr …   a system install, never into build/ (docs
   the window handles them as `src/keyboard.py` decides (Space belongs to a focused button).
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
   saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
-- **Demo mode** (`--demo`, `app.demo`): no engine (commands raise `engine-down`), no MPRIS, its
-  own settings (`settings.ini`); nothing in it may start Chrome or read the real cache.
+- **Demo mode** (`--demo`, `app.demo`): no engine (`engine-down`; only its invented artist pages
+  answer), no MPRIS, its own settings; nothing in it may start Chrome or read the real cache.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
   ruff: 4-space indents, no type annotations, a docstring where a module or function is not

@@ -58,6 +58,18 @@ def track_label(track, show_artist=True, show_album=True):
     return label
 
 
+def song_label(item):
+    """A song Item's row name (an artist's Top Songs): its title, its album when known, and
+    "explicit" for explicit lyrics, as track_label() words a track."""
+    label = item.title
+    album = item.raw.get('album') if isinstance(item.raw, dict) else None
+    if album:
+        label = _format('part').format(label=label, part=album)
+    if item.explicit:
+        label = _format('explicit').format(label=label)
+    return label
+
+
 def flow_child(widget, label):
     """A Gtk.FlowBoxChild holding widget, named `label` for assistive technology (a flow box's
     children are not list items: their name is set on the child)."""

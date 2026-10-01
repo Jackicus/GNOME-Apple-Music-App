@@ -1333,6 +1333,105 @@ class PlaybackTest(EngineFixture):
             self.assertEqual(raised.exception.code, 'engine-down')
 
 
+class ArtistTest(EngineFixture):
+    """artist_page, artist_view and catalog_artist: the reads they make, the shaping, the
+    day-long cache, and the demo's own answers."""
+
+    async def up(self, authorized=True):
+        self.page.authorized = authorized
+        await self.engine.start()
+
+    def fixture(self):
+        with open(FIXTURES / 'catalog_artist.json', encoding='utf-8') as file:
+            return json.load(file)
+
+    async def test_the_page_is_one_read_kept_for_a_day(self):
+        await self.up()
+        path = '/v1/catalog/us/artists/1724049001'
+        self.page.api_answers[path] = self.fixture()
+        answer = await self.engine.artist_page('1724049001')
+        self.assertEqual(self.page.api_calls, [path])
+        params = self.page.api_params[0]
+        self.assertIn('top-songs', params['views'].split(','))
+        self.assertIn('more-to-see', params['views'].split(','))
+        self.assertEqual(params['extend'], 'artistBio,bornOrFormed,isGroup,origin')
+        self.assertEqual(answer['artist']['title'], 'Paper Parachutes')
+        self.assertEqual(answer['latest']['item']['title'], 'Ladders of Rain')
+        self.assertIn('cached', answer)
+        self.assertTrue((self.cache / 'artists' / '1724049001.json').is_file())
+        await self.engine.stop()
+        again = await self.engine.artist_page('1724049001')  # from the file, the engine down
+        self.assertEqual(again['shelves'], answer['shelves'])
+        self.assertEqual(len(self.page.api_calls), 1)
+
+    async def test_a_library_id_is_not_a_catalog_artist(self):
+        await self.up()
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.artist_page('l.art_0123456789ab')
+        self.assertEqual(raised.exception.code, 'usage')
+        self.assertEqual(self.page.api_calls, [])
+
+    async def test_a_view_is_read_whole(self):
+        await self.up()
+        path = '/v1/catalog/us/artists/1724049001/view/full-albums'
+        album = self.fixture()['data'][0]['views']['full-albums']['data'][0]
+        self.page.api_answers[path] = {'data': [album], 'next': f'{path}?offset=1'}
+        self.page.api_answers[f'{path}?offset=1'] = {
+            'data': [dict(album, id='1724049111')]}
+        items = await self.engine.artist_view('1724049001', 'full-albums')
+        self.assertEqual(self.page.api_calls, [path, f'{path}?offset=1'])
+        self.assertEqual(self.page.api_params[0], {'limit': 100})
+        self.assertEqual([(item['id'], item['subtitle']) for item in items],
+                         [('1724049100', '2026'), ('1724049111', '2026')])
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.artist_view('1724049001', 'library-albums')
+        self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_a_library_artist_is_found_through_its_songs(self):
+        await self.up()
+        base = '/v1/catalog/us/songs'
+
+        def song(artists):
+            return {'data': [{'id': 's', 'relationships': {'artists': {'data': [
+                {'id': artist_id, 'attributes': {'name': name}} for artist_id, name in artists]}}}]}
+
+        # The first song is gone, the second is a duet: the artist named as the library's.
+        self.page.api_answers[f'{base}/1'] = {'errors': [{'status': '404', 'title': 'no'}]}
+        self.page.api_answers[f'{base}/2'] = song([('7', 'Mara Lind'),
+                                                   ('1724049001', 'Paper  Parachutes')])
+        found = await self.engine.catalog_artist('paper parachutes', ['1', '2', '3'])
+        self.assertEqual(found, '1724049001')
+        self.assertEqual(self.page.api_calls, [f'{base}/1', f'{base}/2'])
+        self.assertEqual(self.page.api_params[1], {'include': 'artists'})
+        # Remembered, a miss too.
+        self.assertEqual(await self.engine.catalog_artist('Paper Parachutes', ['2']),
+                         '1724049001')
+        self.page.api_answers[f'{base}/4'] = song([('8', 'Someone Else')])
+        self.assertIsNone(await self.engine.catalog_artist('Nobody', ['4']))
+        self.assertIsNone(await self.engine.catalog_artist('nobody', ['4']))
+        self.assertEqual(len(self.page.api_calls), 3)
+
+    async def test_the_demo_answers_from_its_own_cache(self):
+        demo = engine_module.Engine(demo=True)
+        path = pathlib.Path(normalize.artist_cache_path(str(self.cache), '1724049001'))
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({'id': '1724049001', 'shelves': [], 'demo': True,
+                                    'cached': '2020-01-01T00:00:00Z'}), encoding='utf-8')
+        answer = await demo.artist_page('1724049001')  # old, and still the demo's answer
+        self.assertEqual(answer['id'], '1724049001')
+        self.assertNotIn('stale', answer)
+        # One of Apple's, kept by the app before: not the demo's to show.
+        apple = pathlib.Path(normalize.artist_cache_path(str(self.cache), '1724049002'))
+        apple.write_text(json.dumps({'id': '1724049002', 'shelves': [],
+                                     'cached': '2020-01-01T00:00:00Z'}), encoding='utf-8')
+        for coro in (demo.artist_page('1724049002'), demo.artist_page('1724049003'),
+                     demo.browse(),
+                     demo.catalog_artist('Paper Parachutes', ['1'])):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'engine-down')
+
+
 class LibraryWriteTest(EngineFixture):
     """love, unlove, rating, add_to_library, add_to_playlist and catalog_url: the bridge
     calls, with the API's types for library and catalog ids, all needing a signed-in engine.
