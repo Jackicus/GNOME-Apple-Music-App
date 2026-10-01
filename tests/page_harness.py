@@ -356,9 +356,10 @@ class PageTestCase(unittest.IsolatedAsyncioTestCase):
         self._roots = []  # the pages show_root() added to the navigation view
 
     async def asyncTearDown(self):
-        # The focus off the page first: an entry torn down while it has the focus (the Songs
-        # filter bar puts it there) has crashed GTK's Wayland text input, which still
-        # reached the entry after it was gone.
+        # A turn of the main loop before the teardown: the first entry to take the focus in a
+        # process binds Wayland's text input, and when it is torn down before the loop has read
+        # the compositor's answer, GTK's text input reaches it after it is gone and crashes
+        # (docs/notes.md, #254). The turn is what matters; the focus moves off the page too.
         self.window.set_focus(None)
         await self.turn()
         self.window.navigation_view.replace([self.window.root_page])
