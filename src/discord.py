@@ -29,9 +29,9 @@ the artist, in the one-line status under the user's name.
 
 While the music plays the timestamps carry the start and end of the track in wall-clock
 seconds, so Discord counts down by itself and nothing has to be sent for the progress to stay
-right; paused, they are left out, which stops the counter where it is. A pause that lasts
-PAUSED_TIMEOUT clears the activity, as a stop does: the user has stopped listening, and the
-profile says so. Playing again brings it back.
+right; paused, they are left out, which stops the counter where it is, and PAUSED_TIMEOUT
+into the pause the activity is cleared, as Spotify's is: the user has stopped listening, and
+the profile says so. Playing again brings it back.
 
 Only what Discord shows is sent: the title, the artist, the album and the catalogue's own
 cover URL, which is public. No library id, no token, nothing of the account's.
@@ -102,9 +102,10 @@ SETTLING_STATES = ('loading', 'waiting', 'stalled', 'seeking')
 # Discord shows it with the clock stopped, until the pause has lasted PAUSED_TIMEOUT.
 FINISHED_STATES = ('none', 'stopped', 'ended', 'completed')
 
-# How long a paused track stays on the profile (seconds): a short pause keeps it there, a
-# long one means nobody is listening, and the activity is cleared until the music plays.
-PAUSED_TIMEOUT = 5 * 60
+# How long a paused track stays on the profile (seconds) before it is cleared until the music
+# plays again: about as long as Spotify keeps one, and long enough that a pause and a quick
+# resume do not take the card off and put it back.
+PAUSED_TIMEOUT = 5
 
 # The start is worked out from the position each time, so it drifts by a moment between
 # updates. A difference that small is not a seek and must not cost a frame.
