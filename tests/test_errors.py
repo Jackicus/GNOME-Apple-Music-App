@@ -21,15 +21,15 @@ class ErrorMessageTest(unittest.TestCase):
         self.assertEqual(error_message('engine-down'), (
             'The playback engine is not running', 'Start', 'app.start-engine'))
         self.assertEqual(error_message('no-keyring'), (
-            'The keyring is not available, so starting would lose the Apple Music sign-in',
-            'Retry', 'app.start-engine'))
+            'Unlock the keyring, then start the engine', 'Start', 'app.start-engine'))
         self.assertEqual(error_message('not-signed-in'), (
             'Sign in to Apple Music again', 'Sign In', 'app.sign-in'))
         self.assertEqual(error_message('timeout'), (
             'Apple Music did not answer in time', None, None))
         self.assertEqual(error_message('api'), ('Apple Music could not do that', None, None))
-        self.assertEqual(error_message('usage'), ('Something went wrong', None, None))
-        self.assertEqual(error_message('anything else'), ('Something went wrong', None, None))
+        unexpected = ('The playback engine did not answer as expected', None, None)
+        self.assertEqual(error_message('usage'), unexpected)
+        self.assertEqual(error_message('anything else'), unexpected)
 
     def test_every_code_has_a_sentence_and_its_action_exists(self):
         from applemusic import main

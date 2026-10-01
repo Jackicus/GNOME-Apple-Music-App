@@ -21,7 +21,7 @@
     <key name="expanded-folders" type="as">
       <default>[]</default>
       <summary>Expanded playlist folders</summary>
-      <description>The ids of the playlist folders shown open in the sidebar, their contents listed under them.</description>
+      <description>The IDs of the playlist folders shown open in the sidebar, their contents listed under them.</description>
     </key>
     <key name="background-playback" type="b">
       <default>false</default>

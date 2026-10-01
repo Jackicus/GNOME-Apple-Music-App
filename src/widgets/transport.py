@@ -203,7 +203,10 @@ class SeekControl:
         self.adjustment = adjustment
         self.elapsed_label = elapsed_label
         self.remaining_label = remaining_label
-        self._value_format = _('{position} of {duration}')  # looked up once: this runs often
+        # Looked up once: this runs often.
+        # Translators: the position slider's value as a screen reader hears it: {position}
+        # is the time played ("1:05"), {duration} the song's length ("3:40").
+        self._value_format = _('{position} of {duration}')
         self._value_text = None  # what the slider reads to assistive technology
         self._player = None
         self._app = None
@@ -370,6 +373,8 @@ class VolumeControl:
     def attach(self, player, app):
         self._player = player
         self._app = app
+        # Translators: the volume button's name, and its level as a screen reader hears it:
+        # {percent} is a whole number ("70%").
         self._strings = {'volume': _('Volume'), 'percent': _('{percent}%')}
         self._label()
         player.connect('notify::volume', lambda *_: self.update())

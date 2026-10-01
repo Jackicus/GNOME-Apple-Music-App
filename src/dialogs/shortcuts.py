@@ -27,7 +27,11 @@ def present(parent):
             section.add(Adw.ShortcutsItem.new(item_title, accelerator(key)))
             keys = [_key_label(accel) for accel in accelerator(key).split()]
             if len(keys) > 1:
+                # Translators: a shortcut's alternative keys, as a screen reader hears them:
+                # {keys} is the list but the last ("Menu"), {key} the last ("Shift+F10").
                 keys = [_('{keys} or {key}').format(keys=', '.join(keys[:-1]), key=keys[-1])]
+            # Translators: a shortcut's row as a screen reader hears it: {title} is what the
+            # shortcut does ("Quit"), {keys} its key or keys ("Ctrl+Q").
             names[item_title] = _('{title}: {keys}').format(title=item_title, keys=keys[0])
         dialog.add(section)
     dialog.present(parent)
