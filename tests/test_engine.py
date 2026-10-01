@@ -1431,9 +1431,14 @@ class ArtistTest(EngineFixture):
         self.assertEqual([(artist['id'], artist['kind'], artist['title'])
                           for artist in found['artists']],
                          [('1724049001', 'artist', 'Paper Parachutes')])
-        # Remembered for the session.
+        # Remembered for the session, until the engine stops (another account may follow).
         self.assertEqual(await self.engine.related('song', '1724049201'), found)
         self.assertEqual(len(self.page.api_calls), 1)
+        await self.engine.stop()
+        await self.up()
+        await self.engine.related('song', '1724049201')
+        self.assertEqual(self.page.api_calls[-1], path)
+        self.assertEqual(len([call for call in self.page.api_calls if call == path]), 2)
 
     async def test_related_of_an_album_and_what_it_refuses(self):
         await self.up()

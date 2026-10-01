@@ -698,6 +698,7 @@ class Engine(GObject.Object):
                 relay.cancel()
         self.authorized = False
         self._storefront = None
+        self._related = {}  # the next account's storefront may differ
         self.state = 'down'
 
     async def _close_browser(self, client, process):
@@ -831,6 +832,7 @@ class Engine(GObject.Object):
             if authorized != self.authorized:
                 self.authorized = authorized
             self._storefront = None  # the account's may differ: the next status says
+            self._related = {}
         elif name == 'bridgeReset':
             # The page loaded a new document, and the bridge is back in it: what MusicKit
             # held (the sign-in, the queue) may have changed with it. The Player hears it too.

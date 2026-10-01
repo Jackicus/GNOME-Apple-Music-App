@@ -31,8 +31,9 @@ from .library import Item, Track, fold
 from .remote import remote_item
 
 # What may come between an artist's name and another's in a song's artist: "A feat. B",
-# "A & B", "A, B and C", "A x B", "A with B", "A vs. B".
-JOINER = re.compile(r'\s*(?:[,&+/;]|(?:feat|ft|featuring|with|and|x|vs)\b)')
+# "A & B", "A, B and C", "A x B", "A with B", "A vs. B". A word joiner after a space only:
+# "Max" is not "Ma" and "x".
+JOINER = re.compile(r'\s*[,&+/;]|\s+(?:feat|ft|featuring|with|and|x|vs)\b')
 
 # The kinds an artist is offered for.
 ARTIST_KINDS = ('song', 'video', 'album')
@@ -106,7 +107,8 @@ def has_artist(obj):
     Item, with an artist name or a catalog id."""
     if not (isinstance(obj, Track) or (isinstance(obj, Item) and obj.kind in ARTIST_KINDS)):
         return False
-    return bool(_key(artist_name(obj)) or catalog_target(obj))
+    # Not folded: a row's link asks at every bind, and only emptiness matters here.
+    return bool(artist_name(obj).strip()) or catalog_target(obj) is not None
 
 
 def _holds(album, ids):
@@ -122,8 +124,10 @@ def _holds(album, ids):
 
 def library_album(library, obj):
     """The library's album Item a Track or song Item is on, or None: the album a track's
-    group plays, else one of the library's of the same title by the same artist, else one
-    of them that holds the song (a compilation's, by Various Artists)."""
+    group plays, else the best of the library's of the same title: by the song's artist and
+    holding the song, then holding it (a compilation's, by Various Artists), then by the
+    song's artist exactly, then by the first it credits ("A feat. B": A's), the first of
+    equals in the library's order."""
     if isinstance(obj, Track):
         play = obj.play or {}
         if play.get('kind') == 'album' and play.get('id'):
@@ -137,11 +141,17 @@ def library_album(library, obj):
     if not candidates:
         return None
     artist = _key(artist_name(obj))
-    for album in candidates:
-        if artist and _credits(artist, _key(album.subtitle)):
-            return album
     ids = {value for value in (obj.id, obj.catalog_id) if value}
-    return next((album for album in candidates if ids and _holds(album, ids)), None)
+
+    def rank(album):
+        subtitle = _key(album.subtitle)
+        holds = bool(ids) and _holds(album, ids)
+        exact = bool(artist) and subtitle == artist
+        return (holds and exact, holds, exact, bool(artist) and _credits(artist, subtitle))
+
+    ranks = [rank(album) for album in candidates]
+    best = max(range(len(candidates)), key=ranks.__getitem__)  # the first of equals
+    return candidates[best] if any(ranks[best]) else None
 
 
 def artist_named(library, name):
@@ -200,15 +210,25 @@ def from_answer(library, answer, kind, name=''):
 def shows(here, obj, kind):
     """Whether `here` (the Item of the page shown, or None) is already where Go to Album
     (`kind` 'album') or Go to Artist ('artist') would take obj: an album page's own tracks,
-    an artist page's own songs and albums (by name, the first credited); the menu leaves the
+    an album page's songs by name too when they carry no group (the item playing's), an
+    artist page's own songs and albums (by name, the first credited); the menu leaves the
     item out there."""
     if not isinstance(here, Item):
         return False
     if kind == 'album':
         if here.kind != 'album':
             return False
-        play = obj.play if isinstance(obj, (Track, Item)) else {}
-        return bool(play) and play.get('kind') == 'album' and play.get('id') == here.id
+        play = (obj.play if isinstance(obj, (Track, Item)) else None) or {}
+        if play.get('kind') == 'album':
+            return play.get('id') == here.id
+        # A track without its album's group (the item playing, Up Next's): by its album's
+        # name and artist, or the page's album holding it.
+        title = _key(album_name(obj))
+        if not title or title != _key(here.title):
+            return False
+        ids = {value for value in (obj.id, obj.catalog_id) if value}
+        return (_credits(_key(artist_name(obj)), _key(here.subtitle))
+                or (bool(ids) and _holds(here, ids)))
     if here.kind != 'artist':
         return False
     return _credits(_key(artist_name(obj)), _key(here.title))
