@@ -47,7 +47,7 @@ calls `window.__appleMusicLibrary.<name>(...)`; the Engine's commands are thin c
 | `signin()` | `mk.authorize()`, then `{authorized}` |
 | `signout()` | `mk.unauthorize()`, which revokes the session at Apple's end: `{ok: true}` or `{error}`, never a throw |
 | `api(path, params, options)`, `apiAll(paths)` | the API's answer body (`mk.api.music()`); `apiAll` answers null in place of a failed read |
-| `play(kind, id, {startWith, shuffle})` | `{ok: true}`, or `{error, code}` when MusicKit refuses. `kind`: `album playlist station song musicVideo artist songs` (`songs`: ids joined by commas; `artist`: its top songs, else its station). `shuffle` true turns shuffle on, false off, null leaves it |
+| `play(kind, id, {startWith, startId, shuffle})` | `{ok: true}` (with `moved: {from, to}` when the queue held another item than `startId` at `startWith` and was moved to it), or `{error, code}` when MusicKit refuses. `kind`: `album playlist station song musicVideo artist songs` (`songs`: ids joined by commas; `artist`: its top songs, else its station). `shuffle` true turns shuffle on, false off, null leaves it |
 | `playNext(kind, id)`, `playLater(kind, id)` | `{ok: true}` |
 | `control(action)` | `play pause toggle next previous stop`: `{ok: true}` |
 | `seek(seconds)` | `{ok: true}` |

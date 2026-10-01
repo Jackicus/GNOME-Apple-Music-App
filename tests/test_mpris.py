@@ -74,7 +74,7 @@ class FakeEngine(GObject.Object):
             raise self.fail
         return None
 
-    async def play(self, kind, item_id, start_with=None, shuffle=None):
+    async def play(self, kind, item_id, start_with=None, shuffle=None, start_id=None):
         return await self._command('play', kind, item_id, start_with, shuffle)
 
     async def now_playing(self):

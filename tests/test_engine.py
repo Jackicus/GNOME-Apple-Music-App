@@ -1143,6 +1143,15 @@ class PlaybackTest(EngineFixture):
             ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': False}),  # in order
         ])
 
+    async def test_a_track_row_names_the_item_that_must_play(self):
+        await self.up()
+        self.page.bridge_answers['play'] = {'ok': True, 'moved': {'from': 2, 'to': 3}}
+        with self.assertLogs('applemusic.engine', 'INFO') as logged:
+            await self.engine.play('album', 'l.alb1', start_with=2, start_id='i.song3')
+        self.assertEqual(self.page.bridge_calls[-1], (
+            'play', 'album', 'l.alb1', {'startWith': 2, 'shuffle': None, 'startId': 'i.song3'}))
+        self.assertIn('moved to 3', logged.output[0])
+
     async def test_a_refused_play_carries_musickits_code(self):
         await self.up()
         self.page.bridge_answers['play'] = {'error': 'Content unavailable',

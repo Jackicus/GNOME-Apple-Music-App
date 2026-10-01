@@ -486,7 +486,8 @@ class DetailPage(Adw.NavigationPage):
     def _on_activate(self, _list_view, position):
         track = self._rows.get_item(position)
         if isinstance(track, Track):
-            self.get_root().play_request(track.play, start_with=track.index)
+            self.get_root().play_request(track.play, start_with=track.index,
+                                         start_id=track.id)
 
     # The hero's links and menus.
 

@@ -648,11 +648,12 @@ class Player(GObject.Object):
         self._app.toast(_('Starting playback engine…'))
         await self._engine.start()
 
-    async def play(self, play, start_with=None, shuffle=None):
+    async def play(self, play, start_with=None, shuffle=None, start_id=None):
         """Play what `play` names ({kind, id}: an Item's or a Group's play target), from its
-        entry at queue position `start_with`; `shuffle` True shuffled (a Shuffle button),
-        False in order (a Play button), None as the mode is (a track row). Requests go to
-        the engine one at a time, in order, and one superseded while it waits is dropped
+        entry at queue position `start_with`, the track `start_id` (a track row's: the item
+        that must play, wherever MusicKit queues it); `shuffle` True shuffled (a Shuffle
+        button), False in order (a Play button), None as the mode is (a track row). Requests
+        go to the engine one at a time, in order, and one superseded while it waits is dropped
         (the newest wins: a second album clicked while the first's queue loads). `pending`
         is True from a request until the engine has answered it, or it failed."""
         kind = play.get('kind') if isinstance(play, dict) else None
@@ -671,7 +672,8 @@ class Player(GObject.Object):
                 log.info('play %s %s%s%s', kind, item_id,
                          f' from {start_with}' if start_with is not None else '',
                          {True: ' shuffled', False: ' in order'}.get(shuffle, ''))
-                await self._engine.play(kind, item_id, start_with=start_with, shuffle=shuffle)
+                await self._engine.play(kind, item_id, start_with=start_with, shuffle=shuffle,
+                                        start_id=start_id)
         finally:
             if serial == self._play_serial:
                 self._set_pending(False)

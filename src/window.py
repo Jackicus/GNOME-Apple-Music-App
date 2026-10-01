@@ -10,7 +10,7 @@ The pages reach the window through get_root() and these seams, not its internals
                                       play a station, song or video
     open_shelf(shelf)                 a shelf's items as a grid (See All)
     open_songs(text)                  the Songs page, filtered
-    play_request(play, start_with=None, shuffle=None)
+    play_request(play, start_with=None, shuffle=None, start_id=None)
                                       every "play this": the Player, the sign-in, the toasts
     add_toast(toast)                  a toast over the content, or in the open sheet
     announce(text, priority)          Gtk.Accessible's, for assistive technology
@@ -307,9 +307,10 @@ class Window(Adw.ApplicationWindow):
         page.shelf = shelf
         self.navigation_view.push(page)
 
-    def play_request(self, play, start_with=None, shuffle=None):
+    def play_request(self, play, start_with=None, shuffle=None, start_id=None):
         """Play what play names ({kind, id}: an Item's or a Group's play target), from its entry at
-        queue position start_with (a track row: track.play, track.index); `shuffle` True
+        queue position start_with (a track row: track.play, track.index, start_id=track.id,
+        the item that must play wherever MusicKit queues it); `shuffle` True
         shuffled (a Shuffle button), False in order (a Play button), None as the mode is (a
         track row, a tile).
 
@@ -325,12 +326,13 @@ class Window(Adw.ApplicationWindow):
         if not play or not play.get('kind') or not play.get('id'):
             app.toast(_('This cannot be played'))
             return
-        app.spawn(self._play(play, start_with, shuffle))
+        app.spawn(self._play(play, start_with, shuffle, start_id))
 
-    async def _play(self, play, start_with, shuffle):
+    async def _play(self, play, start_with, shuffle, start_id):
         app = self.get_application()
         try:
-            await app.player.play(play, start_with=start_with, shuffle=shuffle)
+            await app.player.play(play, start_with=start_with, shuffle=shuffle,
+                                  start_id=start_id)
         except EngineError as error:
             if error.code == 'api' and error.musickit_code:
                 log.warning('play refused: %s', error)

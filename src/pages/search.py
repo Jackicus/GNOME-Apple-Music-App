@@ -584,7 +584,8 @@ class SearchPage(Adw.NavigationPage):
     def _on_song_activated(self, _list_view, position):
         track = self._songs_shown.get_item(position)
         if isinstance(track, Track):
-            self.get_root().play_request(track.play, start_with=track.index)
+            self.get_root().play_request(track.play, start_with=track.index,
+                                         start_id=track.id)
 
     def _on_songs_see_all_clicked(self, _button):
         self.get_root().open_songs(self.text)

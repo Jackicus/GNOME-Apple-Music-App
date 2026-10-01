@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """The Songs page (pages/songs.py): what it shows while the songs are on their way, and a
-sync that changes the songs keeps the table's place; the Sort By menu sorts as a header does.
+sync that changes the songs keeps the table's place; the Sort By menu sorts as a header does;
+a row plays its own song.
 Over an invented library.json in a temporary cache (tests/page_harness.py's window)."""
 
 import json
@@ -90,6 +91,15 @@ class SongsPageTest(PageTestCase):
         page.set_filter('Song 0011')
         self.assertEqual(page._rows.get_n_items(), 1)
         self.assertEqual(page.count_label.get_label(), '1 of 12 songs')
+
+    async def test_a_row_plays_its_album_from_its_own_song(self):
+        page = await self.songs_page(5)
+        page.activate_action('songs.sort-order', _variant('descending'))
+        page.on_activate(page.column_view, 1)
+        window = page.get_root()
+        track = page._rows.get_item(1)
+        self.assertEqual(window.played[-1], (track.play, track.index, None))
+        self.assertEqual(window.started_with[-1], track.id)
 
 
 def _variant(text):

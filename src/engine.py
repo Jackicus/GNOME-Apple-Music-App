@@ -22,7 +22,7 @@ UI awaits.
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.unauthorize()          # revoke the session at Apple's (sign-out); True if done
     await engine.account_name()         # the name on the page, or '' (best effort)
-    await engine.play(kind, id, start_with=None, shuffle=None)    # mk.setQueue + mk.play
+    await engine.play(kind, id, start_with=None, shuffle=None, start_id=None)  # setQueue, play
     await engine.play_next(kind, id); await engine.play_later(kind, id)
     await engine.control('toggle')      # play, pause, toggle, next, previous, stop
     await engine.seek(seconds); await engine.volume(level)   # volume answers the level set
@@ -1131,11 +1131,13 @@ class Engine(GObject.Object):
             raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
         return client
 
-    async def play(self, kind, item_id, start_with=None, shuffle=None):
+    async def play(self, kind, item_id, start_with=None, shuffle=None, start_id=None):
         """Play an album, playlist, station, song, musicVideo or artist (its top songs) by
         id, or `songs` (song ids joined by commas: a stand-in album of loose songs), from
         queue position `start_with` (a track row): the bridge's play(), that is
-        mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `shuffle` True turns
+        mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `start_id`, the track
+        row's own id, is the item that must play: where MusicKit's queue holds another at
+        `start_with`, the bridge moves to the one with that id (logged). `shuffle` True turns
         MusicKit's shuffle on (a Shuffle button), False off (a Play button plays in order),
         None leaves it as it is (a track row). Needs a signed-in engine: library ids and
         full songs are the account's. MusicKit refusing is EngineError('api') with its code
@@ -1145,11 +1147,17 @@ class Engine(GObject.Object):
             raise EngineError('usage', 'play needs a kind and an id')
         options = {'startWith': int(start_with or 0),
                    'shuffle': None if shuffle is None else bool(shuffle)}
+        if start_id:
+            options['startId'] = str(start_id)
         answer = await client.bridge('play', str(kind), str(item_id), options,
                                      timeout=PLAY_TIMEOUT)
         if isinstance(answer, dict) and answer.get('error'):
             raise EngineError('api', f'play {kind}: {answer["error"]}',
                               musickit_code=str(answer.get('code') or '') or None)
+        moved = answer.get('moved') if isinstance(answer, dict) else None
+        if isinstance(moved, dict):
+            log.info('play %s: MusicKit queued %s at %s, not %s; moved to %s', kind, start_id,
+                     moved.get('to'), moved.get('from'), moved.get('to'))
 
     async def play_next(self, kind, item_id):
         """Queue an item right after the one playing (mk.playNext)."""

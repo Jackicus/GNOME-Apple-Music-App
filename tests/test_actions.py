@@ -405,7 +405,7 @@ class FakeWindow:
     def add_action(self, action):
         self.actions[action.get_name()] = action
 
-    def play_request(self, play, start_with=None, shuffle=None):
+    def play_request(self, play, start_with=None, shuffle=None, start_id=None):
         self.played.append((play, start_with))
 
     def get_clipboard(self):
