@@ -731,6 +731,34 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         await self.run_action('item-go-to-album', 'song', '1000000009')
         self.assertIs(self.window.opened[-1], CATALOG_ALBUM)
 
+    async def test_go_to_artist_is_apple_musics_page(self):
+        # The library has the artist, but with the engine up the catalog names them exactly:
+        # Apple Music's page opens (it shows the library's albums of theirs too).
+        song = Track({'id': 'i.song4', 'catalogId': '1000000030', 'title': 'Harbour Lights',
+                      'artist': 'The Invented Band', 'type': 'library-songs'})
+        self.app.engine.related_answers[('song', '1000000030')] = {
+            'album': None,
+            'artists': [{'id': '1000000031', 'kind': 'artist', 'title': 'The Invented Band'}]}
+        self.actions.menu_for(song)
+        await self.run_action('item-go-to-artist', 'song', 'i.song4')
+        self.assertEqual([(item.kind, item.id) for item in self.window.opened],
+                         [('artist', '1000000031')])
+        # The engine down: the library's artist, at once, nothing asked.
+        self.app.engine.state = 'down'
+        calls = len(self.app.engine.calls)
+        await self.run_action('item-go-to-artist', 'song', 'i.song4')
+        self.assertIs(self.window.opened[-1], BAND)
+        self.assertEqual(len(self.app.engine.calls), calls)
+        # The catalog failing, or naming no artist: the library's.
+        self.app.engine.state = 'up'
+        self.app.engine.related_answers[('song', '1000000030')] = {'album': None, 'artists': []}
+        await self.run_action('item-go-to-artist', 'song', 'i.song4')
+        self.app.engine.fail = EngineError('api', 'HTTP 500', status=500)
+        await self.run_action('item-go-to-artist', 'song', 'i.song4')
+        self.assertEqual(self.window.opened[-2:], [BAND, BAND])
+        self.assertEqual(self.app.reported, [])
+        self.assertEqual(self.app.toasts, [])
+
     async def test_go_to_finds_nothing(self):
         song = Track({'id': '1000000009', 'catalogId': '1000000009', 'title': 'Shoreline',
                       'album': 'Coastal'})

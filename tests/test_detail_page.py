@@ -141,8 +141,9 @@ class DetailPageTest(PageTestCase):
         page = await self.push(self.page(album(1)))
         self.assertTrue(page.artist_button.get_visible())
         self.assertFalse(page.subtitle_label.get_visible())
+        # Opened as Go to Artist opens it: Apple Music's page when the engine can say.
         page.artist_button.emit('clicked')
-        self.assertEqual([item.id for item in self.window.opened], ['l.artist001'])
+        self.assertEqual(self.window.item_actions.went, [(self.item, 'artist')])
 
     async def test_a_catalog_albums_artist_is_looked_up(self):
         # Not the library's: a catalog album's artist is linked, and found on a click.
@@ -256,12 +257,13 @@ class ArtistPageTest(PageTestCase):
         self.assertTrue(page.release_date.get_label().endswith('2026'))
         self.assertTrue(page.top_songs.get_visible())
         self.assertEqual(page.top_songs.shelf.items.get_n_items(), 4)
-        # Apple's shelves in its order, About before Similar Artists; the library's albums
-        # are not shown beside the catalog's.
+        # The library's albums of theirs first, then Apple's shelves in its order, About
+        # before Similar Artists.
         self.assertEqual([shelf.key for shelf in page._column.shelves],
-                         ['featured-albums', 'full-albums'])
+                         ['library', 'featured-albums', 'full-albums'])
         self.assertEqual([shelf.key for shelf in page._after.shelves], ['similar-artists'])
-        self.assertTrue(page._column.widgets[0].props.hero)  # Essential Albums: large cards
+        self.assertFalse(page._column.widgets[0].props.hero)
+        self.assertTrue(page._column.widgets[1].props.hero)  # Essential Albums: large cards
         self.assertFalse(page.status_page.get_visible())
         self.assertEqual(page.about_title.get_label(), 'About Invented Artist')
         self.assertEqual(page.summary_label.get_label(), 'An invented biography.')
@@ -290,6 +292,39 @@ class ArtistPageTest(PageTestCase):
         self.assertEqual(self.app.engine.calls, ['catalog_artist', 'artist_page'])
         # One song an album, as the engine reads each with its artists.
         self.assertEqual(asked, [('Invented Artist', ['l.album001.0', 'l.album002.0'])])
+
+    async def test_the_songs_asked_about_are_the_library_albums(self):
+        # As the library loads them: the artist's groups of albums it has are empty, the
+        # tracks being the albums' own.
+        from applemusic.library import Item
+
+        albums = [Item(album(1)), Item(album(2))]
+        for item in albums:
+            for group in item.groups:
+                for number in range(group.entries.get_n_items()):
+                    group.entries.get_item(number).raw['catalogId'] = f'{item.id}.{number}'
+            self.library._index[('album', item.id)] = item
+        # The second album's first song is someone else's (a compilation's): its second is
+        # the one to ask about.
+        albums[1].groups[0].entries.get_item(0).raw['artist'] = 'Someone Else'
+        albums[1].groups[0].entries.get_item(1).raw['artist'] = 'Invented Artist feat. X'
+        data = artist([album(1), album(2)])
+        for group in data['groups']:
+            group['entries'] = []
+        asked = []
+
+        def catalog_artist(name, song_ids):
+            asked.append(song_ids)
+            return '42'
+
+        self.app.engine.answers['catalog_artist'] = catalog_artist
+        page = await self.artist_page(data, artist_answer())
+        self.assertEqual(asked, [['l.album001.0', 'l.album002.1']])
+        self.assertEqual(self.app.engine.calls, ['catalog_artist', 'artist_page'])
+        # Apple Music's page, with the library's two albums first.
+        self.assertEqual([shelf.key for shelf in page._column.shelves][:2],
+                         ['library', 'featured-albums'])
+        self.assertIs(page._library_shelf.items.get_item(0), albums[1])  # newest first
 
     async def test_an_artist_with_nothing_to_find_shows_no_albums(self):
         page = await self.artist_page(artist([]))

@@ -38,8 +38,9 @@ touches widgets.
   folders, the drops) is `sidebar_view.py`'s controller, with its decisions as `sidebar.py`'s
   functions; which playback action a key runs is `keyboard.py`'s decision. The item actions
   and context menus are `actions.py` and `widgets/context_menu.py`; where their Go to Album
-  and Go to Artist lead (the library's album or artist, else the catalog's, which the engine
-  looks up) is `related.py`'s.
+  and Go to Artist lead is `related.py`'s: an album the library's, else the catalog's, which
+  the engine looks up; an artist Apple Music's while the engine is up, the library's
+  otherwise.
 - **Pages** (`pages/`): one module per destination or pushed page, built when first shown. The
   library pages bind the library's stores; New, Made for You and Search ask the engine (the
   first two, and Search's categories, keep its answers in the cache for a day).

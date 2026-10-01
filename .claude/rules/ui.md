@@ -90,7 +90,8 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `ShelfColumn`s, before About and after it (Similar Artists), Essential Albums as hero cards
   (`show(heroes=…)`). Shelf titles are Apple's (`view_title()`, not `remote.shelf_title()`), and
   a shelf Apple has more of fetches the rest on See All (its `complete`, which
-  `window.open_shelf` runs). The library's albums show only while the catalog cannot answer.
+  `window.open_shelf` runs). The library's albums of the artist's come first, as In Your
+  Library, whenever there are some (alone while the catalog cannot answer).
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
   The item actions take their object as a `(ss)` target (kind, id), not as state. Go to Album

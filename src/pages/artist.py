@@ -15,6 +15,7 @@ from ..actions import can_play
 from ..backend.api import is_library_id
 from ..backend.errors import EngineError
 from ..library import Item, ShelfModel, fold
+from ..related import credits
 from ..remote import fetch_cover, fetch_shelf_art, fetch_thumb, remote_item
 from ..widgets import artwork
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
@@ -58,16 +59,24 @@ def catalog_id(item):
     return item.catalog_id or None
 
 
-def song_ids(item, limit=SONGS_ASKED):
+def song_ids(item, library=None, limit=SONGS_ASKED):
     """Up to `limit` catalog song ids from an artist's albums, one an album first: what the
-    engine asks for their artist (Engine.catalog_artist)."""
+    engine asks for their artist (Engine.catalog_artist), a song the artist is credited on
+    first (a compilation's first is someone else's). A group whose album the library has is
+    empty (the library drops the artist's copy of its tracks as it loads: library.py), so its
+    tracks are the library album's."""
     ids = []
     for group in item.groups:
-        for position in range(group.entries.get_n_items()):
-            song_id = group.entries.get_item(position).catalog_id
-            if song_id:
-                ids.append(song_id)
-                break
+        stores = [group.entries]
+        if not group.entries.get_n_items() and library is not None:
+            album = library.by_id(group.play.get('kind'), group.play.get('id'))
+            stores = [disc.entries for disc in album.groups] if album is not None else []
+        tracks = [track for store in stores for position in range(store.get_n_items())
+                  for track in (store.get_item(position),) if track.catalog_id]
+        track = next((track for track in tracks if credits(track.artist, item.title)),
+                     tracks[0] if tracks else None)
+        if track is not None:
+            ids.append(track.catalog_id)
         if len(ids) >= limit:
             break
     return ids
@@ -123,13 +132,14 @@ class ArtistPage(Adw.NavigationPage):
 
     Which catalog artist: a catalog artist's own id, or the catalog id a library artist
     carries; a library artist the sync made up from its songs' names is found through its
-    songs (Engine.catalog_artist). Until the catalog answers, and for good without the
-    engine or with no catalog artist found, the page shows the albums the library has (In
-    Your Library; a library album carries no catalog id, so the two cannot be told apart to
-    show both). The catalog is asked once while the page is shown (and again when hidden
-    then shown); what stops it shows in the status page (EngineStatus), under the library's
-    albums when there are some. The page follows the artist Item and the library while it
-    is shown.
+    songs (Engine.catalog_artist; song_ids(), from the library's albums). The albums the
+    library has of the artist's (the library artist's, or for a catalog artist the library's
+    of the same name) come first, as In Your Library, beside the catalog's shelves (the same
+    album may be on both: a library album carries no catalog id to tell), and alone without
+    the engine or with no catalog artist found. The catalog is asked once while the page is
+    shown (and again when hidden then shown); what stops it shows in the status page
+    (EngineStatus), under the library's albums when there are some. The page follows the
+    artist Item and the library while it is shown.
 
     Each group of an artist Item is one of their albums (the backend README), named after it
     and playing it: {kind: album, id}. The album comes from the library by that id; one the
@@ -330,7 +340,7 @@ class ArtistPage(Adw.NavigationPage):
         before, after = [], []
         for shelf in self._shelves:
             (after if shelf.key in AFTER_ABOUT else before).append(shelf)
-        if answer is None and self._library_shelf.items.get_n_items():
+        if self._library_shelf.items.get_n_items():
             before.insert(0, self._library_shelf)
         heroes = [shelf for shelf in before if shelf.key == HERO_SHELF]
         self._column.show(before, heroes=heroes)
@@ -371,7 +381,7 @@ class ArtistPage(Adw.NavigationPage):
         engine = app().engine
         try:
             artist_id = catalog_id(self.item)
-            songs = song_ids(self.item) if artist_id is None else []
+            songs = song_ids(self.item, self._library) if artist_id is None else []
             if songs:
                 artist_id = await engine.catalog_artist(self.item.title, songs)
             if artist_id is None:

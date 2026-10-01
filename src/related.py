@@ -12,14 +12,16 @@ song, a music video or an album is by.
     shows(here, obj, kind)            whether the page showing `here` is obj's album or artist
     same_page(here, item)             whether `item` is the page showing `here`
 
-The library answers first, at once and without the engine (the demo's only answer): the album
-a track's group plays (an album page's, the Songs page's), else one of the library's albums of
-that title (case and accents aside, fold()) by the song's artist, or one that holds the song (a
-compilation's); the artist of that name. A song's artist may credit several ("A feat. B", "A
-& B", "A, B and C"): the first is the one (JOINER). The library's artists are its albums'
-artists, so an album's is always there. What the library cannot place, the engine looks up in
-the catalog by its catalog id, an Item of the library's preferred when it is the same album
-(its catalog id) or artist (its name).
+For an album the library answers first, at once and without the engine (the demo's only
+answer): the album a track's group plays (an album page's, the Songs page's), else one of the
+library's albums of that title (case and accents aside, fold()) by the song's artist, or one
+that holds the song (a compilation's). A song's artist may credit several ("A feat. B", "A &
+B", "A, B and C"): the first is the one (JOINER). What the library cannot place, the engine
+looks up in the catalog by its catalog id, the library's Item preferred when it is the same
+album (its catalog id). For an artist the catalog comes first while the engine is up
+(actions.ItemActions.go_to): their page is Apple Music's, with the library's albums of theirs
+on it (pages/artist.py); else the library's artist of that name, which the library always has
+for its own albums (its artists are its albums' artists).
 
 GLib, GObject and Gio only, no GTK: the unit tests run it with a stand-in library.
 """
@@ -50,6 +52,12 @@ def _credits(name_key, artist_key):
     if not artist_key or not name_key.startswith(artist_key):
         return False
     return len(name_key) == len(artist_key) or bool(JOINER.match(name_key, len(artist_key)))
+
+
+def credits(song_artist, artist):
+    """Whether a song's artist ("A feat. B") credits the artist called `artist` (A), case and
+    accents aside."""
+    return _credits(_key(song_artist), _key(artist))
 
 
 def album_name(obj):
@@ -180,10 +188,11 @@ def library_artist(library, obj):
 
 def from_answer(library, answer, kind, name=''):
     """The Item Go to Album (`kind` 'album') or Go to Artist ('artist') opens from
-    Engine.related()'s answer, or None when it names none: the library's own when it has the
-    same album (by catalog id) or the artist (by name), else the answer's, as a search hit's
-    Item (remote.remote_item: its artwork fetched where the app fetches it). Of several
-    artists, the one called `name`, else the first."""
+    Engine.related()'s answer, or None when it names none: for an album the library's own
+    when it has it (by catalog id), else the answer's, as a search hit's Item
+    (remote.remote_item: its artwork fetched where the app fetches it); for an artist the
+    catalog's always, whose page shows the library's albums of theirs too (pages/artist.py).
+    Of several artists, the one called `name`, else the first."""
     if not isinstance(answer, dict):
         return None
     if kind == 'album':
@@ -201,9 +210,6 @@ def from_answer(library, answer, kind, name=''):
     key = _key(name)
     found = next((artist for artist in artists if key and _key(artist.get('title')) == key),
                  artists[0])
-    own = artist_named(library, found.get('title'))
-    if own is not None and _key(own.title) == _key(found.get('title')):
-        return own
     return Item(remote_item(found))
 
 
