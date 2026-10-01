@@ -32,6 +32,31 @@ metainfo_file = i18n.merge_file(
   install_dir: get_option('datadir') / 'metainfo',
 )
 
+# GNOME Shell's search provider (src/search_provider.py): the .ini tells the Shell the bus
+# name and the object's path (under GApplication's own, the app ID with dots as slashes),
+# and the D-Bus service file lets the bus start the app for a search, in service mode (no
+# window until a result is activated). A launch from the Shell still runs the desktop file's
+# Exec (DBusActivatable=false: a bus launch has no fallback when the bus cannot see the
+# service file, docs/decisions.md). Both name this build's app ID.
+search_provider_configuration = data_configuration + {
+  'OBJECT_PATH': '/' + application_id.replace('.', '/') + '/SearchProvider',
+  'BINDIR': get_option('prefix') / get_option('bindir'),
+}
+configure_file(
+  input: base_id + '.search-provider.ini.in',
+  output: application_id + '.search-provider.ini',
+  configuration: search_provider_configuration,
+  install: true,
+  install_dir: get_option('datadir') / 'gnome-shell' / 'search-providers',
+)
+configure_file(
+  input: base_id + '.service.in',
+  output: application_id + '.service',
+  configuration: search_provider_configuration,
+  install: true,
+  install_dir: get_option('datadir') / 'dbus-1' / 'services',
+)
+
 install_data(
   base_id + '.gschema.xml',
   install_dir: get_option('datadir') / 'glib-2.0' / 'schemas',

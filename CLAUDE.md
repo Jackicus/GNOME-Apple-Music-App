@@ -63,10 +63,10 @@ sign-in's keys each build's own (`account_key()`).
 
 ```
 src/main.py, src/window.py      the Application and the Window
-src/*.py                        services and logic (engine, player, mpris, discord, sync, account,
-                                cache, background, actions, related, errors, i18n, lyrics, remote,
-                                timing, shortcuts, keyboard, sidebar, sections; new ones go here),
-                                and the window's parts (player_bar, sidebar_view)
+src/*.py                        services and logic (engine, player, mpris, search_provider, discord,
+                                sync, account, cache, background, actions, related, errors, i18n,
+                                lyrics, remote, timing, shortcuts, keyboard, sidebar, sections; new
+                                ones go here), and the window's parts (player_bar, sidebar_view)
 src/library.py                  the data model: GLib, GObject and Gio only, no GTK
 src/pages/<name>.py + .blp      one per destination or pushed page (PAGES in pages/__init__.py)
 src/widgets/                    reusable widgets: tiles, shelves, rows, covers, transport, artwork
@@ -144,7 +144,7 @@ meson setup _build --prefix=/usr …   a system install, never into build/ (docs
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
   saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
 - **Demo mode** (`--demo`, `app.demo`): no engine (`engine-down`; only its invented artist pages
-  answer), no MPRIS, its own settings; nothing in it may start Chrome or read the real cache.
+  answer), no MPRIS, no search provider, its own settings; never Chrome, never the real cache.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
   ruff: 4-space indents, no type annotations, a docstring where a module or function is not

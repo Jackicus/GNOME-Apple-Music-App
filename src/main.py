@@ -6,13 +6,19 @@
     app = Application(version, app_id, base_id, profile, demo_dir)   # the launcher's main()
     app.run(sys.argv)
 
-do_startup makes the parts (a picture of them is in CLAUDE.md): the Library, whose first
-load() starts reading library.json at once; the Engine (Chrome, stopped); the Player over it;
-LibrarySync (sync.py), which runs the syncs and schedules them; BackgroundPlayback; Mpris.
-do_activate builds the Window (imported only then) and starts the engine when the settings
-ask. What happens elsewhere: the sync in sync.py, signing in and out and clearing the cache
-in account.py, background playback in background.py, the words for each error in errors.py,
-the startup marks in timing.py, the About and Keyboard Shortcuts dialogs in dialogs/.
+do_dbus_register exports the Shell's search provider (search_provider.py) beside
+GApplication's own object, before the app's bus name is owned. do_startup makes the parts (a
+picture of them is in CLAUDE.md): the Library, whose first load() starts reading
+library.json at once; the Engine (Chrome, stopped); the Player over it; LibrarySync
+(sync.py), which runs the syncs and schedules them; BackgroundPlayback; Mpris. do_activate
+builds the Window (imported only then) and starts the engine when the settings ask: not
+do_startup, so the app the bus starts for a search (the D-Bus service file's
+--gapplication-service, which runs startup alone) shows no window and starts no Chrome
+until a result is activated, and quits SERVICE_LINGER_MS after its last call. The library's
+first load is load_library()'s, once, for the window or for the search. What happens
+elsewhere: the sync in sync.py, signing in and out and clearing the cache in account.py,
+background playback in background.py, the words for each error in errors.py, the startup
+marks in timing.py, the About and Keyboard Shortcuts dialogs in dialogs/.
 
 Every coroutine the app starts goes through spawn(); every message for the user through
 toast(), and every EngineError through report(). The account's settings are read through
@@ -46,6 +52,7 @@ from .errors import error_message  # noqa: E402
 from .library import Library  # noqa: E402
 from .mpris import Mpris  # noqa: E402
 from .player import Player  # noqa: E402
+from .search_provider import OBJECT_NAME, SearchProvider  # noqa: E402
 from .shortcuts import ACCELS  # noqa: E402
 from .sync import LibrarySync, install_scaler  # noqa: E402
 from .timing import PROCESS_START, StartupMarks  # noqa: E402, F401  (bench.py reads it here)
@@ -71,6 +78,11 @@ ACCOUNT_KEYS = ('signed-in', 'account-name', 'last-sync', 'last-page', 'expanded
 # How long quitting waits, after the engine's stop, for a sign-out under way to wipe the
 # profile and the cache and forget the account.
 SIGN_OUT_WAIT = 10.0
+
+# How long the app stays once nothing holds it: started by the bus for a search
+# (--gapplication-service), with no window, it is held only while a search provider call
+# is answered, and lingers this long after the last one for the next keystroke's.
+SERVICE_LINGER_MS = 30_000
 
 
 class Application(Adw.Application):
@@ -100,6 +112,7 @@ class Application(Adw.Application):
         self.engine = None  # created in do_startup
         self.player = None  # created in do_startup, after the engine
         self.mpris = None  # created in do_startup, after the player; released in do_shutdown
+        self.search_provider = None  # the Shell's, exported in do_dbus_register (not demo)
         self.presence = None  # Discord rich presence, while its setting is on
         self.library_sync = None  # created in do_startup
         self.background = None  # created in do_startup: the window closed, the music on
@@ -113,11 +126,15 @@ class Application(Adw.Application):
         self.sign_in_finish = None  # what follows a sign-in's commit (account.py)
         self._preferences = None  # the Preferences dialog while it is open
         self._first_load = None  # the library's first load(), reading since do_startup
+        self._library_load = None  # that load as a task, once load_library() has started it
         # Startup timing (timing.py): name -> GLib.get_monotonic_time(), for scripts/bench.py.
         self._timing = StartupMarks(self.get_active_window)
         self.marks = self._timing.marks
         # One schema for every profile; the sign-in's keys are each build's (account_key()).
         self.settings = Gio.Settings.new(base_id)
+        # A window holds the app for as long as it lives, and quitting ends the run outright;
+        # this is for the app started by the bus for a search, held by nothing else.
+        self.set_inactivity_timeout(SERVICE_LINGER_MS)
 
         self._add_action('quit', self._on_quit)
         self._add_action('about', self._on_about)
@@ -191,6 +208,25 @@ class Application(Adw.Application):
                 Gio.keyfile_settings_backend_new(path, '/', None), None)
         log.info('Demo mode: the library in %s', config.cache_dir())
         return True
+
+    def do_dbus_register(self, connection, object_path):
+        """The app's objects on the bus, exported before its name is owned (GApplication
+        registers its own first): the Shell's search provider, at the app's path plus
+        /SearchProvider, which data/meson.build writes into the .ini the Shell reads. Not
+        for the demo library, which runs as an instance of its own (NON_UNIQUE registers
+        on the bus without owning the name) and must not answer for the real one."""
+        if not Adw.Application.do_dbus_register(self, connection, object_path):
+            return False
+        if not self.demo:
+            self.search_provider = SearchProvider(self)
+            self.search_provider.register(connection, f'{object_path}/{OBJECT_NAME}')
+        return True
+
+    def do_dbus_unregister(self, connection, object_path):
+        if self.search_provider is not None:
+            self.search_provider.unregister()
+            self.search_provider = None
+        Adw.Application.do_dbus_unregister(self, connection, object_path)
 
     def do_startup(self):
         self.mark('startup')
@@ -274,7 +310,7 @@ class Application(Adw.Application):
             from .window import Window
 
             self.mark('activate')
-            self.spawn(self._load_library())
+            self.load_library()
             window = Window(application=self)
             self.mark('window-built')
             if self.profile == 'development':
@@ -303,7 +339,19 @@ class Application(Adw.Application):
         scripts/bench.py reads `marks`; --debug logs each."""
         self._timing.mark(name, painted)
 
+    def load_library(self):
+        """The library's first load as a task, started once: by do_activate, for the window,
+        or by the search provider when the bus started the app for a search, with no window
+        to come until a result is activated. The read has run in the library's thread since
+        do_startup; this is its main-thread part, and the cache's trim after it."""
+        if self._library_load is None:
+            self._library_load = self.spawn(self._load_library())
+        return self._library_load
+
     async def _load_library(self):
+        # The read is held for the window's build (do_startup); a search has none to hold
+        # it for. It runs after do_activate's own resume, which comes before present().
+        self.library.resume_reading()
         load, self._first_load = self._first_load, None
         await (load or self.library.load())
         if self.library.state == 'ready':

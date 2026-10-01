@@ -9,8 +9,11 @@
     "both sides, and the DevTools pipe (descriptors 3 and 4) is passed on to the host's Chrome",
     "with flatpak-spawn --forward-fd=3 --forward-fd=4. Audio comes out of the host's Chrome, not",
     "the app. The app's MPRIS name, org.mpris.MediaPlayer2.<its id>, is one Flatpak lets an app",
-    "own without asking. Written without a GNOME 50 runtime or flatpak-builder to test it on:",
-    "not built yet."
+    "own without asking. The Shell search provider's .ini and the D-Bus service file are",
+    "among the files Flatpak exports from share/ (gnome-shell/search-providers and",
+    "dbus-1/services, the service's Exec rewritten to flatpak run), so the overview's search",
+    "should reach the sandboxed app too. Written without a GNOME 50 runtime or",
+    "flatpak-builder to test it on: not built yet."
   ],
   "id": "io.github.jackicus.MusicSleeve.Devel",
   "runtime": "org.gnome.Platform",

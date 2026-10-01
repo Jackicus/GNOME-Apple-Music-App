@@ -63,6 +63,15 @@ touches widgets.
   and the playback commands. The player bar, the Now Playing sheet and MPRIS all follow it.
 - **MPRIS** (`mpris.py`): the app on the session bus as `org.mpris.MediaPlayer2.<app id>`, for
   GNOME Shell's media controls and the media keys. Chrome's own MPRIS player is switched off.
+- **Search provider** (`search_provider.py`): `org.gnome.Shell.SearchProvider2` under the
+  app's own D-Bus object, exported before its name is owned, so the Activities overview
+  searches the library: albums, artists, playlists and (once the Songs store is built)
+  songs, matched as the Search page's Your Library mode matches them and ranked, a handful
+  of each kind, with their thumbnails. It answers from the library in memory only, never
+  the engine. Choosing a result opens its page (a song plays); the overview's own search
+  button opens the Search page with the terms. A D-Bus service file starts the app for a
+  search in service mode: no window and no Chrome until a result is chosen, and the app
+  quits half a minute after its last call.
 - **Discord presence** (`discord.py`): while `discord-presence` is on, the track the player
   holds, sent as a rich presence activity over the Discord desktop app's local socket. It
   follows the player's notifications like MPRIS, connects only when there is something to
@@ -76,10 +85,15 @@ touches widgets.
 
 ## Flows
 
-- **Startup.** `do_startup` starts reading library.json in a thread, then makes the engine,
-  the player, the sync, MPRIS and the Discord presence; `do_activate` builds the window, awaits the library (then
-  trims the caches in a thread) and, when the account is signed in and `engine-autostart` is
-  on, starts the engine, whose coming up starts a sync when one is due.
+- **Startup.** `do_dbus_register` exports the search provider; `do_startup` starts reading
+  library.json in a thread, then makes the engine, the player, the sync, MPRIS and the
+  Discord presence; `do_activate` builds the window, awaits the library (then trims the
+  caches in a thread) and, when the account is signed in and `engine-autostart` is on,
+  starts the engine, whose coming up starts a sync when one is due. A search from the
+  overview starts the app over the bus instead (the service file's `Exec` has
+  `--gapplication-service`), which runs `do_startup` alone; the provider's first call
+  finishes the library's load (`Application.load_library()`, the same once-only task
+  `do_activate` uses), and nothing shows or starts Chrome until a result is chosen.
 - **Playing.** A tile, row or button calls `window.play_request()`, which calls
   `app.player.play()`. The player starts the engine if it is down and the account is signed in,
   then asks the engine, which asks MusicKit through the bridge. Nothing comes back from the
@@ -124,7 +138,8 @@ touches widgets.
   `--demo` and needs `APPLE_MUSIC_CACHE` for it), and its engine is inert (starting it does
   nothing, every command answers `engine-down`), so every page and screenshot works without
   Chrome or an account. Its settings are its own (settings.ini beside
-  the library) and it takes no MPRIS name, so it runs beside the real app.
+  the library), it takes no MPRIS name and exports no search provider, so it runs beside
+  the real app.
 
 ## Data
 
