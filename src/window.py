@@ -103,6 +103,8 @@ class Window(Adw.ApplicationWindow):
                                           self.item_actions)
         self.player_bar.set_player(app.player, app)
         self.now_playing.set_player(app.player, app, self.bottom_sheet)
+        self._sheet_opened_from = None  # a weak reference to the focus the sheet opened over
+        self.bottom_sheet.connect('notify::open', self._on_sheet_open)
         self._library_handler = self._library.connect('changed', self._on_library_changed)
         # The banners live under the visible page's header bar, whichever page that is.
         self._banner_host = None
@@ -128,8 +130,10 @@ class Window(Adw.ApplicationWindow):
             (app.library_sync, app.library_sync.connect('progress', self._on_sync_progress)),
             (app.library_sync,
              app.library_sync.connect('notify::running', self._on_sync_running)),
+            (app.player, app.player.connect('notify::track', self._reveal_player_bar)),
         ]
         self._update_account()
+        self._reveal_player_bar()  # hidden from the start, with no animation, while idle
 
         # The window's actions (their keys are shortcuts.ACCELS, set in main.py). Alt+Left:
         # the navigation views pop on their own only while the focus is in them; this goes
@@ -219,6 +223,56 @@ class Window(Adw.ApplicationWindow):
     def _close_sheet(self):
         if self.bottom_sheet.get_open():
             self.bottom_sheet.set_open(False)
+
+    def _reveal_player_bar(self, *_args):
+        """The player bar only while something plays, as GNOME Music shows its own: the
+        Player's track reveals the bottom sheet's bar, and its going (after the Player's
+        grace between queues, so a change of queue shows no blink) hides it, the content's
+        bottom margin following the bar's height (window.blp). Set from here, not bound in
+        window.blp: the Player is the application's.
+
+        The focus, if the bar had it as it goes, moves into the page first: GTK drops the
+        focus as the play button goes insensitive (the app's action, before this runs), and
+        would otherwise leave it on the unmapped bar, where Enter still opens Now Playing.
+        """
+        playing = self.get_application().player.track is not None
+        if (not playing and self.get_mapped() and self.bottom_sheet.get_reveal_bottom_bar()
+                and (self.get_focus() is None or self._focus_in_player_bar())):
+            self._focus_content()
+            if self._focus_in_player_bar():  # the collapsed layout showing the sidebar
+                self.set_focus(None)
+        self.bottom_sheet.set_reveal_bottom_bar(playing)
+
+    def _focus_in_player_bar(self):
+        """Whether the focus is in the player bar, or on the button the bottom sheet wraps it
+        in (the bar itself, which opens Now Playing)."""
+        focus = self.get_focus()
+        return focus is not None and (focus.is_ancestor(self.player_bar)
+                                      or focus is self.player_bar.get_parent())
+
+    def _on_sheet_open(self, *_args):
+        """The focus around the Now Playing sheet. Adw.BottomSheet leaves it alone: the sheet
+        takes it as it opens (widgets/now_playing.py), and as it closes GTK moves it out of
+        the hidden sheet page, back into the bar (the bar's last focus) while the bar is
+        there, and onto the sheet's own unmapped bin while it is not (nothing playing).
+        So the focus the sheet opened over is remembered, and put back after a close that
+        lost it."""
+        if self.bottom_sheet.get_open():
+            focus = self.get_focus()
+            self._sheet_opened_from = focus.weak_ref() if focus is not None else None
+        else:
+            GLib.idle_add(self._restore_sheet_focus)  # after GTK's own move
+
+    def _restore_sheet_focus(self):
+        opened_from = self._sheet_opened_from
+        self._sheet_opened_from = None
+        focus = self.get_focus()
+        if focus is not None and focus.get_mapped():
+            return GLib.SOURCE_REMOVE  # in the bar, or moved on purpose (Ctrl+F, Go to Album)
+        widget = opened_from() if opened_from is not None else None
+        if widget is None or not widget.get_mapped() or not widget.grab_focus():
+            self._focus_content()
+        return GLib.SOURCE_REMOVE
 
     # -- the seams the pages use -----------------------------------------------------------
 
@@ -629,10 +683,13 @@ class Window(Adw.ApplicationWindow):
 
     def _on_focus_player(self, *_args):
         """win.focus-player: the focus on the play button, the Now Playing sheet's while it
-        is open, else the bar's; with nothing playing, on the bar itself (it opens the
-        sheet)."""
+        is open, else the bar's (on the bar itself, which opens the sheet, when its buttons
+        are off). With nothing playing there is no bar (_reveal_player_bar): the focus stays
+        where it is, and a screen reader hears why."""
         if self.bottom_sheet.get_open():
             self.now_playing.focus_controls()
+        elif not self.bottom_sheet.get_reveal_bottom_bar():
+            self.announce(_('Not Playing'), Gtk.AccessibleAnnouncementPriority.MEDIUM)
         elif not self.player_bar.play_button.grab_focus():
             self.player_bar.grab_bar_focus()
 
