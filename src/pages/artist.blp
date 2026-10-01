@@ -238,8 +238,18 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
             }
           }
 
-          // What stands in for the sections Apple has not answered: the spinner while it is
-          // asked, or what stopped it (artist.py sets the texts).
+          // What stands in for the sections Apple has not answered: the spinner alone while
+          // it is asked (as every page's loading state is), or what stopped it (artist.py
+          // sets the texts).
+          Adw.Spinner status_spinner {
+            width-request: 32;
+            height-request: 32;
+            halign: center;
+            margin-top: 24;
+            margin-bottom: 24;
+            visible: false;
+          }
+
           Adw.StatusPage status_page {
             icon-name: "media-optical-cd-audio-symbolic";
             visible: false;
@@ -249,6 +259,7 @@ template $AppleMusicArtistPage: Adw.NavigationPage {
 
               styles [
                 "pill",
+                "suggested-action",
               ]
             };
 

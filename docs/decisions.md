@@ -78,6 +78,18 @@ changes, change it here, with the date. The plan they came from is in
   have): GTK selects the hovered row of a single-click list, which would have followed the
   pointer around. The track playing is marked in every row that shows it, as Up Next marks
   its entry (#241).
+- **One look for loading, status pages, links and grids** (2026-10-01). A page that waits
+  shows a bare 32 px `AdwSpinner`, the album and artist pages' sections under their hero too,
+  in place of three looks (that spinner, a hand-made "Loading…", a status page with a spinner
+  paintable). A state with words is an `AdwStatusPage`, or a box shaped as a compact one
+  where a list row cannot hold one (the album page's), with one `pill suggested-action`
+  button and plain `pill` ones beside it. A link in text (an album's artist, a row's artist
+  and album) is the text's own colour, underlined under the pointer, never a `link` button's
+  blue. A grid's first column sits on the page's 24 px margin, the tiles at the start of
+  cells that grow with the page, as Radio's flow box has them, where the grids' tiles were
+  centred in theirs and drifted (28 px wide, 13 at 360); under 400sp the margins shrink to
+  the 14 px that still fit two tiles, Radio's the same, the grid never centred (a centred
+  scrollable has GTK measure its width for its height, which warns) (#243).
 
 ## Engine
 

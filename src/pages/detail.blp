@@ -144,8 +144,9 @@ Box hero {
           ]
         };
 
+        // A link as the tables' are (style.css: plain, underlined under the pointer), not a
+        // "link" button's blue.
         styles [
-          "link",
           "flat",
           "artist-link",
         ]
@@ -236,9 +237,10 @@ Box hero {
 
   // In place of the tracks: an item that came without them (a shelf's) while the engine
   // fetches them, what stopped the fetch (the engine down, not signed in, an error) with a
-  // button that helps, or an empty playlist. A compact status page's look, but not an
-  // Adw.StatusPage: a list row gets its minimum height, and a status page, a scrolled window
-  // inside, asks for a fifth of what it shows.
+  // button that helps, or an empty playlist. A compact status page's look (its 96px icon, its
+  // title-2, its spacing), but not an Adw.StatusPage: a list row gets its minimum height, and
+  // a status page, a scrolled window inside, asks for a fifth of what it shows. While the
+  // tracks are fetched, the spinner alone, as every page's loading state is.
   Box status_box {
     orientation: vertical;
     spacing: 12;
@@ -248,7 +250,7 @@ Box hero {
 
     Image status_icon {
       icon-name: "music-note-symbolic";
-      pixel-size: 64;
+      pixel-size: 96;
       margin-bottom: 12;
       accessible-role: presentation;
 
@@ -258,10 +260,9 @@ Box hero {
     }
 
     Adw.Spinner status_spinner {
-      width-request: 48;
-      height-request: 48;
+      width-request: 32;
+      height-request: 32;
       halign: center;
-      margin-bottom: 12;
       visible: false;
     }
 
@@ -285,6 +286,7 @@ Box hero {
 
       styles [
         "pill",
+        "suggested-action",
       ]
     }
   }

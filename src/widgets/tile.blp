@@ -3,10 +3,12 @@
 
 using Gtk 4.0;
 
+// At the start of its cell: a grid's and a flow box's cells grow with the page, and the first
+// column stays on the page's margin.
 template $AppleMusicTile: Box {
   orientation: vertical;
   spacing: 6;
-  halign: center;
+  halign: start;
   valign: start;
   margin-top: 6;
   margin-bottom: 6;

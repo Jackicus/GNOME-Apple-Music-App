@@ -30,9 +30,10 @@
 
 /* Grid pages (pages/grid.blp). The top padding scrolls with the tiles and leaves room for the
    page title laid over it: the title's 24px + 12px margins and a title-1 line, which grows with
-   the text size as em does. Narrow sides keep two 160px tiles within a 360px window. */
+   the text size as em does. The sides are the grid view's margins (grid.blp), which its
+   breakpoint narrows. */
 gridview.tile-grid {
-  padding: calc(36px + 2.4em) 6px 24px 6px;
+  padding: calc(36px + 2.4em) 0 24px;
 }
 
 /* A tile's cover and its placeholder: rounded as the cards elsewhere in the app are. */
@@ -66,17 +67,25 @@ columnview.songs-table > listview > row > cell:last-child:dir(rtl) {
   padding-right: 6px;
 }
 
-/* An album page's artist, a link to their page (pages/detail.blp): its text on the title's
-   edge, as the plain subtitle's is. */
+/* An album page's artist, a link to their page (pages/detail.blp): a button that reads as the
+   plain subtitle it stands in for, its text on the title's edge, with no wash under the
+   pointer. */
 button.artist-link {
   padding: 0 2px;
   margin-left: -2px;
   min-height: 0;
 }
 
-/* A track's artist and album as links (widgets/track_links.py), in the Songs table and a
-   playlist's: the row's own text colour, underlined under the pointer. */
-label.track-link:hover {
+button.artist-link:hover,
+button.artist-link:active {
+  background: none;
+}
+
+/* Links in text, the one way: the album page's artist and a track's artist and album
+   (widgets/track_links.py, in the Songs table and a playlist's) in the text's own colour,
+   underlined under the pointer. */
+label.track-link:hover,
+button.artist-link:hover > label {
   text-decoration: underline;
 }
 
@@ -211,7 +220,7 @@ button.release-card {
 }
 
 .hero-caption {
-  padding: 10px 12px 12px 12px;
+  padding: 12px;
 }
 
 /* The subtitle, less dim than a .dimmed label elsewhere: it sits on a colour, not the page (which
@@ -236,8 +245,9 @@ button.release-card {
 }
 
 /* The Now Playing sheet (widgets/now_playing.blp): larger transport buttons than the bar's,
-   the play button largest; the lyrics as big bold lines, the current one at full opacity
-   (the others carry .dimmed); the queue's rows as the detail pages' track rows. */
+   the play button largest; the lyrics as title-3 lines (widgets/lyrics.py), the current one
+   at full opacity (the others carry .dimmed), a line fading between the two; the queue's
+   rows as the detail pages' track rows. */
 .now-playing .play-button {
   min-width: 56px;
   min-height: 56px;
@@ -269,8 +279,6 @@ listview.lyrics-list > row {
 }
 
 .lyric-line {
-  font-size: 1.35em;
-  font-weight: bold;
   transition: opacity 200ms ease-out;
 }
 

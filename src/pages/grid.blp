@@ -5,83 +5,112 @@ using Gtk 4.0;
 using Adw 1;
 
 template $AppleMusicGridPage: Adw.NavigationPage {
-  child: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar header_bar {
-      show-title: false;
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
 
-      // Its menu is grid.py's: the page's orders, as radio items of the page.sort action.
-      [end]
-      MenuButton sort_button {
-        icon-name: "view-sort-descending-symbolic";
-        tooltip-text: _("Sort By");
-        visible: false;
+    // Narrow (a phone): the margins shrink to what still fits two tiles in 360 px (the
+    // covers 17 px in; the title keeps its 24), as Radio's flow box's do. The grid stays
+    // filling: a centred scrollable has GTK measure its width for its height, which a grid
+    // taller than the window cannot answer without a warning.
+    Adw.Breakpoint {
+      condition ("max-width: 400sp")
 
-        accessibility {
-          label: _("Sort By");
-        }
+      setters {
+        grid_view.margin-start: 14;
+        grid_view.margin-end: 14;
       }
     }
 
-    content: Stack stack {
-      StackPage {
-        name: "loading";
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar header_bar {
+        show-title: false;
 
-        child: Adw.Spinner {
-          width-request: 32;
-          height-request: 32;
-          halign: center;
-          valign: center;
-        };
+        // Its menu is grid.py's: the page's orders and the directions, as radio items of the
+        // page.sort and page.sort-order actions.
+        [end]
+        MenuButton sort_button {
+          icon-name: "view-sort-descending-symbolic";
+          tooltip-text: _("Sort By");
+          visible: false;
+
+          accessibility {
+            label: _("Sort By");
+          }
+        }
       }
 
-      StackPage {
-        name: "empty";
-        child: Adw.StatusPage empty_page {};
-      }
+      content: Stack stack {
+        StackPage {
+          name: "loading";
 
-      StackPage {
-        name: "items";
+          child: Adw.Spinner {
+            width-request: 32;
+            height-request: 32;
+            halign: center;
+            valign: center;
+          };
+        }
 
-        // The title scrolls with the grid. A Gtk.GridView only recycles its tiles as the
-        // scrollable child of a Gtk.ScrolledWindow, so the title cannot sit above it in a box
-        // in the same scrolled window: it is laid over the grid's top padding (style.css) and
-        // moved up as the grid scrolls (_on_title_position).
-        child: Overlay overlay {
-          overflow: hidden;
+        StackPage {
+          name: "empty";
+          child: Adw.StatusPage empty_page {};
+        }
 
-          child: ScrolledWindow scrolled_window {
-            hscrollbar-policy: never;
+        StackPage {
+          name: "items";
 
-            child: GridView grid_view {
-              min-columns: 2;
-              max-columns: 12;
-              single-click-activate: true;
-              tab-behavior: item;
+          // The title scrolls with the grid. A Gtk.GridView only recycles its tiles as the
+          // scrollable child of a Gtk.ScrolledWindow, so the title cannot sit above it in a
+          // box in the same scrolled window: it is laid over the grid's top padding
+          // (style.css) and moved up as the grid scrolls (_on_title_position).
+          child: Overlay overlay {
+            overflow: hidden;
+
+            // On the view background, which the grid's margins would otherwise leave bare.
+            child: ScrolledWindow scrolled_window {
+              hscrollbar-policy: never;
 
               styles [
-                "tile-grid",
+                "view",
               ]
+
+              // The first column's covers on the page's 24px margin (a child's 3px padding),
+              // the tiles at the start of their cells, as Radio's flow box has them: margins,
+              // which the breakpoint can narrow, rather than CSS padding.
+              child: GridView grid_view {
+                min-columns: 2;
+                max-columns: 12;
+                single-click-activate: true;
+                tab-behavior: item;
+                margin-start: 21;
+                margin-end: 21;
+
+                styles [
+                  "tile-grid",
+                ]
+              };
             };
+
+            [overlay]
+            Label title_label {
+              xalign: 0;
+              valign: start;
+              ellipsize: end;
+              can-target: false;
+              margin-start: 24;
+              margin-end: 24;
+              margin-top: 24;
+              margin-bottom: 12;
+
+              styles [
+                "title-1",
+              ]
+            }
           };
-
-          [overlay]
-          Label title_label {
-            xalign: 0;
-            valign: start;
-            ellipsize: end;
-            can-target: false;
-            margin-start: 24;
-            margin-end: 24;
-            margin-top: 24;
-            margin-bottom: 12;
-
-            styles [
-              "title-1",
-            ]
-          }
-        };
-      }
+        }
+      };
     };
   };
 }

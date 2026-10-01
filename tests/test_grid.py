@@ -36,35 +36,86 @@ class GridTest(PageTestCase):
         self.assertEqual(columns_for(1920), 11)
         self.assertEqual(columns_for(200), 2)  # never fewer
 
-    def test_the_title_starts_at_the_first_cover(self):
-        from applemusic.pages.grid import cover_start
+    async def test_the_title_and_the_first_cover_sit_on_the_margin(self):
+        from gi.repository import Gio
 
-        # 5 columns of 166 in 830 px less the padding: 163.6 px each, the cover centred.
-        self.assertAlmostEqual(cover_start(830, 12), 6 + (818 / 4 - 160) / 2)
-        self.assertAlmostEqual(cover_start(1000, 3), 6 + (988 / 3 - 160) / 2)
+        from applemusic.library import Item
+        from applemusic.pages.grid import GridPage
+        from applemusic.widgets.tile import Tile
+        from tests.page_harness import find_all
+
+        store = Gio.ListStore(item_type=Item)
+        store.splice(0, 0, [Item(album(n)) for n in range(12)])
+        page = await self.show_root(GridPage(self.library, 'Invented Grid', store))
+
+        def x_of(widget):
+            return widget.compute_bounds(page.overlay)[1].get_x()
+
+        def first_cover_x():
+            return min((x_of(tile.cover) for tile in find_all(page.grid_view, Tile)),
+                       default=None)
+
+        # The page is 1000 px wide: five columns in the 958 inside the margins, each wider
+        # than a tile, the tile at the start of its cell, so the first cover and the title
+        # are both 24 px in, as Home's title is.
+        self.assertTrue(await self.until(lambda: first_cover_x() == 24))
+        self.assertEqual(x_of(page.title_label), 24)
 
     def test_grid_sorts(self):
         from gi.repository import Gio, Gtk
 
         from applemusic.library import Item
-        from applemusic.pages.grid import SORTS
+        from applemusic.pages.grid import SORTS, make_sorter
 
         items = [Item(dict(album(0), title='B', subtitle='Zed', year=2001)),
                  Item(dict(album(1), title='A', subtitle='Zed', year=1999)),
                  Item(dict(album(2), title='C', subtitle='Abe', year=0)),
-                 Item(dict(album(3), title='D', subtitle='Abe', year=2020))]
+                 Item(dict(album(3), title='D', subtitle='Abe', year=2020)),
+                 Item(dict(album(4), title='E', subtitle='Abe', year=2001))]
         store = Gio.ListStore(item_type=Item)
         store.splice(0, 0, items)
 
-        def titles(key):
-            model = Gtk.SortListModel(model=store, sorter=SORTS[key][1]())
-            return [model.get_item(n).title for n in range(model.get_n_items())]
+        def titles(key, descending=False):
+            sorter, backwards = make_sorter(key, descending)
+            model = Gtk.SortListModel(model=store, sorter=sorter)
+            order = [model.get_item(n).title for n in range(model.get_n_items())]
+            return order[::-1] if backwards else order
 
-        self.assertEqual(titles('title'), ['A', 'B', 'C', 'D'])
-        # By artist, then year (unknown first), then title.
-        self.assertEqual(titles('artist'), ['C', 'D', 'A', 'B'])
-        # Newest first, an unknown year last.
-        self.assertEqual(titles('year'), ['D', 'B', 'A', 'C'])
+        self.assertEqual(titles('title'), ['A', 'B', 'C', 'D', 'E'])
+        self.assertEqual(titles('title', descending=True), ['E', 'D', 'C', 'B', 'A'])
+        # By artist, then year (unknown first), then title; Z to A is that backwards.
+        self.assertEqual(titles('artist'), ['C', 'E', 'D', 'A', 'B'])
+        self.assertEqual(titles('artist', descending=True), ['B', 'A', 'D', 'E', 'C'])
+        # Year's own direction is newest first, an unknown year last, the titles A to Z
+        # within a year; ascending turns the years round and leaves the titles.
+        self.assertTrue(SORTS['year'][2])
+        self.assertEqual(titles('year', descending=True), ['D', 'B', 'E', 'A', 'C'])
+        self.assertEqual(titles('year'), ['C', 'A', 'B', 'E', 'D'])
+
+    def test_a_reversed_model_maps_positions_and_changes(self):
+        from gi.repository import Gtk
+
+        from applemusic.pages.grid import ReversedModel
+
+        strings = Gtk.StringList.new(['a', 'b', 'c'])
+        model = ReversedModel(strings)
+        changes = []
+        model.connect('items-changed', lambda _model, *change: changes.append(change))
+
+        def shown():
+            return [model.get_item(n).get_string() for n in range(model.get_n_items())]
+
+        self.assertEqual(shown(), ['a', 'b', 'c'])
+        model.set_backwards(True)
+        self.assertEqual(shown(), ['c', 'b', 'a'])
+        self.assertEqual(changes, [(0, 3, 3)])
+        model.set_backwards(True)  # as it is: nothing changes
+        self.assertEqual(changes, [(0, 3, 3)])
+        strings.splice(1, 1, ['x', 'y'])  # a, x, y, c: shown as c, y, x, a
+        self.assertEqual(shown(), ['c', 'y', 'x', 'a'])
+        self.assertEqual(changes[-1], (1, 1, 2))
+        model.set_backwards(False)
+        self.assertEqual(shown(), ['a', 'x', 'y', 'c'])
 
     async def test_the_sort_menu_sorts_and_is_remembered_by_page(self):
         from gi.repository import Gio, GLib
@@ -81,8 +132,19 @@ class GridTest(PageTestCase):
         self.assertTrue(page.sort_button.get_visible())
         page.activate_action('page.sort', GLib.Variant('s', 'year'))
         model = page.grid_view.get_model()
-        self.assertEqual(model.get_item(0).title, 'Invented Album 005')
+        self.assertEqual(model.get_item(0).title, 'Invented Album 005')  # newest first
+        self.assertEqual(page._order_action.get_state().get_string(), 'descending')
         self.assertEqual(self.app.settings.get_value('grid-sort').unpack(), {'albums': 'year'})
+        # The direction turns the order; a key chosen comes its own way round (Title A to Z).
+        page.activate_action('page.sort-order', GLib.Variant('s', 'ascending'))
+        self.assertEqual(model.get_item(0).title, 'Invented Album 000')
+        page.activate_action('page.sort', GLib.Variant('s', 'title'))
+        self.assertEqual(model.get_item(0).title, 'Invented Album 000')
+        self.assertEqual(page._order_action.get_state().get_string(), 'ascending')
+        page.activate_action('page.sort-order', GLib.Variant('s', 'descending'))
+        self.assertEqual(model.get_item(0).title, 'Invented Album 005')
+        self.assertEqual(self.app.settings.get_value('grid-sort').unpack(), {'albums': 'title'})
+        page.activate_action('page.sort', GLib.Variant('s', 'year'))
 
         self.window.navigation_view.replace([self.window.root_page])  # one page a tag
         self.window.navigation_view.remove(page)

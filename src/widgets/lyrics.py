@@ -363,6 +363,7 @@ class LyricsView(Gtk.Stack):
         label = Gtk.Label(wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR, xalign=0,
                           justify=Gtk.Justification.LEFT)
         label.add_css_class('lyric-line')
+        label.add_css_class('title-3')
         list_item.set_child(label)
 
     def _on_bind(self, _factory, list_item):
