@@ -82,15 +82,17 @@ changes, change it here, with the date. The plan they came from is in
 ## Engine
 
 - **The overview searches the library, through the bus** (2026-10-01). The app exports
-  `org.gnome.Shell.SearchProvider2` (`src/search_provider.py`) and is `DBusActivatable`, with
-  a D-Bus service file whose `Exec` has `--gapplication-service`, as GNOME's own apps do.
+  `org.gnome.Shell.SearchProvider2` (`src/search_provider.py`), with a D-Bus service file
+  whose `Exec` has `--gapplication-service`, as GNOME's own apps do.
   The Shell starts the app for a search when it is not running; that start runs
   `do_startup` alone, and the engine's autostart lives in `do_activate`, so no window shows
   and no Chrome runs until a result is chosen, and the app quits half a minute after its
   last call. The provider answers from the library in memory only: never the engine, never
   the Songs store built for it (a second on a big library; songs show once a page has
-  built it). The cost is that every Shell launch now goes over the bus (the service file's
-  `Exec`, with the bus's activation environment), which is how GNOME launches its apps.
+  built it). The desktop file stays `DBusActivatable=false`, unlike GNOME's own apps: the
+  search does not need it, and a bus launch has no fallback to `Exec` (GLib drops the
+  error), so an install whose service directory the session bus cannot see would leave the
+  app's icon doing nothing.
 - **Chrome as the engine** (2026-09-27). See "Why there is a browser inside" in
   `docs/architecture.md`. The real Chrome, because Chromium ships without Widevine.
 - **The app owns MPRIS** (2026-09-27). The app publishes `org.mpris.MediaPlayer2.<app id>`

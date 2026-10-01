@@ -69,9 +69,9 @@ touches widgets.
   songs, matched as the Search page's Your Library mode matches them and ranked, a handful
   of each kind, with their thumbnails. It answers from the library in memory only, never
   the engine. Choosing a result opens its page (a song plays); the overview's own search
-  button opens the Search page with the terms. The desktop file is `DBusActivatable`, and
-  a D-Bus service file starts the app for a search in service mode: no window and no
-  Chrome until a result is chosen, and the app quits half a minute after its last call.
+  button opens the Search page with the terms. A D-Bus service file starts the app for a
+  search in service mode: no window and no Chrome until a result is chosen, and the app
+  quits half a minute after its last call.
 - **Discord presence** (`discord.py`): while `discord-presence` is on, the track the player
   holds, sent as a rich presence activity over the Discord desktop app's local socket. It
   follows the player's notifications like MPRIS, connects only when there is something to
@@ -89,13 +89,11 @@ touches widgets.
   library.json in a thread, then makes the engine, the player, the sync, MPRIS and the
   Discord presence; `do_activate` builds the window, awaits the library (then trims the
   caches in a thread) and, when the account is signed in and `engine-autostart` is on,
-  starts the engine, whose coming up starts a sync when one is due. A launch from the Shell
-  goes over the bus (`DBusActivatable`): the service file starts the app with
-  `--gapplication-service`, which runs `do_startup` alone, and the Shell's Activate call
-  then runs `do_activate` as a launch always has. A search from the overview makes the same
-  start without the Activate: the provider's first call finishes the library's load
-  (`Application.load_library()`, the same once-only task `do_activate` uses), and nothing
-  shows or starts Chrome until a result is chosen.
+  starts the engine, whose coming up starts a sync when one is due. A search from the
+  overview starts the app over the bus instead (the service file's `Exec` has
+  `--gapplication-service`), which runs `do_startup` alone; the provider's first call
+  finishes the library's load (`Application.load_library()`, the same once-only task
+  `do_activate` uses), and nothing shows or starts Chrome until a result is chosen.
 - **Playing.** A tile, row or button calls `window.play_request()`, which calls
   `app.player.play()`. The player starts the engine if it is down and the account is signed in,
   then asks the engine, which asks MusicKit through the bridge. Nothing comes back from the

@@ -36,14 +36,15 @@ paths:
 - `data/meson.build` validates the desktop file, the metainfo (`appstreamcli validate
   --no-net`) and the schema (`glib-compile-schemas --strict`) as Meson tests, which check.sh
   runs; each is skipped when its tool is missing. A new settings key has a summary.
-- The desktop file is `DBusActivatable=true`: `data/<id>.service.in` (installed as
-  `<app id>.service` under `share/dbus-1/services`, its `Exec` the installed launcher with
-  `--gapplication-service`) lets the bus start the app, for a launch and for the Shell's
-  search (`data/<id>.search-provider.ini.in`, installed under
+- `data/<id>.service.in` (installed as `<app id>.service` under `share/dbus-1/services`, its
+  `Exec` the installed launcher with `--gapplication-service`) lets the bus start the app for
+  the Shell's search (`data/<id>.search-provider.ini.in`, installed under
   `share/gnome-shell/search-providers`, whose `ObjectPath` is the app ID with dots as
   slashes plus `/SearchProvider`: data/meson.build derives both from `application_id`, so
   the .Devel build has its own). A Flatpak exports both directories itself and rewrites
-  the service's `Exec` (untested here, like the manifest).
+  the service's `Exec` (untested here, like the manifest). The desktop file stays
+  `DBusActivatable=false`: a bus launch has no fallback to `Exec`, so a prefix whose service
+  directory the session bus does not see would make the app's icon do nothing.
 - The minimum versions live in `meson.build` (with the reason next to the GLib one). Raising
   one also means README.md, CONTRIBUTING.md, the PKGBUILD's depends and CI's package list.
 - The metainfo lists its screenshots by `raw.githubusercontent.com/…/data/screenshots/…`
