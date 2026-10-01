@@ -54,7 +54,7 @@ from ..widgets.song_title import SongTitle
 from ..widgets.track_links import TrackLink
 from ..widgets.track_row import PlayingMark
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak
-from . import app, mark_bound
+from . import SignInOffer, app, mark_bound
 
 # The columns' names in the Sort By menu's targets and SongOrder's keys.
 COLUMNS = ('title', 'artist', 'album', 'time')
@@ -119,6 +119,7 @@ class SongsPage(Adw.NavigationPage):
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(_('No Songs'))
         self.empty_page.set_description(_('Songs in your library appear here'))
+        self._sign_in = SignInOffer(self.empty_page)  # Sign In… while signed out
 
         # column -> its SongOrder key. The sorters make the headers clickable and say what the
         # order is; SongOrder does the sorting.

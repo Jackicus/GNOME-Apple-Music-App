@@ -74,7 +74,8 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   while it starts, Sign In when signed out, Start Engine (through `app.start_engine()`, whose
   failure the app reports), Try Again, and "Not Available in the Demo" with no button (the
   demo engine answers `engine-down`, but for the artist pages scripts/demo_library.py invents).
-  A state the page shows is not toasted too.
+  A state the page shows is not toasted too. A library page's empty state offers Sign In… while
+  signed out (outside the demo) through one `pages.SignInOffer(status_page)`.
 - A page of shelves is a vertical `Gtk.Box` of a handful of `AppleMusicShelf`, each a horizontal
   `Gtk.ListView` in its own scrolled window, placed by a `widgets.shelf.ShelfColumn`: a shelf
   shown again keeps its widget (moved into place), new ones are bound a frame apart after

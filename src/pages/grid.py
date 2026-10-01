@@ -19,7 +19,7 @@ from ..widgets import context_menu
 from ..widgets.labels import bind_label, unbind_label
 from ..widgets.tile import ART_SIZE, Tile
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak
-from . import app, mark_bound
+from . import SignInOffer, app, mark_bound
 
 
 def _string(name):
@@ -137,6 +137,7 @@ class GridPage(Adw.NavigationPage):
         # The page's title, which a folder's page changes when the folder is renamed.
         self.bind_property('title', self.title_label, 'label', GObject.BindingFlags.SYNC_CREATE)
         self.empty_page.set_icon_name(icon_name)
+        self._sign_in = SignInOffer(self.empty_page)  # Sign In… while signed out
 
         self._sort_keys = tuple(sorts)
         self._sorters = {key: SORTS[key][1]() for key in sorts}
@@ -216,7 +217,7 @@ class GridPage(Adw.NavigationPage):
             name = 'empty'
             title, description = self._missing_texts if self._missing else self._empty
             self.empty_page.set_title(title)
-            self.empty_page.set_description(description)
+            self._sign_in.set_description(description)
         self.stack.set_visible_child_name(name)
         self.sort_button.set_visible(name == 'items' and len(self._sort_keys) > 1)
 

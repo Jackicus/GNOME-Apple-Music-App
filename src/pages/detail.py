@@ -36,7 +36,7 @@ from ..widgets.engine_status import EngineStatus
 from ..widgets.labels import track_label
 from ..widgets.track_row import PlayingMark, TrackRow, TrackTableHeader
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
-from . import app, show_notes
+from . import SignInOffer, app, show_notes
 
 log = logging.getLogger(__name__)
 
@@ -210,6 +210,8 @@ class DetailPage(Adw.NavigationPage):
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(empty_title or self.get_title())
         self.empty_page.set_description(empty_description)
+        if root:  # a destination's page (Favourite Songs): Sign In… while signed out
+            self._sign_in = SignInOffer(self.empty_page)
 
         # Every signal of a child or of an object the page holds is connected weakly
         # (widgets/util.py): a bound method would keep the page alive once popped.
