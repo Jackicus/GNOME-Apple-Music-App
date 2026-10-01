@@ -165,7 +165,9 @@ class TrackTitles:
 class PlayButton:
     """A play/pause button whose icon and tooltip follow the Player's state, with a spinner
     in place of the icon while a play request is with the engine (`pending`); its action
-    (app.play-pause) is the template's."""
+    (app.play-pause) is the template's. Its icons are the bundled transport-* ones, which no
+    icon theme replaces: a theme's 24 px media-playback-start can be a 16 px glyph in a larger
+    canvas, small and off-centre at the sheet's size."""
 
     def __init__(self, button):
         self.button = button
@@ -188,7 +190,7 @@ class PlayButton:
                 self.button.set_child(self._spinner)
         else:
             self.button.set_icon_name(
-                'media-playback-pause-symbolic' if active else 'media-playback-start-symbolic')
+                'transport-pause-symbolic' if active else 'transport-play-symbolic')
         self.button.set_tooltip_text(_('Pause') if active else _('Play'))
 
 

@@ -10,7 +10,7 @@ import unittest
 
 from gi.repository import GObject
 
-from tests import ROOT  # noqa: F401  registers src/ as applemusic
+from tests import ROOT, SRC  # noqa: F401  ROOT registers src/ as applemusic
 from tests.test_player import TRACK, make_player
 
 from applemusic.backend.errors import EngineError
@@ -288,6 +288,32 @@ class ModeControlTest(unittest.TestCase):
             self.assertTrue(repeat.active)
             self.assertEqual(len(app.toasts), 1)
         asyncio.run(go())
+
+
+class PlayButtonTest(unittest.TestCase):
+    def test_the_icons_are_the_bundled_ones(self):
+        """Play and Pause draw the app's own icons: an icon theme's 24 px
+        media-playback-start (Papirus's) came out small and off-centre in the sheet."""
+        from applemusic.widgets.transport import PlayButton
+
+        class Player:
+            active = False
+            pending = False
+
+            def connect(self, *_args):
+                pass
+
+        bundled = {path.stem for path in (SRC / 'icons').glob('*.svg')}
+        button = Button()
+        player = Player()
+        play = PlayButton(button)
+        play.attach(player)
+        for active, tooltip in ((False, 'Play'), (True, 'Pause')):
+            with self.subTest(active=active):
+                player.active = active
+                play.update()
+                self.assertIn(button.icon, bundled)
+                self.assertEqual(button.tooltip, tooltip)
 
 
 if __name__ == '__main__':
