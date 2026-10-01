@@ -179,6 +179,7 @@ def classes():
             self.reset()
 
         def reset(self):
+            self.item_actions.went = []
             self.opened = []
             self.shelves_opened = []
             self.played = []

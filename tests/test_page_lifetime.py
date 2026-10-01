@@ -461,6 +461,18 @@ class PageLifetimeTest(WidgetTestCase):
             DetailPage(self.library, Item(_album(1, tracks=12))), TrackRow)
         await self.assert_freed(*refs)
 
+    async def test_playlist_table_page(self):
+        # A playlist's page in a window wide enough for its table: links and a header.
+        from applemusic.library import Item
+        from applemusic.pages.detail import DetailPage
+        from applemusic.widgets.track_links import TrackLink
+        from applemusic.widgets.track_row import TrackRow, TrackTableHeader
+
+        item = Item(dict(_album(1, tracks=12), kind='playlist'))
+        refs = await self.pushed_and_popped(DetailPage(self.library, item), TrackRow,
+                                            TrackLink, TrackTableHeader)
+        await self.assert_freed(*refs)
+
     async def test_artist_page(self):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage

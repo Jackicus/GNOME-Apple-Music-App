@@ -74,6 +74,12 @@ button.artist-link {
   min-height: 0;
 }
 
+/* A track's artist and album as links (widgets/track_links.py), in the Songs table and a
+   playlist's: the row's own text colour, underlined under the pointer. */
+label.track-link:hover {
+  text-decoration: underline;
+}
+
 /* The "E" after an explicit song's title: small and bold on a faint wash of the text colour. */
 .explicit-badge {
   padding: 0 4px;
@@ -114,6 +120,13 @@ listview.track-list > row {
 
 listview.track-list > header {
   padding: 0;
+}
+
+/* A playlist's column titles (widgets/track_row.py's TrackTableHeader): a list header's text is
+   bold, which would make its Time column, measured in the rows' font, wider than theirs. The
+   titles are caption-heading, bold of their own. */
+listview.track-list > header > .track-table-header {
+  font-weight: normal;
 }
 
 /* Shelves (widgets/shelf.blp): tiles 18px apart, the first on the page title's 24px margin

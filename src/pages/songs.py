@@ -31,7 +31,8 @@ short delay), and the new count is announced. A sync that changes the songs brin
 to date with the fewest splices (library.apply_diff), so the table keeps its scroll position;
 only a new sort or filter starts it again from the top. Activating a row (Enter, double-click)
 asks the window to play it; a right click, a long press or the Menu key opens its context
-menu, and a row drags onto a sidebar playlist (widgets/context_menu.py).
+menu, and a row drags onto a sidebar playlist (widgets/context_menu.py). The artist and the
+album are links to their pages (widgets/track_links.py).
 """
 
 from gettext import gettext as _
@@ -40,9 +41,10 @@ from gettext import ngettext
 from gi.repository import Adw, Gio, GLib, Gtk
 
 from ..library import SongOrder, Track, apply_diff, fold
-from ..widgets import context_menu
+from ..widgets import context_menu, track_links
 from ..widgets.labels import track_label
 from ..widgets.song_title import SongTitle
+from ..widgets.track_links import TrackLink
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak
 from . import app, mark_bound
 
@@ -124,8 +126,8 @@ class SongsPage(Adw.NavigationPage):
 
         self.title_column.set_factory(self._factory(self._setup_title, self._bind_title,
                                                     self._unbind_title))
-        self.artist_column.set_factory(self._text_factory('artist'))
-        self.album_column.set_factory(self._text_factory('album'))
+        self.artist_column.set_factory(self._link_factory('artist'))
+        self.album_column.set_factory(self._link_factory('album'))
         self.time_column.set_factory(self._text_factory('duration_label', numeric=True))
 
         # Each row reads its title, artist and album to assistive technology (labels.py),
@@ -139,6 +141,7 @@ class SongsPage(Adw.NavigationPage):
         self.column_view.set_model(self._selection)
         # Every cell of a row finds the row's Track in its title cell (SongTitle.context_item).
         context_menu.attach(self.column_view, drag=True)
+        track_links.attach(self.column_view)
 
         # The Sort By menu's actions (songs.sort-column, songs.sort-order), following the
         # headers too; the songs are put in this order when the page is realized.
@@ -340,8 +343,10 @@ class SongsPage(Adw.NavigationPage):
             self.get_root().play_request(track.play, start_with=track.index,
                                          start_id=track.id)
 
-    # Cells. Text columns are Gtk.Inscriptions: their size comes from their line count, not
-    # their text, so rebinding a row redraws it without laying it out again.
+    # Cells. The time is a Gtk.Inscription: its size comes from its line count, not its text,
+    # so rebinding it redraws it without laying it out again. The title, the artist and the
+    # album are one-line labels (the badge follows the title's text, a link is only its
+    # text), which a single line keeps cheap to measure again.
 
     def _factory(self, setup, bind, unbind=None):
         factory = Gtk.SignalListItemFactory()
@@ -363,6 +368,17 @@ class SongsPage(Adw.NavigationPage):
 
         def bind(_factory, cell):
             cell.get_child().set_text(getattr(cell.get_item(), name))
+
+        return self._factory(setup, bind)
+
+    def _link_factory(self, kind):
+        """The artist's or the album's cells: TrackLinks, one-line labels as wide as their
+        text, so that only the text is the link."""
+        def setup(_factory, cell):
+            cell.set_child(TrackLink(kind))
+
+        def bind(_factory, cell):
+            cell.get_child().show(cell.get_item())
 
         return self._factory(setup, bind)
 

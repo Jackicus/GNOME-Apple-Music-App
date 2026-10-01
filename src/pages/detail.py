@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """AppleMusicDetailPage: an album or a playlist, its cover, titles, Play and Shuffle over its
-tracks.
+tracks; a playlist's as a table (title, artist, album, time) in a wide window.
 
 One Gtk.ListView holds the whole page. Its model flattens a store of sections
 (Gtk.FlattenListModel, whose sections are its models): first a store of one marker item, whose
@@ -12,6 +12,12 @@ Gtk.ListView recycles its rows only as the scrollable child of a Gtk.ScrolledWin
 builds a row for every track, up to 200, and leaves the rest blank, and a playlist can hold
 thousands of songs. Why not the hero in a list header: Tab never reaches the buttons of a
 header, where it does reach an item's.
+
+A playlist's tracks are a table while the page is at least 720sp wide (`table`, which
+follows detail.blp's table_breakpoint): each row's title, artist and album in columns
+(TrackRow's table rows, the artist and the album links), under a header of column titles
+(the tracks' section's list header, TrackTableHeader). An album's stay a numbered list, and
+so does any page in a narrower window.
 """
 
 import bisect
@@ -24,11 +30,11 @@ from ..backend.errors import EngineError
 from ..library import Track
 from ..related import catalog_target
 from ..remote import fetch_cover
-from ..widgets import context_menu
+from ..widgets import context_menu, track_links
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.engine_status import EngineStatus
 from ..widgets.labels import track_label
-from ..widgets.track_row import TrackRow
+from ..widgets.track_row import TrackRow, TrackTableHeader
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
 from . import app, show_notes
 
@@ -94,9 +100,9 @@ class _Row(Gtk.Box):
             self.append(hero)
         self.track_row.set_visible(False)
 
-    def show_track(self, track, album_artist):
+    def show_track(self, track, album_artist, table=False):
         self.track_row.set_visible(True)
-        self.track_row.bind(track, album_artist)
+        self.track_row.bind(track, album_artist, table)
 
     def clear(self, hero):
         if hero.get_parent() is self:
@@ -131,6 +137,22 @@ class DetailPage(Adw.NavigationPage):
 
     __gtype_name__ = 'AppleMusicDetailPage'
 
+    _table = False  # the `table` property
+
+    def _get_table(self):
+        return self._table
+
+    def _set_table(self, table):
+        if table != self._table:
+            self._table = table
+            self._update_headers()
+            for list_item in self._bound:
+                self._show_track(list_item, list_item.get_item())
+
+    table = GObject.Property(type=bool, default=False, getter=_get_table, setter=_set_table,
+                             nick='Table', blurb="A playlist's tracks as a table (wide)")
+
+    table_breakpoint = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
     stack = Gtk.Template.Child()
     empty_page = Gtk.Template.Child()
@@ -164,6 +186,8 @@ class DetailPage(Adw.NavigationPage):
         self._find = find
         self._root = root
         self._album_artist = None  # an album's artist, whose name its rows leave out
+        self._groups = 0  # the sections of tracks shown
+        self._bound = set()  # the list items bound to tracks: shown again as `table` changes
         self._starts = []  # the list position of each section of tracks
         self._headings = []  # and its heading
         self._fetched = None  # the Item this page asked the engine for (once: should_fetch)
@@ -192,9 +216,15 @@ class DetailPage(Adw.NavigationPage):
         self.list_view.set_factory(factory)
         connect_weak(self.list_view, 'activate', self._on_activate)
         context_menu.attach(self.list_view, drag=True)  # the tracks' menus, dragged to playlists
+        track_links.attach(self.list_view)  # a table's artist and album links
         self._header_factory = Gtk.SignalListItemFactory()
         connect_weak(self._header_factory, 'setup', self._on_setup_header)
         connect_weak(self._header_factory, 'bind', self._on_bind_header)
+        self._table_header_factory = Gtk.SignalListItemFactory()
+        connect_weak(self._table_header_factory, 'setup', self._on_setup_table_header)
+        connect_weak(self._table_header_factory, 'bind', self._on_bind_table_header)
+        connect_weak(self.table_breakpoint, 'apply', self._on_table_apply)
+        connect_weak(self.table_breakpoint, 'unapply', self._on_table_unapply)
         connect_weak(self.play_button, 'clicked', self._on_play_clicked)
         connect_weak(self.shuffle_button, 'clicked', self._on_shuffle_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
@@ -321,10 +351,35 @@ class DetailPage(Adw.NavigationPage):
         self.status_box.set_visible(not groups)
         self._update_buttons()
 
-        self.list_view.set_header_factory(self._header_factory if len(groups) > 1 else None)
+        self._groups = len(groups)
+        self._update_headers()
         self._sections.splice(0, self._sections.get_n_items(),
                               [self._hero_section] + [group.entries for group in groups])
         self._update_state()
+
+    def _on_table_apply(self, _breakpoint):
+        self.table = True
+
+    def _on_table_unapply(self, _breakpoint):
+        self.table = False
+
+    def _is_table(self):
+        """Whether the tracks show as a table: a playlist's (not an album's) one list of
+        them (several would each want their own column titles), wide."""
+        return (self._table and self._groups == 1 and self.item is not None
+                and self.item.kind != 'album')
+
+    def _update_headers(self):
+        """The list's section headers: an album's discs ("Disc 2"), a table's column titles,
+        or none."""
+        if self._groups > 1:
+            factory = self._header_factory
+        elif self._is_table():
+            factory = self._table_header_factory
+        else:
+            factory = None
+        if self.list_view.get_header_factory() is not factory:
+            self.list_view.set_header_factory(factory)
 
     def _show_hero(self, item):
         """The hero's cover, labels and buttons for item."""
@@ -434,15 +489,22 @@ class DetailPage(Adw.NavigationPage):
         list_item.set_activatable(is_track)
         list_item.set_focusable(is_track)  # the hero's buttons take the focus, not its row
         if is_track:
-            row.show_track(entry, self._album_artist)
-            # The artist when the row shows one (not an album's own): TrackRow's rule.
-            show_artist = self._album_artist is None or entry.artist != self._album_artist
-            list_item.set_accessible_label(track_label(entry, show_artist, show_album=False))
-            list_item.set_accessible_description(entry.duration_label or '')
+            self._bound.add(list_item)
+            self._show_track(list_item, entry)
         else:
+            self._bound.discard(list_item)
             row.show_hero(self.hero)
             list_item.set_accessible_label('')
             list_item.set_accessible_description('')
+
+    def _show_track(self, list_item, track):
+        """A track's row, in a table or not, and its name: the artist when the row shows one
+        (not an album's own: TrackRow's rule), the album too in a table."""
+        table = self._is_table()
+        list_item.get_child().show_track(track, self._album_artist, table)
+        show_artist = self._album_artist is None or track.artist != self._album_artist
+        list_item.set_accessible_label(track_label(track, show_artist, show_album=table))
+        list_item.set_accessible_description(track.duration_label or '')
 
     def _last_button(self):
         """The hero's last button that takes the focus: More Options, Shuffle or Play."""
@@ -481,6 +543,7 @@ class DetailPage(Adw.NavigationPage):
         return False
 
     def _on_unbind(self, _factory, list_item):
+        self._bound.discard(list_item)
         list_item.get_child().clear(self.hero)
 
     def _on_setup_header(self, _factory, header):
@@ -488,6 +551,13 @@ class DetailPage(Adw.NavigationPage):
                           margin_bottom=6, ellipsize=Pango.EllipsizeMode.END)
         label.add_css_class('heading')
         header.set_child(label)
+
+    def _on_setup_table_header(self, _factory, header):
+        header.set_child(TrackTableHeader(margin_start=24, margin_end=24, margin_top=6,
+                                          margin_bottom=6))
+
+    def _on_bind_table_header(self, _factory, header):
+        header.get_child().set_visible(header.get_start() > 0)  # the hero's has none
 
     def _on_bind_header(self, _factory, header):
         label = header.get_child()
