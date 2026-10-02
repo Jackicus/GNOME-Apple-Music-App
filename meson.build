@@ -3,7 +3,7 @@
 
 project(
   'music-sleeve',
-  version: '0.10.0',
+  version: '0.11.0',
   meson_version: '>= 1.2.0',  # get_option('python.bytecompile') (src/meson.build)
   license: 'GPL-2.0-or-later',
   default_options: ['warning_level=2', 'werror=false'],

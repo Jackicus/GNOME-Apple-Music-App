@@ -1,9 +1,11 @@
 # TODO
 
-What is left, as of 2026-09-30. Music Sleeve (`io.github.jackicus.MusicSleeve`) is released:
+What is left, as of 2026-10-02. Music Sleeve (`io.github.jackicus.MusicSleeve`) is released:
 [v0.9.0](https://github.com/Jackicus/GNOME-Music-Sleeve/releases/tag/v0.9.0), the first
-release, and v0.10.0, which adds Discord rich presence. A release is a tag and a GitHub release
-(`docs/release.md`); why the app is built the way it is, is in `docs/decisions.md`.
+release, v0.10.0, which adds Discord rich presence, and v0.11.0, the GNOME HIG pass, artist
+pages in Apple Music's structure and Go to Album and Go to Artist. A release is a tag and a
+GitHub release (`docs/release.md`); why the app is built the way it is, is in
+`docs/decisions.md`.
 
 ## Open
 
