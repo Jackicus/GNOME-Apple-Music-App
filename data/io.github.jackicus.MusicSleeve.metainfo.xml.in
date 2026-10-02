@@ -64,35 +64,35 @@
   <screenshots>
     <screenshot type="default" environment="gnome">
       <caption>Home: your heavy rotation and what you added recently, a song playing below</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/home-light.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/home-light.png</image>
     </screenshot>
     <screenshot environment="gnome">
       <caption>Your albums in a grid, sorted the way you choose</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/albums-light.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/albums-light.png</image>
     </screenshot>
     <screenshot environment="gnome">
       <caption>An album's page, with its first song playing</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/album-light.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/album-light.png</image>
     </screenshot>
     <screenshot environment="gnome">
       <caption>Now Playing, with the lyrics following the song</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/now-playing-light.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/now-playing-light.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
       <caption>Home: your heavy rotation and what you added recently, a song playing below</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/home-dark.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/home-dark.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
       <caption>Your albums in a grid, sorted the way you choose</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/albums-dark.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/albums-dark.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
       <caption>An album's page, with its first song playing</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/album-dark.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/album-dark.png</image>
     </screenshot>
     <screenshot environment="gnome:dark">
       <caption>Now Playing, with the lyrics following the song</caption>
-      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.10.0/data/screenshots/now-playing-dark.png</image>
+      <image type="source" width="1100" height="760">https://raw.githubusercontent.com/Jackicus/GNOME-Music-Sleeve/v0.11.0/data/screenshots/now-playing-dark.png</image>
     </screenshot>
   </screenshots>
 
@@ -102,6 +102,25 @@
   </branding>
 
   <releases>
+    <release version="0.11.0" date="2026-10-02">
+      <description>
+        <p>
+          A pass over the whole app against GNOME's Human Interface Guidelines, artist
+          pages laid out as Apple Music's are, and a way from any song to its album and
+          its artist.
+        </p>
+        <ul>
+          <li>An artist's page has what Apple Music's has: the latest release beside the top songs, essential albums, albums, singles and EPs, music videos, playlists, a biography and similar artists, with your own albums by them first</li>
+          <li>Go to Album and Go to Artist in a song's menu, and in the player bar's and Now Playing's; the artist and the album in the Songs table are links to their pages</li>
+          <li>A playlist's songs are a table in a wide window, as the Songs page's are, with the same links; the Songs filter is a search bar (Ctrl+F); the grid pages sort ascending or descending</li>
+          <li>Clicking a song plays that song, where a list could start the one after it; the song playing is marked in its list, and the player bar shows only while something plays</li>
+          <li>Typing in GNOME's Activities overview finds your artists, albums, playlists and songs, and opens or plays the one you choose</li>
+          <li>Preferences' rows read as Settings' do, with a Last Refreshed row and its Refresh button; the sidebar is titled Music Sleeve; the library's pages offer Sign In while you are signed out</li>
+          <li>Album and playlist pages fit a 360 px window, the player bar's title shows whole there, and the play button has its own play and pause icons, which no icon theme can swap</li>
+          <li>Discord presence clears five seconds into a pause, as Spotify's does</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-09-30">
       <description>
         <p>

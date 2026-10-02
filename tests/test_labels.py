@@ -66,11 +66,9 @@ class SongLabelTest(unittest.TestCase):
                          'Gutter Hymn, explicit')
 
     def test_the_caption_is_the_album_and_year(self):
-        from applemusic.widgets.song_shelf import song_caption
-
-        self.assertEqual(song_caption(self.song()), 'Ladders of Rain · 2026')
-        self.assertEqual(song_caption(self.song(year=None)), 'Ladders of Rain')
-        self.assertEqual(song_caption(self.song(album='')), '2026')
+        self.assertEqual(labels.song_caption(self.song()), 'Ladders of Rain · 2026')
+        self.assertEqual(labels.song_caption(self.song(year=None)), 'Ladders of Rain')
+        self.assertEqual(labels.song_caption(self.song(album='')), '2026')
 
 
 class _ListItem:

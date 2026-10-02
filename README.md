@@ -65,7 +65,7 @@ sudo dnf install gtk4-devel libadwaita-devel glib2-devel python3-gobject python3
     meson gettext                                                                             # Fedora 44+
 sudo apt install libgtk-4-dev libadwaita-1-dev python3-gi python-gi-dev meson gettext        # Ubuntu 26.04
 
-tar xf music-sleeve-0.10.0.tar.xz && cd music-sleeve-0.10.0
+tar xf music-sleeve-0.11.0.tar.xz && cd music-sleeve-0.11.0
 meson setup _build --prefix=/usr
 meson compile -C _build
 sudo meson install -C _build --skip-subprojects
