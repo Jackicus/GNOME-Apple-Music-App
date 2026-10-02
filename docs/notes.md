@@ -191,6 +191,15 @@ is 158 MB on the desktop, 105 of it file-backed; 192 MB headless, 64 of it anony
   the 33: the songs listing, which nothing above can narrow, is the rest. The log's
   `sync done in N s (engine …, songs …, playlists …)` line now gives each phase's seconds
   (`phase_text()`), for the next live measurement.
+- Live, on the maintainer's library (2026-10-02, the .Devel build headless): the first full
+  pass with the stamps took 21 s (songs 6.7, playlists 6.6, shelves 4.4); the next, with
+  nothing changed, 8 s, all 34 playlists kept (playlists 0.5 s). On a throwaway playlist of
+  three songs, each edit moved its `lastModifiedDate` (to the second) within 5 s: a reorder
+  (a `PUT` of its tracks in a new order), a removal (`DELETE` of one track) and an addition
+  (`POST`); after the reorder the next full pass read that playlist alone and kept the new
+  order. The edits went through Apple's library API, as music.apple.com's own do; an edit
+  on a phone reaches the same cloud library, but was not tried. A single playlist's answer
+  carried no `trackCount`, so the date alone did the work.
 
 ## MPRIS and GNOME Shell
 
