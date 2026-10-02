@@ -11,19 +11,13 @@ from gi.repository import Gtk, Pango
 
 from . import context_menu
 from .cover import Cover
-from .labels import song_label
+from .labels import song_caption, song_label
 from .shelf import PagedRow
 from .util import connect_weak
 
 # A song's width in the grid: two columns and a margin fit a 720 px window, one a 360 px.
 ROW_WIDTH = 300
 COVER_SIZE = 48
-
-
-def song_caption(item):
-    """A song row's second line: its album and year ("Album · 2026"), or whichever it has."""
-    parts = [item.raw.get('album') or '', str(item.year) if item.year else '']
-    return ' · '.join(part for part in parts if part)
 
 
 class SongRow(Gtk.Box):

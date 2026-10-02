@@ -8,6 +8,7 @@ looked up once (a list binds its rows by the thousand, and gettext is slow when 
     bind_label(list_item, item, artist)   # the same, following a renamed Item (unbind_label)
     list_item.set_accessible_label(track_label(track, show_artist=True, show_album=True))
     child = flow_child(tile, accessible_label(item))   # a Gtk.FlowBox's create function
+    caption.set_text(song_caption(item))   # a song row's album and year, its second line
 
 No template here, so the unit tests import it without a display.
 """
@@ -68,6 +69,13 @@ def song_label(item):
     if item.explicit:
         label = _format('explicit').format(label=label)
     return label
+
+
+def song_caption(item):
+    """A song row's second line, beside song_label(): its album and year ("Album · 2026"),
+    or whichever it has."""
+    parts = [item.raw.get('album') or '', str(item.year) if item.year else '']
+    return ' · '.join(part for part in parts if part)
 
 
 def flow_child(widget, label):
