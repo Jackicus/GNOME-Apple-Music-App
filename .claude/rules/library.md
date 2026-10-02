@@ -80,7 +80,10 @@ them before changing either. What matters most:
   collected, and a reload follows every sync. Don't freeze anywhere else.
 - Startup: `load()` starts reading the file in the library's thread the moment it is called
   (from `do_startup`); `hold_reading()`/`resume_reading()` pause the parse while the main thread
-  runs Python before the window is presented, since the two share the GIL.
+  runs Python before the window is presented, since the two share the GIL. The load's
+  main-thread part is `Application.load_library()`'s task, started once: by `do_activate`,
+  or by the search provider when the bus started the app for a search with no window to
+  come (it resumes the parse itself).
 - The sync (`sync_library()`, run one at a time by `LibrarySync`, `app.library_sync`) fetches
   through the engine only, normalises in a thread with `backend.normalize`'s pure functions,
   fetches missing thumbnails (covers are fetched on demand by the pages that show them), writes

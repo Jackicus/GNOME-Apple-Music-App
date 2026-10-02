@@ -25,7 +25,12 @@ changes, change it here, with the date. The plan they came from is in
 - **The player at the bottom** (2026-09-27). A full-width bar at the bottom of the window, as
   in GNOME Music, with Now Playing as an `AdwBottomSheet` that slides up over the content and
   holds Lyrics and Up Next. The web player puts its player at the top; the bottom keeps the
-  header bar for titles and back buttons, which is what GNOME users expect.
+  header bar for titles and back buttons, which is what GNOME users expect. Shown only while
+  something plays (2026-10-01), as GNOME Music's is: with nothing playing the window ends at
+  the content rather than carrying a dead "Not Playing" bar, and the bar slides in with the
+  first item (`src/window.py` reveals it from the Player's track, after the Player's grace
+  between queues, so a change of queue shows no blink). Ctrl+Shift+N still opens Now
+  Playing; Ctrl+3 with no bar leaves the focus and says "Not Playing" to a screen reader.
 - **Playlist folders in the sidebar** (2026-09-27). Folders are sidebar items with a folder icon
   and a disclosure arrow; activating one shows or hides its playlists and opens the folder's
   page (in the narrow layout's page mode it only opens the page). `AdwSidebar` cannot indent,
@@ -52,9 +57,54 @@ changes, change it here, with the date. The plan they came from is in
   happens. The alternative, skipping the revocation when the engine is down, is quicker but
   leaves the token valid until Apple expires it. Every job that writes the cache is stopped
   first (the cache's generation), so nothing is written after the wipe.
+- **Discord presence, off by default** (2026-09-30). A switch in Preferences sends the playing
+  track to the Discord desktop app as rich presence, over its local IPC socket, with no
+  library: the protocol is a handshake and one command, and a dependency would be the app's
+  only one outside GNOME's stack. Off until the user turns it on, since it publishes what they
+  listen to. The application id is the project's own Discord application, public by nature
+  (rich presence needs no token). The activity names itself "Apple Music", so the card reads
+  "Listening to Apple Music" as it reads "Listening to Spotify": it names the service being
+  listened to, not this app, which keeps to the rule on Apple's marks. The artist is the
+  status line under the user's name, and the album is the cover's caption, which Discord
+  prints as the card's third line. The cover is Apple's own public URL, which Discord fetches;
+  nothing is uploaded anywhere.
+- **A click plays a song** (2026-10-01). A track in an album's or a playlist's list, the Songs
+  table and Search's songs plays on a single click (`single-click-activate`), as GNOME Music
+  plays one: the first click of a double click selected nothing anyone used, and a row that
+  wants a second click is a file manager's. Enter plays the focused row as before; the
+  context menu, a drag to a sidebar playlist and a row's artist and album links
+  (`src/widgets/track_links.py`) claim their presses before the row sees them, so they are
+  unchanged. The Songs table keeps no selection any more (a `Gtk.NoSelection`, as the lists
+  have): GTK selects the hovered row of a single-click list, which would have followed the
+  pointer around. The track playing is marked in every row that shows it, as Up Next marks
+  its entry (#241).
+- **One look for loading, status pages, links and grids** (2026-10-01). A page that waits
+  shows a bare 32 px `AdwSpinner`, the album and artist pages' sections under their hero too,
+  in place of three looks (that spinner, a hand-made "Loading…", a status page with a spinner
+  paintable). A state with words is an `AdwStatusPage`, or a box shaped as a compact one
+  where a list row cannot hold one (the album page's), with one `pill suggested-action`
+  button and plain `pill` ones beside it. A link in text (an album's artist, a row's artist
+  and album) is the text's own colour, underlined under the pointer, never a `link` button's
+  blue. A grid's first column sits on the page's 24 px margin, the tiles at the start of
+  cells that grow with the page, as Radio's flow box has them, where the grids' tiles were
+  centred in theirs and drifted (28 px wide, 13 at 360); under 400sp the margins shrink to
+  the 14 px that still fit two tiles, Radio's the same, the grid never centred (a centred
+  scrollable has GTK measure its width for its height, which warns) (#243).
 
 ## Engine
 
+- **The overview searches the library, through the bus** (2026-10-01). The app exports
+  `org.gnome.Shell.SearchProvider2` (`src/search_provider.py`), with a D-Bus service file
+  whose `Exec` has `--gapplication-service`, as GNOME's own apps do.
+  The Shell starts the app for a search when it is not running; that start runs
+  `do_startup` alone, and the engine's autostart lives in `do_activate`, so no window shows
+  and no Chrome runs until a result is chosen, and the app quits half a minute after its
+  last call. The provider answers from the library in memory only: never the engine, never
+  the Songs store built for it (a second on a big library; songs show once a page has
+  built it). The desktop file stays `DBusActivatable=false`, unlike GNOME's own apps: the
+  search does not need it, and a bus launch has no fallback to `Exec` (GLib drops the
+  error), so an install whose service directory the session bus cannot see would leave the
+  app's icon doing nothing.
 - **Chrome as the engine** (2026-09-27). See "Why there is a browser inside" in
   `docs/architecture.md`. The real Chrome, because Chromium ships without Widevine.
 - **The app owns MPRIS** (2026-09-27). The app publishes `org.mpris.MediaPlayer2.<app id>`
@@ -176,6 +226,30 @@ changes, change it here, with the date. The plan they came from is in
   next song of one album (the same URL, nothing fetched) and a moment for a file on disk; a
   slower download publishes the item first and its artwork after, since a card that is right
   late is worse than one that fills in twice.
+- **The keyboard walkthrough presses real keys** (2026-09-30). `scripts/a11y_check.py` sends
+  them through the headless mutter's `org.gnome.Mutter.RemoteDesktop` interface, which
+  `scripts/headless.sh` already puts on a private session bus, rather than dispatching each
+  press through GTK's controllers: the window is then active, so the walkthrough covers what
+  only an active window does — Tab from row to row and Down from one boxed sidebar section to
+  the next — and typing is typed. The emulation stays behind `--emulate-keys`, and as the
+  fallback on a session that has no such interface (a desktop one keeps it behind the
+  remote-desktop portal, which asks the user first). It stays a tool to run here rather than a
+  CI job: the container installs no mutter, and nothing in `check.sh` may need one (#169).
+- **Artist pages are Apple's views** (2026-10-01). An artist's page is one catalog read with
+  every view music.apple.com's views-based page asks for (`api.ARTIST_VIEWS`), kept for a day,
+  laid out in the order and under the titles Apple gives: the release beside Top Songs (a grid
+  three rows high), Essential Albums as large cards, the shelves, About (biography, From,
+  Born or Formed, Genre) before Similar Artists. It replaces fetching every album with its
+  tracks, which took one read an album. A library artist is the sync's own invention (no
+  catalog id), so its catalog artist is found through one of its songs (the library album's,
+  since the artist's copy of the tracks is dropped at load). The library's albums of the
+  artist's show first, as In Your Library, beside the catalog's shelves: a library album
+  carries no catalog id to tell it from the catalog's, so an album may be on both, which is
+  the price of keeping what is in the library on the page (#236); Go to Artist opens the
+  catalog artist's page while the engine is up. Videos about the artist open on music.apple.com: the engine is
+  headless and has no picture to show. The demo engine answers with the artist pages the
+  demo library invents (marked `demo`), and with none of Apple's (#226).
+
 ## Open
 
 - Nothing. The questions that were open here are settled above; what is left before the

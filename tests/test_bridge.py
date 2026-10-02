@@ -347,6 +347,33 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(value, [1, 1, 1, 0, 0, 1])
 
     @scenario("""
+        // MusicKit's queue for the album holds the row's song one place later than the
+        // library's list has it (it left out an entry before it).
+        mk.setQueue = async function (options) {
+            this.calls.push(['setQueue', options]);
+            this.queue = {position: options.startWith, items: [
+                {id: 'i.one'}, {id: 'i.three'}, {id: 'i.four',
+                 attributes: {playParams: {id: 'i.four', catalogId: '104'}}}]};
+        };
+        const moved = await bridge.play('album', 'l.alb1', {startWith: 1, startId: 'i.four'});
+        const kept = await bridge.play('album', 'l.alb1', {startWith: 1, startId: 'i.three'});
+        const catalog = await bridge.play('album', 'l.alb1', {startWith: 0, startId: '104'});
+        const missing = await bridge.play('album', 'l.alb1', {startWith: 1, startId: 'i.gone'});
+        const plain = await bridge.play('album', 'l.alb1', {startWith: 1});
+        return {answers: [moved, kept, catalog, missing, plain],
+                changes: mk.calls.filter(call => call[0] === 'changeToMediaAtIndex')};
+    """)
+    def test_play_starts_at_the_rows_own_item(self, value):
+        self.assertEqual(value['answers'], [
+            {'ok': True, 'moved': {'from': 1, 'to': 2}},
+            {'ok': True},
+            {'ok': True, 'moved': {'from': 0, 'to': 2}},
+            {'ok': True},   # not in the queue: where startWith put it
+            {'ok': True},
+        ])
+        self.assertEqual(value['changes'], [['changeToMediaAtIndex', 2]] * 2)
+
+    @scenario("""
         mk.nowPlayingItem = {id: 'i.video1', type: 'library-music-videos',
                              attributes: {name: 'Harbour Lights (Live)'}};
         const video = bridge.nowPlaying().track;

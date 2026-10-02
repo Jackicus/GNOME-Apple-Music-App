@@ -22,7 +22,7 @@ UI awaits.
     await engine.signin()               # until MusicKit is authorized (event or 2 s polls)
     await engine.unauthorize()          # revoke the session at Apple's (sign-out); True if done
     await engine.account_name()         # the name on the page, or '' (best effort)
-    await engine.play(kind, id, start_with=None, shuffle=None)    # mk.setQueue + mk.play
+    await engine.play(kind, id, start_with=None, shuffle=None, start_id=None)  # setQueue, play
     await engine.play_next(kind, id); await engine.play_later(kind, id)
     await engine.control('toggle')      # play, pause, toggle, next, previous, stop
     await engine.seek(seconds); await engine.volume(level)   # volume answers the level set
@@ -43,10 +43,17 @@ UI awaits.
     await engine.category(id)    # {id, title, shelves}: a category's page
     await engine.browse()        # {shelves}: the New page (the editorial groupings)
     await engine.made_for_you()  # {shelves}: the personal mixes and stations
-    # The last four are kept under the cache for a day (landing.json, categories/, browse.json,
-    # made-for-you.json) and answered from there without the engine; refresh=True asks again.
-    # Each answer carries `cached`, when it was fetched; one older than a day, answered when
-    # Apple cannot be asked, carries `stale: True` too.
+    await engine.artist_page(id) # {id, artist, latest, topSongs, shelves}: a catalog artist's
+                                 # page, every view of it at once
+    # The last five are kept under the cache for a day (landing.json, categories/, browse.json,
+    # made-for-you.json, artists/) and answered from there without the engine; refresh=True
+    # asks again. Each answer carries `cached`, when it was fetched; one older than a day,
+    # answered when Apple cannot be asked, carries `stale: True` too.
+    await engine.artist_view(id, 'full-albums')   # [Item…]: one of an artist's views whole
+    await engine.catalog_artist(name, song_ids)   # the catalog artist a library one stands
+                                                  # for, found through its songs, or None
+    await engine.related('song', id)  # {album, artists}: a catalog song's (or music video's)
+                                      # album and artists, or an album's artists
 
 Properties `state` ('down', 'starting', 'up', 'signing-in'), `authorized`, `headless`; the
 `event(name, data)` signal re-emits the bridge's MusicKit events (name without the 'am:'
@@ -58,7 +65,8 @@ is an EngineError; nothing here blocks the loop: Chrome is a Gio.Subprocess (awa
 wait_async), the connection is the asynchronous CDPClient over Chrome's DevTools pipe (its
 descriptors 3 and 4: no port is open), and the JSON shaping and artwork HTTP of item() run in
 a thread. In demo mode (`demo=True`) start() and stop() do nothing and every command raises
-EngineError('engine-down') at once.
+EngineError('engine-down') at once, but for a kept answer the demo library invented
+(scripts/demo_library.py writes its artists' pages, marked `demo`), answered from its cache.
 
 The browser command (`browser_command`) and the preferred mode (`prefer_headless`) are read
 when Chrome is spawned, so a change applies at the next start and a running Chrome is left
@@ -109,6 +117,7 @@ API_RETRIES = 3           # tries of an API read that may pass another time (api
 API_RETRY_DELAY = 0.5     # before the first retry of a failed API read; doubles after
 READ_TIMEOUT = 15.0       # one read a person waits on: an item's page, a rating, a link
 RELATIONSHIP_PAGES = 50   # pages of an item's relationship followed past the first, at most
+CATALOG_ARTIST_TRIES = 3  # a library artist's songs asked for their artists, at most
 ALBUM_BATCH = 25          # an artist's albums asked of the page at once
 PAGE_CONCURRENCY = 3      # pages of one endpoint fetched at once, when its total is known
 PLAY_TIMEOUT = 60.0       # setQueue fetches the queue's items from Apple before playing
@@ -316,6 +325,8 @@ class Engine(GObject.Object):
         self.close_wait = CLOSE_WAIT
         self.probe_timeout = PROBE_TIMEOUT
         self.api_retry_delay = API_RETRY_DELAY
+        self._catalog_artists = {}  # a library artist's name, folded -> its catalog id, or None
+        self._related = {}  # (kind, catalog id) -> related()'s answer
         # While set (a reason), start() refuses with 'engine-down': sign-out sets it while it
         # stops Chrome and deletes the profile, which a Chrome started meanwhile would rewrite.
         self.refuse_starts = None
@@ -687,6 +698,7 @@ class Engine(GObject.Object):
                 relay.cancel()
         self.authorized = False
         self._storefront = None
+        self._related = {}  # the next account's storefront may differ
         self.state = 'down'
 
     async def _close_browser(self, client, process):
@@ -820,6 +832,7 @@ class Engine(GObject.Object):
             if authorized != self.authorized:
                 self.authorized = authorized
             self._storefront = None  # the account's may differ: the next status says
+            self._related = {}
         elif name == 'bridgeReset':
             # The page loaded a new document, and the bridge is back in it: what MusicKit
             # held (the sign-in, the queue) may have changed with it. The Player hears it too.
@@ -1131,11 +1144,13 @@ class Engine(GObject.Object):
             raise EngineError('not-signed-in', f'sign in to Apple Music to {what}')
         return client
 
-    async def play(self, kind, item_id, start_with=None, shuffle=None):
+    async def play(self, kind, item_id, start_with=None, shuffle=None, start_id=None):
         """Play an album, playlist, station, song, musicVideo or artist (its top songs) by
         id, or `songs` (song ids joined by commas: a stand-in album of loose songs), from
         queue position `start_with` (a track row): the bridge's play(), that is
-        mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `shuffle` True turns
+        mk.setQueue({kind: id, startWith, startPlaying}) and mk.play(). `start_id`, the track
+        row's own id, is the item that must play: where MusicKit's queue holds another at
+        `start_with`, the bridge moves to the one with that id (logged). `shuffle` True turns
         MusicKit's shuffle on (a Shuffle button), False off (a Play button plays in order),
         None leaves it as it is (a track row). Needs a signed-in engine: library ids and
         full songs are the account's. MusicKit refusing is EngineError('api') with its code
@@ -1145,11 +1160,17 @@ class Engine(GObject.Object):
             raise EngineError('usage', 'play needs a kind and an id')
         options = {'startWith': int(start_with or 0),
                    'shuffle': None if shuffle is None else bool(shuffle)}
+        if start_id:
+            options['startId'] = str(start_id)
         answer = await client.bridge('play', str(kind), str(item_id), options,
                                      timeout=PLAY_TIMEOUT)
         if isinstance(answer, dict) and answer.get('error'):
             raise EngineError('api', f'play {kind}: {answer["error"]}',
                               musickit_code=str(answer.get('code') or '') or None)
+        moved = answer.get('moved') if isinstance(answer, dict) else None
+        if isinstance(moved, dict):
+            log.info('play %s: MusicKit queued %s at %s, not %s; moved to %s', kind, start_id,
+                     moved.get('to'), moved.get('from'), moved.get('to'))
 
     async def play_next(self, kind, item_id):
         """Queue an item right after the one playing (mk.playNext)."""
@@ -1374,10 +1395,15 @@ class Engine(GObject.Object):
         fetch(client)`'s raw answer, shaped by `shaper(raw, cache_dir)` in a thread and kept
         there, stamped `cached`. When Apple cannot be asked (the engine down or signed out,
         the page or the network failing), an older answer kept there is answered instead,
-        marked `stale: True`; with none, or on a refresh, the error. Demo mode has no
-        answers of Apple's to keep: 'engine-down'."""
+        marked `stale: True`; with none, or on a refresh, the error. Demo mode has none of
+        Apple's answers: only an invented one the demo library wrote there (marked `demo`), at
+        any age, else 'engine-down'."""
         if self.demo:
-            raise EngineError('engine-down', 'the engine is not running')
+            kept = await asyncio.to_thread(cache.read_kept, path, allow_stale=True)
+            if kept is None or kept.get('demo') is not True:
+                raise EngineError('engine-down', 'the engine is not running')
+            kept.pop('stale', None)
+            return kept
         generation = store.cache_generation()
         if not refresh:
             kept = await asyncio.to_thread(cache.read_kept, path)
@@ -1438,6 +1464,113 @@ class Engine(GObject.Object):
                                    api.BROWSE_PARAMS, timeout=BROWSE_TIMEOUT)
         return await self._kept_answer(normalize.browse_cache_path(str(self.cache_dir)),
                                        refresh, fetch, normalize.editorial_shelves)
+
+    async def artist_page(self, artist_id, refresh=False):
+        """A catalog artist's page: {id, artist, latest, topSongs, shelves}
+        (normalize.artist_page), every section of it in one read (api.ARTIST_ENDPOINT with
+        all of api.ARTIST_VIEWS), the shelves in music.apple.com's order and titled as Apple
+        titles them. From <cache>/artists/<id>.json for a day, else fetched and kept."""
+        artist_id = str(artist_id or '')
+        if not artist_id or api.is_library_id(artist_id):
+            raise EngineError('usage', 'artist_page needs a catalog artist id')
+
+        async def fetch(client):
+            storefront = await self._current_storefront()
+            return await self._api(
+                client, api.ARTIST_ENDPOINT.format(storefront=storefront, id=artist_id),
+                api.ARTIST_PARAMS, timeout=READ_TIMEOUT)
+        return await self._kept_answer(
+            normalize.artist_cache_path(str(self.cache_dir), artist_id), refresh, fetch,
+            normalize.artist_page)
+
+    async def artist_view(self, artist_id, view):
+        """One of an artist's views (api.ARTIST_VIEWS) whole, for its See All: its Items as
+        artist_page() has them, Apple's `next` links followed (RELATIONSHIP_PAGES at most)."""
+        artist_id, view = str(artist_id or ''), str(view or '')
+        if not artist_id or view not in api.ARTIST_VIEWS:
+            raise EngineError('usage', 'artist_view needs a catalog artist id and a view')
+        client = await self._require_signed_in('browse')
+        storefront = await self._current_storefront()
+        path = api.ARTIST_VIEW_ENDPOINT.format(storefront=storefront, id=artist_id, view=view)
+        answer = await self._api(client, path, {'limit': api.ARTIST_VIEW_LIMIT},
+                                 timeout=READ_TIMEOUT)
+        resources = api.page_data(answer)
+        link = answer.get('next')
+        for _ in range(RELATIONSHIP_PAGES):
+            if not isinstance(link, str) or not link.startswith('/v1/'):
+                break
+            answer = await self._api(client, link, timeout=READ_TIMEOUT)
+            page = api.page_data(answer)
+            if not page:
+                break
+            resources += page
+            link = answer.get('next')
+        return await asyncio.to_thread(normalize.artist_view_items, view, resources,
+                                       str(self.cache_dir))
+
+    async def catalog_artist(self, name, song_ids):
+        """The id of the catalog artist a library artist stands for, or None. The library
+        makes its artists up from its songs' artist names (an `l.art_` id, no catalog id), so
+        the artist is found through its songs: each of `song_ids` (catalog song ids) in turn
+        is read with its artists, and the first artist named `name` (case aside) is the one.
+        Remembered for the session, a miss too."""
+        name = ' '.join(str(name or '').split())
+        key = name.casefold()
+        if not key:
+            return None
+        if key in self._catalog_artists:
+            return self._catalog_artists[key]
+        client = await self._require_signed_in('browse')
+        storefront = await self._current_storefront()
+        found = None
+        for song_id in [str(song_id) for song_id in song_ids if song_id][:CATALOG_ARTIST_TRIES]:
+            try:
+                answer = await self._api(
+                    client, api.SONG_ARTISTS_ENDPOINT.format(storefront=storefront, id=song_id),
+                    api.SONG_ARTISTS_PARAMS, timeout=READ_TIMEOUT)
+            except EngineError as error:
+                if error.code == 'engine-down':
+                    raise
+                log.debug('the artists of song %s: %s', song_id, error)
+                continue
+            for song in api.page_data(answer):
+                artists = ((song.get('relationships') or {}).get('artists') or {}).get('data')
+                for artist in artists if isinstance(artists, list) else []:
+                    if not isinstance(artist, dict):
+                        continue
+                    artist_name = (artist.get('attributes') or {}).get('name') or ''
+                    if ' '.join(str(artist_name).split()).casefold() == key and artist.get('id'):
+                        found = str(artist['id'])
+                        break
+                if found:
+                    break
+            if found:
+                break
+        self._catalog_artists[key] = found
+        return found
+
+    async def related(self, kind, item_id):
+        """Where Go to Album and Go to Artist go for a catalog song, music video or album
+        (`kind` 'song', 'video' or 'album') the library cannot place: {album, artists}
+        (normalize.related), its album (None for an album) and its artists as Items without
+        groups, from one read of it with its relationships (api.RELATED_ENDPOINTS).
+        Remembered for the session. A library id is EngineError('usage')."""
+        item_id = str(item_id or '')
+        endpoint = api.RELATED_ENDPOINTS.get(kind)
+        if endpoint is None or not item_id or is_library_id(item_id):
+            raise EngineError('usage', f'related needs a catalog song, video or album: '
+                                       f'{kind} {item_id}'.strip())
+        key = (kind, item_id)
+        if key in self._related:
+            return self._related[key]
+        client = await self._require_signed_in('look items up')
+        storefront = await self._current_storefront()
+        answer = await self._api(client, endpoint.format(storefront=storefront, id=item_id),
+                                 api.RELATED_PARAMS[kind], timeout=READ_TIMEOUT)
+        # Off the loop: a hit's artwork is looked for on disk, as a search's are.
+        found = await asyncio.to_thread(normalize.related, answer, str(self.cache_dir))
+        self._related[key] = found
+        return found
 
     async def made_for_you(self, refresh=False):
         """Made for You: {shelves: [{key, title, items}]}, the recommendations

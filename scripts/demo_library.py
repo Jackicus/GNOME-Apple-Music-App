@@ -25,7 +25,12 @@ The last playlist is Favourite Songs, flagged by attributes.isFavourites.
 Three playlist folders, one inside another, hold some of the playlists; the
 rest are at the top level (`folders`, whose "root" entry lists the top level).
 sections.videos holds six invented music videos with 16:9 artwork, as Apple's
-is (the thumbnails 320 x 180). The other keys the app's sync adds
+is (the thumbnails 320 x 180). Each hand-written artist also gets the page
+Apple's catalog would answer for it (artists/<catalog id>.json, the shape
+normalize.artist_page() gives: its top songs, latest release and shelves, made
+of the demo's own albums, songs and videos and a few invented singles,
+playlists, radio episodes and interviews), which the demo engine answers
+from. The other keys the app's sync adds
 (sections.songs, artUrl) are optional and left out: the demo has no loose
 songs and nothing to fetch.
 Uses only Python stdlib and PyGObject / Cairo (no pip dependencies).
@@ -92,6 +97,32 @@ PALETTES = [
     ('#1d3557', '#457b9d', '#a8dadc'),  # Atlantic blues
     ('#3d0c11', '#d1495b', '#edae49'),  # Rich garnet
 ]
+
+# Each hand-written artist's About: where they are from, when born or formed (Apple's own
+# words for it), and whether they are a group.
+ARTIST_FACTS = [
+    ('Stromness, Orkney, Scotland', '2011', True),
+    ('Rotterdam, Netherlands', '2014', True),
+    ('Tofino, BC, Canada', '2016', True),
+    ('Kanazawa, Japan', '2009', True),
+    ('Lisbon, Portugal', '2017', True),
+    ('Reykjavík, Iceland', '2012', True),
+    ('Bristol, England', '2015', True),
+    ('Gothenburg, Sweden', '2010', True),
+    ('Sapporo, Japan', '4 March 1991', False),
+    ('Ghent, Belgium', '2013', True),
+    ('Wellington, New Zealand', '2018', True),
+    ('Leipzig, Germany', '2016', True),
+    ('Galway, Ireland', '2019', True),
+    ('Tallinn, Estonia', '2014', True),
+    ('New Orleans, LA, United States', '2008', True),
+]
+
+# The radio shows an artist's episodes air on, and the words an episode or an interview takes.
+DEMO_SHOWS = ['Lighthouse One', 'Slow Tide Radio', 'The Long Play', 'Night Shift']
+DEMO_EPISODES = ['{artist} in Conversation', 'The Making of {album}', '{genre} Spotlight',
+                 'A Night with {artist}']
+DEMO_INTERVIEWS = ['{artist} on {album}', '{artist}: Behind the Songs', 'Live from the Studio']
 
 MOTIFS = [
     'sun_horizon',
@@ -2103,6 +2134,11 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         'folders': build_folders([playlist['id'] for playlist in playlists]),
     }
 
+    # 7. The catalog's page of each hand-written artist, after the rest, with a random source
+    # of its own, so nothing above changes.
+    build_artist_pages(out_dir, artists_data[:len(ARTISTS_DATA)], artists, artist_albums_map,
+                       albums, videos, draw_cover, thumb_for, cover_size, library['generated'])
+
     draw_covers(covers, thumb_dir, thumb_size)
 
     out_file = os.path.join(out_dir, 'library.json')
@@ -2114,6 +2150,151 @@ def build_demo_library(out_dir, cover_size=config.COVER_SIZE, thumb_size=config.
         f'{len(playlists)} playlists, {len(radio_stations)} radio stations, '
         f'{len(videos)} music videos in {out_dir}'
     )
+
+
+def build_artist_pages(out_dir, artists_data, artists, artist_albums_map, albums, videos,
+                       draw_cover, thumb_for, cover_size, generated):
+    """Write artists/<catalog id>.json for each hand-written artist: the page the catalog would
+    answer (normalize.artist_page()'s shape, kept as the engine keeps it, stamped `cached`
+    with the library's date), made of the artist's albums, songs and videos in the library,
+    and invented singles, playlists, radio episodes and interviews drawn here. Albums and
+    songs keep their library ids, so their pages are the library's."""
+    rnd = random.Random(31)
+    art_dir = os.path.join(out_dir, 'art')
+    pages_dir = os.path.join(out_dir, 'artists')
+    os.makedirs(pages_dir, exist_ok=True)
+
+    def cover(item_id, title, subtitle, palette_index, wide=False, badge=None):
+        path = os.path.join(art_dir, f"{hashlib.sha1(item_id.encode('utf-8')).hexdigest()}.jpg")
+        draw_cover(out_path=path, title=title, subtitle=subtitle, badge=badge,
+                   palette=PALETTES[palette_index % len(PALETTES)],
+                   motif=MOTIFS[palette_index % len(MOTIFS)], is_artist=False,
+                   size=cover_size, wide=wide)
+        return path
+
+    def brief(item, **changes):
+        """An Item as a shelf carries it: no groups, unless `changes` give some."""
+        return dict(item, groups=[], **changes)
+
+    def tracks_of(album):
+        return [entry for group in album['groups'] for entry in group['entries']]
+
+    def song(track, album):
+        return {'id': track['catalogId'], 'kind': 'song', 'title': track['title'],
+                'subtitle': track['artist'], 'album': album['title'], 'year': album['year'],
+                'art': album['art'], 'thumb': album['thumb'], 'artColor': album['artColor'],
+                'explicit': track['explicit'], 'durationMs': track['durationMs'],
+                'catalogId': track['catalogId'], 'url': None,
+                'play': {'kind': 'song', 'id': track['catalogId']}, 'groups': []}
+
+    def collection(item_id, kind, title, subtitle, year, entries, palette_index, badge=None):
+        """An invented album or playlist of `entries` (library tracks), with its cover."""
+        art = cover(item_id, title, subtitle, palette_index, badge=badge)
+        play = {'kind': kind, 'id': item_id}
+        tracks = [dict(entry, index=position) for position, entry in enumerate(entries)]
+        return {'id': item_id, 'kind': kind, 'title': title, 'subtitle': subtitle,
+                'year': year, 'genre': None, 'summary': None, 'art': art,
+                'thumb': thumb_for(art), 'artColor': PALETTES[palette_index % len(PALETTES)][1],
+                'trackCount': len(tracks), 'durationMs': sum(t['durationMs'] for t in tracks),
+                'explicit': any(t['explicit'] for t in tracks), 'catalogId': None, 'url': None,
+                'play': play, 'groups': [{'name': '', 'play': play, 'entries': tracks}]}
+
+    for index, (data, artist) in enumerate(zip(artists_data, artists, strict=False)):
+        name, genre = data['name'], data['genre']
+        catalog_id = artist['catalogId']
+        own = sorted(artist_albums_map[index], key=lambda album: album['year'], reverse=True)
+        origin, born, group = ARTIST_FACTS[index]
+        tracks = [(track, album) for album in own for track in tracks_of(album)]
+        newest = own[0]
+        shelves = []
+
+        def shelf(key, title, items, shelves=shelves):
+            if items:
+                shelves.append({'key': key, 'title': title, 'items': items, 'more': False})
+
+        top = rnd.sample(tracks, min(24, len(tracks)))
+        shelf('featured-albums', 'Essential Albums', [
+            brief(album, subtitle=album['summary'].split('. ')[0].rstrip('.') + '.')
+            for album in own[:2]])
+        shelf('full-albums', 'Albums', [brief(album, subtitle=str(album['year']))
+                                        for album in own])
+        shelf('music-videos', 'Music Videos', [
+            brief(video, subtitle=str(video['year'])) for video in videos
+            if video['subtitle'] == name])
+        picks = [track for track, _album in rnd.sample(tracks, min(12, len(tracks)))]
+        shelf('playlists', 'Artist Playlists', [
+            collection(f'pl.demo{index:02d}1', 'playlist', f'{name} Essentials',
+                       f'Apple Music {genre}', None, picks, index * 5 + 1),
+            collection(f'pl.demo{index:02d}2', 'playlist', f'{name}: Deep Cuts',
+                       f'Apple Music {genre}', None, picks[::-1][:8], index * 5 + 2)])
+        singles = []
+        for number, (track, _album) in enumerate(rnd.sample(tracks, min(2, len(tracks))), 1):
+            year = newest['year'] + (1 if number == 1 else 0)
+            single = collection(f'demo.single{index:02d}{number}', 'album',
+                                f"{track['title']} - Single", str(year), year, [track],
+                                index * 5 + 3 + number, badge=str(year))
+            singles.append(single)
+        shelf('singles', 'Singles & EPs', singles)
+        if index % 4 == 2:
+            live = collection(f'demo.live{index:02d}', 'album', 'Live at the Harbour Hall',
+                              str(newest['year']), newest['year'],
+                              [track for track, _album in tracks[:6]], index * 5 + 4,
+                              badge='LIVE')
+            shelf('live-albums', 'Live Albums', [live])
+        if index % 5 == 0:
+            best = collection(f'demo.best{index:02d}', 'album', f'The Best of {name}',
+                              str(newest['year']), newest['year'],
+                              [track for track, _album in tracks[::2][:10]], index * 5 + 6)
+            shelf('compilation-albums', 'Compilations', [best])
+        guest = artist_albums_map[(index + 1) % len(artists_data)][0]
+        shelf('appears-on-albums', 'Appears On', [brief(guest)])
+        episodes = []
+        for number in range(3):
+            words = DEMO_EPISODES[(index + number) % len(DEMO_EPISODES)].format(
+                artist=name, album=own[number % len(own)]['title'], genre=genre)
+            item_id = f'ra.demo{index:02d}{number}'
+            show = DEMO_SHOWS[(index + number) % len(DEMO_SHOWS)]
+            art = cover(item_id, words, show, index * 7 + number)
+            episodes.append({'id': item_id, 'kind': 'station', 'title': words, 'subtitle': show,
+                             'year': None, 'genre': genre, 'summary': None, 'art': art,
+                             'thumb': thumb_for(art), 'artColor': None, 'explicit': False,
+                             'catalogId': None, 'url': None,
+                             'play': {'kind': 'station', 'id': item_id}, 'groups': []})
+        shelf('more-to-hear', 'More To Hear', episodes)
+        interviews = []
+        for number in range(2):
+            words = DEMO_INTERVIEWS[(index + number) % len(DEMO_INTERVIEWS)].format(
+                artist=name, album=newest['title'])
+            item_id = f'{int(catalog_id) * 10 + number}'
+            art = cover(f'post.{item_id}', words, name, index * 3 + number, wide=True)
+            seconds = rnd.randint(70, 900)
+            interviews.append({'id': item_id, 'kind': 'link', 'title': words,
+                               'subtitle': f'{seconds // 60}:{seconds % 60:02d}',
+                               'year': newest['year'], 'art': art, 'thumb': thumb_for(art),
+                               'url': f'https://music.apple.com/us/post/{item_id}',
+                               'play': {}, 'groups': []})
+        shelf('more-to-see', 'More To See', interviews)
+        others = [other for other in artists if other is not artist]
+        shelf('similar-artists', 'Similar Artists', [
+            brief(other, id=other['catalogId'], play={'kind': 'artist', 'id': other['catalogId']})
+            for other in rnd.sample(others, min(8, len(others)))])
+
+        released = f"{newest['year']}-0{index % 9 + 1}-1{index % 9}"
+        page = {
+            'id': catalog_id,
+            'artist': brief(artist, id=catalog_id, origin=origin, bornOrFormed=born,
+                            isGroup=group, play={'kind': 'artist', 'id': catalog_id}),
+            'latest': {'key': 'latest-release', 'title': 'Latest Release',
+                       'item': brief(newest, subtitle=str(newest['year']),
+                                     releaseDate=released)},
+            'topSongs': {'key': 'top-songs', 'title': 'Top Songs', 'more': False,
+                         'items': [song(track, album) for track, album in top]},
+            'shelves': shelves,
+            'cached': generated,
+            'demo': True,  # invented: the demo engine answers only these
+        }
+        with open(os.path.join(pages_dir, f'{catalog_id}.json'), 'w', encoding='utf-8') as f:
+            json.dump(page, f, indent=2)
 
 
 # ---------------------------------------------------------------------------

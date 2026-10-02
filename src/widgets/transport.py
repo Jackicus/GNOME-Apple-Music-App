@@ -165,7 +165,9 @@ class TrackTitles:
 class PlayButton:
     """A play/pause button whose icon and tooltip follow the Player's state, with a spinner
     in place of the icon while a play request is with the engine (`pending`); its action
-    (app.play-pause) is the template's."""
+    (app.play-pause) is the template's. Its icons are the bundled transport-* ones, which no
+    icon theme replaces: a theme's 24 px media-playback-start can be a 16 px glyph in a larger
+    canvas, small and off-centre at the sheet's size."""
 
     def __init__(self, button):
         self.button = button
@@ -188,7 +190,7 @@ class PlayButton:
                 self.button.set_child(self._spinner)
         else:
             self.button.set_icon_name(
-                'media-playback-pause-symbolic' if active else 'media-playback-start-symbolic')
+                'transport-pause-symbolic' if active else 'transport-play-symbolic')
         self.button.set_tooltip_text(_('Pause') if active else _('Play'))
 
 
@@ -201,7 +203,10 @@ class SeekControl:
         self.adjustment = adjustment
         self.elapsed_label = elapsed_label
         self.remaining_label = remaining_label
-        self._value_format = _('{position} of {duration}')  # looked up once: this runs often
+        # Looked up once: this runs often.
+        # Translators: the position slider's value as a screen reader hears it: {position}
+        # is the time played ("1:05"), {duration} the song's length ("3:40").
+        self._value_format = _('{position} of {duration}')
         self._value_text = None  # what the slider reads to assistive technology
         self._player = None
         self._app = None
@@ -368,6 +373,8 @@ class VolumeControl:
     def attach(self, player, app):
         self._player = player
         self._app = app
+        # Translators: the volume button's name, and its level as a screen reader hears it:
+        # {percent} is a whole number ("70%").
         self._strings = {'volume': _('Volume'), 'percent': _('{percent}%')}
         self._label()
         player.connect('notify::volume', lambda *_: self.update())

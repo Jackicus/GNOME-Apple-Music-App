@@ -52,6 +52,27 @@ class TrackLabelTest(unittest.TestCase):
 
 
 
+class SongLabelTest(unittest.TestCase):
+    """An artist's top song (an Item with its album): its row's name and its caption."""
+
+    def song(self, **data):
+        return Item(dict({'id': '1', 'kind': 'song', 'title': 'Gutter Hymn',
+                          'subtitle': 'Paper Parachutes', 'album': 'Ladders of Rain',
+                          'year': 2026}, **data))
+
+    def test_the_title_and_the_album(self):
+        self.assertEqual(labels.song_label(self.song()), 'Gutter Hymn, Ladders of Rain')
+        self.assertEqual(labels.song_label(self.song(album='', explicit=True)),
+                         'Gutter Hymn, explicit')
+
+    def test_the_caption_is_the_album_and_year(self):
+        from applemusic.widgets.song_shelf import song_caption
+
+        self.assertEqual(song_caption(self.song()), 'Ladders of Rain · 2026')
+        self.assertEqual(song_caption(self.song(year=None)), 'Ladders of Rain')
+        self.assertEqual(song_caption(self.song(album='')), '2026')
+
+
 class _ListItem:
     """What bind_label() names: a list item's accessible label."""
 

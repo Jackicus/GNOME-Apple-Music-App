@@ -74,6 +74,16 @@ class QueueViewTest(unittest.TestCase):
         self.assertEqual(self.told, 2)
         self.assertTrue(wait_for(lambda: self.rows() == ['Entry 0', 'Entry 1']), self.rows())
 
+    def test_a_rows_menu_is_its_entrys_without_play(self):
+        self.assertTrue(wait_for(lambda: len(self.rows()) == 3))
+        row = self.view._rows[1]
+        track = row.context_item
+        self.assertEqual((track.id, track.catalog_id, track.title),
+                         ('i.queue0003', '2000000003', 'Entry 3'))
+        self.assertTrue(row.context_queued)  # activating the row plays it: no Play
+        row.unbind()
+        self.assertIsNone(row.context_item)
+
 
 if __name__ == '__main__':
     unittest.main()

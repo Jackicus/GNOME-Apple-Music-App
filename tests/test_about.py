@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """The About dialog (src/dialogs/about.py): the release its notes are for, the debug
-information, and the dialog built from the metainfo in the compiled gresource."""
+information, the credits and details, and the dialog built from the metainfo in the compiled
+gresource."""
 
 import unittest
 
@@ -61,10 +62,26 @@ class AboutTest(unittest.TestCase):
         from gi.repository import Adw
 
         dialog = Adw.AboutDialog.new_from_appdata(about.METAINFO, '0.9.0')
-        self.assertEqual(dialog.get_application_name(), 'Music Sleeve')
+        # The development build (build/, where the tests' gresource comes from) is named apart.
+        self.assertIn(dialog.get_application_name(),
+                      ('Music Sleeve', 'Music Sleeve (Development)'))
         self.assertEqual(dialog.get_release_notes_version(), '0.9.0')
         self.assertTrue(dialog.get_release_notes())
         self.assertTrue(dialog.get_issue_url().startswith('https://github.com/'))
+        self.assertTrue(dialog.get_support_url().endswith('/docs/user-guide.md'))  # the help URL
+
+    @requires_gtk
+    def test_credits_and_details(self):
+        dialog = about.build(App())
+        self.assertEqual(dialog.get_version(), '0.9.0-1a2b3c4')
+        self.assertEqual(list(dialog.get_developers()), ['Jack Tully'])
+        self.assertEqual(dialog.get_copyright(), '© 2026 Jack Tully')
+        description, notice = dialog.get_comments().split('\n\n')
+        self.assertIn('library, playlists, radio', description)
+        self.assertEqual(notice,
+                         'Not affiliated with Apple. Apple Music is a trademark of Apple Inc.')
+        self.assertIn('Engine: up, headless, signed in', dialog.get_debug_info())
+        self.assertEqual(dialog.get_debug_info_filename(), about.DEBUG_INFO_FILENAME)
 
 
 if __name__ == '__main__':

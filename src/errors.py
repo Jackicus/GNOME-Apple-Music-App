@@ -25,13 +25,15 @@ def error_message(code):
         return _('The playback engine is not running'), _('Start'), 'app.start-engine'
     if code == errors.NO_KEYRING:
         # Chrome was not started: without the keyring it would delete the cookies that hold
-        # the sign-in, encrypted with a key kept there.
-        return (_('The keyring is not available, so starting would lose the Apple Music '
-                  'sign-in'), _('Retry'), 'app.start-engine')
+        # the sign-in, encrypted with a key kept there. The sentence says what to do (it has
+        # to fit a narrow toast), and the button is the step after it.
+        return _('Unlock the keyring, then start the engine'), _('Start'), 'app.start-engine'
     if code == errors.NOT_SIGNED_IN:
         return _('Sign in to Apple Music again'), _('Sign In'), 'app.sign-in'
     if code == errors.TIMEOUT:
         return _('Apple Music did not answer in time'), None, None
     if code == errors.API:
         return _('Apple Music could not do that'), None, None
-    return _('Something went wrong'), None, None
+    # A usage error or an unknown code: the bridge or Chrome answered something the app
+    # did not expect, so that is what the user is told.
+    return _('The playback engine did not answer as expected'), None, None

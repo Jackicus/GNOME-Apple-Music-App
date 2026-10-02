@@ -70,6 +70,26 @@ its "Performance pass" section.
   revisit, would free about 6.3 MB on the 3,000-album, 40,000-song library (headless,
   2026-09-29): under the 10 MB it had to save to be worth a rebuild on every revisit, so it is
   not done.
+- A focused entry destroyed with its page and GTK's Wayland text input (2026-10-01, GTK
+  4.22.5, mutter 50.4, headless). The first `Gtk.Text` to take the focus in a process binds
+  the `zwp_text_input_v3` object, and the compositor answers at once with `enter`. If that
+  entry is destroyed before the main loop has dispatched the answer, GTK still holds the dead
+  context and the `enter` crashes the process in `gtk_widget_get_display`
+  (`text_input_enter` → `enable`), which is what a page test's synchronous teardown did
+  (tests/page_harness.py): focus the entry, tear the page down, pump. Moving the focus off
+  first (`set_focus(None)`) alone does not help; one main-loop turn before the teardown does,
+  and a later focus (the text input bound already) torn down the same way is harmless. With
+  the turn, every teardown was clean: the Search page's entry and the Songs filter focused
+  and typed into, the page dropped and freed, then the keyboard moved to another window and
+  back (the compositor's `leave` and `enter`), with the protocol log showing `enable` at the
+  focus, `disable` at the teardown and nothing dangling. The app never destroys a page in
+  the same loop iteration as a first focus: sign-out's `forget_account_pages()` (account.py)
+  comes after the engine's stop, the wipe and the library's reload; eviction past
+  `ROOT_LIMIT` and a sync's stale playlists drop only pages not shown; and a drop moves the
+  focus into the new root page by itself (libadwaita's replace). Driven on the demo library
+  over scripts/harness.py with real keys (scripts/remote_keys.py), with and without
+  animations, the window active and not: no crash in any of 20-odd rounds, so nothing was
+  changed in the window (issue 254).
 
 ## Memory
 

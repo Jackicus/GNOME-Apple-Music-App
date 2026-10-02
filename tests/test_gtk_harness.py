@@ -10,7 +10,7 @@ import sys
 import unittest
 
 from tests import ROOT
-from tests.gtk import SCHEMA_ID, pump, requires_gtk, wait_for
+from tests.gtk import RESOURCES, SCHEMA_ID, pump, requires_gtk, wait_for
 
 
 @requires_gtk
@@ -46,6 +46,9 @@ class HarnessTest(unittest.TestCase):
 
 
 class SkipTest(unittest.TestCase):
+    # Without a compiled gresource (a tarball built outside build/) the harness skips before
+    # it ever tries the display, so there is no display branch to test.
+    @unittest.skipUnless(any(path.exists() for path in RESOURCES), 'no compiled gresource')
     def test_without_a_display_widget_tests_skip(self):
         env = dict(os.environ, GDK_BACKEND='none')
         done = subprocess.run(

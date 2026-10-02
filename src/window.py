@@ -8,9 +8,11 @@ The pages reach the window through get_root() and these seams, not its internals
 
     open_item(item)                   show an album, artist, playlist, folder or category;
                                       play a station, song or video
+    shown_item()                      the Item of the page shown, while no sheet covers it
     open_shelf(shelf)                 a shelf's items as a grid (See All)
     open_songs(text)                  the Songs page, filtered
-    play_request(play, start_with=None, shuffle=None)
+    search_library(text)              the Search page in Your Library mode, text typed
+    play_request(play, start_with=None, shuffle=None, start_id=None)
                                       every "play this": the Player, the sign-in, the toasts
     add_toast(toast)                  a toast over the content, or in the open sheet
     announce(text, priority)          Gtk.Accessible's, for assistive technology
@@ -30,9 +32,10 @@ from gettext import gettext as _
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from . import keyboard, pages
+from . import keyboard, pages, related
 from .actions import ItemActions
 from .backend.errors import EngineError
+from .library import Item
 from .player import playback_error_text
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
@@ -48,6 +51,8 @@ log = logging.getLogger(__name__)
 # recently shown is dropped (and freed), and built again if it is shown again. The fixed
 # destinations' pages are kept for good.
 ROOT_LIMIT = 8
+# The kinds open_item shows a page for: it uncovers the content for them first.
+PAGE_KINDS = ('album', 'playlist', 'artist', 'folder', 'category')
 # The fixed destinations whose pages show the engine's answers for the account signed in,
 # forgotten at sign-out (forget_account_pages).
 ACCOUNT_PAGES = ('new', 'made-for-you', 'search')
@@ -99,6 +104,8 @@ class Window(Adw.ApplicationWindow):
                                           self.item_actions)
         self.player_bar.set_player(app.player, app)
         self.now_playing.set_player(app.player, app, self.bottom_sheet)
+        self._sheet_opened_from = None  # a weak reference to the focus the sheet opened over
+        self.bottom_sheet.connect('notify::open', self._on_sheet_open)
         self._library_handler = self._library.connect('changed', self._on_library_changed)
         # The banners live under the visible page's header bar, whichever page that is.
         self._banner_host = None
@@ -124,8 +131,10 @@ class Window(Adw.ApplicationWindow):
             (app.library_sync, app.library_sync.connect('progress', self._on_sync_progress)),
             (app.library_sync,
              app.library_sync.connect('notify::running', self._on_sync_running)),
+            (app.player, app.player.connect('notify::track', self._reveal_player_bar)),
         ]
         self._update_account()
+        self._reveal_player_bar()  # hidden from the start, with no animation, while idle
 
         # The window's actions (their keys are shortcuts.ACCELS, set in main.py). Alt+Left:
         # the navigation views pop on their own only while the focus is in them; this goes
@@ -216,6 +225,56 @@ class Window(Adw.ApplicationWindow):
         if self.bottom_sheet.get_open():
             self.bottom_sheet.set_open(False)
 
+    def _reveal_player_bar(self, *_args):
+        """The player bar only while something plays, as GNOME Music shows its own: the
+        Player's track reveals the bottom sheet's bar, and its going (after the Player's
+        grace between queues, so a change of queue shows no blink) hides it, the content's
+        bottom margin following the bar's height (window.blp). Set from here, not bound in
+        window.blp: the Player is the application's.
+
+        The focus, if the bar had it as it goes, moves into the page first: GTK drops the
+        focus as the play button goes insensitive (the app's action, before this runs), and
+        would otherwise leave it on the unmapped bar, where Enter still opens Now Playing.
+        """
+        playing = self.get_application().player.track is not None
+        if (not playing and self.get_mapped() and self.bottom_sheet.get_reveal_bottom_bar()
+                and (self.get_focus() is None or self._focus_in_player_bar())):
+            self._focus_content()
+            if self._focus_in_player_bar():  # the collapsed layout showing the sidebar
+                self.set_focus(None)
+        self.bottom_sheet.set_reveal_bottom_bar(playing)
+
+    def _focus_in_player_bar(self):
+        """Whether the focus is in the player bar, or on the button the bottom sheet wraps it
+        in (the bar itself, which opens Now Playing)."""
+        focus = self.get_focus()
+        return focus is not None and (focus.is_ancestor(self.player_bar)
+                                      or focus is self.player_bar.get_parent())
+
+    def _on_sheet_open(self, *_args):
+        """The focus around the Now Playing sheet. Adw.BottomSheet leaves it alone: the sheet
+        takes it as it opens (widgets/now_playing.py), and as it closes GTK moves it out of
+        the hidden sheet page, back into the bar (the bar's last focus) while the bar is
+        there, and onto the sheet's own unmapped bin while it is not (nothing playing).
+        So the focus the sheet opened over is remembered, and put back after a close that
+        lost it."""
+        if self.bottom_sheet.get_open():
+            focus = self.get_focus()
+            self._sheet_opened_from = focus.weak_ref() if focus is not None else None
+        else:
+            GLib.idle_add(self._restore_sheet_focus)  # after GTK's own move
+
+    def _restore_sheet_focus(self):
+        opened_from = self._sheet_opened_from
+        self._sheet_opened_from = None
+        focus = self.get_focus()
+        if focus is not None and focus.get_mapped():
+            return GLib.SOURCE_REMOVE  # in the bar, or moved on purpose (Ctrl+F, Go to Album)
+        widget = opened_from() if opened_from is not None else None
+        if widget is None or not widget.get_mapped() or not widget.grab_focus():
+            self._focus_content()
+        return GLib.SOURCE_REMOVE
+
     # -- the seams the pages use -----------------------------------------------------------
 
     def content_width(self):
@@ -242,20 +301,42 @@ class Window(Adw.ApplicationWindow):
         if page is not None and hasattr(page, 'set_filter'):
             page.set_filter(search)
 
+    def search_library(self, text):
+        """Show the Search page in Your Library mode with `text` typed, the cursor in its
+        entry (the Shell's search provider's LaunchSearch: the overview's search carried
+        on here), over anything pushed, the Now Playing sheet closed first."""
+        self._close_sheet()
+        self._sidebar.select('search', pop=True)
+        page = self._roots.get('search')
+        if page is None or not hasattr(page, 'set_mode'):
+            return
+        page.search_entry.set_text(text)
+        page.set_mode('library')  # a mode change filters at once; the entry's own waits
+        self._show_content_then(page.focus_entry)
+
     def open_item(self, item):
         """Show an album, artist, playlist, folder, category, station, song or video: what
         activating a tile does.
 
         Albums and playlists push a DetailPage, artists an ArtistPage, playlist folders their
         grid of folders and playlists (the page follows the folder Item: a rename, a
-        deletion), search categories their page of shelves, over the page shown. A station,
+        deletion), search categories their page of shelves, over the page shown, which the
+        Now Playing sheet then uncovers (its Go to Album and Go to Artist). A station,
         a song (a search hit, a Best New Songs tile) or a music video has no page: it plays,
         as on music.apple.com (a video as its audio, in the headless engine, as the context
-        menu's Play does). Anything else is named in a toast.
+        menu's Play does). A link (an interview on an artist's page) opens its page on
+        music.apple.com in the browser. Anything else is named in a toast.
         """
         visible = self.navigation_view.get_visible_page()
-        if getattr(visible, 'item', None) is item:
-            return  # a double activation
+        if item.kind in PAGE_KINDS:
+            self._close_sheet()
+            self.split_view.set_show_content(True)
+        if related.same_page(getattr(visible, 'item', None), item):
+            return  # a double activation, or the page shown already (Go to from the sheet)
+        if item.kind in ('album', 'playlist') and not item.groups:
+            # One the library has (an artist page's, under the same id): the library's own,
+            # whose page needs no fetch.
+            item = self._library.by_id(item.kind, item.id) or item
         if item.kind in ('album', 'playlist'):
             from .pages.detail import DetailPage
 
@@ -274,16 +355,32 @@ class Window(Adw.ApplicationWindow):
         elif item.kind in ('station', 'song', 'video'):
             self.play_request(item.play)
             return
+        elif item.kind == 'link' and item.url:
+            if not self.get_application().refuse_in_demo():
+                self.item_actions.launch(item.url)
+            return
         else:
             self.get_application().toast(item.title)
             return
         self.navigation_view.push(page)
 
+    def shown_item(self):
+        """The Item the page shown shows (an album's, a playlist's, an artist's), or None:
+        also while the Now Playing sheet covers it, or the sidebar does (collapsed)."""
+        if self.bottom_sheet.get_open():
+            return None
+        if self.split_view.get_collapsed() and not self.split_view.get_show_content():
+            return None
+        item = getattr(self.navigation_view.get_visible_page(), 'item', None)
+        return item if isinstance(item, Item) else None
+
     def open_shelf(self, shelf):
         """Show a shelf's items as a grid, pushed over the page shown: a shelf's See All.
 
         A shelf of the library's is followed by its key, so the page shows what a later load
-        puts on it; any other (a search's results, a category's) is shown as it is.
+        puts on it; any other (a search's results, a category's) is shown as it is, and one
+        that knows where the rest of it is (an artist's: `complete`, a coroutine function)
+        fetches it, the grid following as it arrives.
         """
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'shelf', None) is shelf:
@@ -306,10 +403,14 @@ class Window(Adw.ApplicationWindow):
                         empty_description=_('This shelf is empty now'))
         page.shelf = shelf
         self.navigation_view.push(page)
+        complete = getattr(shelf, 'complete', None)
+        if complete is not None:
+            self.get_application().spawn(complete())
 
-    def play_request(self, play, start_with=None, shuffle=None):
+    def play_request(self, play, start_with=None, shuffle=None, start_id=None):
         """Play what play names ({kind, id}: an Item's or a Group's play target), from its entry at
-        queue position start_with (a track row: track.play, track.index); `shuffle` True
+        queue position start_with (a track row: track.play, track.index, start_id=track.id,
+        the item that must play wherever MusicKit queues it); `shuffle` True
         shuffled (a Shuffle button), False in order (a Play button), None as the mode is (a
         track row, a tile).
 
@@ -325,12 +426,13 @@ class Window(Adw.ApplicationWindow):
         if not play or not play.get('kind') or not play.get('id'):
             app.toast(_('This cannot be played'))
             return
-        app.spawn(self._play(play, start_with, shuffle))
+        app.spawn(self._play(play, start_with, shuffle, start_id))
 
-    async def _play(self, play, start_with, shuffle):
+    async def _play(self, play, start_with, shuffle, start_id):
         app = self.get_application()
         try:
-            await app.player.play(play, start_with=start_with, shuffle=shuffle)
+            await app.player.play(play, start_with=start_with, shuffle=shuffle,
+                                  start_id=start_id)
         except EngineError as error:
             if error.code == 'api' and error.musickit_code:
                 log.warning('play refused: %s', error)
@@ -341,11 +443,12 @@ class Window(Adw.ApplicationWindow):
     # -- the account and the banners -------------------------------------------------------
 
     def _update_account(self, *_args):
-        """The account button and the sign-in banner: Sign In while signed out; the name
-        over a menu with Sign Out once signed in; and, when the engine is up but Apple no
+        """The account button and the sign-in banner: Sign In… while signed out; the name
+        over a menu with Sign Out… once signed in; and, when the engine is up but Apple no
         longer takes the sign-in (the session expired: signed in here, not authorized
-        there), the banner says so with Sign In and the menu offers Sign In Again, until
-        the account is signed in again or out."""
+        there), the banner says so with Sign In and the menu offers Sign In Again…, until
+        the account is signed in again or out. The menu's items end in an ellipsis: each
+        opens a window (the sign-in's, or the question before signing out)."""
         app = self.get_application()
         signed_in = self._settings.get_boolean(self.account_key('signed-in'))
         name = self._settings.get_string(self.account_key('account-name'))
@@ -359,10 +462,10 @@ class Window(Adw.ApplicationWindow):
         self._account_menu.remove_all()
         if expired:
             section = Gio.Menu()
-            section.append(_('Sign _In Again'), 'app.sign-in')
+            section.append(_('Sign _In Again…'), 'app.sign-in')
             self._account_menu.append_section(None, section)
         section = Gio.Menu()
-        section.append(_('Sign _Out'), 'app.sign-out')
+        section.append(_('Sign _Out…'), 'app.sign-out')
         self._account_menu.append_section(None, section)
         self.sign_in_banner.set_title(sign_in_title(expired))
         self.sign_in_banner.set_revealed((not signed_in or expired) and not app.demo)
@@ -594,10 +697,13 @@ class Window(Adw.ApplicationWindow):
 
     def _on_focus_player(self, *_args):
         """win.focus-player: the focus on the play button, the Now Playing sheet's while it
-        is open, else the bar's; with nothing playing, on the bar itself (it opens the
-        sheet)."""
+        is open, else the bar's (on the bar itself, which opens the sheet, when its buttons
+        are off). With nothing playing there is no bar (_reveal_player_bar): the focus stays
+        where it is, and a screen reader hears why."""
         if self.bottom_sheet.get_open():
             self.now_playing.focus_controls()
+        elif not self.bottom_sheet.get_reveal_bottom_bar():
+            self.announce(_('Not Playing'), Gtk.AccessibleAnnouncementPriority.MEDIUM)
         elif not self.player_bar.play_button.grab_focus():
             self.player_bar.grab_bar_focus()
 

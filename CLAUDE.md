@@ -51,7 +51,7 @@ Application (main.py)    app.settings, .library, .engine, .player, .mpris, .libr
 ```
 
 Pages reach the window through its seams (`self.get_root()`), not its internals: `open_item()`,
-`open_shelf()`, `open_songs()`, `play_request(play, start_with=None, shuffle=None)` (every "play
+`open_shelf()`, `open_songs()`, `play_request(play, start_with, shuffle, start_id)` (every "play
 this"), `add_toast()`, `item_actions`; the Application through `pages.app()`.
 
 On disk: `$XDG_CACHE_HOME/apple-music/` (library.json, art/, thumb/, remote-art/, lyrics/,
@@ -63,10 +63,10 @@ sign-in's keys each build's own (`account_key()`).
 
 ```
 src/main.py, src/window.py      the Application and the Window
-src/*.py                        services and logic (engine, player, mpris, sync, account, cache,
-                                background, actions, errors, i18n, lyrics, remote, shortcuts,
-                                keyboard, sidebar, sections, timing; new ones go here), and the
-                                window's parts (player_bar, sidebar_view)
+src/*.py                        services and logic (engine, player, mpris, search_provider, discord,
+                                sync, account, cache, background, actions, related, errors, i18n,
+                                lyrics, remote, timing, shortcuts, keyboard, sidebar, sections; new
+                                ones go here), and the window's parts (player_bar, sidebar_view)
 src/library.py                  the data model: GLib, GObject and Gio only, no GTK
 src/pages/<name>.py + .blp      one per destination or pushed page (PAGES in pages/__init__.py)
 src/widgets/                    reusable widgets: tiles, shelves, rows, covers, transport, artwork
@@ -143,8 +143,8 @@ meson setup _build --prefix=/usr …   a system install, never into build/ (docs
   the window handles them as `src/keyboard.py` decides (Space belongs to a focused button).
 - **Quitting**: activate `app.quit`, never `Gio.Application.quit()` directly: the quit path
   saves the window state and stops Chrome cleanly, where `do_shutdown` could only SIGKILL it.
-- **Demo mode** (`--demo`, `app.demo`): no engine (commands raise `engine-down`), no MPRIS, its
-  own settings (`settings.ini`); nothing in it may start Chrome or read the real cache.
+- **Demo mode** (`--demo`, `app.demo`): no engine (`engine-down`; only its invented artist pages
+  answer), no MPRIS, no search provider, its own settings; never Chrome, never the real cache.
 - **Logging**: `log = logging.getLogger(__name__)`, set up once in main.py; no `print` in `src/`.
 - **Style**: `ruff check .` must be clean (`pyproject.toml`, no per-file exemptions). Beyond
   ruff: 4-space indents, no type annotations, a docstring where a module or function is not
@@ -195,6 +195,6 @@ meson setup _build --prefix=/usr …   a system install, never into build/ (docs
   `screenshots`, `live-engine-check`.
 - `docs/`: `architecture.md` (how the parts fit), `decisions.md` (settled decisions and why),
   `notes.md` (measurements), `accessibility.md` (the keyboard walkthrough), `release.md`,
-  `history/build-plan.md` (history, not instructions); `src/backend/README.md` (the bridge).
+  `user-guide.md` (for users), `history/build-plan.md` (history); `src/backend/README.md` (bridge).
 - A change that makes a line in these files wrong fixes that line in the same commit
   (tests/test_docs.py checks the paths and keys they name, and this file's 200 lines).

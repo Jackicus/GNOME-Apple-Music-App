@@ -14,20 +14,80 @@ page, and importing every page module (their templates and widgets) cost about 2
 
 Pages reach the application through app(), and the window through get_root() and its seams
 (open_item, open_shelf, open_songs, play_request, add_toast, item_actions).
+
+A library page's empty state (Home's, Radio's, the grids', Songs', Favourite Songs') offers
+the way out while the account is signed out: SignInOffer puts Sign In… on its status page.
 """
 
 from gettext import gettext as _
 
-from gi.repository import Gio, GObject
+from gi.repository import Gio, GObject, Gtk
 
 from ..library import ROOT_FOLDER
 from ..sidebar import FOLDER_ICON, PLAYLIST_ICON
+from ..widgets.util import MappedHandlers, connect_weak
 
 
 def app():
     """The application (Gio.Application.get_default()): its engine, settings, spawn() and
     report(). How every page reaches it; None only in a test without one."""
     return Gio.Application.get_default()
+
+
+def signed_out():
+    """Whether the account is signed out (the signed-in setting, by the app's account_key());
+    False in the demo, which has no account to sign in to, and without an application."""
+    application = app()
+    return (application is not None and not application.demo
+            and not application.settings.get_boolean(application.account_key('signed-in')))
+
+
+class SignInOffer:
+    """What a library page's empty state, an Adw.StatusPage, offers while the account is
+    signed out: a Sign In… button (app.sign-in; the ellipsis, as the sign-in's window
+    follows) and, in place of the page's own description, what signing in does. Signed in,
+    the page's own words show and there is no button: a first sync filling the library is
+    the page's loading state, and the sync banner says so. In the demo, which has no account,
+    and in a widget test without an application, the page's words show as they are.
+
+        self._sign_in = SignInOffer(self.empty_page)   # once the page's description is set
+        self._sign_in.set_description(text)            # a page whose description changes
+
+    The signed-in setting is followed only while the status page is mapped (its stack shows
+    it), weakly, and showing it again catches up. The page holds this object, which holds the
+    status page and the button, its children: a dropped page takes them with it.
+    """
+
+    def __init__(self, status_page):
+        self._status_page = status_page
+        self._description = status_page.get_description()  # the page's own words
+        self._button = Gtk.Button(label=_('Sign In…'), action_name='app.sign-in',
+                                  halign=Gtk.Align.CENTER, visible=False,
+                                  css_classes=['pill', 'suggested-action'])
+        status_page.set_child(self._button)
+        self._handlers = MappedHandlers(status_page)
+        application = app()
+        if application is not None and not application.demo:
+            self._handlers.add(application.settings,
+                               'changed::' + application.account_key('signed-in'), self._update)
+        connect_weak(status_page, 'map', self._update)
+        self._update()
+
+    @property
+    def button(self):
+        """The Sign In… button (visible while signed out)."""
+        return self._button
+
+    def set_description(self, description):
+        """The page's own description, shown once signed in."""
+        self._description = description
+        self._update()
+
+    def _update(self, *_args):
+        offered = signed_out()
+        self._button.set_visible(offered)
+        self._status_page.set_description(
+            _('Sign in to Apple Music to see your library') if offered else self._description)
 
 
 def estimate_width(default_width, maximized, monitor_width, sidebar):

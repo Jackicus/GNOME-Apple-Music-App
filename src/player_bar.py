@@ -3,7 +3,9 @@
 
 """AppleMusicPlayerBar: the transport bar, following the Player.
 
-The window hands it the Player (set_player) once, after the template is built. Everything
+The window hands it the Player (set_player) once, after the template is built, and reveals
+the bar only while the Player has an item (Window._reveal_player_bar): "Not Playing" is
+what the bar shows while hidden, and on its way out. Everything
 shown comes from the Player's properties: the play button's icon from `state`, the title,
 artist and artwork from `track` (the artwork fetched by remote.fetch_remote at the cover
 size, so the Now Playing sheet and MPRIS find the same file), the seek slider and the times
@@ -14,6 +16,10 @@ while something plays); the toggles and the sliders call the Player's coroutines
 failure is toasted by the app. The play button, the seek slider, the toggles, the volume,
 the heart and the artwork are the pieces widgets/transport.py holds, shared with the Now
 Playing sheet.
+
+A right click, a long press or the Menu key on the bar opens the item playing's menu (its
+`context_item`: context_menu on the bar's button), as the Now Playing sheet's More Options
+button does.
 
 For assistive technology: the bar announces each new item (Gtk.Accessible.announce, "Now
 playing …"); the button Adw.BottomSheet puts around the bar (a click on the bar opens the
@@ -27,9 +33,17 @@ from gettext import gettext as _
 
 from gi.repository import Adw, GObject, Gtk
 
+from .actions import now_playing_track
+from .widgets import context_menu
 from .widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .widgets.transport import (HeartControl, ModeControl, PlayButton, RemoteCover, SeekControl,
                                 TrackTitles, VolumeControl, track_subtitle)
+
+# The cover's edge in px, and in the compact layout, where the title needs the room: at
+# 360 px, beside a 44 px cover, three transport buttons and the right-hand box's spacing, a
+# title of a dozen letters was cut.
+COVER_SIZE = 44
+COMPACT_COVER_SIZE = 32
 
 
 @Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/player_bar.ui')
@@ -37,6 +51,9 @@ class PlayerBar(Adw.Bin):
     """The transport bar under the content. See the module."""
 
     __gtype_name__ = 'AppleMusicPlayerBar'
+
+    # The item playing's menu is a queued one: no Play (context_menu).
+    context_queued = True
 
     play_button = Gtk.Template.Child()
     cover = Gtk.Template.Child()
@@ -48,6 +65,7 @@ class PlayerBar(Adw.Bin):
     seek_adjustment = Gtk.Template.Child()
     elapsed_label = Gtk.Template.Child()
     remaining_label = Gtk.Template.Child()
+    controls_box = Gtk.Template.Child()
     heart_button = Gtk.Template.Child()
     shuffle_button = Gtk.Template.Child()
     repeat_button = Gtk.Template.Child()
@@ -75,18 +93,19 @@ class PlayerBar(Adw.Bin):
         return self._compact
 
     def _set_compact(self, compact):
-        # The title keeps the room: at 360 px it showed "Not Play…" with them. Shuffle and
-        # repeat stay in the Now Playing sheet, which the bar opens.
+        # The title keeps the room (COMPACT_COVER_SIZE): the right-hand box goes whole, its
+        # spacing with it. Shuffle and repeat stay in the Now Playing sheet, which the bar
+        # opens.
         self._compact = compact
-        for widget in (self.volume_button, self.shuffle_button, self.repeat_button,
-                       self.elapsed_label, self.remaining_label):
+        self.cover.props.size = COMPACT_COVER_SIZE if compact else COVER_SIZE
+        for widget in (self.controls_box, self.elapsed_label, self.remaining_label):
             widget.set_visible(not compact)
         self._show_playing_controls()
 
     compact = GObject.Property(type=bool, default=False, getter=_get_compact, setter=_set_compact,
                                nick='Compact',
-                               blurb='Hide the volume, the heart, shuffle, repeat and the times '
-                                     '(narrow)')
+                               blurb='A smaller cover, and no volume, heart, shuffle, repeat or '
+                                     'times (narrow)')
 
     def set_player(self, player, app):
         """Follow `player`; `app` spawns the commands and reports their failures."""
@@ -108,8 +127,15 @@ class PlayerBar(Adw.Bin):
         button = self._bar_button()
         if button is not None:
             button.update_property([Gtk.AccessibleProperty.LABEL], [self._strings['now-playing']])
+            context_menu.attach(button)  # on the button: the Menu key reaches it, focused
         player.connect('notify::track', lambda *_: self._update_track())
         self._update_track()
+
+    @property
+    def context_item(self):
+        """The item playing, as the Track its menu is for (actions.now_playing_track), or
+        None."""
+        return now_playing_track(self._player.track if self._player is not None else None)
 
     def _bar_button(self):
         """The button Adw.BottomSheet puts around the bar (a click on it opens the sheet),
@@ -118,8 +144,8 @@ class PlayerBar(Adw.Bin):
         return parent if isinstance(parent, Gtk.Button) else None
 
     def grab_bar_focus(self):
-        """Put the focus on the bar itself (it opens Now Playing): win.focus-player with
-        nothing playing, when the bar's own buttons are off."""
+        """Put the focus on the bar itself (it opens Now Playing): win.focus-player when the
+        bar's own buttons are off, or the focus was on a control that has gone."""
         button = self._bar_button()
         return button.grab_focus() if button is not None else self.grab_focus()
 
@@ -145,12 +171,13 @@ class PlayerBar(Adw.Bin):
             self._announce(track)
 
     def _show_playing_controls(self):
-        """The seek slider and the heart only with an item (the idle bar shows no dead
-        slider); the focus, if it was on a control now hidden or insensitive, moves to
-        the bar itself (the Now Playing button), never off the window."""
+        """The seek slider and the heart only with an item (the bar on its way out shows no
+        dead slider); the focus, if it was on a control now hidden or insensitive, moves to
+        the bar itself (the Now Playing button), never off the window. When the bar itself
+        goes with the item, the window moves the focus on into the page."""
         playing = self._player is not None and self._player.track is not None
         self.seek_box.set_visible(playing)
-        self.heart_button.set_visible(playing and not self._compact)
+        self.heart_button.set_visible(playing)
         root = self.get_root()
         focus = root.get_focus() if root is not None else None
         if (focus is not None and focus.is_ancestor(self)

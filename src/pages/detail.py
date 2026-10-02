@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """AppleMusicDetailPage: an album or a playlist, its cover, titles, Play and Shuffle over its
-tracks.
+tracks; a playlist's as a table (title, artist, album, time) in a wide window.
 
 One Gtk.ListView holds the whole page. Its model flattens a store of sections
 (Gtk.FlattenListModel, whose sections are its models): first a store of one marker item, whose
@@ -12,6 +12,12 @@ Gtk.ListView recycles its rows only as the scrollable child of a Gtk.ScrolledWin
 builds a row for every track, up to 200, and leaves the rest blank, and a playlist can hold
 thousands of songs. Why not the hero in a list header: Tab never reaches the buttons of a
 header, where it does reach an item's.
+
+A playlist's tracks are a table while the page is at least 720sp wide (`table`, which
+follows detail.blp's table_breakpoint): each row's title, artist and album in columns
+(TrackRow's table rows, the artist and the album links), under a header of column titles
+(the tracks' section's list header, TrackTableHeader). An album's stay a numbered list, and
+so does any page in a narrower window.
 """
 
 import bisect
@@ -22,14 +28,15 @@ from gi.repository import Adw, Gdk, Gio, GObject, Gtk, Pango
 
 from ..backend.errors import EngineError
 from ..library import Track
+from ..related import catalog_target
 from ..remote import fetch_cover
-from ..widgets import context_menu
+from ..widgets import context_menu, track_links
 from ..widgets.cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from ..widgets.engine_status import EngineStatus
 from ..widgets.labels import track_label
-from ..widgets.track_row import TrackRow
+from ..widgets.track_row import PlayingMark, TrackRow, TrackTableHeader
 from ..widgets.util import HeaderTitle, MappedHandlers, connect_weak, weak_method
-from . import app, show_notes
+from . import SignInOffer, app, show_notes
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +58,15 @@ def resolve_artist(library, item):
     name = item.subtitle.casefold()
     return next((artist for artist in library.artists if artist.title.casefold() == name),
                 None)
+
+
+def links_catalog_artist(item):
+    """Whether an album's subtitle links to its catalog artist, which the engine looks up
+    (related.catalog_target): a catalog album with an artist's name, outside the demo."""
+    application = app()
+    return (item is not None and item.kind == 'album' and bool(item.subtitle)
+            and catalog_target(item) is not None
+            and application is not None and not application.demo)
 
 
 def should_fetch(item, fetched):
@@ -84,9 +100,9 @@ class _Row(Gtk.Box):
             self.append(hero)
         self.track_row.set_visible(False)
 
-    def show_track(self, track, album_artist):
+    def show_track(self, track, album_artist, table=False, playing=False):
         self.track_row.set_visible(True)
-        self.track_row.bind(track, album_artist)
+        self.track_row.bind(track, album_artist, table, playing)
 
     def clear(self, hero):
         if hero.get_parent() is self:
@@ -109,9 +125,14 @@ class DetailPage(Adw.NavigationPage):
     `groups-changed` (the tracks), and do_map catches up with what changed while it was
     hidden. An Item that came without its tracks has them fetched once (should_fetch());
     the fetch is cancelled when the page is hidden (do_hidden), and asked again when it
-    shows.
+    shows. The Player is followed the same way (`notify::track`, while shown): the rows of
+    the track playing are marked (TrackRow's play icon and bold title, "Playing" as the
+    row's accessible description), every bound row again as the item changes. A click on a
+    track plays its group from it, as Enter does (the list's single-click-activate).
 
-    The hero: an album's artist links to their page (resolve_artist()), a More Options menu
+    The hero: an album's artist links to their page when the library has them
+    (resolve_artist()) or the catalog can say (links_catalog_artist()), opened as Go to Artist
+    opens it (window.item_actions.go_to()), a More Options menu
     button offers the item's own menu (window.item_actions), and the notes show three lines,
     with More for the whole text. The header bar shows the title once the hero's has scrolled
     away (HeaderTitle). Tab from the hero's last button goes on into the tracks, and Shift+Tab
@@ -120,6 +141,22 @@ class DetailPage(Adw.NavigationPage):
 
     __gtype_name__ = 'AppleMusicDetailPage'
 
+    _table = False  # the `table` property
+
+    def _get_table(self):
+        return self._table
+
+    def _set_table(self, table):
+        if table != self._table:
+            self._table = table
+            self._update_headers()
+            for list_item in self._bound:
+                self._show_track(list_item, list_item.get_item())
+
+    table = GObject.Property(type=bool, default=False, getter=_get_table, setter=_set_table,
+                             nick='Table', blurb="A playlist's tracks as a table (wide)")
+
+    table_breakpoint = Gtk.Template.Child()
     header_bar = Gtk.Template.Child()
     stack = Gtk.Template.Child()
     empty_page = Gtk.Template.Child()
@@ -153,12 +190,14 @@ class DetailPage(Adw.NavigationPage):
         self._find = find
         self._root = root
         self._album_artist = None  # an album's artist, whose name its rows leave out
+        self._groups = 0  # the sections of tracks shown
+        self._bound = set()  # the list items bound to tracks: shown again as `table` changes
         self._starts = []  # the list position of each section of tracks
         self._headings = []  # and its heading
         self._fetched = None  # the Item this page asked the engine for (once: should_fetch)
         self._fetch_task = None
         self._shown_groups = None  # item.groups when the tracks were shown: a new list is new
-        self._artist = None  # the artist Item the subtitle links to
+        self._artist = None  # the library's artist Item the subtitle names, if any
         self._painted = None  # (frame clock, handler): the notes' More follows each paint
         self._focused = False  # the page has put the focus on Play once, as it was pushed
         # What the status box says when the engine cannot answer, and what its button does.
@@ -171,6 +210,8 @@ class DetailPage(Adw.NavigationPage):
         self.empty_page.set_icon_name(icon_name)
         self.empty_page.set_title(empty_title or self.get_title())
         self.empty_page.set_description(empty_description)
+        if root:  # a destination's page (Favourite Songs): Sign In… while signed out
+            self._sign_in = SignInOffer(self.empty_page)
 
         # Every signal of a child or of an object the page holds is connected weakly
         # (widgets/util.py): a bound method would keep the page alive once popped.
@@ -181,9 +222,15 @@ class DetailPage(Adw.NavigationPage):
         self.list_view.set_factory(factory)
         connect_weak(self.list_view, 'activate', self._on_activate)
         context_menu.attach(self.list_view, drag=True)  # the tracks' menus, dragged to playlists
+        track_links.attach(self.list_view)  # a table's artist and album links
         self._header_factory = Gtk.SignalListItemFactory()
         connect_weak(self._header_factory, 'setup', self._on_setup_header)
         connect_weak(self._header_factory, 'bind', self._on_bind_header)
+        self._table_header_factory = Gtk.SignalListItemFactory()
+        connect_weak(self._table_header_factory, 'setup', self._on_setup_table_header)
+        connect_weak(self._table_header_factory, 'bind', self._on_bind_table_header)
+        connect_weak(self.table_breakpoint, 'apply', self._on_table_apply)
+        connect_weak(self.table_breakpoint, 'unapply', self._on_table_unapply)
         connect_weak(self.play_button, 'clicked', self._on_play_clicked)
         connect_weak(self.shuffle_button, 'clicked', self._on_shuffle_clicked)
         connect_weak(self.status_button, 'clicked', self._on_status_clicked)
@@ -196,10 +243,14 @@ class DetailPage(Adw.NavigationPage):
         connect_weak(keys, 'key-pressed', self._on_list_key_pressed)
         self.list_view.add_controller(keys)
 
-        # The library, and the Item shown (_watch), followed while the page is shown.
+        # The library, the Item shown (_watch) and the Player's item, followed while the
+        # page is shown (a test's stand-in application may have no player).
         self._handlers = MappedHandlers(self)
         self._handlers.add(library, 'notify::state', self._follow)
         self._handlers.add(library, 'changed', self._follow)
+        self._playing = PlayingMark(getattr(app(), 'player', None))
+        if self._playing.player is not None:
+            self._handlers.add(self._playing.player, 'notify::track', self._on_track_changed)
 
         self._hero_section = Gio.ListStore(item_type=GObject.Object)
         self._hero_section.append(_Hero())
@@ -212,6 +263,7 @@ class DetailPage(Adw.NavigationPage):
     def do_map(self):
         Adw.NavigationPage.do_map(self)
         self._follow()  # what a reload changed while the page was hidden
+        self._update_playing()  # and the item playing now
         self._engine_status.watch()
         if should_fetch(self.item, self._fetched):
             self._fetch(self.item)  # a fetch cancelled when the page was hidden
@@ -310,10 +362,35 @@ class DetailPage(Adw.NavigationPage):
         self.status_box.set_visible(not groups)
         self._update_buttons()
 
-        self.list_view.set_header_factory(self._header_factory if len(groups) > 1 else None)
+        self._groups = len(groups)
+        self._update_headers()
         self._sections.splice(0, self._sections.get_n_items(),
                               [self._hero_section] + [group.entries for group in groups])
         self._update_state()
+
+    def _on_table_apply(self, _breakpoint):
+        self.table = True
+
+    def _on_table_unapply(self, _breakpoint):
+        self.table = False
+
+    def _is_table(self):
+        """Whether the tracks show as a table: a playlist's (not an album's) one list of
+        them (several would each want their own column titles), wide."""
+        return (self._table and self._groups == 1 and self.item is not None
+                and self.item.kind != 'album')
+
+    def _update_headers(self):
+        """The list's section headers: an album's discs ("Disc 2"), a table's column titles,
+        or none."""
+        if self._groups > 1:
+            factory = self._header_factory
+        elif self._is_table():
+            factory = self._table_header_factory
+        else:
+            factory = None
+        if self.list_view.get_header_factory() is not factory:
+            self.list_view.set_header_factory(factory)
 
     def _show_hero(self, item):
         """The hero's cover, labels and buttons for item."""
@@ -325,10 +402,11 @@ class DetailPage(Adw.NavigationPage):
             app().spawn(self._fetch_cover(item))
         self.title_label.set_label(item.title)
         self._artist = resolve_artist(self._library, item)
+        linked = self._artist is not None or links_catalog_artist(item)
         self.subtitle_label.set_label(item.subtitle)
-        self.subtitle_label.set_visible(bool(item.subtitle) and self._artist is None)
+        self.subtitle_label.set_visible(bool(item.subtitle) and not linked)
         self.artist_label.set_label(item.subtitle)
-        self.artist_button.set_visible(self._artist is not None)
+        self.artist_button.set_visible(linked)
         details = [item.genre, str(item.year) if item.year else None, item.count_label]
         self.caption_label.set_label(' · '.join(detail for detail in details if detail))
         self.caption_label.set_visible(any(details))
@@ -385,15 +463,14 @@ class DetailPage(Adw.NavigationPage):
         self._show_status('empty', _('No Songs'), '', None)
 
     def _show_status(self, status, title, description, button):
-        """The status box: the spinner ('loading'), EngineStatus's states, or 'empty' (no
-        tracks at all)."""
+        """The status box: EngineStatus's states or 'empty' (no tracks at all), or for
+        'loading' the spinner alone, as every page's loading state is."""
         loading = status == 'loading'
-        if loading:
-            title, description, button = _('Loading…'), '', None
         self.status_spinner.set_visible(loading)
         self.status_icon.set_visible(not loading)
-        self.status_title.set_label(title)
-        self.status_description.set_label(description)
+        self.status_title.set_label(title or '')
+        self.status_title.set_visible(not loading)
+        self.status_description.set_label(description or '')
         self.status_description.set_visible(bool(description))
         self.status_button.set_label(button or '')
         self.status_button.set_visible(bool(button))
@@ -407,6 +484,8 @@ class DetailPage(Adw.NavigationPage):
         groups keep their names."""
         if item.kind == 'album':
             disc = group.entries.get_item(0).disc_number or number
+            # Translators: the heading over one disc's songs on an album's page: {number}
+            # is the disc's number ("Disc 2").
             return _('Disc {number}').format(number=disc)
         return group.name
 
@@ -422,15 +501,37 @@ class DetailPage(Adw.NavigationPage):
         list_item.set_activatable(is_track)
         list_item.set_focusable(is_track)  # the hero's buttons take the focus, not its row
         if is_track:
-            row.show_track(entry, self._album_artist)
-            # The artist when the row shows one (not an album's own): TrackRow's rule.
-            show_artist = self._album_artist is None or entry.artist != self._album_artist
-            list_item.set_accessible_label(track_label(entry, show_artist, show_album=False))
-            list_item.set_accessible_description(entry.duration_label or '')
+            self._bound.add(list_item)
+            self._show_track(list_item, entry)
         else:
+            self._bound.discard(list_item)
             row.show_hero(self.hero)
             list_item.set_accessible_label('')
             list_item.set_accessible_description('')
+
+    def _show_track(self, list_item, track):
+        """A track's row, in a table or not, marked when its track is the one playing, and
+        its name: the artist when the row shows one (not an album's own: TrackRow's rule),
+        the album too in a table."""
+        table = self._is_table()
+        playing = self._playing.matches(track)
+        list_item.get_child().show_track(track, self._album_artist, table, playing)
+        show_artist = self._album_artist is None or track.artist != self._album_artist
+        list_item.set_accessible_label(track_label(track, show_artist, show_album=table))
+        list_item.set_accessible_description(self._playing.description(track, playing))
+
+    def _on_track_changed(self, _player, _pspec):
+        self._update_playing()
+
+    def _update_playing(self):
+        """Mark the rows of the track playing now, and no other, when the item changed."""
+        if not self._playing.update():
+            return
+        for list_item in self._bound:
+            track = list_item.get_item()
+            playing = self._playing.matches(track)
+            list_item.get_child().track_row.set_playing(playing)
+            list_item.set_accessible_description(self._playing.description(track, playing))
 
     def _last_button(self):
         """The hero's last button that takes the focus: More Options, Shuffle or Play."""
@@ -469,6 +570,7 @@ class DetailPage(Adw.NavigationPage):
         return False
 
     def _on_unbind(self, _factory, list_item):
+        self._bound.discard(list_item)
         list_item.get_child().clear(self.hero)
 
     def _on_setup_header(self, _factory, header):
@@ -476,6 +578,13 @@ class DetailPage(Adw.NavigationPage):
                           margin_bottom=6, ellipsize=Pango.EllipsizeMode.END)
         label.add_css_class('heading')
         header.set_child(label)
+
+    def _on_setup_table_header(self, _factory, header):
+        header.set_child(TrackTableHeader(margin_start=24, margin_end=24, margin_top=6,
+                                          margin_bottom=6))
+
+    def _on_bind_table_header(self, _factory, header):
+        header.get_child().set_visible(header.get_start() > 0)  # the hero's has none
 
     def _on_bind_header(self, _factory, header):
         label = header.get_child()
@@ -486,13 +595,16 @@ class DetailPage(Adw.NavigationPage):
     def _on_activate(self, _list_view, position):
         track = self._rows.get_item(position)
         if isinstance(track, Track):
-            self.get_root().play_request(track.play, start_with=track.index)
+            self.get_root().play_request(track.play, start_with=track.index,
+                                         start_id=track.id)
 
     # The hero's links and menus.
 
     def _on_artist_clicked(self, _button):
-        if self._artist is not None:
-            self.get_root().open_item(self._artist)
+        # As Go to Artist does: Apple Music's artist page when the engine can say, the
+        # library's otherwise.
+        if self.item is not None:
+            self.get_root().item_actions.go_to(self.item, 'artist')
 
     def _on_more_popup(self, button):
         """The item's menu, made as it opens: whether it is a favourite is asked then."""

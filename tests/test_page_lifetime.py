@@ -29,9 +29,11 @@ import tempfile
 import time
 import unittest
 import weakref
+from datetime import UTC, datetime
 from unittest import mock
 
 from tests.gtk import SCHEMA_ID, pump, requires_gtk
+from tests.page_harness import Player, artist_answer
 
 from gi.repository import Gio, GObject
 
@@ -133,6 +135,7 @@ def _classes():
         def __init__(self):
             super().__init__()
             self.calls = []
+            self.artist_answer = None  # what artist_page() answers: engine-down while None
 
         async def start(self, visible=None):
             self.calls.append('start')
@@ -148,6 +151,12 @@ def _classes():
         async def item(self, kind, item_id):
             self.calls.append('item')
             raise EngineError('engine-down')
+
+        async def artist_page(self, artist_id, refresh=False):
+            self.calls.append('artist_page')
+            if self.artist_answer is None:
+                raise EngineError('engine-down')
+            return self.artist_answer
 
     class LibrarySync(GObject.Object):
         """The app's sync as the dialogs see it: never running."""
@@ -178,6 +187,7 @@ def _classes():
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.set_default()  # the pages' app, whichever application another test made first
             self.engine = Engine()
+            self.player = Player()  # the pages follow its item while shown
             self.library_sync = LibrarySync()
             self.settings = Gio.Settings.new(SCHEMA_ID)
             self.demo = False
@@ -186,6 +196,10 @@ def _classes():
             self.actions = []
             self.reported = []
             self.cleared = 0
+            # app.sync, which Preferences' Refresh button runs by its action name.
+            sync = Gio.SimpleAction.new('sync', None)
+            sync.connect('activate', lambda *_args: self.actions.append('sync'))
+            self.add_action(sync)
 
         def spawn(self, coro):
             task = asyncio.get_running_loop().create_task(coro)
@@ -236,7 +250,7 @@ def _classes():
         def open_shelf(self, shelf):
             self.shelves_opened.append(shelf)
 
-        def play_request(self, play, start_with=None, shuffle=False):
+        def play_request(self, play, start_with=None, shuffle=False, start_id=None):
             self.played.append((play, start_with, shuffle))
 
     _stand_ins.update(Engine=Engine, App=App, Window=Window)
@@ -453,6 +467,18 @@ class PageLifetimeTest(WidgetTestCase):
             DetailPage(self.library, Item(_album(1, tracks=12))), TrackRow)
         await self.assert_freed(*refs)
 
+    async def test_playlist_table_page(self):
+        # A playlist's page in a window wide enough for its table: links and a header.
+        from applemusic.library import Item
+        from applemusic.pages.detail import DetailPage
+        from applemusic.widgets.track_links import TrackLink
+        from applemusic.widgets.track_row import TrackRow, TrackTableHeader
+
+        item = Item(dict(_album(1, tracks=12), kind='playlist'))
+        refs = await self.pushed_and_popped(DetailPage(self.library, item), TrackRow,
+                                            TrackLink, TrackTableHeader)
+        await self.assert_freed(*refs)
+
     async def test_artist_page(self):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage
@@ -460,6 +486,20 @@ class PageLifetimeTest(WidgetTestCase):
 
         refs = await self.pushed_and_popped(
             ArtistPage(self.library, Item(_artist([_album(n) for n in range(4)]))), Tile)
+        await self.assert_freed(*refs)
+
+    async def test_artist_page_with_the_catalog(self):
+        from applemusic.library import Item
+        from applemusic.pages.artist import ArtistPage
+        from applemusic.widgets.hero_tile import HeroTile
+        from applemusic.widgets.song_shelf import SongRow, SongShelf
+        from applemusic.widgets.tile import Tile
+
+        self.app.engine.artist_answer = artist_answer()
+        self.addCleanup(setattr, self.app.engine, 'artist_answer', None)
+        refs = await self.pushed_and_popped(
+            ArtistPage(self.library, Item(dict(_artist([_album(1)]), catalogId='42'))),
+            SongShelf, SongRow, HeroTile, Tile)
         await self.assert_freed(*refs)
 
     async def test_shelves_page(self):
@@ -602,6 +642,20 @@ class HandlerTest(WidgetTestCase):
         page = _again(page)
         self.assertTrue(keys.emit('key-pressed', Gdk.KEY_Tab, 0, Gdk.ModifierType(0)))
 
+    async def test_detail_page_follows_the_player(self):
+        from applemusic.library import Item
+        from applemusic.pages.detail import DetailPage
+        from applemusic.player import NowPlaying
+        from applemusic.widgets.track_row import TrackRow
+
+        item = Item(_album(4, tracks=3))
+        page = await self.shown(DetailPage(self.library, item), TrackRow)
+        self.assertTrue(await self.until(lambda: len(page._bound) == 3))
+        self.addCleanup(setattr, self.app.player, 'track', None)
+        self.app.player.track = NowPlaying(_track('l.album004', 1))
+        self.assertEqual([list_item.get_item().id for list_item in page._bound
+                          if list_item.get_child().track_row.playing], ['l.album004.t1'])
+
     def signed_in(self):
         """The account signed in (the engine-down pages offer Start Engine, not Sign In)."""
         self.app.settings.set_boolean('signed-in', True)
@@ -623,21 +677,36 @@ class HandlerTest(WidgetTestCase):
     async def test_artist_page_album_and_status(self):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage
+        from applemusic.widgets.shelf import Shelf
         from applemusic.widgets.tile import Tile
 
         self.signed_in()
 
-        page = await self.shown(
-            ArtistPage(self.library, Item(_artist([_album(n) for n in range(3)]))), Tile)
-        page.flow_box.emit('child-activated', page.flow_box.get_child_at_index(1))
+        # The engine down: the library's albums, newest first, and Start Engine under them.
+        page = await self.shown(ArtistPage(self.library, Item(dict(
+            _artist([_album(n) for n in range(3)]), catalogId='42'))), Tile)
+        _find(page, Shelf).list_view.emit('activate', 1)
         self.assertEqual([album.title for album in self.window.opened], ['Album 001'])
-        self.window.navigation_view.pop()
-
-        page = await self.shown(ArtistPage(self.library, Item(_artist([]))))  # engine down
         self.assertTrue(await self.until(lambda: page.status_button.get_visible()))
         page.status_button.emit('clicked')
         await self.settle()
-        self.assertEqual(self.app.engine.calls, ['item', 'start', 'item'])
+        self.assertEqual(self.app.engine.calls, ['artist_page', 'start', 'artist_page'])
+        self.window.navigation_view.pop()
+
+    async def test_artist_page_top_songs(self):
+        from applemusic.library import Item
+        from applemusic.pages.artist import ArtistPage
+        from applemusic.widgets.song_shelf import SongRow, SongShelf
+
+        self.app.engine.artist_answer = artist_answer()
+        self.addCleanup(setattr, self.app.engine, 'artist_answer', None)
+        page = await self.shown(ArtistPage(self.library, Item(dict(_artist([]), catalogId='42'))),
+                                SongRow)
+        _find(page, SongShelf).grid_view.emit('activate', 1)
+        self.assertEqual(self.window.played,
+                         [({'kind': 'songs', 'id': '900,901,902,903'}, 1, False)])
+        page.release_button.emit('clicked')
+        self.assertEqual([item.title for item in self.window.opened], ['Invented album 99'])
 
     async def test_shelf_activation_and_see_all(self):
         from applemusic.library import Item, ShelfModel
@@ -688,6 +757,16 @@ class HandlerTest(WidgetTestCase):
             try:
                 dialog.interval_row.set_selected(0)
                 self.assertEqual(self.app.settings.get_int('sync-interval'), INTERVALS[0])
+                # Last Refreshed follows the last-sync setting and the sync's running.
+                self.assertEqual(dialog.last_refreshed_row.get_subtitle(), 'Never')
+                self.app.settings.set_string('last-sync', datetime.now(UTC).isoformat())
+                self.assertTrue(await self.until(
+                    lambda: dialog.last_refreshed_row.get_subtitle() == 'Just now'))
+                self.app.library_sync.props.running = True
+                self.assertEqual(dialog.last_refreshed_row.get_subtitle(), 'Refreshing…')
+                self.app.library_sync.props.running = False
+                self.assertEqual(dialog.last_refreshed_row.get_subtitle(), 'Just now')
+                dialog.refresh_button.emit('clicked')  # app.sync
                 dialog.engine_button.emit('clicked')
                 dialog.sign_out_row.emit('activated')
                 dialog.clear_button.emit('clicked')  # asks first
@@ -698,10 +777,11 @@ class HandlerTest(WidgetTestCase):
                 del alert
                 await self.settle()
                 self.assertEqual(self.app.engine.calls, ['start'])
-                self.assertEqual(self.app.actions, ['sign-out'])
+                self.assertEqual(self.app.actions, ['sync', 'sign-out'])
                 self.assertEqual(self.app.cleared, 1)
             finally:
                 self.app.settings.reset('sync-interval')
+                self.app.settings.reset('last-sync')
                 await self.asyncTearDown()  # the dialogs closed with the cache still patched
 
     async def test_sign_in_cancel(self):

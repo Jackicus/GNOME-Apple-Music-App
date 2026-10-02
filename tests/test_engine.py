@@ -1143,6 +1143,15 @@ class PlaybackTest(EngineFixture):
             ('play', 'album', 'l.alb1', {'startWith': 0, 'shuffle': False}),  # in order
         ])
 
+    async def test_a_track_row_names_the_item_that_must_play(self):
+        await self.up()
+        self.page.bridge_answers['play'] = {'ok': True, 'moved': {'from': 2, 'to': 3}}
+        with self.assertLogs('applemusic.engine', 'INFO') as logged:
+            await self.engine.play('album', 'l.alb1', start_with=2, start_id='i.song3')
+        self.assertEqual(self.page.bridge_calls[-1], (
+            'play', 'album', 'l.alb1', {'startWith': 2, 'shuffle': None, 'startId': 'i.song3'}))
+        self.assertIn('moved to 3', logged.output[0])
+
     async def test_a_refused_play_carries_musickits_code(self):
         await self.up()
         self.page.bridge_answers['play'] = {'error': 'Content unavailable',
@@ -1319,6 +1328,159 @@ class PlaybackTest(EngineFixture):
                      self.engine.lyrics('1000000001'), self.engine.search('x'),
                      self.engine.suggest('x'), self.engine.landing(), self.engine.category('1'),
                      self.engine.browse(), self.engine.made_for_you()):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'engine-down')
+
+
+class ArtistTest(EngineFixture):
+    """artist_page, artist_view and catalog_artist: the reads they make, the shaping, the
+    day-long cache, and the demo's own answers."""
+
+    async def up(self, authorized=True):
+        self.page.authorized = authorized
+        await self.engine.start()
+
+    def fixture(self):
+        with open(FIXTURES / 'catalog_artist.json', encoding='utf-8') as file:
+            return json.load(file)
+
+    async def test_the_page_is_one_read_kept_for_a_day(self):
+        await self.up()
+        path = '/v1/catalog/us/artists/1724049001'
+        self.page.api_answers[path] = self.fixture()
+        answer = await self.engine.artist_page('1724049001')
+        self.assertEqual(self.page.api_calls, [path])
+        params = self.page.api_params[0]
+        self.assertIn('top-songs', params['views'].split(','))
+        self.assertIn('more-to-see', params['views'].split(','))
+        self.assertEqual(params['extend'], 'artistBio,bornOrFormed,isGroup,origin')
+        self.assertEqual(answer['artist']['title'], 'Paper Parachutes')
+        self.assertEqual(answer['latest']['item']['title'], 'Ladders of Rain')
+        self.assertIn('cached', answer)
+        self.assertTrue((self.cache / 'artists' / '1724049001.json').is_file())
+        await self.engine.stop()
+        again = await self.engine.artist_page('1724049001')  # from the file, the engine down
+        self.assertEqual(again['shelves'], answer['shelves'])
+        self.assertEqual(len(self.page.api_calls), 1)
+
+    async def test_a_library_id_is_not_a_catalog_artist(self):
+        await self.up()
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.artist_page('l.art_0123456789ab')
+        self.assertEqual(raised.exception.code, 'usage')
+        self.assertEqual(self.page.api_calls, [])
+
+    async def test_a_view_is_read_whole(self):
+        await self.up()
+        path = '/v1/catalog/us/artists/1724049001/view/full-albums'
+        album = self.fixture()['data'][0]['views']['full-albums']['data'][0]
+        self.page.api_answers[path] = {'data': [album], 'next': f'{path}?offset=1'}
+        self.page.api_answers[f'{path}?offset=1'] = {
+            'data': [dict(album, id='1724049111')]}
+        items = await self.engine.artist_view('1724049001', 'full-albums')
+        self.assertEqual(self.page.api_calls, [path, f'{path}?offset=1'])
+        self.assertEqual(self.page.api_params[0], {'limit': 100})
+        self.assertEqual([(item['id'], item['subtitle']) for item in items],
+                         [('1724049100', '2026'), ('1724049111', '2026')])
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.artist_view('1724049001', 'library-albums')
+        self.assertEqual(raised.exception.code, 'usage')
+
+    async def test_a_library_artist_is_found_through_its_songs(self):
+        await self.up()
+        base = '/v1/catalog/us/songs'
+
+        def song(artists):
+            return {'data': [{'id': 's', 'relationships': {'artists': {'data': [
+                {'id': artist_id, 'attributes': {'name': name}} for artist_id, name in artists]}}}]}
+
+        # The first song is gone, the second is a duet: the artist named as the library's.
+        self.page.api_answers[f'{base}/1'] = {'errors': [{'status': '404', 'title': 'no'}]}
+        self.page.api_answers[f'{base}/2'] = song([('7', 'Mara Lind'),
+                                                   ('1724049001', 'Paper  Parachutes')])
+        found = await self.engine.catalog_artist('paper parachutes', ['1', '2', '3'])
+        self.assertEqual(found, '1724049001')
+        self.assertEqual(self.page.api_calls, [f'{base}/1', f'{base}/2'])
+        self.assertEqual(self.page.api_params[1], {'include': 'artists'})
+        # Remembered, a miss too.
+        self.assertEqual(await self.engine.catalog_artist('Paper Parachutes', ['2']),
+                         '1724049001')
+        self.page.api_answers[f'{base}/4'] = song([('8', 'Someone Else')])
+        self.assertIsNone(await self.engine.catalog_artist('Nobody', ['4']))
+        self.assertIsNone(await self.engine.catalog_artist('nobody', ['4']))
+        self.assertEqual(len(self.page.api_calls), 3)
+
+    async def test_related_reads_a_song_with_its_album_and_artists(self):
+        await self.up()
+        path = '/v1/catalog/us/songs/1724049201'
+        self.page.api_answers[path] = {'data': [{'id': '1724049201', 'type': 'songs',
+                                                 'relationships': {
+            'albums': {'data': [{'id': '1724049100', 'type': 'albums', 'attributes': {
+                'name': 'Ladders of Rain', 'artistName': 'Paper Parachutes'}}]},
+            'artists': {'data': [
+                {'id': '1724049001', 'type': 'artists',
+                 'attributes': {'name': 'Paper Parachutes'}},
+                {'id': '1724049002', 'type': 'artists'}]}}}]}  # one Apple did not include
+        found = await self.engine.related('song', '1724049201')
+        self.assertEqual(self.page.api_calls, [path])
+        self.assertEqual(self.page.api_params[0], {'include': 'albums,artists'})
+        self.assertEqual((found['album']['id'], found['album']['title'],
+                          found['album']['subtitle']),
+                         ('1724049100', 'Ladders of Rain', 'Paper Parachutes'))
+        self.assertEqual([(artist['id'], artist['kind'], artist['title'])
+                          for artist in found['artists']],
+                         [('1724049001', 'artist', 'Paper Parachutes')])
+        # Remembered for the session, until the engine stops (another account may follow).
+        self.assertEqual(await self.engine.related('song', '1724049201'), found)
+        self.assertEqual(len(self.page.api_calls), 1)
+        await self.engine.stop()
+        await self.up()
+        await self.engine.related('song', '1724049201')
+        self.assertEqual(self.page.api_calls[-1], path)
+        self.assertEqual(len([call for call in self.page.api_calls if call == path]), 2)
+
+    async def test_related_of_an_album_and_what_it_refuses(self):
+        await self.up()
+        path = '/v1/catalog/us/albums/1724049100'
+        self.page.api_answers[path] = {'data': [{'id': '1724049100', 'type': 'albums',
+                                                 'attributes': {'name': 'Ladders of Rain'},
+                                                 'relationships': {'artists': {'data': [
+            {'id': '1724049001', 'type': 'artists',
+             'attributes': {'name': 'Paper Parachutes'}}]}}}]}
+        found = await self.engine.related('album', '1724049100')
+        self.assertEqual(self.page.api_params[0], {'include': 'artists'})
+        self.assertIsNone(found['album'])
+        self.assertEqual([artist['id'] for artist in found['artists']], ['1724049001'])
+        for kind, item_id in (('song', 'i.abc'), ('playlist', 'pl.1'), ('song', '')):
+            with self.assertRaises(EngineError) as raised:
+                await self.engine.related(kind, item_id)
+            self.assertEqual(raised.exception.code, 'usage')
+        self.assertEqual(len(self.page.api_calls), 1)
+
+    async def test_related_needs_a_sign_in(self):
+        await self.up(authorized=False)
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.related('song', '1724049201')
+        self.assertEqual(raised.exception.code, 'not-signed-in')
+
+    async def test_the_demo_answers_from_its_own_cache(self):
+        demo = engine_module.Engine(demo=True)
+        path = pathlib.Path(normalize.artist_cache_path(str(self.cache), '1724049001'))
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({'id': '1724049001', 'shelves': [], 'demo': True,
+                                    'cached': '2020-01-01T00:00:00Z'}), encoding='utf-8')
+        answer = await demo.artist_page('1724049001')  # old, and still the demo's answer
+        self.assertEqual(answer['id'], '1724049001')
+        self.assertNotIn('stale', answer)
+        # One of Apple's, kept by the app before: not the demo's to show.
+        apple = pathlib.Path(normalize.artist_cache_path(str(self.cache), '1724049002'))
+        apple.write_text(json.dumps({'id': '1724049002', 'shelves': [],
+                                     'cached': '2020-01-01T00:00:00Z'}), encoding='utf-8')
+        for coro in (demo.artist_page('1724049002'), demo.artist_page('1724049003'),
+                     demo.browse(),
+                     demo.catalog_artist('Paper Parachutes', ['1']),
+                     demo.related('song', '1724049201')):
             with self.assertRaises(EngineError) as raised:
                 await coro
             self.assertEqual(raised.exception.code, 'engine-down')

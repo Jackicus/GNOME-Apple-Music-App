@@ -1,0 +1,460 @@
+{
+  "data": [
+    {
+      "id": "1724049001",
+      "type": "artists",
+      "href": "/v1/catalog/gb/artists/1724049001",
+      "attributes": {
+        "name": "Paper Parachutes",
+        "genreNames": [
+          "Math Rock",
+          "Rock"
+        ],
+        "artistBio": "An <i>invented</i> math-rock band.\nThey play in odd meters.",
+        "origin": "Tallinn, Estonia",
+        "bornOrFormed": "2014",
+        "isGroup": true,
+        "artwork": {
+          "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+          "width": 3000,
+          "height": 3000,
+          "bgColor": "101010"
+        },
+        "url": "https://music.apple.com/gb/artist/paper-parachutes/1724049001"
+      },
+      "views": {
+        "featured-release": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/featured-release",
+          "attributes": {
+            "title": "Featured Release"
+          },
+          "data": []
+        },
+        "latest-release": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/latest-release",
+          "attributes": {
+            "title": "Latest Release"
+          },
+          "data": [
+            {
+              "id": "1724049100",
+              "type": "albums",
+              "attributes": {
+                "name": "Ladders of Rain",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2026-03-14",
+                "trackCount": 10,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/album/invented/1724049100",
+                "playParams": {
+                  "id": "1724049100",
+                  "kind": "album"
+                }
+              }
+            }
+          ]
+        },
+        "top-songs": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/top-songs",
+          "attributes": {
+            "title": "Top Songs"
+          },
+          "data": [
+            {
+              "id": "1724049201",
+              "type": "songs",
+              "attributes": {
+                "name": "Gutter Hymn",
+                "artistName": "Paper Parachutes",
+                "albumName": "Ladders of Rain",
+                "releaseDate": "2026-03-14",
+                "durationInMillis": 201000,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "playParams": {
+                  "id": "1724049201",
+                  "kind": "song"
+                },
+                "contentRating": null
+              }
+            },
+            {
+              "id": "1724049202",
+              "type": "songs",
+              "attributes": {
+                "name": "Odd Meter Heart",
+                "artistName": "Paper Parachutes",
+                "albumName": "Kites in Fog",
+                "releaseDate": "2023-05-02",
+                "durationInMillis": 201000,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "playParams": {
+                  "id": "1724049202",
+                  "kind": "song"
+                },
+                "contentRating": "explicit"
+              }
+            },
+            {
+              "id": "1724049203",
+              "type": "songs",
+              "attributes": {
+                "name": "Seven Over Eight",
+                "artistName": "Paper Parachutes",
+                "albumName": "Kites in Fog",
+                "releaseDate": "2023-05-02",
+                "durationInMillis": 201000,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "playParams": {
+                  "id": "1724049203",
+                  "kind": "song"
+                },
+                "contentRating": null
+              }
+            }
+          ],
+          "next": "/v1/catalog/gb/artists/1724049001/view/top-songs?offset=10"
+        },
+        "featured-albums": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/featured-albums",
+          "attributes": {
+            "title": "Essential Albums"
+          },
+          "data": [
+            {
+              "id": "1724049110",
+              "type": "albums",
+              "attributes": {
+                "name": "Kites in Fog",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2023-05-02",
+                "trackCount": 10,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/album/invented/1724049110",
+                "playParams": {
+                  "id": "1724049110",
+                  "kind": "album"
+                },
+                "editorialNotes": {
+                  "short": "The <i>invented</i> band’s finest hour.",
+                  "standard": "<p>The <i>invented</i> band’s finest hour. More words.</p>"
+                }
+              }
+            }
+          ]
+        },
+        "full-albums": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/full-albums",
+          "attributes": {
+            "title": "Albums"
+          },
+          "data": [
+            {
+              "id": "1724049100",
+              "type": "albums",
+              "attributes": {
+                "name": "Ladders of Rain",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2026-03-14",
+                "trackCount": 10,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/album/invented/1724049100",
+                "playParams": {
+                  "id": "1724049100",
+                  "kind": "album"
+                }
+              }
+            },
+            {
+              "id": "1724049110",
+              "type": "albums",
+              "attributes": {
+                "name": "Kites in Fog",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2023-05-02",
+                "trackCount": 10,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/album/invented/1724049110",
+                "playParams": {
+                  "id": "1724049110",
+                  "kind": "album"
+                }
+              }
+            }
+          ],
+          "next": "/v1/catalog/gb/artists/1724049001/view/full-albums?offset=10"
+        },
+        "music-videos": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/music-videos",
+          "attributes": {
+            "title": "Music Videos"
+          },
+          "data": [
+            {
+              "id": "1724049300",
+              "type": "music-videos",
+              "attributes": {
+                "name": "Gutter Hymn",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2026-03-20",
+                "durationInMillis": 240000,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "playParams": {
+                  "id": "1724049300",
+                  "kind": "musicVideo"
+                }
+              }
+            }
+          ]
+        },
+        "playlists": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/playlists",
+          "attributes": {
+            "title": "Artist Playlists"
+          },
+          "data": [
+            {
+              "id": "pl.aW52ZW50ZWQx",
+              "type": "playlists",
+              "attributes": {
+                "name": "Paper Parachutes Essentials",
+                "curatorName": "Apple Music Rock",
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "playParams": {
+                  "id": "pl.aW52ZW50ZWQx",
+                  "kind": "playlist"
+                }
+              }
+            }
+          ]
+        },
+        "radio-shows": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/radio-shows",
+          "attributes": {
+            "title": "Radio Shows"
+          },
+          "data": []
+        },
+        "singles": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/singles",
+          "attributes": {
+            "title": "Singles & EPs"
+          },
+          "data": [
+            {
+              "id": "1724049120",
+              "type": "albums",
+              "attributes": {
+                "name": "Gutter Hymn - Single",
+                "artistName": "Paper Parachutes",
+                "releaseDate": "2026-01-09",
+                "trackCount": 1,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/album/invented/1724049120",
+                "playParams": {
+                  "id": "1724049120",
+                  "kind": "album"
+                }
+              }
+            }
+          ]
+        },
+        "live-albums": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/live-albums",
+          "attributes": {
+            "title": "Live Albums"
+          },
+          "data": []
+        },
+        "compilation-albums": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/compilation-albums",
+          "attributes": {
+            "title": "Compilations"
+          },
+          "data": []
+        },
+        "appears-on-albums": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/appears-on-albums",
+          "attributes": {
+            "title": "Appears On"
+          },
+          "data": [
+            {
+              "id": "1724049130",
+              "type": "albums",
+              "attributes": {
+                "name": "Harbour Sessions",
+                "artistName": "Mara Lind & The Tide",
+                "releaseDate": "2024-07-01",
+                "trackCount": 10,
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/album/invented/1724049130",
+                "playParams": {
+                  "id": "1724049130",
+                  "kind": "album"
+                }
+              }
+            }
+          ]
+        },
+        "more-to-hear": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/more-to-hear",
+          "attributes": {
+            "title": "More To Hear"
+          },
+          "data": [
+            {
+              "id": "ra.1724049400",
+              "type": "stations",
+              "attributes": {
+                "name": "Paper Parachutes in Conversation",
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "isLive": false,
+                "plainEditorialNotes": {
+                  "name": "Paper Parachutes in Conversation",
+                  "short": "The band on odd meters.",
+                  "standard": "The Long Play"
+                },
+                "playParams": {
+                  "id": "ra.1724049400",
+                  "kind": "radioStation"
+                }
+              }
+            }
+          ],
+          "next": "/v1/catalog/gb/artists/1724049001/view/more-to-hear?offset=10"
+        },
+        "more-to-see": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/more-to-see",
+          "attributes": {
+            "title": "More To See"
+          },
+          "data": [
+            {
+              "id": "1724049500",
+              "type": "uploaded-videos",
+              "attributes": {
+                "name": "Paper Parachutes on Ladders of Rain",
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "durationInMilliseconds": 682000,
+                "postUrl": "https://music.apple.com/gb/post/1724049500",
+                "uploadDate": "2026-03-20"
+              }
+            },
+            {
+              "id": "1724049501",
+              "type": "uploaded-videos",
+              "attributes": {
+                "name": "No page to open",
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "durationInMilliseconds": 1000
+              }
+            },
+            {
+              "id": "1724049502",
+              "type": "concerts",
+              "attributes": {
+                "name": "An unknown kind"
+              }
+            }
+          ]
+        },
+        "similar-artists": {
+          "href": "/v1/catalog/gb/artists/1724049001/view/similar-artists",
+          "attributes": {
+            "title": "Similar Artists"
+          },
+          "data": [
+            {
+              "id": "1724049600",
+              "type": "artists",
+              "attributes": {
+                "name": "Komorebi Quartet",
+                "genreNames": [
+                  "Modern Classical"
+                ],
+                "artwork": {
+                  "url": "https://example.invalid/image/thumb/aW52ZW50ZWQ/{w}x{h}bb.jpg",
+                  "width": 3000,
+                  "height": 3000,
+                  "bgColor": "204060"
+                },
+                "url": "https://music.apple.com/gb/artist/komorebi-quartet/1724049600"
+              }
+            }
+          ],
+          "next": "/v1/catalog/gb/artists/1724049001/view/similar-artists?offset=10"
+        }
+      }
+    }
+  ]
+}

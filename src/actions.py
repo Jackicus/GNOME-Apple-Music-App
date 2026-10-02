@@ -6,6 +6,8 @@ actions, the menus that offer them, and what a track dragged onto a sidebar play
 
     actions = ItemActions(window, app)     # made once by the window; adds the win.* actions
     menu = actions.menu_for(obj)           # a Gio.Menu for an Item or a Track, or None
+    menu = actions.menu_for(track, queued=True)   # the item playing's, or Up Next's
+    actions.go_to(obj, 'album')            # obj's album's page ('artist': its artist's)
     actions.fill_sidebar_menu(menu, item)  # a sidebar playlist's Play, Play Next, Open in Browser
     actions.drop(playlist, ref)            # a library.TrackRef dropped on a sidebar playlist
 
@@ -18,6 +20,8 @@ what it acts on (an Item's kind and id, or 'song' and a Track's id):
     item-love            loved: a song goes into Favourite Songs
     item-unlove          the love taken back
     item-add-to-library  a catalog item added to the library
+    item-go-to-album     the page of the album a song is on (related.py finds it)
+    item-go-to-artist    the page of the artist a song, video or album is by
     item-open-in-browser its music.apple.com page, in the default browser (Gtk.UriLauncher)
     item-copy-link       that page's address, on the clipboard
 
@@ -30,11 +34,14 @@ signed in, as a play request does) and confirms with a toast, or reports the Eng
 song loved or unloved, the playlist (Favourite Songs) is fetched again and merged into the
 library's Item, so an open page shows the change at once.
 
-The menus are built in code, per kind (build_menu): Play, Play Next, Play Later; Favourite
-and Remove from Favourites (both, of which the menu shows the one whose action is enabled:
-the actions' state says whether the item is loved), Add to Library, Add to Playlist (the
+The menus are built in code, per kind (build_menu): Play, Play Next, Play Later; Go to Album,
+Go to Artist (not where the page shown is that album or artist already); Favourite and
+Remove from Favourites (both, of which the menu shows the one whose action is enabled: the
+actions' state says whether the item is loved), Add to Library, Add to Playlist (the
 library's playlists that take songs, folders flattened); Open in Browser, Copy Link (only an
 address anyone can open: not the web player's library routes); each only where it applies.
+The menus of the player's queue (the item playing's in the Now Playing sheet and the player
+bar, Up Next's) have no Play, which would replace the queue: activating the row plays it.
 Whether an item is loved is not in the library: a menu shows what the engine said last (its
 `rated` signal), and asks again (engine.rating) as it opens.
 
@@ -49,9 +56,10 @@ from urllib.parse import urlsplit
 
 from gi.repository import Gio, GLib
 
+from . import related
 from .backend.errors import EngineError
 from .backend.api import is_library_id
-from .library import Item, Track, TrackRef
+from .library import TRACK_KINDS, Item, Track, TrackRef
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +104,8 @@ def action_labels():
         'item-unlove': _('_Remove from Favourites'),
         'item-add-to-library': _('_Add to Library'),
         'item-add-to-playlist': _('Add to Pla_ylist'),
+        'item-go-to-album': _('_Go to Album'),
+        'item-go-to-artist': _('Go to Ar_tist'),
         'item-open-in-browser': _('_Open in Browser'),
         'item-copy-link': _('_Copy Link'),
     }
@@ -268,20 +278,27 @@ def mnemonic_escaped(title):
     return title.replace('_', '__')
 
 
-def build_menu(obj, playlists=(), storefront=None):
+def build_menu(obj, playlists=(), storefront=None, here=None, queued=False):
     """The menu for obj (an Item or a Track), or None when nothing applies (a folder, a
-    category). `playlists` are the (id, title) pairs the Add to Playlist submenu lists."""
+    category). `playlists` are the (id, title) pairs the Add to Playlist submenu lists;
+    `here` is the Item of the page shown (Go to Album and Go to Artist are left out where
+    they would go nowhere: related.shows); `queued`, obj is in the player's queue (no
+    Play)."""
     named = describe(obj)
     if named is None or (isinstance(obj, Item) and obj.kind not in MENU_KINDS):
         return None
     target = GLib.Variant('(ss)', named)
-    sections = [Gio.Menu(), Gio.Menu(), Gio.Menu()]
-    play, keep, share = sections
-    if can_play(obj):
+    sections = [Gio.Menu(), Gio.Menu(), Gio.Menu(), Gio.Menu()]
+    play, go, keep, share = sections
+    if can_play(obj) and not queued:
         play.append_item(menu_item('item-play', target))
     if queue_target(obj) is not None:
         play.append_item(menu_item('item-play-next', target))
         play.append_item(menu_item('item-play-later', target))
+    if related.has_album(obj) and not related.shows(here, obj, 'album'):
+        go.append_item(menu_item('item-go-to-album', target))
+    if related.has_artist(obj) and not related.shows(here, obj, 'artist'):
+        go.append_item(menu_item('item-go-to-artist', target))
     if rating_target(obj) is not None:
         for item in favourite_items(target):
             keep.append_item(item)
@@ -325,6 +342,28 @@ def fill_sidebar_menu(menu, playlist):
         menu.append_item(menu_item(action, target))
 
 
+def now_playing_track(now_playing):
+    """An entry of the player's queue (a player.NowPlaying: the item playing, an Up Next
+    row's) as a Track a menu is built for, or None for what has no menu (a station's segment,
+    an ad: NowPlaying.kind ''). Its `type` is an API type of its kind (MusicKit names its own
+    items 'song'), so it is rated, added and opened as what it is; it has no group to play."""
+    if now_playing is None or now_playing.kind not in ('song', 'video'):
+        return None
+    raw = getattr(now_playing, 'raw', None)
+    data = dict(raw) if isinstance(raw, dict) else {}
+    data.update(id=now_playing.id, catalogId=now_playing.catalog_id or None,
+                title=now_playing.title, artist=now_playing.artist, album=now_playing.album)
+    if TRACK_KINDS.get(data.get('type')) != now_playing.kind:
+        data['type'] = 'music-videos' if now_playing.kind == 'video' else 'songs'
+    track = Track(data)
+    return track if track.id or track.catalog_id else None
+
+
+def not_found_message(kind):
+    """The toast when Go to Album (`kind` 'album') or Go to Artist finds nothing."""
+    return _('Could not find the album') if kind == 'album' else _('Could not find the artist')
+
+
 def love_messages(kind):
     """(loved, unloved) toasts for an item of kind: a song goes into Favourite Songs."""
     if kind == 'song':
@@ -351,6 +390,8 @@ class ItemActions:
             'item-love': self._on_love,
             'item-unlove': self._on_unlove,
             'item-add-to-library': self._on_add_to_library,
+            'item-go-to-album': self._on_go_to_album,
+            'item-go-to-artist': self._on_go_to_artist,
             'item-open-in-browser': self._on_open_in_browser,
             'item-copy-link': self._on_copy_link,
         }
@@ -375,15 +416,16 @@ class ItemActions:
 
     # -- menus -----------------------------------------------------------------------------
 
-    def menu_for(self, obj):
+    def menu_for(self, obj, queued=False):
         """The menu for obj (build_menu), obj remembered for its actions; None when nothing
-        applies. The favourite actions' state shows whether obj is loved, as last known;
-        with the engine up, it is asked again as the menu opens."""
+        applies. `queued`: obj is in the player's queue (now_playing_track()). The favourite
+        actions' state shows whether obj is loved, as last known; with the engine up, it is
+        asked again as the menu opens."""
         named = describe(obj)
         if named is None:
             return None
         menu = build_menu(obj, self.playlists() if playlist_song(obj) else (),
-                          self._storefront())
+                          self._storefront(), here=self._shown(), queued=queued)
         if menu is None:
             return None
         self._remember(named, obj)
@@ -446,6 +488,11 @@ class ItemActions:
     def _storefront(self):
         return getattr(self.library, 'storefront', None) or 'us'
 
+    def _shown(self):
+        """The Item of the page shown (window.shown_item), or None."""
+        shown_item = getattr(self.window, 'shown_item', None)
+        return shown_item() if shown_item is not None else None
+
     def _engine_ready(self):
         return (not self.app.demo and self.engine.state == 'up'
                 and bool(self.engine.authorized))
@@ -479,7 +526,7 @@ class ItemActions:
         obj, kind, item_id = self._unpack(parameter)
         if isinstance(obj, Track):
             if obj.play.get('kind') and obj.play.get('id'):
-                self.window.play_request(obj.play, start_with=obj.index)
+                self.window.play_request(obj.play, start_with=obj.index, start_id=obj.id)
             else:
                 self.window.play_request({'kind': 'song', 'id': _song_id(obj)})
         elif isinstance(obj, Item):
@@ -538,6 +585,66 @@ class ItemActions:
                    else _('Added to your library'))
         return self._run(self.engine.add_to_library, target, message,
                          after=self._refresh_library)
+
+    def _on_go_to_album(self, _action, parameter):
+        return self.go_to(self._unpack(parameter)[0], 'album')
+
+    def _on_go_to_artist(self, _action, parameter):
+        return self.go_to(self._unpack(parameter)[0], 'artist')
+
+    def go_to(self, obj, kind):
+        """Open the page of the album obj is on (`kind` 'album') or of the artist it is by
+        ('artist'). An artist's is Apple Music's while the engine is up and obj has a catalog
+        id (the engine names the artist exactly; their page shows the library's albums of
+        theirs too); else, and for an album, the library's (related.library_album,
+        library_artist) at once, else the catalog's, which the engine looks up (started first
+        if need be, as for the other actions). Nothing is opened when that page is the one
+        shown. A toast says when there is none. The engine's task, or None."""
+        if obj is None:
+            self.app.toast(not_found_message(kind))
+            return None
+        target = related.catalog_target(obj)
+        if kind == 'artist' and target is not None and self._engine_ready():
+            return self.app.spawn(self._go_to_catalog(obj, kind, target))
+        if self._go_to_library(obj, kind):
+            return None
+        if target is None or (kind == 'album' and target[0] == 'album'):
+            self.app.toast(not_found_message(kind))
+            return None
+        if self.app.refuse_in_demo():
+            return None
+        return self.app.spawn(self._go_to_catalog(obj, kind, target))
+
+    async def _go_to_catalog(self, obj, kind, target):
+        try:
+            await self.app.player.ensure_engine()
+            answer = await self.engine.related(*target)
+        except EngineError as error:
+            if self._go_to_library(obj, kind):
+                pass  # the library's page, rather than nothing
+            elif error.status == 404:  # gone from the storefront's catalog: nowhere to go
+                self.app.toast(not_found_message(kind))
+            else:
+                self.app.report(error)
+            return
+        found = related.from_answer(self.library, answer, kind, related.artist_name(obj))
+        if found is not None:
+            self._show_page(found)
+        elif not self._go_to_library(obj, kind):
+            self.app.toast(not_found_message(kind))
+
+    def _go_to_library(self, obj, kind):
+        """Show the library's album or artist of obj's: True when it has one."""
+        found = (related.library_album(self.library, obj) if kind == 'album'
+                 else related.library_artist(self.library, obj))
+        if found is not None:
+            self._show_page(found)
+        return found is not None
+
+    def _show_page(self, item):
+        """Show item's page, unless it is the page shown already."""
+        if not related.same_page(self._shown(), item):
+            self.window.open_item(item)
 
     async def _refresh_library(self):
         """Show what was just added: a quick sync (sync.py), which reads the songs and the

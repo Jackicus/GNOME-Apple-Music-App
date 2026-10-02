@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """The Songs page (pages/songs.py): what it shows while the songs are on their way, and a
-sync that changes the songs keeps the table's place; the Sort By menu sorts as a header does.
+sync that changes the songs keeps the table's place; the Sort By menu sorts as a header does;
+a row plays its own song, on a click; the row of the song playing is marked.
 Over an invented library.json in a temporary cache (tests/page_harness.py's window)."""
 
 import json
@@ -12,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.page_harness import PageTestCase, track
+from tests.page_harness import PageTestCase, playing, track
 
 
 def library_json(cache, tracks):
@@ -59,6 +60,20 @@ class SongsPageTest(PageTestCase):
         self.assertTrue(await self.until(lambda: page._rows.get_n_items() == tracks, 2))
         return page
 
+    async def test_a_library_without_songs_offers_sign_in_while_signed_out(self):
+        self.app.settings.set_boolean('signed-in', False)
+        page = await self.songs_page(0)
+        self.assertTrue(await self.until(
+            lambda: page.stack.get_visible_child_name() == 'empty'))
+        button = page.empty_page.get_child()
+        self.assertTrue(button.get_visible())
+        self.assertEqual(button.get_action_name(), 'app.sign-in')
+        self.assertEqual(page.empty_page.get_description(),
+                         'Sign in to Apple Music to see your library')
+        self.app.settings.set_boolean('signed-in', True)
+        self.assertFalse(button.get_visible())
+        self.assertEqual(page.empty_page.get_description(), 'Songs in your library appear here')
+
     async def test_a_sync_that_adds_a_song_keeps_the_scroll_position(self):
         page = await self.songs_page(300)
         adjustment = page.column_view.get_vadjustment()
@@ -69,7 +84,8 @@ class SongsPageTest(PageTestCase):
         await self.library.reload()
         self.assertTrue(await self.until(lambda: page._rows.get_n_items() == 301, 2))
         await self.turn()
-        self.assertEqual(adjustment.get_value(), 2000)
+        # Within a pixel: the view's anchor is a row and a fraction of its height.
+        self.assertAlmostEqual(adjustment.get_value(), 2000, delta=1)
 
     async def test_the_sort_menu_sorts_as_a_header_does(self):
         page = await self.songs_page(5)
@@ -90,6 +106,74 @@ class SongsPageTest(PageTestCase):
         page.set_filter('Song 0011')
         self.assertEqual(page._rows.get_n_items(), 1)
         self.assertEqual(page.count_label.get_label(), '1 of 12 songs')
+        # In the filter bar, shown with the text in it.
+        self.assertTrue(page.search_bar.get_search_mode())
+        self.assertEqual(page.filter_entry.get_text(), 'Song 0011')
+        # Closing the bar (its button, Escape) clears the filter.
+        page.search_bar.set_search_mode(False)
+        self.assertTrue(await self.until(lambda: page._rows.get_n_items() == 12))
+        self.assertEqual(page.count_label.get_label(), '12 songs')
+        self.assertEqual(page.filter_entry.get_text(), '')
+
+    async def test_the_filter_bar_is_shown_by_ctrl_f_and_typing_and_closed_by_escape(self):
+        page = await self.songs_page(3)
+        window = page.get_root()
+        self.assertIs(page.search_bar.get_key_capture_widget(), page)  # typing shows it
+        self.assertTrue(page.search_button.get_visible())
+        self.assertFalse(page.search_bar.get_search_mode())
+        self.assertTrue(page.focus_filter())
+        self.assertTrue(page.search_bar.get_search_mode())
+        self.assertTrue(page.search_button.get_active())  # the header's toggle follows
+        self.assertTrue(await self.until(
+            lambda: window.get_focus() is not None
+            and window.get_focus().is_ancestor(page.filter_entry)))
+        page.filter_entry.set_text('Song 0002')
+        page.on_filter_changed(page.filter_entry)
+        self.assertEqual(page._rows.get_n_items(), 1)
+        page.filter_entry.emit('stop-search')  # Escape
+        self.assertFalse(page.search_bar.get_search_mode())
+        self.assertFalse(page.search_button.get_active())
+        self.assertTrue(await self.until(lambda: page._rows.get_n_items() == 3))
+        self.assertTrue(await self.until(
+            lambda: window.get_focus() is not None
+            and window.get_focus().is_ancestor(page.column_view)))
+
+    async def test_no_songs_means_no_filter(self):
+        page = await self.songs_page(0)
+        self.assertTrue(await self.until(
+            lambda: page.stack.get_visible_child_name() == 'empty'))
+        self.assertFalse(page.search_button.get_visible())
+        self.assertFalse(page.focus_filter())
+        self.assertFalse(page.search_bar.get_search_mode())
+
+    async def test_a_row_plays_its_album_from_its_own_song(self):
+        from gi.repository import Gtk
+
+        page = await self.songs_page(5)
+        page.activate_action('songs.sort-order', _variant('descending'))
+        page.on_activate(page.column_view, 1)
+        window = page.get_root()
+        track = page._rows.get_item(1)
+        self.assertEqual(window.played[-1], (track.play, track.index, None))
+        self.assertEqual(window.started_with[-1], track.id)
+        # On a click; with no selection, which GTK would move to the hovered row.
+        self.assertTrue(page.column_view.get_single_click_activate())
+        self.assertIsInstance(page.column_view.get_model(), Gtk.NoSelection)
+
+    async def test_the_song_playing_is_marked(self):
+        page = await self.songs_page(5)
+        self.assertTrue(await self.until(lambda: len(page._title_cells) == 5))
+        cells = {cell.get_item().id: cell.get_child() for cell in page._title_cells}
+        rows = {row.get_item().id: row for row in page._row_items}
+        self.assertEqual(len(rows), 5)
+        self.app.player.track = playing(track('l.album001', 2))
+        self.assertEqual([song_id for song_id, cell in cells.items() if cell.playing],
+                         ['l.album001.t1.2'])
+        self.assertEqual(rows['l.album001.t1.2'].get_accessible_description(), 'Playing')
+        self.assertEqual(rows['l.album001.t1.1'].get_accessible_description(), '3:00')
+        self.app.player.track = None
+        self.assertFalse(any(cell.playing for cell in cells.values()))
+        self.assertEqual(rows['l.album001.t1.2'].get_accessible_description(), '3:00')
 
 
 def _variant(text):

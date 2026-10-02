@@ -15,6 +15,7 @@ src/window.blp
 src/player.py
 src/sync.py
 src/mpris.py
+src/search_provider.py
 src/player_bar.py
 src/player_bar.blp
 src/sections.py
@@ -40,7 +41,10 @@ src/pages/songs.blp
 src/widgets/engine_status.py
 src/widgets/shelf.py
 src/widgets/shelf.blp
+src/widgets/song_shelf.py
+src/widgets/song_shelf.blp
 src/widgets/song_title.blp
+src/widgets/track_row.py
 src/widgets/track_row.blp
 src/widgets/lyrics.py
 src/widgets/now_playing.blp

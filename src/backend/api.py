@@ -41,6 +41,44 @@ BROWSE_PARAMS = {'name': 'music', 'platform': 'web', 'extend': 'editorialArtwork
 RECOMMENDATIONS_ENDPOINT = '/v1/me/recommendations'
 RECOMMENDATIONS_PARAMS = {'limit': 25}
 
+# An artist's page, as music.apple.com's views-based artist page asks for it: the artist with
+# every view its page shows (each answered with Apple's own title, its first page of
+# resources and a `next` link where there are more) and the attributes its About reads.
+# featured-release, when an artist has one, is shown in latest-release's place;
+# featured-albums is "Essential Albums", more-to-hear the radio episodes about the artist,
+# more-to-see the videos about them (uploaded videos and films). top-songs is 24 long, three
+# rows of eight, as Apple's.
+ARTIST_ENDPOINT = '/v1/catalog/{storefront}/artists/{id}'
+ARTIST_VIEWS = (
+    'featured-release', 'latest-release', 'top-songs', 'featured-albums', 'full-albums',
+    'music-videos', 'playlists', 'radio-shows', 'singles', 'live-albums', 'compilation-albums',
+    'appears-on-albums', 'more-to-hear', 'more-to-see', 'similar-artists',
+)
+ARTIST_PARAMS = {
+    'views': ','.join(ARTIST_VIEWS),
+    'extend': 'artistBio,bornOrFormed,isGroup,origin',
+    'limit[artists:top-songs]': 24,
+}
+# One of an artist's views whole (See All), a page of it at a time.
+ARTIST_VIEW_ENDPOINT = '/v1/catalog/{storefront}/artists/{id}/view/{view}'
+ARTIST_VIEW_LIMIT = 100
+# A catalog song with its artists: how a library artist, which the library makes up from its
+# songs' names, finds the catalog artist it stands for.
+SONG_ARTISTS_ENDPOINT = '/v1/catalog/{storefront}/songs/{id}'
+SONG_ARTISTS_PARAMS = {'include': 'artists'}
+# A catalog song or music video with its album and artists, or an album with its artists, by
+# kind: where Go to Album and Go to Artist go when the library cannot say (Engine.related).
+RELATED_ENDPOINTS = {
+    'song': '/v1/catalog/{storefront}/songs/{id}',
+    'video': '/v1/catalog/{storefront}/music-videos/{id}',
+    'album': '/v1/catalog/{storefront}/albums/{id}',
+}
+RELATED_PARAMS = {
+    'song': {'include': 'albums,artists'},
+    'video': {'include': 'albums,artists'},
+    'album': {'include': 'artists'},
+}
+
 
 def is_library_id(item_id):
     return str(item_id).startswith(LIBRARY_PREFIXES)

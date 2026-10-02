@@ -3,81 +3,136 @@
 
 using Gtk 4.0;
 
-// One track of an album or playlist (widgets/track_row.py). Everything but the title is a
-// Gtk.Inscription, sized by its characters or lines rather than its text, so a recycled row
-// is rebound without being measured again; the title is a one-line label, so the explicit
-// badge follows its text.
+// One track of an album or playlist (widgets/track_row.py). Everything but the title (and a
+// table's links) is a Gtk.Inscription, sized by its characters or lines rather than its text,
+// so a recycled row is rebound without being measured again; the title is a one-line label,
+// so the explicit badge follows its text.
 template $AppleMusicTrackRow: Box {
   spacing: 12;
 
   // Albums: the track number, in a column as wide as two digits, and three when there is
-  // room (a box set's hundredth track).
-  Inscription number_label {
-    min-chars: 2;
-    nat-chars: 3;
-    xalign: 1;
+  // room (a box set's hundredth track); a play icon in its place while the track is the one
+  // playing. Both pages stay visible, so the stack keeps one size whichever it shows.
+  Stack number_stack {
     valign: center;
     visible: false;
 
-    styles [
-      "numeric",
-      "dimmed",
-    ]
+    StackPage {
+      name: "number";
+
+      child: Inscription number_label {
+        min-chars: 2;
+        nat-chars: 3;
+        xalign: 1;
+
+        styles [
+          "numeric",
+          "dimmed",
+        ]
+      };
+    }
+
+    StackPage {
+      name: "playing";
+
+      child: Image playing_icon {
+        icon-name: "media-playback-start-symbolic";
+        accessible-role: presentation;
+
+        styles [
+          "accent",
+        ]
+      };
+    }
   }
 
-  // Playlists: the track's own thumbnail.
-  $AppleMusicCover cover {
-    size: 40;
+  // Playlists: the track's own thumbnail, with a play icon laid over it while the track is
+  // the one playing (shown by opacity: nothing in a recycled row changes size).
+  Overlay cover_slot {
     valign: center;
     visible: false;
 
-    styles [
-      "small",
-    ]
+    child: $AppleMusicCover cover {
+      size: 40;
+
+      styles [
+        "small",
+      ]
+    };
+
+    [overlay]
+    Box playing_scrim {
+      opacity: 0;
+      can-target: false;
+      accessible-role: presentation;
+
+      styles [
+        "osd",
+        "playing-scrim",
+      ]
+
+      Image {
+        icon-name: "media-playback-start-symbolic";
+        hexpand: true;
+        accessible-role: presentation;
+      }
+    }
   }
 
-  Box {
-    orientation: vertical;
-    valign: center;
+  // The title (and, in a list, the artist under it); in a table the artist and the album
+  // follow as links (track_row.py adds them), the three columns sharing the width equally
+  // (homogeneous) so that every row's line up with the header's.
+  Box columns {
+    spacing: 12;
     hexpand: true;
 
     Box {
-      spacing: 6;
+      orientation: vertical;
+      valign: center;
+      hexpand: true;
 
-      Label title_label {
-        xalign: 0;
-        ellipsize: end;
-        single-line-mode: true;
+      Box {
+        spacing: 6;
+
+        Label title_label {
+          xalign: 0;
+          ellipsize: end;
+          single-line-mode: true;
+
+          styles [
+            "track-title",
+          ]
+        }
+
+        Label explicit_badge {
+          // Translators: the badge marking a song with explicit lyrics, as Apple Music shows it
+          label: C_("explicit badge", "E");
+          tooltip-text: _("Explicit");
+          valign: center;
+          visible: false;
+
+          accessibility {
+            label: _("Explicit");
+          }
+
+          styles [
+            "caption",
+            "explicit-badge",
+          ]
+        }
       }
 
-      Label explicit_badge {
-        // Translators: the badge marking a song with explicit lyrics, as Apple Music shows it
-        label: C_("explicit badge", "E");
-        tooltip-text: _("Explicit");
-        valign: center;
+      // Playlists, and album tracks by someone other than the album's artist.
+      Inscription artist_label {
+        xalign: 0;
+        text-overflow: ellipsize_end;
         visible: false;
-
-        accessibility {
-          label: _("Explicit");
-        }
 
         styles [
           "caption",
-          "explicit-badge",
+          "dimmed",
         ]
       }
-    }
-
-    // Playlists, and album tracks by someone other than the album's artist.
-    Inscription artist_label {
-      xalign: 0;
-      text-overflow: ellipsize_end;
-      visible: false;
-
-      styles [
-        "caption",
-        "dimmed",
-      ]
     }
   }
 

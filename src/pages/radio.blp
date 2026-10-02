@@ -9,16 +9,15 @@ template $AppleMusicRadioPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow (a phone): two station tiles a row, centred as a pair (the margins would make
-    // the page wider than the window).
+    // Narrow (a phone): two station tiles a row, on the margins that still fit them in
+    // 360 px (the covers 17 px in), as the grid pages' tiles are.
     Adw.Breakpoint {
       condition ("max-width: 400sp")
 
       setters {
-        flow_box.margin-start: 6;
-        flow_box.margin-end: 6;
+        flow_box.margin-start: 14;
+        flow_box.margin-end: 14;
         flow_box.max-children-per-line: 2;
-        flow_box.halign: center;
       }
     }
 
@@ -105,10 +104,11 @@ template $AppleMusicRadioPage: Adw.NavigationPage {
                   activate-on-single-click: true;
                   min-children-per-line: 2;
                   max-children-per-line: 12;
-                  column-spacing: 12;
                   valign: start;
                   // The first column's covers on the shelf's and the titles' 24px margin (a
-                  // child's 3px padding), its tiles at the start of their cells.
+                  // child's 3px padding), its tiles at the start of their cells, the cells
+                  // as the grid pages' (grid.blp: a tile and its padding wide, grown with
+                  // the page).
                   margin-start: 21;
                   margin-end: 21;
                   child-activated => $on_station_activated();

@@ -24,7 +24,8 @@ What to shoot: $ARGUMENTS
      follows the name); `--banner sign-in|expired`: the sign-in banner;
    - `--sidebar` (the narrow layout: the sidebar rather than the page), `--expand first`,
      `--search TERM`, `--context-menu`, `--preferences [general|engine]`,
-     `--dialog about|shortcuts`.
+     `--dialog about|shortcuts`; `--scroll PX` for the rest of a page taller than the
+     window (an artist's: `--open artist:first --scroll 900`).
    Dark is the default; add `--light`. Sizes: the default (1100x760), `--size 400x700`, and
    `--size 360x640`, the narrowest supported. The script waits for the artwork to decode
    before it shoots.

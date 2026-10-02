@@ -7,6 +7,7 @@ or the gresource, or a file with translatable strings missing from po/POTFILES.i
 every other test and break (or go untranslated) only once installed."""
 
 import io
+import pathlib
 import re
 import shutil
 import subprocess
@@ -34,11 +35,20 @@ def translates(path):
                for previous, token, following in zip(tokens, tokens[1:], tokens[2:], strict=False))
 
 
+def _git_toplevel(git):
+    done = subprocess.run([git, 'rev-parse', '--show-toplevel'], cwd=ROOT,
+                          capture_output=True, text=True)
+    return pathlib.Path(done.stdout.strip()).resolve() if done.returncode == 0 else None
+
+
 def source_files(*suffixes):
     """The files under src/ with these suffixes, as paths relative to the repository: those
-    git tracks or would add (untracked but not ignored), else every one on disk."""
+    git tracks or would add (untracked but not ignored), else every one on disk. Git is asked
+    only when this tree is a repository's own top level: an unpacked release tarball inside
+    another checkout (meson dist's check unpacks into the ignored build/) would otherwise be
+    answered for by that checkout, which ignores every file in it."""
     git = shutil.which('git')
-    if git is not None:
+    if git is not None and _git_toplevel(git) == ROOT:
         done = subprocess.run(
             [git, 'ls-files', '--cached', '--others', '--exclude-standard', '--', 'src'],
             cwd=ROOT, capture_output=True, text=True)

@@ -73,7 +73,9 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   `widgets.engine_status.EngineStatus` (no widget; tests/test_engine_status.py): the spinner
   while it starts, Sign In when signed out, Start Engine (through `app.start_engine()`, whose
   failure the app reports), Try Again, and "Not Available in the Demo" with no button (the
-  demo engine always answers `engine-down`). A state the page shows is not toasted too.
+  demo engine answers `engine-down`, but for the artist pages scripts/demo_library.py invents).
+  A state the page shows is not toasted too. A library page's empty state offers Sign In… while
+  signed out (outside the demo) through one `pages.SignInOffer(status_page)`.
 - A page of shelves is a vertical `Gtk.Box` of a handful of `AppleMusicShelf`, each a horizontal
   `Gtk.ListView` in its own scrolled window, placed by a `widgets.shelf.ShelfColumn`: a shelf
   shown again keeps its widget (moved into place), new ones are bound a frame apart after
@@ -83,9 +85,23 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   the shelf measures itself: shelves are made at run time, out of a page breakpoint's reach),
   so the title has their room at 360 px. Anything unbounded gets a page of its own (See All), since a
   `Gtk.GridView` cannot sit under a shelf in the same scrolled window.
+- The artist page (pages/artist.py) is Apple's artist page over `Engine.artist_page`: the
+  release card beside Top Songs (`widgets.song_shelf.SongShelf`, a horizontal `Gtk.GridView`
+  three rows high, which plays the songs as one queue from the one activated), then two
+  `ShelfColumn`s, before About and after it (Similar Artists), Essential Albums as hero cards
+  (`show(heroes=…)`). Shelf titles are Apple's (`view_title()`, not `remote.shelf_title()`), and
+  a shelf Apple has more of fetches the rest on See All (its `complete`, which
+  `window.open_shelf` runs). The library's albums of the artist's come first, as In Your
+  Library, whenever there are some (alone while the catalog cannot answer).
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
-  The item actions take their object as a `(ss)` target (kind, id), not as state.
+  The item actions take their object as a `(ss)` target (kind, id), not as state. Go to Album
+  and Go to Artist go where `related.py` says, through `window.item_actions.go_to(obj, kind)`;
+  a row's artist and album links are `widgets.track_links.TrackLink`s, clicked through
+  `track_links.attach(view)` (the Songs table, a playlist's table).
+- A playlist's page is a table from 720sp (`DetailPage.table`, set by detail.blp's
+  breakpoint): TrackRow's table rows under a `TrackTableHeader` (the tracks' section header);
+  an album's tracks stay a numbered list.
 - The window's keyed actions (`win.back`, `win.search`, `win.focus-*`) are disabled while a
   dialog is open over the window (`Window._update_actions`); add a new keyed window action
   there.
@@ -106,8 +122,11 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   two tiles would not fit).
 - Bundled icons are `src/icons/*-symbolic.svg`, found by icon name through the gresource alias.
   Use a `#222` fill (GTK recolours fills and strokes), Adwaita's 2 px weight at 16 px, and an
-  outline as a ring with `fill-rule="evenodd"` (compare `non-starred-symbolic`). Bundle any icon
-  the installed Adwaita theme lacks (`emblem-favorite-symbolic` is gone).
+  outline as a ring with `fill-rule="evenodd"` (compare `heart-outline-symbolic`), and an arc
+  as a filled, round-capped band (`broadcast-symbolic`), never a stroke thinner than 2 px.
+  Bundle any icon the installed Adwaita theme lacks (`emblem-favorite-symbolic` is gone), not
+  one it ships (the shuffle and repeat icons are Adwaita's); `transport-play/pause` are
+  bundled on purpose, a theme's 24 px glyph having sat off-centre in the play button.
 
 ## Accessibility
 

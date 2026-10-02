@@ -8,8 +8,10 @@ once, after the template is built. The artwork, titles, transport, seek slider, 
 heart and volume follow the Player as the player bar's do (the pieces are shared:
 widgets/transport.py); the Lyrics and Up Next tabs are a LyricsView and a QueueView (built
 here: GtkBuilder does not run a Python widget's __init__) in an Adw.ViewStack an inline
-view switcher switches. The close button sets the bottom sheet's `open` false; Escape and a
-swipe down are the bottom sheet's own.
+view switcher switches. More Options is the item playing's menu (the window's item actions:
+Go to Album, Go to Artist, Add to Playlist…, without Play), made as it opens. The close
+button sets the bottom sheet's `open` false; Escape and a swipe down are the bottom sheet's
+own; Go to Album and Go to Artist close the sheet too (window.open_item).
 
 Sizing: an AdwBottomSheet gives its sheet its natural height (clamped to the window less a
 margin), so this widget asks for a tall one (SHEET_NATURAL_HEIGHT) and the tabs' lists take
@@ -26,6 +28,7 @@ from gettext import gettext as _
 
 from gi.repository import Adw, GLib, GObject, Gtk
 
+from ..actions import now_playing_track
 from .cover import Cover  # noqa: F401  registers $AppleMusicCover for the template
 from .lyrics import LyricsView
 from .queue import QueueView
@@ -46,6 +49,7 @@ class NowPlayingSheet(Adw.Bin):
 
     toast_overlay = Gtk.Template.Child()
     close_button = Gtk.Template.Child()
+    more_button = Gtk.Template.Child()
     heart_button = Gtk.Template.Child()
     volume_button = Gtk.Template.Child()
     volume_adjustment = Gtk.Template.Child()
@@ -91,6 +95,7 @@ class NowPlayingSheet(Adw.Bin):
         self._heart = HeartControl(self.heart_button)
         self._volume = VolumeControl(self.volume_button, self.volume_adjustment)
         self._art = RemoteCover(self.cover)
+        self.more_button.set_create_popup_func(self._on_more_popup)
         self._apply_layout()
 
     # -- layout ------------------------------------------------------------------------------
@@ -184,7 +189,25 @@ class NowPlayingSheet(Adw.Bin):
         self.lyrics_view.set_player(player, app)
         self.queue_view.set_player(player, app)
         bottom_sheet.connect('notify::open', lambda *_: self._on_open_changed())
+        player.connect('notify::track', lambda *_: self._update_more())
         self._on_open_changed()
+        self._update_more()
+
+    def _playing_track(self):
+        """The item playing as the Track its menu is for, or None (actions)."""
+        return now_playing_track(self._player.track if self._player is not None else None)
+
+    def _update_more(self):
+        """More Options only while an item with a menu plays (not a station's segment)."""
+        self.more_button.set_sensitive(self._playing_track() is not None)
+
+    def _on_more_popup(self, button):
+        """The item playing's menu, made as it opens (whether it is a favourite is asked
+        then)."""
+        actions = getattr(self.get_root(), 'item_actions', None)
+        track = self._playing_track()
+        button.set_menu_model(actions.menu_for(track, queued=True)
+                              if actions is not None and track is not None else None)
 
     def _on_open_changed(self):
         is_open = self._bottom_sheet is not None and self._bottom_sheet.get_open()

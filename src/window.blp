@@ -82,9 +82,10 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
     }
   }
 
-  // The player bar is the bottom sheet's bottom bar, always shown under the content and the
-  // window's full width (not full-width, it floats over the content as a pill the width of
-  // its controls, which covers the tiles); the sheet over it is Now Playing
+  // The player bar is the bottom sheet's bottom bar, under the content and the window's full
+  // width (not full-width, it floats over the content as a pill the width of its controls,
+  // which covers the tiles), revealed only while something plays (window.py
+  // _reveal_player_bar); the sheet over it is Now Playing
   // (widgets/now_playing.blp), which the bar's click, a swipe and app.now-playing open.
   // Toasts go over the content, above the bar, or into the sheet while it is open.
   content: Adw.BottomSheet bottom_sheet {
@@ -100,30 +101,15 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
       min-sidebar-width: 220;
       max-sidebar-width: 280;
 
+      // The sidebar's header bar carries the page's title, the app's name, as GNOME's core
+      // apps title theirs.
       sidebar: Adw.NavigationPage {
-        title: _("Music");
+        title: _("Music Sleeve");
         tag: "sidebar";
 
         child: Adw.ToolbarView {
           [top]
           Adw.HeaderBar {
-            title-widget: Box {
-              spacing: 6;
-
-              Image {
-                icon-name: "music-note-symbolic";
-                accessible-role: presentation;
-              }
-
-              Label {
-                label: _("Music");
-
-                styles [
-                  "heading",
-                ]
-              }
-            };
-
             [end]
             MenuButton primary_menu_button {
               icon-name: "open-menu-symbolic";
@@ -135,9 +121,10 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
 
           content: Adw.Sidebar sidebar {};
 
-          // The account: Sign In while signed out; the name (or "Signed In") over a menu with
-          // Sign Out (and Sign In Again once the session has expired) once signed in, which
-          // window.py builds.
+          // The account: Sign In… while signed out (it opens the sign-in); the name (or
+          // "Signed In") over a menu with Sign Out… (and Sign In Again… once the session has
+          // expired) once signed in, which window.py builds. Both buttons are labelled, so
+          // neither has a tooltip: the label is the name assistive technology reads.
           [bottom]
           Stack account_stack {
             hhomogeneous: true;
@@ -155,7 +142,6 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
 
                 styles [
                   "flat",
-                  "account-button",
                 ]
 
                 child: Box {
@@ -172,7 +158,7 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
                   }
 
                   Label {
-                    label: _("Sign In");
+                    label: _("Sign In…");
                     xalign: 0;
                     hexpand: true;
                     ellipsize: end;
@@ -191,11 +177,9 @@ template $AppleMusicWindow: Adw.ApplicationWindow {
               child: MenuButton account_button {
                 direction: up;
                 always-show-arrow: true;
-                tooltip-text: _("Account");
 
                 styles [
                   "flat",
-                  "account-button",
                 ]
 
                 child: Box {

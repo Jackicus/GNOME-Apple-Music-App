@@ -30,9 +30,10 @@
 
 /* Grid pages (pages/grid.blp). The top padding scrolls with the tiles and leaves room for the
    page title laid over it: the title's 24px + 12px margins and a title-1 line, which grows with
-   the text size as em does. Narrow sides keep two 160px tiles within a 360px window. */
+   the text size as em does. The sides are the grid view's margins (grid.blp), which its
+   breakpoint narrows. */
 gridview.tile-grid {
-  padding: calc(36px + 2.4em) 6px 24px 6px;
+  padding: calc(36px + 2.4em) 0 24px;
 }
 
 /* A tile's cover and its placeholder: rounded as the cards elsewhere in the app are. */
@@ -66,12 +67,26 @@ columnview.songs-table > listview > row > cell:last-child:dir(rtl) {
   padding-right: 6px;
 }
 
-/* An album page's artist, a link to their page (pages/detail.blp): its text on the title's
-   edge, as the plain subtitle's is. */
+/* An album page's artist, a link to their page (pages/detail.blp): a button that reads as the
+   plain subtitle it stands in for, its text on the title's edge, with no wash under the
+   pointer. */
 button.artist-link {
   padding: 0 2px;
   margin-left: -2px;
   min-height: 0;
+}
+
+button.artist-link:hover,
+button.artist-link:active {
+  background: none;
+}
+
+/* Links in text, the one way: the album page's artist and a track's artist and album
+   (widgets/track_links.py, in the Songs table and a playlist's) in the text's own colour,
+   underlined under the pointer. */
+label.track-link:hover,
+button.artist-link:hover > label {
+  text-decoration: underline;
 }
 
 /* The "E" after an explicit song's title: small and bold on a faint wash of the text colour. */
@@ -80,6 +95,19 @@ button.artist-link {
   border-radius: 3px;
   background-color: alpha(currentColor, 0.15);
   font-weight: bold;
+}
+
+/* The row of the track playing (widgets/track_row.py and song_title.py, marked by the album,
+   playlist, Songs and Search pages as the Player's item changes): its title bold, as Up
+   Next's is, and a play icon in place of its number, or over its thumbnail on libadwaita's
+   translucent on-screen-display wash (`osd`, which reads on any artwork) with the
+   thumbnail's corners. */
+.playing .track-title {
+  font-weight: bold;
+}
+
+.playing-scrim {
+  border-radius: 4px;
 }
 
 /* Artwork over its placeholder (widgets/cover.blp): rounded by size. */
@@ -116,6 +144,21 @@ listview.track-list > header {
   padding: 0;
 }
 
+/* A playlist's column titles (widgets/track_row.py's TrackTableHeader), as a Gtk.ColumnView's
+   header shows the Songs table's: caption-heading (the titles' own class) at 40% of the text
+   colour, libadwaita's `columnview > header > button > box`. A list header's own text is
+   bold, which would make its Time column, measured in the rows' font, wider than theirs. */
+listview.track-list > header > .track-table-header {
+  font-weight: normal;
+  color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+@media (prefers-contrast: more) {
+  listview.track-list > header > .track-table-header {
+    color: color-mix(in srgb, currentColor 60%, transparent);
+  }
+}
+
 /* Shelves (widgets/shelf.blp): tiles 18px apart, the first on the page title's 24px margin
    (15px of the list's padding, 6px of the row's margin, 3px of its padding), with rounded
    highlights as the grids' tiles have. The header is as tall as its See All button, whether
@@ -132,6 +175,28 @@ listview.shelf-list > row {
 
 .shelf-header {
   min-height: 34px;
+}
+
+/* An artist's Top Songs (widgets/song_shelf.blp): the songs in columns three high, the covers
+   on the shelves' 24px margin (18px of the grid's padding, 6px of a row's), each row with a
+   rounded highlight; a column 18px from the next. */
+gridview.song-shelf {
+  padding: 0 18px;
+  background: none;
+}
+
+gridview.song-shelf > child {
+  margin: 0 9px 0 0;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+/* An artist's latest release (pages/artist.blp): the cover and its caption as one button,
+   flush with the page's margin. */
+button.release-card {
+  padding: 6px;
+  margin-left: -6px;
+  border-radius: 12px;
 }
 
 /* Hero cards (widgets/hero_tile.blp): one rounded card, the cover square at the top and the
@@ -155,7 +220,7 @@ listview.shelf-list > row {
 }
 
 .hero-caption {
-  padding: 10px 12px 12px 12px;
+  padding: 12px;
 }
 
 /* The subtitle, less dim than a .dimmed label elsewhere: it sits on a colour, not the page (which
@@ -180,8 +245,9 @@ listview.shelf-list > row {
 }
 
 /* The Now Playing sheet (widgets/now_playing.blp): larger transport buttons than the bar's,
-   the play button largest; the lyrics as big bold lines, the current one at full opacity
-   (the others carry .dimmed); the queue's rows as the detail pages' track rows. */
+   the play button largest; the lyrics as title-3 lines (widgets/lyrics.py), the current one
+   at full opacity (the others carry .dimmed), a line fading between the two; the queue's
+   rows as the detail pages' track rows. */
 .now-playing .play-button {
   min-width: 56px;
   min-height: 56px;
@@ -213,8 +279,6 @@ listview.lyrics-list > row {
 }
 
 .lyric-line {
-  font-size: 1.35em;
-  font-weight: bold;
   transition: opacity 200ms ease-out;
 }
 

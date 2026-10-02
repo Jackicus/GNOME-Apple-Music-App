@@ -9,14 +9,14 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow: the album column goes, title, artist and time stay, and the filter narrows to
-    // leave the header room for Sort By and the window's buttons.
+    // Narrow: the album column goes, and the title column gives up what the time column
+    // needs, so that title, artist and time fit a 360 px window.
     Adw.Breakpoint {
       condition ("max-width: 560sp")
 
       setters {
         album_column.visible: false;
-        filter_entry.width-chars: 6;
+        title_column.fixed-width: 160;
       }
     }
 
@@ -37,18 +37,41 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
           }
         }
 
+        // Shows the filter bar below, as the search button of GNOME's apps does.
         [end]
-        SearchEntry filter_entry {
-          placeholder-text: _("Filter");
-          width-chars: 16;
+        ToggleButton search_button {
+          icon-name: "edit-find-symbolic";
+          tooltip-text: _("Filter Songs");
           visible: false;
-          search-changed => $on_filter_changed();
-          stop-search => $on_stop_search();
 
           accessibility {
             label: _("Filter Songs");
           }
         }
+      }
+
+      // The filter, under the header bar: revealed by the button, by Ctrl+F and by typing on
+      // the page (songs.py makes the page its key-capture widget); Escape or the button
+      // closes it, which clears the entry and so the filter.
+      [top]
+      // The entry at a readable width, centred, as GNOME's search bars have it.
+      SearchBar search_bar {
+        search-mode-enabled: bind search_button.active bidirectional;
+
+        child: Adw.Clamp {
+          maximum-size: 400;
+
+          child: SearchEntry filter_entry {
+            placeholder-text: _("Filter Songs");
+            hexpand: true;
+            search-changed => $on_filter_changed();
+            stop-search => $on_stop_search();
+
+            accessibility {
+              label: _("Filter Songs");
+            }
+          };
+        };
       }
 
       content: Stack stack {
@@ -119,10 +142,12 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
                 child: ScrolledWindow {
                   hscrollbar-policy: never;
 
+                  // A click plays a song, as GNOME Music plays one (docs/decisions.md): the
+                  // links, the context menu and a drag claim their presses before the row
+                  // sees them. No row separators, as a playlist's table has none.
                   child: ColumnView column_view {
-                    show-row-separators: true;
                     tab-behavior: item;
-                    single-click-activate: false;
+                    single-click-activate: true;
                     activate => $on_activate();
 
                     styles [
@@ -132,7 +157,8 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
                     // Fixed widths, shared out as the table grows, keep the columns from
                     // measuring their cells: rows are rebound all the time while scrolling,
                     // and widths that followed the text shown would jump as it changed.
-                    // Without the album column they fit a 360 px window: 350 px.
+                    // Without the album column, and the title column narrowed, they fit a
+                    // 360 px window: 356 px.
                     ColumnViewColumn title_column {
                       title: _("Title");
                       fixed-width: 170;
@@ -154,9 +180,11 @@ template $AppleMusicSongsPage: Adw.NavigationPage {
                       resizable: true;
                     }
 
+                    // Room for an hour or more ("1:02:03", 56 px at Adwaita Sans 11) beside
+                    // the cell's 6 px and the page margin's 24 px.
                     ColumnViewColumn time_column {
                       title: _("Time");
-                      fixed-width: 80;
+                      fixed-width: 96;
                     }
                   };
                 };

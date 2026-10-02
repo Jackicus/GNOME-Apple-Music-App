@@ -21,12 +21,17 @@
     <key name="expanded-folders" type="as">
       <default>[]</default>
       <summary>Expanded playlist folders</summary>
-      <description>The ids of the playlist folders shown open in the sidebar, their contents listed under them.</description>
+      <description>The IDs of the playlist folders shown open in the sidebar, their contents listed under them.</description>
     </key>
     <key name="background-playback" type="b">
       <default>false</default>
       <summary>Keep playing when the window is closed</summary>
       <description>Whether closing the window while something plays hides it and lets the music play on, the system's media controls bringing the window back; the app quits once playback stops. Off, closing the window quits the app and stops the engine.</description>
+    </key>
+    <key name="discord-presence" type="b">
+      <default>false</default>
+      <summary>Show what you are listening to on Discord</summary>
+      <description>Whether the title, artist and album of the playing track, and the address of its cover on Apple's servers, are sent to a running Discord as rich presence, so they show on your profile as listening to Apple Music. Nothing is sent while this is off, and nothing is sent when Discord is not running. No account information ever leaves the app.</description>
     </key>
     <key name="browser-command" type="s">
       <default>'google-chrome-stable'</default>

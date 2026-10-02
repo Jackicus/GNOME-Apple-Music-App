@@ -218,6 +218,14 @@
     // What setQueue, playNext and playLater take for one kind ('album', 'playlist',
     // 'station', 'song', 'musicVideo'…) and id. `songs` is song ids joined by commas: the
     // library's stand-in album for its loose songs, which Apple has no album for.
+    // Whether a queue item is the track with that id: its own id, or its play
+    // parameters' (a library song's i. id, or the catalog id it plays as).
+    function isItem(item, id) {
+        if (!item) return false;
+        const params = (item.attributes && item.attributes.playParams) || item.playParams || {};
+        return item.id === id || params.id === id || params.catalogId === id;
+    }
+
     function queueOptions(kind, id) {
         const options = {};
         options[kind] = kind === 'songs' ? String(id).split(',').filter(Boolean) : id;
@@ -456,13 +464,30 @@
 
             // MusicKit refusing (an item not in this storefront, no subscription…)
             // answers {error, code} rather than throwing, so its code reaches the app.
+            // `startId`, a track row's own id: MusicKit's queue for an album or playlist need
+            // not hold its entries where the library's list has them (it leaves out what it
+            // cannot play, and orders the album its own way), so the queue is moved to the
+            // item with that id where startWith found another. The answer says it moved.
+            const startId = options.startId ? String(options.startId) : null;
+            let moved = null;
             try {
                 await mk.setQueue(queueObj);
+                if (startId) {
+                    const items = (mk.queue && mk.queue.items) || [];
+                    const position = mk.queue ? mk.queue.position : -1;
+                    if (!isItem(items[position], startId)) {
+                        const found = items.findIndex(function (it) { return isItem(it, startId); });
+                        if (found >= 0) {
+                            await mk.changeToMediaAtIndex(found);
+                            moved = { from: position, to: found };
+                        }
+                    }
+                }
                 await mk.play();
             } catch (err) {
                 return { error: describeError(err), code: errorCode(err) };
             }
-            return { ok: true };
+            return moved ? { ok: true, moved: moved } : { ok: true };
         },
 
         playNext: async function (kind, id) {

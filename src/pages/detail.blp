@@ -9,9 +9,18 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
     width-request: 360;
     height-request: 200;
 
-    // Narrow: the cover goes above the text, and the hero centres.
+    // Wide: a playlist's tracks as a table (detail.py follows its apply and unapply: a
+    // setter may only change what is inside the bin). Disjoint from the narrow one below.
+    Adw.Breakpoint table_breakpoint {
+      condition ("min-width: 720sp")
+    }
+
+    // Narrow: the cover goes above the text, and the hero centres. The cover beside the text
+    // needs 650 px: the cover, their 24 px gap, the buttons row (318 px, 12 px apart) and the
+    // row's 24 px inset each side (style.css's track-list rows); narrower, the page would ask
+    // for more than it has.
     Adw.Breakpoint {
-      condition ("max-width: 600sp")
+      condition ("max-width: 650sp")
 
       setters {
         hero_row.orientation: vertical;
@@ -25,6 +34,31 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
         caption_label.xalign: 0.5;
         caption_label.justify: center;
         buttons_box.halign: center;
+        summary_label.xalign: 0.5;
+        summary_label.justify: center;
+        more_notes_button.halign: center;
+      }
+    }
+
+    // Narrower still (a phone): the buttons 6 px apart, as one group, since the row's inset
+    // leaves 312 px at the 360 px minimum. The last breakpoint that matches is the one
+    // applied, so this repeats the one above.
+    Adw.Breakpoint {
+      condition ("max-width: 400sp")
+
+      setters {
+        hero_row.orientation: vertical;
+        cover.halign: center;
+        info_box.valign: start;
+        title_label.xalign: 0.5;
+        title_label.justify: center;
+        subtitle_label.xalign: 0.5;
+        subtitle_label.justify: center;
+        artist_button.halign: center;
+        caption_label.xalign: 0.5;
+        caption_label.justify: center;
+        buttons_box.halign: center;
+        buttons_box.spacing: 6;
         summary_label.xalign: 0.5;
         summary_label.justify: center;
         more_notes_button.halign: center;
@@ -55,12 +89,14 @@ template $AppleMusicDetailPage: Adw.NavigationPage {
         StackPage {
           name: "item";
 
-          // The hero and every track in one list, the hero its first row (see detail.py).
+          // The hero and every track in one list, the hero its first row (see detail.py). A
+          // click plays a track, as GNOME Music plays one (docs/decisions.md): the links,
+          // the context menu and a drag claim their presses before the row sees them.
           child: ScrolledWindow scrolled_window {
             hscrollbar-policy: never;
 
             child: ListView list_view {
-              single-click-activate: false;
+              single-click-activate: true;
               tab-behavior: item;
 
               styles [
@@ -136,8 +172,9 @@ Box hero {
           ]
         };
 
+        // A link as the tables' are (style.css: plain, underlined under the pointer), not a
+        // "link" button's blue.
         styles [
-          "link",
           "flat",
           "artist-link",
         ]
@@ -153,6 +190,9 @@ Box hero {
         ]
       }
 
+      // Play, Shuffle and More Options. The labels may ellipsize (can-shrink): a language
+      // whose words are long keeps the row within the 360 px minimum rather than pushing the
+      // page past it; the English ones fit whole (tests/test_detail_page.py).
       Box buttons_box {
         spacing: 12;
         margin-top: 12;
@@ -161,6 +201,7 @@ Box hero {
           child: Adw.ButtonContent {
             icon-name: "media-playback-start-symbolic";
             label: _("Play");
+            can-shrink: true;
           };
 
           styles [
@@ -173,6 +214,7 @@ Box hero {
           child: Adw.ButtonContent {
             icon-name: "media-playlist-shuffle-symbolic";
             label: _("Shuffle");
+            can-shrink: true;
           };
 
           styles [
@@ -228,9 +270,10 @@ Box hero {
 
   // In place of the tracks: an item that came without them (a shelf's) while the engine
   // fetches them, what stopped the fetch (the engine down, not signed in, an error) with a
-  // button that helps, or an empty playlist. A compact status page's look, but not an
-  // Adw.StatusPage: a list row gets its minimum height, and a status page, a scrolled window
-  // inside, asks for a fifth of what it shows.
+  // button that helps, or an empty playlist. A compact status page's look (its 96px icon, its
+  // title-2, its spacing), but not an Adw.StatusPage: a list row gets its minimum height, and
+  // a status page, a scrolled window inside, asks for a fifth of what it shows. While the
+  // tracks are fetched, the spinner alone, as every page's loading state is.
   Box status_box {
     orientation: vertical;
     spacing: 12;
@@ -240,7 +283,7 @@ Box hero {
 
     Image status_icon {
       icon-name: "music-note-symbolic";
-      pixel-size: 64;
+      pixel-size: 96;
       margin-bottom: 12;
       accessible-role: presentation;
 
@@ -250,10 +293,9 @@ Box hero {
     }
 
     Adw.Spinner status_spinner {
-      width-request: 48;
-      height-request: 48;
+      width-request: 32;
+      height-request: 32;
       halign: center;
-      margin-bottom: 12;
       visible: false;
     }
 
@@ -277,6 +319,7 @@ Box hero {
 
       styles [
         "pill",
+        "suggested-action",
       ]
     }
   }

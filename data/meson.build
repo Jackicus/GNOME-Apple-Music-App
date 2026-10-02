@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
+# The development build is "Music Sleeve (Development)" in the desktop file and the metainfo,
+# as GNOME's development builds are, so it is told from a release install beside it. The
+# Flatpak manifest adds no suffix of its own.
+name_suffix = get_option('profile') == 'development' ? ' (Development)' : ''
+data_configuration = {'APP_ID': application_id, 'NAME_SUFFIX': name_suffix}
+
 desktop_file = i18n.merge_file(
   input: configure_file(
     input: base_id + '.desktop.in',
     output: application_id + '.desktop.in',
-    configuration: {'APP_ID': application_id},
+    configuration: data_configuration,
   ),
   output: application_id + '.desktop',
   type: 'desktop',
@@ -18,12 +24,37 @@ metainfo_file = i18n.merge_file(
   input: configure_file(
     input: base_id + '.metainfo.xml.in',
     output: application_id + '.metainfo.xml.in',
-    configuration: {'APP_ID': application_id},
+    configuration: data_configuration,
   ),
   output: application_id + '.metainfo.xml',
   po_dir: '../po',
   install: true,
   install_dir: get_option('datadir') / 'metainfo',
+)
+
+# GNOME Shell's search provider (src/search_provider.py): the .ini tells the Shell the bus
+# name and the object's path (under GApplication's own, the app ID with dots as slashes),
+# and the D-Bus service file lets the bus start the app for a search, in service mode (no
+# window until a result is activated). A launch from the Shell still runs the desktop file's
+# Exec (DBusActivatable=false: a bus launch has no fallback when the bus cannot see the
+# service file, docs/decisions.md). Both name this build's app ID.
+search_provider_configuration = data_configuration + {
+  'OBJECT_PATH': '/' + application_id.replace('.', '/') + '/SearchProvider',
+  'BINDIR': get_option('prefix') / get_option('bindir'),
+}
+configure_file(
+  input: base_id + '.search-provider.ini.in',
+  output: application_id + '.search-provider.ini',
+  configuration: search_provider_configuration,
+  install: true,
+  install_dir: get_option('datadir') / 'gnome-shell' / 'search-providers',
+)
+configure_file(
+  input: base_id + '.service.in',
+  output: application_id + '.service',
+  configuration: search_provider_configuration,
+  install: true,
+  install_dir: get_option('datadir') / 'dbus-1' / 'services',
 )
 
 install_data(

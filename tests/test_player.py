@@ -112,7 +112,7 @@ class FakeEngine(GObject.Object):
             raise EngineError('api', 'the page gave no now-playing answer')
         return answer
 
-    async def play(self, kind, item_id, start_with=None, shuffle=None):
+    async def play(self, kind, item_id, start_with=None, shuffle=None, start_id=None):
         return await self._command('play', kind, item_id, start_with, shuffle)
 
     async def play_next(self, kind, item_id):
@@ -544,11 +544,11 @@ class EventTest(unittest.TestCase):
                               {'code': 'CONTENT_UNAVAILABLE', 'message': 'x'})
             self.engine.event('mediaPlaybackError', {'code': 'BOGUS', 'message': 'y'})
             self.engine.event('mediaPlaybackError', {})
-        self.assertEqual(errors[0], "This isn't available in your country or region")
+        self.assertEqual(errors[0], 'This isn’t available in your country or region')
         self.assertEqual(errors[1], 'This could not be played')  # an unknown code
         self.assertEqual(errors[2], 'This could not be played')
         self.assertIn('CONTENT_UNAVAILABLE: x', logged.output[0])  # the raw text, logged
-        for code, sentence in (('GEO_BLOCK', "This isn't available in your country or region"),
+        for code, sentence in (('GEO_BLOCK', 'This isn’t available in your country or region'),
                                ('CONTENT_RESTRICTED', 'This content is restricted'),
                                ('SUBSCRIPTION_ERROR',
                                 'An Apple Music subscription is needed to play this'),

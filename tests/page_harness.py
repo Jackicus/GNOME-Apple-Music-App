@@ -28,8 +28,22 @@ from tests.gtk import SCHEMA_ID, pump, requires_gtk
 from gi.repository import Gio, GObject
 
 from applemusic.backend.errors import EngineError
+from applemusic.player import NowPlaying
 
 _stand_ins = {}
+
+
+class Player(GObject.Object):
+    """What the pages follow of app.player: the item playing (a NowPlaying, or None), which a
+    test sets (`playing(track)` makes one from a track's dict)."""
+
+    track = GObject.Property(type=NowPlaying, default=None)
+
+
+def playing(data):
+    """A NowPlaying for a track dict (page_harness.track()), as the Player reports the
+    item: the same keys as the bridge's Track shape (id, catalogId, title…)."""
+    return NowPlaying(dict(data))
 
 
 def classes():
@@ -90,11 +104,21 @@ def classes():
         async def category(self, category_id, refresh=False):
             return await self._answer('category', category_id, refresh)
 
+        async def artist_page(self, artist_id, refresh=False):
+            return await self._answer('artist_page', artist_id)
+
+        async def artist_view(self, artist_id, view):
+            return await self._answer('artist_view', artist_id, view)
+
+        async def catalog_artist(self, name, song_ids):
+            return await self._answer('catalog_artist', name, song_ids)
+
     class App(Adw.Application):
         def __init__(self):
             super().__init__(application_id='io.github.jackicus.MusicSleeve.PageTest',
                              flags=Gio.ApplicationFlags.NON_UNIQUE)
             self.engine = Engine()
+            self.player = Player()
             self.settings = Gio.Settings.new(SCHEMA_ID)
             self.demo = False
             self.tasks = []
@@ -104,6 +128,7 @@ def classes():
 
         def reset(self):
             self.engine = Engine()
+            self.player.track = None
             self.demo = False
             self.tasks = []
             self.actions = []
@@ -146,12 +171,16 @@ def classes():
     class ItemActions:
         def __init__(self):
             self.asked = []
+            self.went = []  # (obj, kind) per go_to()
 
-        def menu_for(self, obj):
+        def menu_for(self, obj, queued=False):
             self.asked.append(obj)
             menu = Gio.Menu()
             menu.append('Invented Action', 'win.invented')
             return menu
+
+        def go_to(self, obj, kind):
+            self.went.append((obj, kind))
 
     class Window(Adw.Window):
         def __init__(self):
@@ -166,9 +195,11 @@ def classes():
             self.reset()
 
         def reset(self):
+            self.item_actions.went = []
             self.opened = []
             self.shelves_opened = []
             self.played = []
+            self.started_with = []  # each play request's start_id
             self.songs_opened = []
 
         def content_width(self):
@@ -183,8 +214,9 @@ def classes():
         def open_songs(self, text=''):
             self.songs_opened.append(text)
 
-        def play_request(self, play, start_with=None, shuffle=None):
+        def play_request(self, play, start_with=None, shuffle=None, start_id=None):
             self.played.append((play, start_with, shuffle))
+            self.started_with.append(start_id)
 
     _stand_ins.update(Engine=Engine, App=App, Window=Window)
     return _stand_ins
@@ -253,6 +285,40 @@ def artist(albums, artist_id='l.artist001'):
             'thumb': None, 'groups': groups, 'play': {}}
 
 
+def artist_answer(artist_id='42', songs=4, group=False):
+    """An invented catalog artist's page, as Engine.artist_page answers (normalize.artist_page):
+    a latest release, `songs` top songs, Essential Albums, Albums (with more to fetch) and
+    Similar Artists."""
+    def entry(kind, number, **extra):
+        data = {'id': f'{kind}{number}', 'kind': kind, 'title': f'Invented {kind} {number}',
+                'subtitle': '2026', 'year': 2026, 'art': None, 'thumb': None,
+                'play': {'kind': kind, 'id': f'{kind}{number}'}, 'groups': []}
+        data.update(extra)
+        return data
+
+    return {
+        'id': artist_id,
+        'artist': entry('artist', 0, id=artist_id, title='Invented Artist', subtitle='',
+                        summary='An invented biography.', genre='Pop',
+                        origin='Invented Town, Nowhere', bornOrFormed='1 May 2001',
+                        isGroup=group, play={'kind': 'artist', 'id': artist_id}),
+        'latest': {'key': 'latest-release', 'title': 'Latest Release',
+                   'item': entry('album', 99, releaseDate='2026-09-24', trackCount=12)},
+        'topSongs': {'key': 'top-songs', 'title': 'Top Songs', 'more': False,
+                     'items': [entry('song', 900 + n, id=str(900 + n), album='Invented Album',
+                                     play={'kind': 'song', 'id': str(900 + n)})
+                               for n in range(songs)]},
+        'shelves': [
+            {'key': 'featured-albums', 'title': 'Essential Albums', 'more': False,
+             'items': [entry('album', 1, subtitle='An invented line about it.')]},
+            {'key': 'full-albums', 'title': 'Albums', 'more': True,
+             'items': [entry('album', n) for n in range(1, 4)]},
+            {'key': 'similar-artists', 'title': 'Similar Artists', 'more': False,
+             'items': [entry('artist', 43, subtitle='')]},
+        ],
+    }
+
+
 @requires_gtk
 class PageTestCase(unittest.IsolatedAsyncioTestCase):
     """A presented stand-in window, the stand-in application as the default one, animations
@@ -290,6 +356,12 @@ class PageTestCase(unittest.IsolatedAsyncioTestCase):
         self._roots = []  # the pages show_root() added to the navigation view
 
     async def asyncTearDown(self):
+        # A turn of the main loop before the teardown: the first entry to take the focus in a
+        # process binds Wayland's text input, and when it is torn down before the loop has read
+        # the compositor's answer, GTK's text input reaches it after it is gone and crashes
+        # (docs/notes.md, #254). The turn is what matters; the focus moves off the page too.
+        self.window.set_focus(None)
+        await self.turn()
         self.window.navigation_view.replace([self.window.root_page])
         for page in self._roots:
             self.window.navigation_view.remove(page)
