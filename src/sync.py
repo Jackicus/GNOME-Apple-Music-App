@@ -19,7 +19,8 @@ atomically; prunes the artwork nothing names and the caches that only grow; and 
 the Library reload() itself in place. `progress(section, done, total)` is called as it goes
 (section one of PROGRESS_SECTIONS; total None until known). The songs and playlists listings
 must be fetched; anything else that fails keeps last time's entry (a playlist's tracks
-included: its listing is still the fresh one), read from library.json only then. Apple's 404
+included: its listing is still the fresh one), read from library.json only then, as are the
+tracks of a playlist the listing says are unchanged (below). Apple's 404
 for a playlist's tracks or a folder's children means there are none. A failure is an
 EngineError; a sync cancelled, or whose cache was wiped under it, raises store.Cancelled.
 The listings are read with `unique` (api_pages): an item met twice while the library changed
@@ -31,6 +32,15 @@ songs, the playlist listing and the shelves, and keeps last time's playlist trac
 videos and stations, none of which adding to the library changes. It writes library.json and
 reloads the models as a full pass does, but stamps no last-sync and says nothing when it ends:
 it is no substitute for the full one the clock waits for.
+
+A full pass reads a playlist's tracks again only when its listing says they may have changed.
+Each playlist Item records `modified`, Apple's `lastModifiedDate` as the listing had it when
+the tracks were last read; a playlist listed again with that date, and with no other
+`trackCount` than the tracks kept, keeps them (playlist_unchanged()). One listed without a
+date, one whose tracks last time's file does not hold, and every playlist of a file from
+before the key are read as before. Nothing narrows the songs listing: Apple's library API
+has no changes feed, no since filter and no sort the app could stop at, and MusicKit's
+`music()` hands back the body alone, so an ETag can be neither seen nor sent (docs/notes.md).
 
 What the web player asks for, found by watching its requests (2026-09-28):
 
@@ -49,8 +59,9 @@ What the web player asks for, found by watching its requests (2026-09-28):
   `next`); Music Videos: `/v1/me/library/music-videos?limit=100&offset=N`; Recently Added:
   `/v1/me/library/recently-added?limit=25`, paged by `next` (no total).
 
-The Item dicts written here carry one key beyond the README's shape: `artUrl`, the cover's
-URL at config.COVER_SIZE, which fetch_cover() downloads to the item's `art` path.
+The Item dicts written here carry two keys beyond the normalisers' shape (both in the
+README): `artUrl`, the cover's URL at config.COVER_SIZE, which fetch_cover() downloads to the
+item's `art` path; and a playlist's `modified`, the stamp its kept tracks are checked against.
 
 LibrarySync runs sync_library() for the app, one at a time: it says whether one is `running`
 and relays its `progress(section, done, total)` (progress_text() words it for the window's
@@ -240,6 +251,7 @@ async def sync_library(engine, library, progress=None, quick=False):
     # a sync that fails before it keeps the thumbnails there are.
     normalize.ART_SIZES.update(normalize.wanted_art_sizes(config.COVER_SIZE, config.THUMB_SIZE))
     raw = {}  # Apple's answers, for the build, which lets go of them once they are used
+    previous = _Previous(cache_dir)  # last time's file, read (in a thread) when first asked
 
     # 1. The songs, each with its album: the Albums and Artists sections come from them.
     report('songs', 0, None)
@@ -247,14 +259,18 @@ async def sync_library(engine, library, progress=None, quick=False):
         SONGS_ENDPOINT, {'include': 'albums'}, page=PAGE, unique=True,
         progress=lambda done, total: report('songs', done, total))
 
-    # 2. The playlists, then each one's tracks (a few at a time).
+    # 2. The playlists, then each one's tracks (a few at a time), bar those whose listing
+    # says nothing changed since last time's file read them. _playlists() takes last time's
+    # groups and counts for a playlist whose tracks are not here: the expensive read
+    # skipped, which a quick pass does for every playlist.
     report('playlists', 0, None)
     raw['playlists'] = await engine.api_pages(PLAYLISTS_ENDPOINT, PLAYLIST_PARAMS, page=PAGE,
                                               unique=True)
-    # A quick pass keeps every playlist's tracks: _playlists() takes last time's groups and
-    # counts for a playlist whose tracks are not here, which is the expensive read skipped.
-    raw['tracks'] = {} if quick else await _fetch_playlist_tracks(engine, raw['playlists'],
-                                                                  report)
+    if quick:
+        raw['tracks'] = {}
+    else:
+        stamps = await asyncio.to_thread(previous.playlist_stamps)
+        raw['tracks'] = await _fetch_playlist_tracks(engine, raw['playlists'], report, stamps)
 
     # 3. The playlist folders; 4. the music videos; 5. the stations; 6. the shelves. None of
     # these stops the sync: what fails is None here, and keeps last time's entry — which is
@@ -262,7 +278,7 @@ async def sync_library(engine, library, progress=None, quick=False):
     if quick:
         raw['folders'] = raw['videos'] = raw['stations'] = None
         raw['shelves'] = await _fetch_shelves(engine, report)
-        return await _build(cache_dir, storefront, raw, library, report, generation)
+        return await _build(cache_dir, storefront, raw, library, report, generation, previous)
     try:
         raw['folders'] = await _fetch_folders(engine, report)
     except EngineError as error:
@@ -284,10 +300,10 @@ async def sync_library(engine, library, progress=None, quick=False):
         raw['stations'] = None
     report('radio', 1, 1)
     raw['shelves'] = await _fetch_shelves(engine, report)
-    return await _build(cache_dir, storefront, raw, library, report, generation)
+    return await _build(cache_dir, storefront, raw, library, report, generation, previous)
 
 
-async def _build(cache_dir, storefront, raw, library, report, generation):
+async def _build(cache_dir, storefront, raw, library, report, generation, previous=None):
     """The end of either pass: everything into the Item shapes, the missing thumbnails
     fetched, the file written and the caches pruned, all in a thread with the artwork's
     progress relayed to this loop; then the models follow, in place. The thread cannot be
@@ -301,7 +317,7 @@ async def _build(cache_dir, storefront, raw, library, report, generation):
 
     build = asyncio.ensure_future(asyncio.to_thread(
         _build_and_write, cache_dir, storefront, raw, art_progress,
-        lambda: stop['cancelled'], generation))
+        lambda: stop['cancelled'], generation, previous))
     del raw  # the build's now
     try:
         await asyncio.wait([build])  # cancelling this wait leaves the build running
@@ -333,18 +349,27 @@ def _keep_going(error):
     log.warning('sync: %s', error)
 
 
-async def _fetch_playlist_tracks(engine, raw_playlists, report):
+async def _fetch_playlist_tracks(engine, raw_playlists, report, stamps=None):
     """{playlist id: its raw tracks, or None when they could not be fetched}, a few playlists
     at a time; progress per playlist done. Apple answers 404 for a playlist with no songs:
-    that is an empty list."""
+    that is an empty list. A playlist unchanged since last time's file read its tracks
+    (playlist_unchanged, against `stamps`, _Previous.playlist_stamps') is not read and has
+    no entry here: the build keeps last time's tracks for it."""
     tracks = {}
     total = len(raw_playlists)
     done = 0
+    kept = 0
+    stamps = stamps or {}
     semaphore = asyncio.Semaphore(PLAYLIST_CONCURRENCY)
 
     async def fetch(raw):
-        nonlocal done
+        nonlocal done, kept
         playlist_id = str(raw.get('id') or '')
+        if playlist_unchanged(raw, stamps.get(playlist_id)):
+            kept += 1
+            done += 1
+            report('playlists', done, total)
+            return
         async with semaphore:
             try:
                 answer = await engine.api_pages(f'{PLAYLISTS_ENDPOINT}/{playlist_id}/tracks',
@@ -361,7 +386,29 @@ async def _fetch_playlist_tracks(engine, raw_playlists, report):
 
     report('playlists', 0, total)
     await asyncio.gather(*(fetch(raw) for raw in raw_playlists if raw.get('id')))
+    if kept:
+        log.info('sync: %d of %d playlists unchanged since their tracks were last read: kept',
+                 kept, total)
     return tracks
+
+
+def playlist_unchanged(raw, stamp):
+    """Whether a playlist as the listing has it (`raw`) can keep the tracks read last time:
+    `stamp` is (modified, trackCount) from last time's file (_Previous.playlist_stamps; None
+    when the file holds no tracks or no stamp for it), and the listing carries that
+    `lastModifiedDate`, and either no `trackCount` or that one. Anything less (no date
+    listed, a file from before the stamp, a count that differs) reads the tracks again."""
+    if not stamp:
+        return False
+    modified, count = stamp
+    attributes = raw.get('attributes') or {}
+    listed = attributes.get('lastModifiedDate')
+    if not modified or not isinstance(listed, str) or listed != modified:
+        return False
+    listed_count = attributes.get('trackCount')
+    if listed_count is None:
+        return True
+    return not isinstance(listed_count, bool) and listed_count == count
 
 
 async def _fetch_folders(engine, report):
@@ -430,13 +477,14 @@ async def _fetch_shelves(engine, report):
     return {'recommendations': recommendations, 'fixed': fixed}
 
 
-def _build_and_write(cache_dir, storefront, raw, art_progress, cancelled, generation=None):
+def _build_and_write(cache_dir, storefront, raw, art_progress, cancelled, generation=None,
+                     previous=None):
     """In a thread: normalise Apple's answers (`raw`, emptied once used), fetch the missing
-    thumbnails, write library.json, prune. What could not be fetched (None in `raw`) keeps
-    last time's entry, read from library.json only then."""
+    thumbnails, write library.json, prune. What could not be fetched (None in `raw`), or was
+    not asked for, keeps last time's entry, read from library.json (`previous`) only then."""
     counts = {}
     art_urls = {}  # every artwork path named here, and its URL
-    previous = _Previous(cache_dir)
+    previous = previous if previous is not None else _Previous(cache_dir)
     albums, artists = normalize.group_songs_into_albums_and_artists(raw['songs'], cache_dir,
                                                                     art_urls)
     sections = {'albums': albums, 'artists': artists}
@@ -504,12 +552,17 @@ def _build_and_write(cache_dir, storefront, raw, art_progress, cancelled, genera
 
 def _playlists(raw_playlists, playlist_tracks, cache_dir, art_urls, previous):
     """The playlist Items, each from the listing just fetched (its title, artwork, tags). One
-    whose tracks could not be fetched keeps last time's tracks and counts, or, new since,
-    has no groups yet, which its page fetches when it is shown: never an empty list that
-    would read as an empty playlist."""
+    whose tracks were not fetched (unchanged, a quick pass, a failed read) keeps last time's
+    tracks and counts, or, new since, has no groups yet, which its page fetches when it is
+    shown: never an empty list that would read as an empty playlist.
+
+    `modified` is the listing's `lastModifiedDate` when the tracks were read now, and stays
+    last time's when they were kept: it says which listing the tracks in hand belong to, so
+    a later pass compares the right dates (playlist_unchanged)."""
     playlists = []
     for raw in raw_playlists:
         playlist_id = str(raw.get('id') or '')
+        attributes = raw.get('attributes') or {}
         tracks = playlist_tracks.get(playlist_id)
         item = normalize.normalize_playlist(raw, cache_dir, tracks=tracks or [],
                                             art_urls=art_urls)
@@ -519,14 +572,18 @@ def _playlists(raw_playlists, playlist_tracks, cache_dir, art_urls, previous):
             if old is not None and old.get('groups'):
                 item['groups'] = old['groups']
                 counted = old
+                if isinstance(old.get('modified'), str):
+                    item['modified'] = old['modified']
             else:
                 item['groups'] = []
-                counted = {'trackCount': (raw.get('attributes') or {}).get('trackCount')}
+                counted = {'trackCount': attributes.get('trackCount')}
             for key in ('trackCount', 'durationMs', 'countLabel'):
                 if counted.get(key) is not None:
                     item[key] = counted[key]
                 else:
                     item.pop(key, None)
+        elif isinstance(attributes.get('lastModifiedDate'), str):
+            item['modified'] = attributes['lastModifiedDate']
         playlists.append(item)
     return playlists
 
@@ -588,6 +645,14 @@ class _Previous:
         if self._playlists is None:
             self._playlists = {entry.get('id'): entry for entry in self.section('playlists')}
         return self._playlists.get(playlist_id)
+
+    def playlist_stamps(self):
+        """{playlist id: (modified, trackCount)} for every playlist whose tracks the file
+        holds under a stamp: what playlist_unchanged() checks a listing against. Reads the
+        file: call it in a thread."""
+        return {entry.get('id'): (entry['modified'], entry.get('trackCount'))
+                for entry in self.section('playlists')
+                if entry.get('groups') and isinstance(entry.get('modified'), str)}
 
     def forget(self):
         self._data = self._playlists = None
@@ -695,6 +760,19 @@ def progress_text(section, done, total):
     if not total:
         return uncounted
     return counted.format(done=f'{done:n}', total=f'{total:n}')
+
+
+def phase_text(phases, ended):
+    """The seconds each phase of a run took, for the log: `phases` is [(section, started)]
+    at each section's first progress report, in order ('' as the run starts: the engine's
+    start), each lasting until the next section's first report, the last until `ended`. The
+    normalising lands in the last fetched section's time, the write and the reload in the
+    artwork's: "engine 0.1, songs 12.1, playlists 13.0, …"."""
+    if not phases:
+        return ''
+    ends = [started for _section, started in phases[1:]] + [ended]
+    return ', '.join(f'{section or "engine"} {end - started:.1f}'
+                     for (section, started), end in zip(phases, ends, strict=True))
 
 
 class LibrarySync(GObject.Object):
@@ -805,11 +883,14 @@ class LibrarySync(GObject.Object):
         engine = app.engine
         started = time.monotonic()
         live = [True]
+        phases = []  # (section, when its first report came), for the log's timings
 
         def progress(section, done, total):
             # A report the build thread queued before the run ended arrives after it: the
             # banner is not shown again for it.
             if live[0]:
+                if not phases or phases[-1][0] != section:
+                    phases.append((section, time.monotonic()))
                 self.emit('progress', section, done, total)
 
         app.library.syncing = True  # an empty library is on its way, not empty (the pages)
@@ -840,11 +921,13 @@ class LibrarySync(GObject.Object):
         if quick:
             # No last-sync stamp and no toast: the write's own toast has been shown, and a
             # quick pass must not put off the full one the clock is waiting for.
-            log.info('quick sync done in %.0f s', time.monotonic() - started)
+            log.info('quick sync done in %.0f s (%s)', time.monotonic() - started,
+                     phase_text(phases, time.monotonic()))
             return
         app.settings.set_string(app.account_key('last-sync'),
                                 datetime.now(UTC).isoformat(timespec='seconds'))
-        log.info('sync done in %.0f s', time.monotonic() - started)
+        log.info('sync done in %.0f s (%s)', time.monotonic() - started,
+                 phase_text(phases, time.monotonic()))
         failed = (counts.get('art') or {}).get('failed', 0)
         if failed and not retry:
             log.info('%d thumbnails could not be fetched: trying again in %d minutes', failed,

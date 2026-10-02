@@ -110,6 +110,9 @@ Item = {
   "albumCount": 3,                                   // artists
   "catalogId": "…" /* or null */, "url": "https://music.apple.com/…" /* or null */,
   "attributes": {"isFavourites": true, "canEdit": false},   // playlists, when they apply
+  "modified": "2025-05-01T09:00:00Z",                // playlists: Apple's lastModifiedDate as
+                                                     // listed when `groups` was last read; the
+                                                     // sync keeps them while it holds (sync.py)
   "play": {"kind": "album", "id": "l.…"},            // what the bridge's play() takes
   "groups": [{"name": "Disc 1", "play": {…}, "entries": [Track]}]   // an album's discs, a
                                                      // playlist's "Tracks", an artist's albums

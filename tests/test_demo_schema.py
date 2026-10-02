@@ -304,7 +304,8 @@ class TestDemoLibrarySchema(unittest.TestCase):
 
     def test_the_demo_has_the_normalisers_shapes(self):
         # Each kind of Item has the keys the real sync gives it (normalize), no more, no less,
-        # apart from this app's own additions (library.json's `attributes`, `artUrl`).
+        # apart from this app's own additions (library.json's `attributes`, `artUrl`, and a
+        # playlist's `modified`).
         real = {
             'album': normalize.normalize_album({'id': 'l.a', 'attributes': {'name': 'A'}}),
             'playlist': normalize.normalize_playlist({'id': 'p.1', 'attributes': {'name': 'P'}}),
@@ -313,7 +314,7 @@ class TestDemoLibrarySchema(unittest.TestCase):
             'video': normalize.normalize_item({'id': '1', 'type': 'library-music-videos',
                                                'attributes': {'name': 'V'}}),
         }
-        additions = {'attributes', 'artUrl'}
+        additions = {'attributes', 'artUrl', 'modified'}
         for name, items in self.data['sections'].items():
             if name == 'songs':
                 continue  # Tracks, not Items
