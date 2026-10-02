@@ -252,6 +252,6 @@ changes, change it here, with the date. The plan they came from is in
 
 ## Open
 
-- Nothing. The questions that were open here are settled above; what is left before the
-  first release is in `TODO.md` and the open issues.
+- Nothing. The questions that were open here are settled above; what is left is in
+  `TODO.md` and the open issues.
 
