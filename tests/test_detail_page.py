@@ -515,12 +515,12 @@ class ArtistWordsTest(PageTestCase):
 
     def test_a_catalog_artist_and_a_library_one(self):
         from applemusic.library import Item
-        from applemusic.pages.artist import catalog_id
+        from applemusic.related import artist_catalog_id
 
-        self.assertEqual(catalog_id(Item({'id': '42', 'kind': 'artist'})), '42')
-        self.assertEqual(catalog_id(Item({'id': 'l.art001', 'kind': 'artist',
-                                          'catalogId': '43'})), '43')
-        self.assertIsNone(catalog_id(Item({'id': 'l.art_abc', 'kind': 'artist'})))
+        self.assertEqual(artist_catalog_id(Item({'id': '42', 'kind': 'artist'})), '42')
+        self.assertEqual(artist_catalog_id(Item({'id': 'l.art001', 'kind': 'artist',
+                                                 'catalogId': '43'})), '43')
+        self.assertIsNone(artist_catalog_id(Item({'id': 'l.art_abc', 'kind': 'artist'})))
 
 
 if __name__ == '__main__':

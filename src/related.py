@@ -8,6 +8,8 @@ song, a music video or an album is by.
     library_album(library, obj)       the library's album Item a Track or song Item is on
     library_artist(library, obj)      the library's artist Item obj is by
     catalog_target(obj)               (kind, catalog id) that Engine.related() looks obj up by
+    artist_catalog_id(item)           the catalog id an artist Item says it is, or None
+    artist_song_ids(item, library)    the catalog songs Engine.catalog_artist() finds it by
     from_answer(library, answer, kind, name)   the Item to open from related()'s answer
     shows(here, obj, kind)            whether the page showing `here` is obj's album or artist
     same_page(here, item)             whether `item` is the page showing `here`
@@ -39,6 +41,8 @@ JOINER = re.compile(r'\s*[,&+/;]|\s+(?:feat|ft|featuring|with|and|x|vs)\b')
 
 # The kinds an artist is offered for.
 ARTIST_KINDS = ('song', 'video', 'album')
+# How many of a library artist's songs are asked for their catalog artist, at most.
+SONGS_ASKED = 3
 
 
 def _key(text):
@@ -96,6 +100,38 @@ def catalog_target(obj):
     if not item_id or is_library_id(item_id):
         return None
     return kind, str(item_id)
+
+
+def artist_catalog_id(item):
+    """The catalog artist an artist Item is, when it says: a catalog artist's own id, or the
+    catalog id a library artist carries (None for the library's made-up artists, which the
+    engine finds through their songs: artist_song_ids())."""
+    if item.id and not is_library_id(item.id):
+        return item.id
+    return item.catalog_id or None
+
+
+def artist_song_ids(item, library=None, limit=SONGS_ASKED):
+    """Up to `limit` catalog song ids from an artist's albums, one an album first: what the
+    engine asks for their artist (Engine.catalog_artist), a song the artist is credited on
+    first (a compilation's first is someone else's). A group whose album the library has is
+    empty (the library drops the artist's copy of its tracks as it loads: library.py), so its
+    tracks are the library album's."""
+    ids = []
+    for group in item.groups:
+        stores = [group.entries]
+        if not group.entries.get_n_items() and library is not None:
+            album = library.by_id(group.play.get('kind'), group.play.get('id'))
+            stores = [disc.entries for disc in album.groups] if album is not None else []
+        tracks = [track for store in stores for position in range(store.get_n_items())
+                  for track in (store.get_item(position),) if track.catalog_id]
+        track = next((track for track in tracks if credits(track.artist, item.title)),
+                     tracks[0] if tracks else None)
+        if track is not None:
+            ids.append(track.catalog_id)
+        if len(ids) >= limit:
+            break
+    return ids
 
 
 def has_album(obj):

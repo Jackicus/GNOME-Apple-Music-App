@@ -49,7 +49,8 @@ Remove from Favourites (both, of which the menu shows the one whose action is en
 actions' state says whether the item is loved), Add to Library, Add to Playlist (the
 library's playlists that take songs, folders flattened, then New Playlist…), Remove from
 Playlist (a track shown in a playlist of the user's: `container`); Open in Browser, Copy Link
-(only an address anyone can open: not the web player's library routes); Rename… and Delete
+(only an address anyone can open: not the web player's library routes; a library artist's is
+the catalog artist's page, which the engine finds through their songs); Rename… and Delete
 Playlist… or Delete Folder… (a playlist of the user's, Item.editable; a folder of theirs);
 each only where it applies.
 
@@ -321,6 +322,14 @@ def needs_catalog_url(obj):
             and is_library_id(obj.id) and not _synthetic(obj.id))
 
 
+def needs_catalog_artist(obj):
+    """Whether obj's page is found through the engine: an artist the library made up from
+    its songs' names (no catalog id, no URL), whose catalog artist the engine finds through
+    those songs (Engine.catalog_artist, related.artist_song_ids)."""
+    return (isinstance(obj, Item) and obj.kind == 'artist' and not obj.url
+            and related.artist_catalog_id(obj) is None)
+
+
 def menu_item(action, target, label=None):
     """A Gio.MenuItem running win.<action> with target, labelled as action_labels() says."""
     item = Gio.MenuItem.new(label or action_labels()[action], None)
@@ -390,11 +399,11 @@ def build_menu(obj, playlists=(), storefront=None, here=None, queued=False, cont
     removed = entry_target(container, obj)
     if removed is not None:
         keep.append_item(menu_item('item-remove-from-playlist', removed))
-    if web_url(obj, storefront):
+    if web_url(obj, storefront) or needs_catalog_artist(obj):
         share.append_item(menu_item('item-open-in-browser', target))
-        # Copy Link: an address anyone can open, or a library album's catalog page, which
-        # the engine can say when the link is asked for.
-        if share_url(obj, storefront) or needs_catalog_url(obj):
+        # Copy Link: an address anyone can open, or a library album's or artist's catalog
+        # page, which the engine can say when the link is asked for.
+        if share_url(obj, storefront) or needs_catalog_url(obj) or needs_catalog_artist(obj):
             share.append_item(menu_item('item-copy-link', target))
     for item in manage_items(obj):
         manage.append_item(item)
@@ -1039,9 +1048,13 @@ class ItemActions:
 
     async def link(self, obj, kind=None, item_id=None):
         """obj's music.apple.com page (web_url), a library album's catalog page when the
-        engine can say (needs_catalog_url), or None."""
+        engine can say (needs_catalog_url), a library artist's catalog page, which only the
+        engine can find (needs_catalog_artist: started first if need be; its EngineError is
+        raised), or None."""
         if obj is None:
             obj = Item({'kind': kind, 'id': item_id})
+        if needs_catalog_artist(obj):
+            return await self._catalog_artist_link(obj)
         if needs_catalog_url(obj) and self._engine_ready():
             try:
                 url = await self.engine.catalog_url(obj.kind, obj.id)
@@ -1052,12 +1065,35 @@ class ItemActions:
                 return url
         return web_url(obj, self._storefront())
 
+    async def _catalog_artist_link(self, obj):
+        songs = related.artist_song_ids(obj, self.library)
+        if not songs:
+            return None
+        await self.app.player.ensure_engine()
+        artist_id = await self.engine.catalog_artist(obj.title, songs)
+        if not artist_id:
+            return None
+        return web_url(Item({'kind': 'artist', 'id': artist_id}), self._storefront())
+
+    async def _asked_link(self, obj, kind, item_id):
+        """link(), or False when the user has been told why there is none: the demo has no
+        engine to ask, or the engine's failure was reported."""
+        if needs_catalog_artist(obj) and self.app.refuse_in_demo():
+            return False
+        try:
+            return await self.link(obj, kind, item_id)
+        except EngineError as error:
+            self.app.report(error)
+            return False
+
     def _on_open_in_browser(self, _action, parameter):
         obj, kind, item_id = self._unpack(parameter)
         return self.app.spawn(self._open(obj, kind, item_id))
 
     async def _open(self, obj, kind, item_id):
-        url = await self.link(obj, kind, item_id)
+        url = await self._asked_link(obj, kind, item_id)
+        if url is False:
+            return
         if not url:
             self.app.toast(_('This has no page to open'))
             return
@@ -1082,9 +1118,12 @@ class ItemActions:
         return self.app.spawn(self._copy(obj, kind, item_id))
 
     async def _copy(self, obj, kind, item_id):
-        """The link on the clipboard, when it is one anyone can open (a library album's
-        catalog page comes from the engine; without it, the album has only its owner's)."""
-        url = await self.link(obj, kind, item_id)
+        """The link on the clipboard, when it is one anyone can open (a library album's or
+        artist's catalog page comes from the engine; without it, the album has only its
+        owner's)."""
+        url = await self._asked_link(obj, kind, item_id)
+        if url is False:
+            return
         if not is_shareable(url):
             self.app.toast(_('This has no link to copy'))
             return
