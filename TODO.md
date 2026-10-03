@@ -9,10 +9,6 @@ GitHub release (`docs/release.md`); why the app is built the way it is, is in
 
 ## Open
 
-- [ ] A quick review pass over the three changes of 2026-10-03 (playlist management #269,
-      playlist order #267, and the library-only artist view), by a Fable agent, since they were
-      built by a Sonnet-class session: the `review-pass` skill against CLAUDE.md's rules (page
-      lifetimes, strings, tests, docs), plus a look at `git diff 8c1a803..main`.
 - [ ] Publish to the AUR when the maintainer wants it: `build-aux/aur/` is ready (set the
       `# Maintainer:` contact, `updpkgsums && makepkg --printsrcinfo > .SRCINFO`, `makepkg -si`
       to try it, then push to aur.archlinux.org with the maintainer's account; README's install
