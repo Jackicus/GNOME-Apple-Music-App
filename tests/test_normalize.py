@@ -575,6 +575,10 @@ class TestSync(unittest.TestCase):
         band = next(artist for artist in artists if artist['title'] == 'The Invented Band')
         self.assertEqual([(group['name'], group['play']) for group in band['groups']],
                          [('Loose Ends', play)])
+        # Its id is the one made from the group's and the artist's names, by which the
+        # library's page of the artist finds the album (discography.py).
+        self.assertEqual(stand_in['id'],
+                         normalize.stand_in_album_id(band['groups'][0]['name'], band['title']))
 
     def test_group_songs_into_albums_and_artists(self):
         songs = [

@@ -18,9 +18,11 @@ endif
 blueprints = []
 foreach blueprint : files(
     'pages/artist.blp',
+    'pages/artists.blp',
     'pages/detail.blp',
     'pages/grid.blp',
     'pages/home.blp',
+    'pages/library_artist.blp',
     'pages/radio.blp',
     'pages/search.blp',
     'pages/shelves.blp',
@@ -100,6 +102,7 @@ install_data(
   'background.py',
   'cache.py',
   'discord.py',
+  'discography.py',
   'engine.py',
   'errors.py',
   'i18n.py',
@@ -126,9 +129,11 @@ install_data(
 install_data(
   'pages/__init__.py',
   'pages/artist.py',
+  'pages/artists.py',
   'pages/detail.py',
   'pages/grid.py',
   'pages/home.py',
+  'pages/library_artist.py',
   'pages/made_for_you.py',
   'pages/new.py',
   'pages/radio.py',
@@ -150,6 +155,7 @@ install_data(
 
 install_data(
   'widgets/__init__.py',
+  'widgets/artist_row.py',
   'widgets/artwork.py',
   'widgets/category_tile.py',
   'widgets/context_menu.py',

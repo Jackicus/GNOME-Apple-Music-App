@@ -1494,6 +1494,13 @@ def recommendation_shelves(raw_recs, cache_dir=None, art_urls=None):
                                    settle=False, art_urls=art_urls)
 
 
+def stand_in_album_id(album_name, artist_name):
+    """The id of the stand-in album the library makes up for the loose songs of that album
+    and artist name: `l.alb_` and a hash of the two. The sync's, and how the library's artist
+    view finds the album a group of an artist's loose songs is (discography.py)."""
+    return f"l.alb_{hashlib.md5(f'{album_name}:{artist_name}'.encode()).hexdigest()[:12]}"
+
+
 def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
     """Group songs from /v1/me/library/songs?include=albums into albums and artists.
 
@@ -1527,7 +1534,7 @@ def group_songs_into_albums_and_artists(songs, cache_dir=None, art_urls=None):
                 alb_attrs.setdefault('contentRating', s_attrs.get('contentRating'))
             alb_obj = dict(alb_rel, attributes=alb_attrs)
         else:
-            alb_id = f"l.alb_{hashlib.md5(f'{album_name}:{artist_name}'.encode()).hexdigest()[:12]}"
+            alb_id = stand_in_album_id(album_name, artist_name)
             alb_obj = {
                 'id': alb_id,
                 'type': 'library-albums',
