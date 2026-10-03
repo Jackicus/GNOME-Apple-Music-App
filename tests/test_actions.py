@@ -66,6 +66,15 @@ VIDEO_TRACK = Track({'id': 'i.vid1', 'catalogId': '1000000011', 'title': 'Harbou
 BAND = Item({'id': 'l.art_00000000band', 'kind': 'artist', 'title': 'The Invented Band',
              'play': {}})
 
+# A library artist of songs the library has no album for: their group holds the songs.
+LOOSE_ARTIST = Item({'id': 'l.art_00000000lose', 'kind': 'artist', 'title': 'Loose Ends Trio',
+                     'play': {'kind': 'artist', 'id': 'l.art_00000000lose'},
+                     'groups': [{'name': 'Loose Ends',
+                                 'play': {'kind': 'album', 'id': 'l.alb_0123456789ab'},
+                                 'entries': [{'id': 'i.song7', 'catalogId': '1000000050',
+                                              'title': 'Drift',
+                                              'artist': 'Loose Ends Trio'}]}]})
+
 # What the engine's item() answers for a playlist: the Item's shape with its groups.
 PLAYLIST_ANSWER = {'id': 'p.pl1', 'kind': 'playlist', 'title': 'Road Trip', 'trackCount': 1,
                    'play': {'kind': 'playlist', 'id': 'p.pl1'},
@@ -229,7 +238,6 @@ class MenuTest(unittest.TestCase):
     def test_what_has_no_menu(self):
         self.assertIsNone(build_menu(TOP_LEVEL))  # All Playlists: not renamed, nor deleted
         self.assertIsNone(build_menu(CATEGORY))
-        self.assertIsNone(build_menu(LIBRARY_ARTIST))  # its id is the library's invention
         self.assertIsNone(build_menu(object()))
 
     def test_other_kinds(self):
@@ -280,6 +288,13 @@ class MenuTest(unittest.TestCase):
         # A catalog album has both; a library album too (its catalog page, from the engine).
         self.assertIn('win.item-copy-link', names(build_menu(CATALOG_ALBUM)))
         self.assertIn('win.item-copy-link', names(build_menu(LIBRARY_ALBUM)))
+
+    def test_a_library_artist_offers_their_apple_music_page(self):
+        # Nothing to play (the library made them up), but Apple Music's page of them, which
+        # the engine finds when it is asked for.
+        self.assertEqual(actions_of(build_menu(LIBRARY_ARTIST)), [
+            ('win.item-open-in-browser', ('artist', 'l.art_0123456789ab')),
+            ('win.item-copy-link', ('artist', 'l.art_0123456789ab'))])
 
     def test_sidebar_menu(self):
         menu = Gio.Menu()
@@ -386,6 +401,7 @@ class FakeEngine(GObject.Object):
         self.fail = None
         self.ratings = {}
         self.catalog_urls = {}
+        self.catalog_artists = {}  # a library artist's name -> catalog_artist()'s answer
         self.items = {}  # (kind, id) -> the Item dict item() answers
         self.related_answers = {}  # (kind, id) -> related()'s answer
         self.listings = []  # folder_children()'s answers, one per call; then none
@@ -414,6 +430,10 @@ class FakeEngine(GObject.Object):
 
     async def add_to_playlist(self, playlist_id, song_id, kind='song'):
         await self._record('add_to_playlist', playlist_id, song_id, kind)
+
+    async def catalog_artist(self, name, song_ids):
+        await self._record('catalog_artist', name, tuple(song_ids))
+        return self.catalog_artists.get(name)
 
     async def catalog_url(self, kind, item_id):
         await self._record('catalog_url', kind, item_id)
@@ -796,6 +816,37 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         self.actions.menu_for(UPLOAD_TRACK)
         await self.run_action('item-copy-link', 'song', 'i.song2')
         self.assertEqual(self.app.toasts[-1], 'This has no link to copy')
+
+    async def test_a_library_artists_link_is_their_catalog_page(self):
+        self.app.engine.state = 'down'  # started for the lookup
+        self.app.engine.catalog_artists['Loose Ends Trio'] = '1000000051'
+        self.actions.menu_for(LOOSE_ARTIST)
+        await self.run_action('item-open-in-browser', 'artist', LOOSE_ARTIST.id)
+        await self.run_action('item-copy-link', 'artist', LOOSE_ARTIST.id)
+        self.assertEqual(self.launched, ['https://music.apple.com/gb/artist/1000000051'])
+        self.assertEqual(self.window.clipboard.value,
+                         'https://music.apple.com/gb/artist/1000000051')
+        self.assertIn(('catalog_artist', 'Loose Ends Trio', ('1000000050',)),
+                      self.app.engine.calls)
+        self.assertEqual(self.app.player.ensured, 2)
+        # Not found in the catalog: nothing to open; a failure is reported, not toasted twice.
+        del self.app.engine.catalog_artists['Loose Ends Trio']
+        await self.run_action('item-open-in-browser', 'artist', LOOSE_ARTIST.id)
+        self.assertEqual(self.app.toasts[-1], 'This has no page to open')
+        self.app.engine.fail = EngineError('not-signed-in', 'sign in first')
+        toasts = len(self.app.toasts)
+        await self.run_action('item-copy-link', 'artist', LOOSE_ARTIST.id)
+        self.assertEqual(self.app.reported, ['not-signed-in'])
+        self.assertEqual(len(self.app.toasts), toasts)
+        self.assertEqual(len(self.launched), 1)
+
+    async def test_a_library_artists_link_in_the_demo(self):
+        self.app.demo = True
+        self.actions.menu_for(LOOSE_ARTIST)
+        await self.run_action('item-open-in-browser', 'artist', LOOSE_ARTIST.id)
+        self.assertEqual(self.app.toasts, ['Not available with the demo library'])
+        self.assertEqual(self.app.engine.calls, [])
+        self.assertEqual(self.launched, [])
 
     async def test_a_foreign_catalog_answer_is_not_opened(self):
         self.app.engine.catalog_urls['l.alb1'] = 'http://evil.example/album'
