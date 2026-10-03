@@ -37,6 +37,7 @@ class FakeInstance {
         this.failures = {};     // method -> what it rejects with
         this.apiAnswers = {};   // path -> the body mk.api.music(path) answers
         this.writeStatus = 204; // what a write's request answers
+        this.writeBody = '';    // and the body it answers with (a 201's new resource)
         this.isAuthorized = false;
         this.storefrontId = 'gb';
         this.bitrate = 256;
@@ -65,7 +66,7 @@ class FakeInstance {
                             const status = instance.writeStatus;
                             return {
                                 ok: status < 400, status: status, statusText: '',
-                                async text() { return ''; },
+                                async text() { return instance.writeBody; },
                             };
                         },
                     };

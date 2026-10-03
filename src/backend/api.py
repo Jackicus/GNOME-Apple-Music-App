@@ -9,6 +9,8 @@ The standard library only; engine.py and actions.py use it.
     is_library_id('l.abc')              # True: under /v1/me/library, not the catalog
     item_endpoint('album', id, 'gb')    # '/v1/catalog/gb/albums/<id>?include=tracks,artists'
     resource_type('song', 'i.1')        # 'library-song' (the singular: callers add the "s")
+    track_type('song', 'i.1')           # 'library-songs': what a playlist takes it as
+    is_deleted(resource)                # a deleted playlist or folder Apple still lists
     page_data(answer)                   # the page's resources: its `data` list's dicts
     api_error(answer, 'search')         # EngineError('api', 'search: 404 Not Found: …',
                                         # status=404) for Apple's {errors: [...]}, else None
@@ -122,6 +124,28 @@ def resource_type(kind, item_id):
     if base is None or item_id in (None, ''):
         raise EngineError('usage', f'no rating for {kind or "nothing"} {item_id or ""}'.strip())
     return f'library-{base}' if is_library_id(item_id) and base != 'station' else base
+
+
+def is_deleted(resource):
+    """Whether a library playlist or playlist folder, as a listing has it, is one the account
+    deleted: Apple goes on listing it for a while (seen for minutes on 2026-10-03), with
+    neither a name nor a date added, canEdit and canDelete false, and a playlist's
+    lastModifiedDate the epoch. Every live one has its name."""
+    attributes = resource.get('attributes') if isinstance(resource, dict) else None
+    if not isinstance(attributes, dict):
+        return False
+    return ('name' not in attributes and 'dateAdded' not in attributes
+            and attributes.get('canEdit') is False and attributes.get('canDelete') is False)
+
+
+def track_type(kind, item_id):
+    """The resource type (plural) a song or music video (`kind` 'song' or 'video') with that
+    id is added to a playlist as: 'library-songs' for a library id, 'songs' for a catalog
+    one, 'library-music-videos', 'music-videos'. None for anything else."""
+    base = RESOURCE_TYPES.get(kind)
+    if base not in ('song', 'music-video') or item_id in (None, ''):
+        return None
+    return f'{"library-" if is_library_id(item_id) else ""}{base}s'
 
 
 def page_data(answer):

@@ -141,6 +141,7 @@ install_data(
 install_data(
   'dialogs/__init__.py',
   'dialogs/about.py',
+  'dialogs/playlist.py',
   'dialogs/preferences.py',
   'dialogs/shortcuts.py',
   'dialogs/signin.py',

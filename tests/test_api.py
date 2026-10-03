@@ -7,8 +7,9 @@ import unittest
 
 from tests import ROOT  # noqa: F401  (registers src/ as the applemusic package)
 
-from applemusic.backend.api import (api_error, http_status, is_final, is_library_id,
-                                    item_endpoint, page_data, resource_type)
+from applemusic.backend.api import (api_error, http_status, is_deleted, is_final,
+                                    is_library_id, item_endpoint, page_data, resource_type,
+                                    track_type)
 from applemusic.backend.errors import EngineError
 
 
@@ -58,6 +59,33 @@ class ResourceTypeTest(unittest.TestCase):
             with self.assertRaises(EngineError) as raised:
                 resource_type(kind, item_id)
             self.assertEqual(raised.exception.code, 'usage')
+
+
+class PlaylistTest(unittest.TestCase):
+    def test_track_types(self):
+        self.assertEqual(track_type('song', 'i.1'), 'library-songs')
+        self.assertEqual(track_type('song', '1000000001'), 'songs')
+        self.assertEqual(track_type('video', 'i.1'), 'library-music-videos')
+        self.assertEqual(track_type('musicVideo', '1'), 'music-videos')
+        for kind, item_id in (('album', 'l.1'), ('station', 'ra.1'), ('song', ''), (None, '1')):
+            self.assertIsNone(track_type(kind, item_id))
+
+    def test_what_the_account_deleted(self):
+        # As Apple went on listing a deleted playlist, and a deleted folder (2026-10-03).
+        self.assertTrue(is_deleted({'id': 'p.1', 'attributes': {
+            'canDelete': False, 'canEdit': False, 'hasCatalog': False,
+            'lastModifiedDate': '1970-01-01T00:00:00Z'}}))
+        self.assertTrue(is_deleted({'id': 'p.2', 'attributes': {'canDelete': False,
+                                                                'canEdit': False}}))
+        # Live ones: the user's, Favourite Songs, Apple's own, a folder.
+        for attributes in ({'name': 'Road Trip', 'canEdit': True, 'canDelete': True},
+                           {'name': 'Favourite Songs', 'canEdit': False, 'canDelete': False,
+                            'dateAdded': '2026-01-01T00:00:00Z'},
+                           {'name': 'Apple Picks', 'canEdit': False, 'canDelete': True},
+                           {'name': 'Evenings', 'canEdit': False, 'canDelete': True}):
+            self.assertFalse(is_deleted({'id': 'p.3', 'attributes': attributes}), attributes)
+        self.assertFalse(is_deleted({'id': 'p.4'}))
+        self.assertFalse(is_deleted(None))
 
 
 class PageDataTest(unittest.TestCase):

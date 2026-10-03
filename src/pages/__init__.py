@@ -21,7 +21,7 @@ the way out while the account is signed out: SignInOffer puts Sign In… on its 
 
 from gettext import gettext as _
 
-from gi.repository import Gio, GObject, Gtk
+from gi.repository import Gio, GLib, GObject, Gtk
 
 from ..library import ROOT_FOLDER
 from ..sidebar import FOLDER_ICON, PLAYLIST_ICON
@@ -197,10 +197,12 @@ def _all_playlists(destination, library):
     # none, each by title, as the sidebar lists them (library.PlaylistTree).
     from .grid import GridPage
 
-    return GridPage(library, destination.title, lambda: library.folder_items(ROOT_FOLDER),
+    page = GridPage(library, destination.title, lambda: library.folder_items(ROOT_FOLDER),
                     icon_name=destination.icon_name,
                     empty_title=_('No Playlists'),
                     empty_description=_('Playlists in your library appear here'))
+    add_folder_buttons(page, library, ROOT_FOLDER)
+    return page
 
 
 def _favourite_songs(destination, library):
@@ -250,7 +252,31 @@ def folder(library, folder_id, title, root=True):
     item = library.by_id('folder', folder_id) if not root else None
     if item is not None:
         item.bind_property('title', page, 'title', GObject.BindingFlags.SYNC_CREATE)
+    add_folder_buttons(page, library, folder_id)
     return page
+
+
+def add_folder_buttons(page, library, folder_id):
+    """The header buttons of All Playlists (`folder_id` ROOT_FOLDER) and of a folder's page
+    (a GridPage): New Playlist, in that folder, and a folder's More Options menu (Rename…,
+    Delete Folder…: the item actions' menu for the folder Item, looked up by its id as it
+    opens, so it follows a reload)."""
+    new = Gtk.Button(icon_name='list-add-symbolic', tooltip_text=_('New Playlist'),
+                     action_name='win.item-new-playlist')
+    new.set_action_target_value(GLib.Variant('(ss)', ('folder', folder_id)))
+    page.header_bar.pack_start(new)
+    if folder_id == ROOT_FOLDER:
+        return
+    more = Gtk.MenuButton(icon_name='view-more-symbolic', tooltip_text=_('More Options'))
+    # Holds the library and the id, never the page: the page frees as it should.
+    more.set_create_popup_func(lambda button: _folder_menu(button, library, folder_id))
+    page.header_bar.pack_end(more)
+
+
+def _folder_menu(button, library, folder_id):
+    actions = getattr(button.get_root(), 'item_actions', None)
+    folder = library.by_id('folder', folder_id)
+    button.set_menu_model(actions.menu_for(folder) if actions and folder else None)
 
 
 PAGES = {

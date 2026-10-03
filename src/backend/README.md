@@ -56,10 +56,35 @@ calls `window.__appleMusicLibrary.<name>(...)`; the Engine's commands are thin c
 | `nowPlaying()` | `{state, track, position, duration, shuffle, repeat, volume}`; `state` is MusicKit's `PlaybackStates` name |
 | `queue()` | `{index, items: [Track]}` |
 | `queueJump(index)` | `{ok: true}` (`mk.changeToMediaAtIndex`) |
-| `rating(kind, id, love)`, `addToLibrary(kind, id)`, `addToPlaylist(playlistId, songId, type)` | `{ok: true}`, or a throw with Apple's status and message. Writes go through `mk.api.client.createRequest(...).send()`: Apple answers them 202 or 204 with no body, which `music()` cannot read |
+| `rating(kind, id, love)`, `addToLibrary(kind, id)`, `addToPlaylist(playlistId, songId, type)` | `{ok: true}`, or a throw with Apple's status and message. Writes go through `mk.api.client.createRequest(...).send()`: Apple answers them 202 or 204 with no body, which `music()` cannot read (a body Apple does send comes back as `data`) |
+| `createPlaylist(attributes, tracks, parentId)` | `{id}`, the new playlist's; `attributes` `{name, description?}`, `tracks` `[{id, type}]` |
+| `updatePlaylist(id, attributes)`, `deletePlaylist(id)`, `removeFromPlaylist(id, type, trackId)`, `replacePlaylistTracks(id, tracks)`, `updateFolder(id, attributes)`, `deleteFolder(id)` | `{ok: true}`, or a throw as above (the requests below) |
 | `lyrics(catalogSongId)` | `{synced, lines: [{startMs, endMs, text, stanza?}]}` (the TTML read with the page's XML parser; `stanza: true` on a verse's first line) |
 | `search(term, limit)`, `suggest(term, limit)`, `searchLanding()`, `category(id)` | the API's answer, shaped by `normalize.search_results()`, `search_suggestions()`, `search_landing()`, `category_page()` |
 | `subscribe()`, `unsubscribe()` | MusicKit's listeners on or off, once per instance |
+
+### The playlist writes
+
+Found in music.apple.com's own code (its `requestCreateNewPlaylist`,
+`requestUpdatePlaylist`, `requestRemoveFromPlaylist`, `requestUpdatePlaylistTracks`,
+`requestMoveToFolder` and `requestDeleteFromLibrary`) and checked against a real account on
+2026-10-03, on playlists and folders made for the check and deleted after it:
+
+| Request | Apple's answer |
+|---|---|
+| `POST /v1/me/library/playlists` `{attributes: {name, description?}, relationships: {tracks: {data: [{id, type}]}, parent: {data: [{id, type: 'library-playlist-folders'}]}}}` | 201 with the new playlist; both relationships may be left out (an empty playlist at the top level). Listed by the listings 4 to 6.5 s later |
+| `PATCH /v1/me/library/playlists/<id>` `{attributes: {name?, description?}}` | 204; either attribute alone; listed within a second |
+| `DELETE /v1/me/library/playlists/<id>/tracks?ids[library-songs]=<id>&mode=all` | 204: every entry of that song goes. The tracks of a library playlist are `library-songs` (or `library-music-videos`) by the song's own `i.` id, and carry no id of the entry |
+| `PUT /v1/me/library/playlists/<id>/tracks` `{data: [{id, type}]}` | 204: the list replaced whole, in that order (the web player's reorder); one entry of a song held twice is removed so |
+| `DELETE /v1/me/library/playlists/<id>` | 204. A playlist is still listed for minutes after, nameless (`api.is_deleted`), and a second DELETE is a 500 |
+| `PUT /v1/me/library/playlists/<id>/parent` `{data: [{id: <folder>, type: 'library-playlist-folders'}]}` | 204: moved into the folder (not used yet) |
+| `POST /v1/me/library/playlist-folders` `{attributes: {name}}` | 201 with the folder (not used yet: the web player makes none) |
+| `PATCH /v1/me/library/playlist-folders/<id>` `{attributes: {name}}` | 204, although Apple lists every folder with `canEdit` false |
+| `DELETE /v1/me/library/playlist-folders/<id>` | 204, the folder and what is in it gone; but playlists deleted with their folder stayed listed, nameless, for more than half an hour, where one deleted by itself left the listing within minutes: `Engine.delete_folder()` deletes the contents first |
+
+A playlist the user may change lists `canEdit` and `canDelete` true; Favourite Songs both
+false; one of Apple's added to the library `canEdit` false, `canDelete` true. The listing
+carries a playlist's `description` when it has one.
 
 ## Events
 

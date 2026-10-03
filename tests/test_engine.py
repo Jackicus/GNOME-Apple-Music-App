@@ -45,7 +45,9 @@ PLAYBACK_METHODS = ('signout', 'play', 'playNext', 'playLater', 'control', 'seek
                     'shuffle',
                     'repeat', 'nowPlaying', 'queue', 'queueJump', 'lyrics',
                     'search', 'suggest', 'searchLanding', 'category',
-                    'rating', 'addToLibrary', 'addToPlaylist')
+                    'rating', 'addToLibrary', 'addToPlaylist', 'createPlaylist',
+                    'updatePlaylist', 'deletePlaylist', 'removeFromPlaylist',
+                    'replacePlaylistTracks', 'updateFolder', 'deleteFolder')
 
 
 class UnixFakeChrome(FakeBrowser):
@@ -1616,6 +1618,132 @@ class LibraryWriteTest(EngineFixture):
                 await coro
             self.assertEqual(raised.exception.code, 'not-signed-in')
         self.assertEqual(self.page.bridge_calls, [])
+
+
+def listed(*entries):
+    """A listing page of library playlists and folders: (type, id, name) each, name None for
+    one the account deleted (Apple's nameless leftover)."""
+    data = []
+    for kind, item_id, name in entries:
+        attributes = ({'name': name, 'canEdit': True, 'canDelete': True,
+                       'dateAdded': '2026-01-01T00:00:00Z'} if name is not None
+                      else {'canEdit': False, 'canDelete': False,
+                            'lastModifiedDate': '1970-01-01T00:00:00Z'})
+        data.append({'id': item_id, 'type': f'library-{kind}s', 'attributes': attributes})
+    return {'data': data}
+
+
+class PlaylistWriteTest(EngineFixture):
+    """Making, renaming and deleting playlists and folders, and taking one entry out of a
+    playlist: the bridge calls the engine makes, from the playlist's tracks as the fake page
+    lists them."""
+
+    async def up(self):
+        self.page.authorized = True
+        await self.engine.start()
+
+    def tracks(self, playlist_id, *ids):
+        self.page.api_answers[(f'/v1/me/library/playlists/{playlist_id}/tracks', 0)] = {
+            'data': [{'id': song_id, 'type': 'library-songs'} for song_id in ids]}
+
+    async def test_create_edit_and_delete_a_playlist(self):
+        await self.up()
+        self.page.bridge_answers['createPlaylist'] = {'id': 'p.new'}
+        new_id = await self.engine.create_playlist(
+            ' Night Drive ', 'Late', [('song', 'i.song1'), ('song', '1000000001'),
+                                      ('video', 'i.video1')], folder_id='p.fd1')
+        self.assertEqual(new_id, 'p.new')
+        await self.engine.create_playlist('Empty', folder_id='root')
+        await self.engine.edit_playlist('p.new', name='Renamed')
+        await self.engine.edit_playlist('p.new', description='')
+        await self.engine.edit_playlist('p.new')  # nothing to change: nothing sent
+        await self.engine.delete_playlist('p.new')
+        self.assertEqual(self.page.bridge_calls, [
+            ('createPlaylist', {'name': 'Night Drive', 'description': 'Late'},
+             [{'id': 'i.song1', 'type': 'library-songs'},
+              {'id': '1000000001', 'type': 'songs'},
+              {'id': 'i.video1', 'type': 'library-music-videos'}], 'p.fd1'),
+            ('createPlaylist', {'name': 'Empty'}, [], None),
+            ('updatePlaylist', 'p.new', {'name': 'Renamed'}),
+            ('updatePlaylist', 'p.new', {'description': ''}),
+            ('deletePlaylist', 'p.new')])
+
+    async def test_what_the_playlist_writes_refuse(self):
+        await self.up()
+        for coro in (self.engine.create_playlist('  '),
+                     self.engine.create_playlist('X', tracks=[('album', 'l.1')]),
+                     self.engine.create_playlist('X', folder_id='1000000001'),
+                     self.engine.edit_playlist('p.1', name=' '),
+                     self.engine.edit_playlist('pl.u-catalog', name='X'),
+                     self.engine.delete_playlist('l.demo'),
+                     self.engine.remove_from_playlist('p.1', ''),
+                     self.engine.rename_folder('root', 'X'),
+                     self.engine.delete_folder('p.playlistsroot')):
+            with self.assertRaises(EngineError) as raised:
+                await coro
+            self.assertEqual(raised.exception.code, 'usage')
+        self.assertEqual(self.page.bridge_calls, [])
+        # A new playlist Apple answered without its id is a failure, not a success.
+        self.page.bridge_answers['createPlaylist'] = {'ok': True}
+        with self.assertRaises(EngineError) as raised:
+            await self.engine.create_playlist('X')
+        self.assertEqual(raised.exception.code, 'api')
+
+    async def test_a_song_the_playlist_holds_once_goes_as_the_web_player_removes_it(self):
+        await self.up()
+        self.tracks('p.1', 'i.a', 'i.b')
+        self.assertTrue(await self.engine.remove_from_playlist('p.1', 'i.b', 1))
+        self.assertEqual(self.page.bridge_calls,
+                         [('removeFromPlaylist', 'p.1', 'library-songs', 'i.b')])
+
+    async def test_one_entry_of_a_song_the_playlist_holds_twice(self):
+        # Apple's DELETE takes every entry of the id: the list goes back whole without the
+        # one at the index, the other entry kept.
+        await self.up()
+        self.tracks('p.1', 'i.a', 'i.b', 'i.a', 'i.c')
+        await self.engine.remove_from_playlist('p.1', 'i.a', 2)
+        # The list changed since the page showed it: the entry of that id nearest the index.
+        self.tracks('p.2', 'i.x', 'i.a', 'i.b', 'i.a')
+        await self.engine.remove_from_playlist('p.2', 'i.a', 0)
+        entry = {'type': 'library-songs'}
+        self.assertEqual(self.page.bridge_calls, [
+            ('replacePlaylistTracks', 'p.1', [dict(entry, id='i.a'), dict(entry, id='i.b'),
+                                              dict(entry, id='i.c')]),
+            ('replacePlaylistTracks', 'p.2', [dict(entry, id='i.x'), dict(entry, id='i.b'),
+                                              dict(entry, id='i.a')])])
+
+    async def test_a_song_no_longer_in_the_playlist_is_nothing_to_do(self):
+        await self.up()
+        self.tracks('p.1', 'i.a')
+        self.assertFalse(await self.engine.remove_from_playlist('p.1', 'i.z', 0))
+        # An empty playlist: Apple answers 404 for its tracks.
+        self.assertFalse(await self.engine.remove_from_playlist('p.empty', 'i.a', 0))
+        self.assertEqual(self.page.bridge_calls, [])
+
+    async def test_folder_children_leave_out_what_was_deleted(self):
+        await self.up()
+        self.page.api_answers[('/v1/me/library/playlist-folders/p.playlistsroot/children',
+                               0)] = listed(('playlist-folder', 'p.fd1', 'Evenings'),
+                                            ('playlist', 'p.1', 'Road Trip'),
+                                            ('playlist', 'p.gone', None))
+        self.assertEqual(await self.engine.folder_children(), [
+            {'kind': 'folder', 'id': 'p.fd1', 'name': 'Evenings'},
+            {'kind': 'playlist', 'id': 'p.1', 'name': 'Road Trip'}])
+        self.assertEqual(await self.engine.folder_children('p.none'), [])  # Apple's 404
+
+    async def test_a_folder_is_emptied_before_it_is_deleted(self):
+        await self.up()
+        children = '/v1/me/library/playlist-folders/{}/children'
+        self.page.api_answers[(children.format('p.fd1'), 0)] = listed(
+            ('playlist', 'p.1', 'Road Trip'), ('playlist-folder', 'p.fd2', 'Inner'))
+        self.page.api_answers[(children.format('p.fd2'), 0)] = listed(
+            ('playlist', 'p.2', 'Deep'))
+        await self.engine.rename_folder('p.fd1', ' Late Evenings ')
+        await self.engine.delete_folder('p.fd1')
+        self.assertEqual(self.page.bridge_calls, [
+            ('updateFolder', 'p.fd1', {'name': 'Late Evenings'}),
+            ('deletePlaylist', 'p.1'), ('deletePlaylist', 'p.2'), ('deleteFolder', 'p.fd2'),
+            ('deleteFolder', 'p.fd1')])
 
 
 def curator(curator_id, name, short=None):

@@ -17,6 +17,7 @@ from applemusic.actions import (ItemActions, build_menu, fill_sidebar_menu, is_a
                                 is_shareable, library_target, mnemonic_escaped,
                                 now_playing_track, playlist_song, playlist_track, queue_target,
                                 rating_target, share_url, web_url)
+from applemusic import actions as actions_module
 from applemusic.backend.errors import EngineError
 from applemusic.library import Item, PlaylistTree, Track, TrackRef
 from applemusic.player import NowPlaying
@@ -41,6 +42,7 @@ CATALOG_SONG = Item({'id': '1000000007', 'kind': 'song', 'title': 'Pilot Light',
 CATALOG_VIDEO = Item({'id': '1000000012', 'kind': 'video', 'title': 'Pilot Light (Video)',
                       'play': {'kind': 'musicVideo', 'id': '1000000012'}})
 FOLDER = Item({'id': 'l.fd1', 'kind': 'folder', 'title': 'Evenings'})
+TOP_LEVEL = Item({'id': 'root', 'kind': 'folder', 'title': ''})  # the top level: All Playlists
 CATEGORY = Item({'id': '1000000008', 'kind': 'category', 'title': 'Jazz'})
 PLAYLIST = Item({'id': 'p.pl1', 'kind': 'playlist', 'title': 'Road Trip',
                  'play': {'kind': 'playlist', 'id': 'p.pl1'}})
@@ -160,13 +162,16 @@ class MenuTest(unittest.TestCase):
             ('win.item-add-to-playlist', ('p.pl1', 'song', 'i.song1')),
             ('win.item-add-to-playlist', ('p.pl3', 'song', 'i.song1')),
             ('win.item-add-to-playlist', ('p.pl4', 'song', 'i.song1')),
+            ('win.item-new-playlist', ('song', 'i.song1')),
             ('win.item-open-in-browser', ('song', 'i.song1')),
             ('win.item-copy-link', ('song', 'i.song1'))])
         # A playlist's name is shown as it is: its underscores are not mnemonics.
         self.assertIn('work__focus', labels_of(menu))
         self.assertEqual(mnemonic_escaped('a_b__c'), 'a__b____c')
-        # No playlists: no submenu. A catalog track can be added to the library.
+        # No playlists: the submenu has New Playlist… alone. A catalog track can be added to
+        # the library.
         self.assertNotIn('win.item-add-to-playlist', names(build_menu(LIBRARY_TRACK)))
+        self.assertIn('win.item-new-playlist', names(build_menu(LIBRARY_TRACK)))
         self.assertIn('win.item-add-to-library', names(build_menu(CATALOG_TRACK)))
 
     def test_go_to_album_and_artist(self):
@@ -222,7 +227,7 @@ class MenuTest(unittest.TestCase):
         self.assertIsNone(now_playing_track(None))
 
     def test_what_has_no_menu(self):
-        self.assertIsNone(build_menu(FOLDER))
+        self.assertIsNone(build_menu(TOP_LEVEL))  # All Playlists: not renamed, nor deleted
         self.assertIsNone(build_menu(CATEGORY))
         self.assertIsNone(build_menu(LIBRARY_ARTIST))  # its id is the library's invention
         self.assertIsNone(build_menu(object()))
@@ -239,6 +244,35 @@ class MenuTest(unittest.TestCase):
         self.assertEqual(names(build_menu(MADE_UP_ALBUM)), ['win.item-play'])
         self.assertNotIn('win.item-open-in-browser', names(build_menu(UPLOAD_TRACK)))
 
+    def test_a_playlist_of_the_users_is_renamed_and_deleted(self):
+        self.assertEqual(names(build_menu(PLAYLIST))[-2:], ['win.item-rename', 'win.item-delete'])
+        self.assertIn('_Delete Playlist…', labels_of(build_menu(PLAYLIST)))
+        # Apple's own (canEdit false) and Favourite Songs: never.
+        for playlist in (READ_ONLY, FAVOURITES):
+            self.assertFalse({'win.item-rename', 'win.item-delete'}
+                             & set(names(build_menu(playlist))), playlist.title)
+        # A folder of the user's: only those two, Delete Folder… by name.
+        self.assertEqual(actions_of(build_menu(FOLDER)), [
+            ('win.item-rename', ('folder', 'l.fd1')), ('win.item-delete', ('folder', 'l.fd1'))])
+        self.assertIn('_Delete Folder…', labels_of(build_menu(FOLDER)))
+
+    def test_remove_from_playlist_where_the_track_is_shown(self):
+        track = Track({'id': 'i.song1', 'title': 'Harbour Lights', 'type': 'library-songs',
+                       'index': 4}, play={'kind': 'playlist', 'id': 'p.pl1'})
+        menu = build_menu(track, container=PLAYLIST)
+        # Its own entry, by index: the same song twice is two entries.
+        self.assertIn(('win.item-remove-from-playlist', ('p.pl1', 'i.song1', 4)),
+                      actions_of(menu))
+        # Not in a playlist that is not the user's, nor anywhere else.
+        for container in (READ_ONLY, FAVOURITES, LIBRARY_ALBUM, None):
+            self.assertNotIn('win.item-remove-from-playlist',
+                             names(build_menu(track, container=container)))
+        # Every label of the fullest menus has a mnemonic of its own.
+        for labels in (labels_of(menu), labels_of(build_menu(PLAYLIST)),
+                       labels_of(build_menu(FOLDER))):
+            letters = [label[label.index('_') + 1].lower() for label in labels if '_' in label]
+            self.assertEqual(len(letters), len(set(letters)), labels)
+
     def test_copy_link_only_for_a_shareable_page(self):
         # A library playlist's page opens for its owner only: Open in Browser, no Copy Link.
         self.assertIn('win.item-open-in-browser', names(build_menu(PLAYLIST)))
@@ -253,7 +287,21 @@ class MenuTest(unittest.TestCase):
         self.assertEqual(actions_of(menu), [
             ('win.item-play', ('playlist', 'p.pl1')),
             ('win.item-play-next', ('playlist', 'p.pl1')),
-            ('win.item-open-in-browser', ('playlist', 'p.pl1'))])
+            ('win.item-open-in-browser', ('playlist', 'p.pl1')),
+            ('win.item-rename', ('playlist', 'p.pl1')),
+            ('win.item-delete', ('playlist', 'p.pl1'))])
+        # Apple's own and Favourite Songs: played, never renamed or deleted.
+        for playlist in (READ_ONLY, FAVOURITES):
+            fill_sidebar_menu(menu, playlist)
+            self.assertFalse({'win.item-rename', 'win.item-delete'} & set(names(menu)))
+        fill_sidebar_menu(menu, FOLDER)
+        self.assertEqual(actions_of(menu), [
+            ('win.item-new-playlist', ('folder', 'l.fd1')),
+            ('win.item-rename', ('folder', 'l.fd1')),
+            ('win.item-delete', ('folder', 'l.fd1'))])
+        self.assertIn('_Delete Folder…', labels_of(menu))
+        fill_sidebar_menu(menu, TOP_LEVEL)  # All Playlists
+        self.assertEqual(actions_of(menu), [('win.item-new-playlist', ('folder', 'root'))])
         fill_sidebar_menu(menu, None)
         self.assertEqual(menu.get_n_items(), 0)
 
@@ -340,6 +388,7 @@ class FakeEngine(GObject.Object):
         self.catalog_urls = {}
         self.items = {}  # (kind, id) -> the Item dict item() answers
         self.related_answers = {}  # (kind, id) -> related()'s answer
+        self.listings = []  # folder_children()'s answers, one per call; then none
 
     async def _record(self, name, *args):
         self.calls.append((name, *args))
@@ -374,6 +423,35 @@ class FakeEngine(GObject.Object):
         await self._record('related', kind, item_id)
         return self.related_answers.get((kind, item_id), {'album': None, 'artists': []})
 
+    async def create_playlist(self, name, description='', tracks=(), folder_id=None):
+        await self._record('create_playlist', name, description, tuple(tracks), folder_id)
+        return 'p.new'
+
+    async def edit_playlist(self, playlist_id, name=None, description=None):
+        await self._record('edit_playlist', playlist_id, name, description)
+
+    async def delete_playlist(self, playlist_id):
+        await self._record('delete_playlist', playlist_id)
+
+    async def remove_from_playlist(self, playlist_id, track_id, index=None):
+        await self._record('remove_from_playlist', playlist_id, track_id, index)
+        return True
+
+    async def rename_folder(self, folder_id, name):
+        await self._record('rename_folder', folder_id, name)
+
+    async def delete_folder(self, folder_id):
+        await self._record('delete_folder', folder_id)
+
+    async def folder_children(self, folder_id=None):
+        self.calls.append(('folder_children', folder_id))
+        if self.listings:
+            listing = self.listings.pop(0)
+            if isinstance(listing, Exception):
+                raise listing
+            return listing
+        return []
+
     async def item(self, kind, item_id):
         await self._record('item', kind, item_id)
         answer = self.items.get((kind, item_id))
@@ -400,17 +478,24 @@ class FakePlayer:
 class FakeLibrary:
     storefront = 'gb'
 
-    def __init__(self, items):
+    def __init__(self, items, folders=()):
         self.items = {(item.kind, item.id): item for item in items}
         self.playlists = [item for item in items if item.kind == 'playlist']
         self.albums = [item for item in items if item.kind == 'album']
         self.artists = [item for item in items if item.kind == 'artist']
+        self.tree = PlaylistTree(folders, self.playlists)
+        for node in self.tree.folders():
+            self.items[('folder', node.id)] = node.item
+        self.placed = 0
 
     def by_id(self, kind, item_id):
         return self.items.get((kind, item_id))
 
     def playlist_tree(self):
-        return PlaylistTree([], self.playlists)
+        return self.tree
+
+    def place_playlists(self):
+        self.placed += 1
 
     def favourite_songs(self):
         return next((item for item in self.playlists if item.favourites), None)
@@ -445,8 +530,8 @@ class FakeApp:
     def toast(self, title):
         self.toasts.append(title)
 
-    def start_sync(self, quick=False):
-        self.syncs.append(quick)
+    def start_sync(self, quick=False, playlists=False):
+        self.syncs.append('playlists' if playlists else quick)
         return None
 
     def refuse_in_demo(self):
@@ -470,6 +555,14 @@ class FakeWindow:
         self.opened = []
         self.shown = None  # the Item of the page shown
         self.clipboard = FakeClipboard()
+        self.left = []  # leave()'s (gone, parent)
+        self.selected = []  # select_page()'s keys
+
+    def leave(self, gone, parent=None):
+        self.left.append((gone, parent))
+
+    def select_page(self, key):
+        self.selected.append(key)
 
     def open_item(self, item):
         self.opened.append(item)
@@ -511,7 +604,11 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(self.window.actions), sorted([
             'item-play', 'item-play-next', 'item-play-later', 'item-love', 'item-unlove',
             'item-add-to-library', 'item-add-to-playlist', 'item-open-in-browser',
-            'item-copy-link', 'item-go-to-album', 'item-go-to-artist']))
+            'item-copy-link', 'item-go-to-album', 'item-go-to-artist', 'item-new-playlist',
+            'item-rename', 'item-delete', 'item-remove-from-playlist']))
+        self.assertEqual(
+            self.window.actions['item-remove-from-playlist'].get_parameter_type().dup_string(),
+            '(ssi)')
         self.assertEqual(self.window.actions['item-love'].get_parameter_type().dup_string(),
                          '(ss)')
         self.assertEqual(
@@ -807,6 +904,191 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.loved_shown(), (False, True))
         self.actions.menu_for(LIBRARY_ALBUM)
         self.assertEqual(self.loved_shown(), (True, False))
+
+
+class PlaylistActionsTest(unittest.IsolatedAsyncioTestCase):
+    """New Playlist, Rename, Delete and Remove from Playlist: the dialogs stood in for (what
+    they would answer is called directly), the engine's writes recorded."""
+
+    async def asyncSetUp(self):
+        self.app = FakeApp()
+        # The playlist in a folder of the user's, which holds it alone.
+        folders = [{'id': 'root', 'title': '', 'parent': None,
+                    'children': [{'kind': 'folder', 'id': 'p.fd1'},
+                                 {'kind': 'playlist', 'id': 'p.pl2'}]},
+                   {'id': 'p.fd1', 'title': 'Evenings', 'parent': 'root',
+                    'children': [{'kind': 'playlist', 'id': 'p.pl1'}]}]
+        self.app.library = FakeLibrary([self.app.playlist, READ_ONLY, self.app.favourites],
+                                       folders)
+        self.folder = self.app.library.by_id('folder', 'p.fd1')
+        self.window = FakeWindow()
+        self.actions = ItemActions(self.window, self.app)
+        self.asked = []  # (heading, confirm, name, description, done) per name dialog
+        self.confirms = []  # (heading, body, confirm, done) per confirmation
+        self.actions.ask_name = lambda *args: self.asked.append(args)
+        self.actions.ask_confirm = lambda *args: self.confirms.append(args)
+        delays = actions_module.SETTLE_DELAYS
+        actions_module.SETTLE_DELAYS = (0, 0, 0)
+        self.addCleanup(setattr, actions_module, 'SETTLE_DELAYS', delays)
+
+    async def run_action(self, name, *target):
+        signature = {3: '(sss)'}.get(len(target), '(ss)')
+        if name == 'item-remove-from-playlist':
+            signature = '(ssi)'
+        self.window.actions[name].activate(GLib.Variant(signature, target))
+        await self.settle()
+
+    async def settle(self):
+        while self.app.tasks:
+            tasks = list(self.app.tasks)
+            self.app.tasks.clear()
+            await asyncio.gather(*tasks)
+
+    def writes(self):
+        return [call for call in self.app.engine.calls
+                if call[0] not in ('folder_children', 'rating')]  # reads
+
+    async def test_remove_a_track_from_the_playlist_it_is_shown_in(self):
+        self.app.engine.items[('playlist', 'p.pl1')] = PLAYLIST_ANSWER
+        track = Track({'id': 'i.song1', 'title': 'Harbour Lights', 'type': 'library-songs',
+                       'index': 2}, play={'kind': 'playlist', 'id': 'p.pl1'})
+        menu = self.actions.menu_for(track)
+        self.assertIn(('win.item-remove-from-playlist', ('p.pl1', 'i.song1', 2)),
+                      actions_of(menu))
+        await self.run_action('item-remove-from-playlist', 'p.pl1', 'i.song1', 2)
+        self.assertEqual(self.writes()[0], ('remove_from_playlist', 'p.pl1', 'i.song1', 2))
+        self.assertEqual(self.app.toasts, ['Removed “Harbour Lights” from “Road Trip”'])
+        self.assertEqual(self.writes()[-1], ('item', 'playlist', 'p.pl1'))  # its page follows
+        # Shown in Apple's own playlist, or in Favourite Songs: no such item.
+        for playlist_id in ('p.pl2', 'p.fav'):
+            elsewhere = Track({'id': 'i.song1', 'title': 'Harbour Lights'},
+                              play={'kind': 'playlist', 'id': playlist_id})
+            self.assertNotIn('win.item-remove-from-playlist',
+                             names(self.actions.menu_for(elsewhere)))
+
+    async def test_rename_a_playlist_and_its_description(self):
+        self.app.engine.listings = [[], [{'kind': 'playlist', 'id': 'p.pl1',
+                                          'name': 'Night Drive'}]]
+        await self.run_action('item-rename', 'playlist', 'p.pl1')
+        heading, confirm, name, description, done = self.asked[0]
+        self.assertEqual((heading, confirm, name, description),
+                         ('Rename Playlist', '_Rename', 'Road Trip', ''))
+        done('Night Drive', 'Late, with the windows down')
+        await self.settle()
+        self.assertEqual(self.writes(), [
+            ('edit_playlist', 'p.pl1', 'Night Drive', 'Late, with the windows down')])
+        # The Item and the sidebar follow at once, the library once Apple lists the name:
+        # in the folder that holds it, asked until it is listed.
+        self.assertEqual(self.app.playlist.title, 'Night Drive')
+        self.assertEqual(self.app.playlist.summary, 'Late, with the windows down')
+        self.assertEqual(self.app.library.placed, 1)
+        self.assertEqual([call for call in self.app.engine.calls
+                          if call[0] == 'folder_children'],
+                         [('folder_children', 'p.fd1')] * 2)
+        self.assertEqual(self.app.syncs, ['playlists'])
+
+    async def test_rename_a_folder(self):
+        await self.run_action('item-rename', 'folder', 'p.fd1')
+        heading, _confirm, name, description, done = self.asked[0]
+        self.assertEqual((heading, name, description), ('Rename Folder', 'Evenings', None))
+        done('Late Evenings', None)
+        await self.settle()
+        self.assertEqual(self.writes(), [('rename_folder', 'p.fd1', 'Late Evenings')])
+        self.assertEqual(self.folder.title, 'Late Evenings')
+        self.assertIn(('folder_children', 'root'), self.app.engine.calls)
+
+    async def test_what_is_not_the_users_is_not_renamed_or_deleted(self):
+        for action in ('item-rename', 'item-delete'):
+            for target in (('playlist', 'p.pl2'), ('playlist', 'p.fav'), ('folder', 'root')):
+                await self.run_action(action, *target)
+        self.assertEqual((self.asked, self.confirms, self.writes()), ([], [], []))
+        self.assertEqual(self.app.toasts, ['This cannot be renamed'] * 3
+                         + ['This cannot be deleted'] * 3)
+
+    async def test_delete_a_playlist_once_confirmed(self):
+        await self.run_action('item-delete', 'playlist', 'p.pl1')
+        heading, body, confirm, done = self.confirms[0]
+        self.assertEqual((heading, confirm), ('Delete Playlist?', '_Delete'))
+        self.assertIn('“Road Trip”', body)
+        self.assertIn('all your devices', body)
+        self.assertEqual(self.writes(), [])  # nothing before the confirmation
+        done()
+        await self.settle()
+        self.assertEqual(self.writes(), [('delete_playlist', 'p.pl1')])
+        self.assertEqual(self.app.toasts, ['Deleted “Road Trip”'])
+        # Its pages are left, for the folder that held it; the library follows.
+        self.assertEqual(self.window.left, [({('playlist', 'p.pl1')}, 'p.fd1')])
+        self.assertEqual(self.app.syncs, ['playlists'])
+
+    async def test_delete_a_folder_with_what_is_in_it(self):
+        await self.run_action('item-delete', 'folder', 'p.fd1')
+        heading, body, _confirm, done = self.confirms[0]
+        self.assertEqual(heading, 'Delete Folder?')
+        self.assertIn('“Evenings” and the playlist in it', body)
+        done()
+        await self.settle()
+        self.assertEqual(self.writes(), [('delete_folder', 'p.fd1')])
+        self.assertEqual(self.window.left,
+                         [({('folder', 'p.fd1'), ('playlist', 'p.pl1')}, 'root')])
+
+    async def test_a_failed_delete_is_reported_and_leaves_nothing(self):
+        self.app.engine.fail = EngineError('api', 'HTTP 500')
+        await self.run_action('item-delete', 'playlist', 'p.pl1')
+        self.confirms[0][3]()
+        await self.settle()
+        self.assertEqual(self.app.reported, ['api'])
+        self.assertEqual((self.window.left, self.app.syncs, self.app.toasts), ([], [], []))
+
+    async def test_new_playlist_holding_a_song(self):
+        self.actions.menu_for(LIBRARY_TRACK)
+        await self.run_action('item-new-playlist', 'song', 'i.song1')
+        heading, confirm, name, description, done = self.asked[0]
+        self.assertEqual((heading, confirm, name, description),
+                         ('New Playlist', '_Create', '', ''))
+        done('Harbour Songs', None)
+        await self.settle()
+        self.assertEqual(self.writes(), [
+            ('create_playlist', 'Harbour Songs', None, (('song', 'i.song1'),), None)])
+        self.assertEqual(self.app.toasts,
+                         ['Added “Harbour Lights” to the new playlist “Harbour Songs”'])
+        self.assertIn(('folder_children', 'root'), self.app.engine.calls)
+        self.assertEqual(self.window.selected, [])  # the song's page stays
+
+    async def test_new_playlist_in_a_folder_is_shown(self):
+        new = Item({'id': 'p.new', 'kind': 'playlist', 'title': 'Fresh'})
+
+        def start_sync(quick=False, playlists=False):
+            self.app.library.items[('playlist', 'p.new')] = new  # the pass brought it
+
+        self.app.start_sync = start_sync
+        await self.run_action('item-new-playlist', 'folder', 'p.fd1')
+        self.asked[0][4]('Fresh', 'Brand new')
+        await self.settle()
+        self.assertEqual(self.writes(), [('create_playlist', 'Fresh', 'Brand new', (), 'p.fd1')])
+        self.assertEqual(self.app.toasts, ['Created “Fresh”'])
+        self.assertEqual(self.window.selected, ['playlist:p.new'])
+
+    async def test_the_demo_shows_the_dialog_and_writes_nothing(self):
+        self.app.demo = True
+        await self.run_action('item-new-playlist', 'folder', 'root')
+        self.asked[0][4]('Fresh', None)
+        await self.run_action('item-delete', 'playlist', 'p.pl1')
+        self.confirms[0][3]()
+        await self.settle()
+        self.assertEqual(self.writes(), [])
+        self.assertEqual(self.app.toasts, ['Not available with the demo library'] * 2)
+
+    async def test_waiting_for_the_listing(self):
+        listed = [{'kind': 'playlist', 'id': 'p.pl1', 'name': 'Road Trip'}]
+        engine = self.app.engine
+        engine.listings = [[], listed]
+        self.assertTrue(await self.actions.wait_listed('root', 'p.pl1', 'Road Trip'))
+        engine.listings = [listed, []]
+        self.assertTrue(await self.actions.wait_listed('root', 'p.pl1', None))
+        engine.listings = [listed] * 3
+        self.assertFalse(await self.actions.wait_listed('root', 'p.pl1', 'Night Drive'))
+        engine.listings = [EngineError('engine-down')]
+        self.assertFalse(await self.actions.wait_listed('root', 'p.pl1', None))
 
 
 if __name__ == '__main__':

@@ -42,8 +42,8 @@ import time
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 from . import sections, shortcuts
-from .library import TrackRef
-from .sections import FAVOURITE_SONGS, HOME, PLAYLISTS_SECTION
+from .library import ROOT_FOLDER, TrackRef
+from .sections import ALL_PLAYLISTS, FAVOURITE_SONGS, HOME, PLAYLISTS_SECTION
 from .sidebar import (SidebarEntry, SidebarItem, is_shown, plan_update, playlist_entries,
                       reveal)
 from .widgets.util import descendants
@@ -441,26 +441,29 @@ class SidebarController:
 
     # -- the playlists' context menu -----------------------------------------------------
 
-    def _playlist_of(self, item):
-        """The playlist Item a sidebar item shows: a playlist entry's, or Favourite Songs';
-        None for a folder, All Playlists and the other sections' items."""
+    def _item_of(self, item):
+        """The library Item a sidebar item shows: a playlist's or a folder's, Favourite
+        Songs', All Playlists' (the top level's folder Item, library.ROOT_FOLDER); None for
+        the other sections' items."""
         if not isinstance(item, SidebarItem):
             return None
         entry = item.entry
-        if entry.kind == 'playlist':
+        if entry.kind in ('playlist', 'folder'):
             return entry.item
         if entry.kind == 'fixed' and entry.key == FAVOURITE_SONGS:
             return self._library.favourite_songs()
+        if entry.kind == 'fixed' and entry.key == ALL_PLAYLISTS:
+            return self._library.by_id('folder', ROOT_FOLDER)
         return None
 
     def _on_setup_menu(self, _sidebar, item):
-        """The Playlists section's context menu opens on item: point it at the playlist
-        (Play, Play Next, Open in Browser). Nothing to offer (a folder, All Playlists): the
-        menu is closed before it is drawn, since AdwSidebar would show it empty. None: it
-        closed, before its action runs, so the menu is left as it is."""
+        """The Playlists section's context menu opens on item: point it at the playlist or
+        folder (actions.fill_sidebar_menu). Nothing to offer: the menu is closed before it
+        is drawn, since AdwSidebar would show it empty. None: it closed, before its action
+        runs, so the menu is left as it is."""
         if item is None:
             return
-        self._item_actions.fill_sidebar_menu(self._sidebar_menu, self._playlist_of(item))
+        self._item_actions.fill_sidebar_menu(self._sidebar_menu, self._item_of(item))
         if not self._sidebar_menu.get_n_items():
             GLib.idle_add(self._close_menu, priority=GLib.PRIORITY_HIGH)
 

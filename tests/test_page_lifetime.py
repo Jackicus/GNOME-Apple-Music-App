@@ -563,6 +563,23 @@ class DialogLifetimeTest(WidgetTestCase):
         await self.assert_freed(ref)
         self.assertEqual(self.app.engine.calls, ['restart', 'stop'])
 
+    async def test_name_dialog(self):
+        from applemusic.dialogs.playlist import NameDialog
+
+        answers = []
+        dialog = NameDialog('Rename Playlist', '_Rename', 'Road Trip', 'Long drives',
+                            lambda *answer: answers.append(answer))
+        dialog.name_row.set_text('Night Drive')  # its handler, connected weakly, still runs
+        self.assertTrue(dialog.get_response_enabled('confirm'))
+        dialog.name_row.set_text('  ')
+        self.assertFalse(dialog.get_response_enabled('confirm'))  # no blank name
+        dialog.name_row.set_text(' Night Drive ')
+        dialog.emit('response', 'confirm')
+        self.assertEqual(answers, [('Night Drive', None)])  # the description unchanged
+        ref = await self.presented_and_closed(dialog)
+        del dialog  # the test's own reference
+        await self.assert_freed(ref)
+
 
 class HandlerTest(WidgetTestCase):
     """The handlers now connected weakly (they were template callbacks or bound-method

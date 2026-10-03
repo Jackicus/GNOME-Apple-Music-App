@@ -40,7 +40,10 @@ touches widgets.
   and context menus are `actions.py` and `widgets/context_menu.py`; where their Go to Album
   and Go to Artist lead is `related.py`'s: an album the library's, else the catalog's, which
   the engine looks up; an artist Apple Music's while the engine is up, the library's
-  otherwise.
+  otherwise. Making, renaming and deleting playlists and folders are item actions too, with
+  their dialogs in `dialogs/playlist.py`: the engine writes, the window leaves the pages of
+  what was deleted, and the library follows once Apple lists the change, through the sync's
+  short playlists pass.
 - **Pages** (`pages/`): one module per destination or pushed page, built when first shown. The
   library pages bind the library's stores; New, Made for You and Search ask the engine (the
   first two, and Search's categories, keep its answers in the cache for a day).

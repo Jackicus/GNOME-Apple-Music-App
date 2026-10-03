@@ -193,7 +193,7 @@ if args.names:
 app = harness.make_app('A11yCheck', light=args.light, size=(width, height), name='a11y_check')
 
 import remote_keys  # noqa: E402  (imports Gtk, so after make_app)
-from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402  (after make_app)
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402  (after make_app)
 
 from applemusic import shortcuts  # noqa: E402  (the installed build's, after make_app)
 
@@ -312,6 +312,12 @@ def press(window, accel):
 
 
 # -- the checklist -------------------------------------------------------------------------
+
+def first_playlist():
+    """The library's first playlist of the user's: one with Rename…."""
+    return next(node.item for node in app.library.playlist_tree().flat
+                if node.kind == 'playlist' and node.item.editable)
+
 
 def check(name, ok, detail=''):
     print(('PASS ' if ok else 'FAIL ') + name + (f' ({detail})' if detail and not ok else ''))
@@ -791,6 +797,38 @@ async def walkthrough(window):
         await key(shown.get_root(), 'Escape', 0)
         await until(lambda: dialog_shown(window, Adw.ShortcutsDialog) is None)
         check('Escape closes it', dialog_shown(window, Adw.ShortcutsDialog) is None)
+    print("-- a playlist's name dialog")
+    from applemusic.dialogs.playlist import NameDialog
+
+    playlist = first_playlist()
+    target = GLib.Variant('(ss)', ('playlist', playlist.id))
+    window.activate_action('win.item-rename', target)
+    await asyncio.sleep(0.8)
+    shown = dialog_shown(window, NameDialog)
+    check('Rename… opens the name dialog', shown is not None)
+    if shown is not None:
+        toplevel = shown.get_root()
+        check('the name has the focus', inside(toplevel.get_focus(), shown.name_row),
+              describe(toplevel.get_focus()))
+        # Rename refuses in the demo: recorded here, without the toast (which would take
+        # the next Escape).
+        refused = []
+        app.refuse_in_demo = lambda: refused.append(True) or True
+        await type_into(toplevel.get_focus(), 'Invented Name')
+        await key(toplevel, 'Return', 0)
+        await until(lambda: refused)
+        del app.refuse_in_demo
+        check('Enter in it renames', refused == [True], refused)
+        await until(lambda: dialog_shown(window, NameDialog) is None)
+        check('and closes it', dialog_shown(window, NameDialog) is None)
+        window.activate_action('win.item-rename', target)
+        await asyncio.sleep(0.8)
+        shown = dialog_shown(window, NameDialog)
+        if shown is not None:
+            await key(shown.get_root(), 'Escape', 0)
+        await until(lambda: dialog_shown(window, NameDialog) is None)
+        check('Escape closes it, nothing renamed',
+              dialog_shown(window, NameDialog) is None and playlist.title != 'Invented Name')
     print('-- a dialog over the window')
     # A dialog is inside the window only when the window is maximized or tiled (else it is
     # a window of its own, which the window's keys never reach).
@@ -876,6 +914,14 @@ async def names(window):
     app.activate_action('shortcuts')
     await asyncio.sleep(1.0)
     total += await unnamed('Keyboard Shortcuts')
+    shortcuts_shown = dialog_shown(window, Adw.ShortcutsDialog)
+    if shortcuts_shown is not None:
+        shortcuts_shown.force_close()
+        await asyncio.sleep(0.5)
+    window.activate_action('win.item-rename',
+                           GLib.Variant('(ss)', ('playlist', first_playlist().id)))
+    await asyncio.sleep(1.0)
+    total += await unnamed('Rename Playlist')
     print(f'{total} unnamed in all')
 
 

@@ -162,7 +162,7 @@ paths:
   tests/bridge_harness.js, a fake page (MusicKit and an instance that records its calls, a
   `document` and a small `DOMParser`). A change to the bridge gets a scenario there; what only
   Apple's MusicKit can show (what it accepts, what it answers) is a live check.
-- bridge.js writes (love, add to library, add to a playlist) through
+- bridge.js writes (love, add to library, add to a playlist, the playlist writes) through
   `mk.api.client.createRequest(...).send()`: `music()` cannot read Apple's empty 202/204 answers
   and would pass a 4xx off as success.
 - MusicKit's `PlaybackStates` names (`none loading playing paused stopped ended seeking waiting
