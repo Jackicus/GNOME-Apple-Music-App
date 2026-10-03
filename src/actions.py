@@ -8,7 +8,7 @@ actions, the menus that offer them, and what a track dragged onto a sidebar play
     menu = actions.menu_for(obj)           # a Gio.Menu for an Item or a Track, or None
     menu = actions.menu_for(track, queued=True)   # the item playing's, or Up Next's
     actions.go_to(obj, 'album')            # obj's album's page ('artist': its artist's)
-    actions.fill_sidebar_menu(menu, item)  # a sidebar playlist's Play, Play Next, Open in Browser
+    actions.fill_sidebar_menu(menu, item)  # a sidebar playlist's or folder's menu
     actions.drop(playlist, ref)            # a library.TrackRef dropped on a sidebar playlist
 
 The actions, each on the window (win.*) with a GLib.Variant target "(ss)", the (kind, id) of
@@ -26,9 +26,17 @@ what it acts on (an Item's kind and id, or 'song' and a Track's id):
     item-copy-link       that page's address, on the clipboard
 
 and item-add-to-playlist, "(sss)" (playlist id, kind, id): a song or a music video added to a
-library playlist. A target names an object the menu was built for (remembered, the last
-REMEMBERED of them) or one the library has; failing both, the target's kind and id are used
-as they are. Each action awaits the engine (started first when it is down and the account is
+library playlist. The playlists' own, each through a dialog (dialogs/playlist.py):
+
+    item-new-playlist    a playlist named in a dialog: holding the song or video of the
+                         target, or in the folder it names ('folder', 'root': the top level)
+    item-rename          a playlist's name and description, or a folder's name
+    item-delete          a playlist, or a folder with what is in it, once a dialog confirms
+
+and item-remove-from-playlist, "(ssi)" (playlist id, track id, the track's index): one entry
+of a playlist taken out. A target names an object the menu was built for (remembered, the
+last REMEMBERED of them) or one the library has; failing both, the target's kind and id are
+used as they are. Each action awaits the engine (started first when it is down and the account is
 signed in, as a play request does) and confirms with a toast, or reports the EngineError
 (app.report: signed out, that opens the sign-in). After a song was added to a playlist, or a
 song loved or unloved, the playlist (Favourite Songs) is fetched again and merged into the
@@ -38,8 +46,17 @@ The menus are built in code, per kind (build_menu): Play, Play Next, Play Later;
 Go to Artist (not where the page shown is that album or artist already); Favourite and
 Remove from Favourites (both, of which the menu shows the one whose action is enabled: the
 actions' state says whether the item is loved), Add to Library, Add to Playlist (the
-library's playlists that take songs, folders flattened); Open in Browser, Copy Link (only an
-address anyone can open: not the web player's library routes); each only where it applies.
+library's playlists that take songs, folders flattened, then New Playlist…), Remove from
+Playlist (a track shown in a playlist of the user's: `container`); Open in Browser, Copy Link
+(only an address anyone can open: not the web player's library routes); Rename… and Delete
+Playlist… or Delete Folder… (a playlist of the user's, Item.editable; a folder of theirs);
+each only where it applies.
+
+After a playlist or folder was made, renamed or deleted, the window leaves the pages of what
+is gone (Window.leave), the sidebar shows a new name at once, and the library follows Apple's
+listing once it shows the change (wait_listed: a new playlist takes seconds to be listed),
+through the playlists pass of a sync (sync.py). A track removed has its playlist fetched again,
+as an add does.
 The menus of the player's queue (the item playing's in the Now Playing sheet and the player
 bar, Up Next's) have no Play, which would replace the queue: activating the row plays it.
 Whether an item is loved is not in the library: a menu shows what the engine said last (its
@@ -49,9 +66,11 @@ Only Gio, GLib and GObject at import time besides Gtk's UriLauncher, used when a
 opened: tests build the menus and run the actions with a stand-in window, app and engine.
 """
 
+import asyncio
 import logging
 from collections import OrderedDict
 from gettext import gettext as _
+from gettext import ngettext
 from urllib.parse import urlsplit
 
 from gi.repository import Gio, GLib
@@ -59,12 +78,18 @@ from gi.repository import Gio, GLib
 from . import related
 from .backend.errors import EngineError
 from .backend.api import is_library_id
-from .library import TRACK_KINDS, Item, Track, TrackRef
+from .library import ROOT_FOLDER, TRACK_KINDS, Item, Track, TrackRef
 
 log = logging.getLogger(__name__)
 
 TARGET = GLib.VariantType.new('(ss)')
 PLAYLIST_TARGET = GLib.VariantType.new('(sss)')
+ENTRY_TARGET = GLib.VariantType.new('(ssi)')
+
+# After a playlist write, how long to wait before each look at Apple's listing, in seconds,
+# until it shows the change: a new playlist was listed 4 to 6.5 s after it was made, a
+# rename or a deletion within a second (2026-10-03). Then the library follows regardless.
+SETTLE_DELAYS = (0.5, 1, 1, 1, 2, 2, 3, 3)
 
 # How many of the objects menus were built for are remembered for their actions.
 REMEMBERED = 64
@@ -84,7 +109,7 @@ LIBRARY_ROUTES = {'playlist': 'library/playlist', 'album': 'library/albums'}
 # and artists): nothing of Apple's answers to them.
 SYNTHETIC_PREFIXES = ('l.alb_', 'l.art_')
 
-MENU_KINDS = ('album', 'playlist', 'song', 'station', 'artist', 'video')
+MENU_KINDS = ('album', 'playlist', 'song', 'station', 'artist', 'video', 'folder')
 QUEUE_KINDS = ('album', 'playlist')
 RATED_KINDS = ('album', 'playlist', 'station', 'video')
 LIBRARY_KINDS = ('song', 'album', 'playlist', 'video')
@@ -108,7 +133,16 @@ def action_labels():
         'item-go-to-artist': _('Go to Ar_tist'),
         'item-open-in-browser': _('_Open in Browser'),
         'item-copy-link': _('_Copy Link'),
+        'item-remove-from-playlist': _('Remo_ve from Playlist'),
+        'item-new-playlist': _('Ne_w Playlist…'),
+        'item-rename': _('Rena_me…'),
+        'item-delete': _('_Delete Playlist…'),
     }
+
+
+def delete_label(kind):
+    """Delete's label for a playlist, or for a folder (kind 'folder')."""
+    return _('_Delete Folder…') if kind == 'folder' else action_labels()['item-delete']
 
 
 def _synthetic(item_id):
@@ -198,6 +232,39 @@ def playlist_song(obj):
     return track[1] if track is not None else None
 
 
+def is_user_folder(obj):
+    """Whether obj is one of the user's playlist folders (not the top level, ROOT_FOLDER):
+    one that can be renamed and deleted."""
+    return (isinstance(obj, Item) and obj.kind == 'folder' and bool(obj.id)
+            and obj.id != ROOT_FOLDER)
+
+
+def is_manageable(obj):
+    """Whether obj can be renamed and deleted: a playlist of the user's (Item.editable: not
+    Favourite Songs, nor one of Apple's or someone else's), or a folder of theirs."""
+    return (isinstance(obj, Item) and obj.kind == 'playlist' and obj.editable) or (
+        is_user_folder(obj))
+
+
+def entry_target(container, obj):
+    """The item-remove-from-playlist target for the Track obj shown in the playlist Item
+    `container` (one of the user's): (playlist id, track id, its index), or None."""
+    if not isinstance(obj, Track) or not is_manageable(container) or not obj.id:
+        return None
+    if container.kind != 'playlist':
+        return None
+    return GLib.Variant('(ssi)', (container.id, obj.id, obj.index))
+
+
+def manage_items(obj):
+    """Rename… and Delete Playlist… (or Delete Folder…) for obj, when it is manageable."""
+    if not is_manageable(obj):
+        return []
+    target = GLib.Variant('(ss)', (obj.kind, obj.id))
+    return [menu_item('item-rename', target),
+            menu_item('item-delete', target, label=delete_label(obj.kind))]
+
+
 def is_apple_music_url(url):
     """Whether url is a page of music.apple.com over https: the only addresses the app
     opens or copies. An Item's `url` comes from Apple's answers, but is checked all the
@@ -278,18 +345,19 @@ def mnemonic_escaped(title):
     return title.replace('_', '__')
 
 
-def build_menu(obj, playlists=(), storefront=None, here=None, queued=False):
-    """The menu for obj (an Item or a Track), or None when nothing applies (a folder, a
-    category). `playlists` are the (id, title) pairs the Add to Playlist submenu lists;
-    `here` is the Item of the page shown (Go to Album and Go to Artist are left out where
-    they would go nowhere: related.shows); `queued`, obj is in the player's queue (no
-    Play)."""
+def build_menu(obj, playlists=(), storefront=None, here=None, queued=False, container=None):
+    """The menu for obj (an Item or a Track), or None when nothing applies (the top level
+    of the folders, a category). `playlists` are the (id, title) pairs the Add to Playlist
+    submenu lists; `here` is the Item of the page shown (Go to Album and Go to Artist are
+    left out where they would go nowhere: related.shows); `queued`, obj is in the player's
+    queue (no Play); `container`, the playlist Item the track obj is shown in (Remove from
+    Playlist, when it is one of the user's)."""
     named = describe(obj)
     if named is None or (isinstance(obj, Item) and obj.kind not in MENU_KINDS):
         return None
     target = GLib.Variant('(ss)', named)
-    sections = [Gio.Menu(), Gio.Menu(), Gio.Menu(), Gio.Menu()]
-    play, go, keep, share = sections
+    sections = [Gio.Menu(), Gio.Menu(), Gio.Menu(), Gio.Menu(), Gio.Menu()]
+    play, go, keep, share, manage = sections
     if can_play(obj) and not queued:
         play.append_item(menu_item('item-play', target))
     if queue_target(obj) is not None:
@@ -304,19 +372,31 @@ def build_menu(obj, playlists=(), storefront=None, here=None, queued=False):
             keep.append_item(item)
     if library_target(obj) is not None:
         keep.append_item(menu_item('item-add-to-library', target))
-    if playlist_song(obj) and playlists:
+    if playlist_song(obj):
+        # The playlists that take songs, then New Playlist…, one holding this song.
         submenu = Gio.Menu()
+        listed = Gio.Menu()
         for playlist_id, title in playlists:
-            submenu.append_item(menu_item(
+            listed.append_item(menu_item(
                 'item-add-to-playlist', GLib.Variant('(sss)', (playlist_id, *named)),
                 label=mnemonic_escaped(title or _('Untitled Playlist'))))
+        if listed.get_n_items():
+            submenu.append_section(None, listed)
+        created = Gio.Menu()
+        created.append_item(menu_item('item-new-playlist', target))
+        submenu.append_section(None, created)
         keep.append_submenu(action_labels()['item-add-to-playlist'], submenu)
+    removed = entry_target(container, obj)
+    if removed is not None:
+        keep.append_item(menu_item('item-remove-from-playlist', removed))
     if web_url(obj, storefront):
         share.append_item(menu_item('item-open-in-browser', target))
         # Copy Link: an address anyone can open, or a library album's catalog page, which
         # the engine can say when the link is asked for.
         if share_url(obj, storefront) or needs_catalog_url(obj):
             share.append_item(menu_item('item-copy-link', target))
+    for item in manage_items(obj):
+        manage.append_item(item)
     menu = Gio.Menu()
     for section in sections:
         if section.get_n_items():
@@ -324,22 +404,34 @@ def build_menu(obj, playlists=(), storefront=None, here=None, queued=False):
     return menu if menu.get_n_items() else None
 
 
-def fill_sidebar_menu(menu, playlist):
-    """Make `menu` a sidebar playlist's: Play, Play Next, Open in Browser (SIDEBAR_ACTIONS)
-    on the playlist, or empty when `playlist` is None (a folder, All Playlists)."""
+def fill_sidebar_menu(menu, item):
+    """Make `menu` a sidebar item's: a playlist's Play, Play Next, Open in Browser
+    (SIDEBAR_ACTIONS), then Rename… and Delete Playlist… for one of the user's; a folder's
+    New Playlist… (in it), Rename… and Delete Folder…; All Playlists' (the folder Item
+    ROOT_FOLDER) New Playlist…. Empty when `item` is None."""
     menu.remove_all()
-    named = describe(playlist)
+    named = describe(item)
     if named is None:
         return
     target = GLib.Variant('(ss)', named)
-    for action in SIDEBAR_ACTIONS:
-        if action == 'item-play' and not can_play(playlist):
-            continue
-        if action == 'item-play-next' and queue_target(playlist) is None:
-            continue
-        if action == 'item-open-in-browser' and not web_url(playlist):
-            continue
-        menu.append_item(menu_item(action, target))
+    first = Gio.Menu()
+    if item.kind == 'folder':
+        first.append_item(menu_item('item-new-playlist', target))
+    elif item.kind == 'playlist':
+        for action in SIDEBAR_ACTIONS:
+            if action == 'item-play' and not can_play(item):
+                continue
+            if action == 'item-play-next' and queue_target(item) is None:
+                continue
+            if action == 'item-open-in-browser' and not web_url(item):
+                continue
+            first.append_item(menu_item(action, target))
+    manage = Gio.Menu()
+    for entry in manage_items(item):
+        manage.append_item(entry)
+    for section in (first, manage):
+        if section.get_n_items():
+            menu.append_section(None, section)
 
 
 def now_playing_track(now_playing):
@@ -394,11 +486,15 @@ class ItemActions:
             'item-go-to-artist': self._on_go_to_artist,
             'item-open-in-browser': self._on_open_in_browser,
             'item-copy-link': self._on_copy_link,
+            'item-new-playlist': self._on_new_playlist,
+            'item-rename': self._on_rename,
+            'item-delete': self._on_delete,
         }
         self.actions = {}
         for name, handler in handlers.items():
             self._add(name, TARGET, handler)
         self._add('item-add-to-playlist', PLAYLIST_TARGET, self._on_add_to_playlist)
+        self._add('item-remove-from-playlist', ENTRY_TARGET, self._on_remove_from_playlist)
 
     def _add(self, name, parameter_type, handler):
         action = Gio.SimpleAction.new(name, parameter_type)
@@ -425,7 +521,8 @@ class ItemActions:
         if named is None:
             return None
         menu = build_menu(obj, self.playlists() if playlist_song(obj) else (),
-                          self._storefront(), here=self._shown(), queued=queued)
+                          self._storefront(), here=self._shown(), queued=queued,
+                          container=self.container(obj))
         if menu is None:
             return None
         self._remember(named, obj)
@@ -436,12 +533,21 @@ class ItemActions:
             self.app.spawn(self._refine(rated))
         return menu
 
-    def fill_sidebar_menu(self, menu, playlist):
-        """The sidebar's menu for a playlist (None: emptied). See fill_sidebar_menu()."""
-        fill_sidebar_menu(menu, playlist)
-        named = describe(playlist)
+    def fill_sidebar_menu(self, menu, item):
+        """The sidebar's menu for a playlist or a folder (None: emptied). See
+        fill_sidebar_menu()."""
+        fill_sidebar_menu(menu, item)
+        named = describe(item)
         if named is not None:
-            self._remember(named, playlist)
+            self._remember(named, item)
+
+    def container(self, obj):
+        """The playlist of the user's that the Track obj is shown in (its group plays that
+        playlist: a playlist's page), or None: where Remove from Playlist applies."""
+        if not isinstance(obj, Track) or obj.play.get('kind') != 'playlist':
+            return None
+        playlist = self.library.by_id('playlist', obj.play.get('id'))
+        return playlist if is_manageable(playlist) else None
 
     def playlists(self):
         """(id, title) of the library playlists that take songs, in the sidebar's order with
@@ -712,6 +818,206 @@ class ItemActions:
             return False
         self.add_to_playlist(playlist.id, ref.song_id, ref.title, kind=ref.kind or 'song')
         return True
+
+    # -- managing playlists and folders ------------------------------------------------------
+
+    def ask_name(self, heading, confirm, name='', description=None, done=None):
+        """The name dialog over the window (dialogs/playlist.py's NameDialog): `name` and
+        `description` filled in (None: no description to edit); done(name, description) when
+        it is confirmed. The dialog."""
+        from .dialogs.playlist import NameDialog
+
+        dialog = NameDialog(heading, confirm, name, description, done)
+        dialog.present(self.window)
+        return dialog
+
+    def ask_confirm(self, heading, body, confirm, done):
+        """The confirmation before something is deleted, over the window
+        (dialogs/playlist.py's confirm()): done() when it is confirmed. The dialog."""
+        from .dialogs.playlist import confirm as confirm_dialog
+
+        return confirm_dialog(self.window, heading, body, confirm, done)
+
+    def _on_new_playlist(self, _action, parameter):
+        """A new playlist, named in a dialog: in the folder the target names, or holding the
+        song or video it names."""
+        obj, kind, item_id = self._unpack(parameter)
+        if kind == 'folder':
+            tracks, folder_id, title = (), item_id, ''
+        else:
+            track = playlist_track(obj) if obj is not None else None
+            tracks = (track or (kind, item_id),)
+            folder_id, title = None, obj.title if obj is not None else ''
+        return self.ask_name(
+            _('New Playlist'), _('_Create'), '', '',
+            lambda name, description: self.create_playlist(name, description, tracks,
+                                                           folder_id, title))
+
+    def create_playlist(self, name, description='', tracks=(), folder_id=None, title=''):
+        """Make the playlist (Engine.create_playlist), confirm with a toast and follow Apple's
+        listing; one made empty (New Playlist) is then shown. The task, or None."""
+        if self.app.refuse_in_demo():
+            return None
+        if title:
+            message = _('Added “{title}” to the new playlist “{playlist}”').format(
+                title=title, playlist=name)
+        else:
+            message = _('Created “{playlist}”').format(playlist=name)
+
+        async def run():
+            try:
+                await self.app.player.ensure_engine()
+                new_id = await self.engine.create_playlist(name, description, tracks,
+                                                           folder_id)
+            except EngineError as error:
+                self.app.report(error)
+                return
+            self.app.toast(message)
+            await self._follow_listing(folder_id or ROOT_FOLDER, new_id, name)
+            if not tracks and self.library.by_id('playlist', new_id) is not None:
+                self.window.select_page(f'playlist:{new_id}')  # sidebar.playlist_key
+
+        return self.app.spawn(run())
+
+    def _on_rename(self, _action, parameter):
+        obj = self._unpack(parameter)[0]
+        if not is_manageable(obj):
+            self.app.toast(_('This cannot be renamed'))
+            return None
+        if obj.kind == 'folder':
+            return self.ask_name(_('Rename Folder'), _('_Rename'), obj.title, None,
+                                 lambda name, _description: self.rename(obj, name))
+        return self.ask_name(_('Rename Playlist'), _('_Rename'), obj.title, obj.summary or '',
+                             lambda name, description: self.rename(obj, name, description))
+
+    def rename(self, obj, name, description=None):
+        """Give a playlist of the user's its name (and its description, unless None), or a
+        folder its name: the Item and the sidebar follow at once, the library once Apple
+        lists it. The task, or None."""
+        if obj.kind == 'folder':
+            method, args = self.engine.rename_folder, (obj.id, name)
+        else:
+            method, args = self.engine.edit_playlist, (obj.id, name, description)
+        parent = self._parent_of(obj)
+
+        async def after():
+            changes = {'title': name}
+            if description is not None:
+                changes['summary'] = description
+            obj.merge(changes)
+            self.library.place_playlists()  # the sidebar retitles and places it now
+            await self._follow_listing(parent, obj.id, name)
+
+        return self._run(method, args, after=after)
+
+    def _on_delete(self, _action, parameter):
+        obj = self._unpack(parameter)[0]
+        if not is_manageable(obj):
+            self.app.toast(_('This cannot be deleted'))
+            return None
+        name = obj.title
+        if obj.kind == 'folder':
+            count = sum(1 for kind, _id in self._inside(obj) if kind == 'playlist')
+            heading = _('Delete Folder?')
+            if count:
+                body = ngettext(
+                    '“{name}” and the playlist in it will be deleted from your library on all '
+                    'your devices. This cannot be undone.',
+                    '“{name}” and the {count} playlists in it will be deleted from your '
+                    'library on all your devices. This cannot be undone.',
+                    count).format(name=name, count=count)
+            else:
+                body = _('“{name}” will be deleted from your library on all your devices. '
+                         'This cannot be undone.').format(name=name)
+        else:
+            heading = _('Delete Playlist?')
+            body = _('“{name}” will be deleted from your library on all your devices. This '
+                     'cannot be undone.').format(name=name)
+        return self.ask_confirm(heading, body, _('_Delete'), lambda: self.delete(obj))
+
+    def delete(self, obj):
+        """Delete a playlist of the user's, or a folder with what is in it: the window leaves
+        their pages, and the library follows once Apple's listing has them gone. The task,
+        or None."""
+        if obj.kind == 'folder':
+            method = self.engine.delete_folder
+        else:
+            method = self.engine.delete_playlist
+        parent = self._parent_of(obj)
+        gone = {(obj.kind, obj.id), *self._inside(obj)}
+
+        async def after():
+            self.window.leave(gone, parent)
+            await self._follow_listing(parent, obj.id, None)
+
+        return self._run(method, (obj.id,), _('Deleted “{name}”').format(name=obj.title),
+                         after=after)
+
+    def _on_remove_from_playlist(self, _action, parameter):
+        playlist_id, track_id, index = parameter.unpack()
+        track = self._remembered.get(('song', track_id))
+        title = track.title if track is not None else ''
+        playlist = self.library.by_id('playlist', playlist_id)
+        name = playlist.title if playlist is not None else ''
+        if title and name:
+            message = _('Removed “{title}” from “{playlist}”').format(title=title,
+                                                                    playlist=name)
+        else:
+            message = _('Removed from the playlist')
+        return self._run(self.engine.remove_from_playlist, (playlist_id, track_id, index),
+                         message, after=lambda: self._refresh_playlist(playlist_id))
+
+    def _tree_node(self, obj):
+        """obj's node in the library's PlaylistTree, or None."""
+        for node in self.library.playlist_tree().flat:
+            if node.kind == obj.kind and node.id == obj.id:
+                return node
+        return None
+
+    def _parent_of(self, obj):
+        """The id of the folder holding a playlist or folder (ROOT_FOLDER: the top level)."""
+        node = self._tree_node(obj)
+        if node is None or node.parent is None or node.parent.parent is None:
+            return ROOT_FOLDER
+        return node.parent.id
+
+    def _inside(self, obj):
+        """(kind, id) of everything in a folder, however deep; nothing for a playlist."""
+        node = self._tree_node(obj) if obj.kind == 'folder' else None
+        found = []
+        stack = list(node.children) if node is not None else []
+        while stack:
+            child = stack.pop()
+            found.append((child.kind, child.id))
+            stack.extend(child.children)
+        return found
+
+    async def _follow_listing(self, folder_id, item_id, name):
+        """After a playlist write: wait until Apple lists it (wait_listed), then bring the
+        library up to date with the playlists pass of a sync, and wait for that."""
+        await self.wait_listed(folder_id, item_id, name)
+        task = self.app.start_sync(playlists=True)
+        if task is not None:
+            await asyncio.wait([task])
+
+    async def wait_listed(self, folder_id, item_id, name):
+        """Wait until Apple lists the playlist or folder item_id in the folder folder_id
+        under `name` (None: not at all), looking again after each of SETTLE_DELAYS. True
+        once it does; False when it never did, or the engine could not say."""
+        for delay in SETTLE_DELAYS:
+            await asyncio.sleep(delay)
+            try:
+                children = await self.engine.folder_children(folder_id)
+            except EngineError as error:
+                log.debug('playlist listing not read: %s', error)
+                return False
+            found = next((child for child in children if child['id'] == item_id), None)
+            if name is None and found is None:
+                return True
+            if name is not None and found is not None and found['name'] == name:
+                return True
+        log.info('Apple does not list the change yet: the library follows its listing')
+        return False
 
     # -- links -------------------------------------------------------------------------------
 

@@ -6,6 +6,7 @@ src/account.py
 src/actions.py
 src/errors.py
 src/dialogs/about.py
+src/dialogs/playlist.py
 src/dialogs/preferences.py
 src/dialogs/preferences.blp
 src/dialogs/shortcuts.py

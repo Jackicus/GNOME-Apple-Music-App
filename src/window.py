@@ -17,6 +17,7 @@ The pages reach the window through get_root() and these seams, not its internals
     add_toast(toast)                  a toast over the content, or in the open sheet
     announce(text, priority)          Gtk.Accessible's, for assistive technology
     item_actions                      the win.item-* actions and their menus (actions.py)
+    leave(gone, parent)               away from the pages of playlists and folders deleted
     content_width()                   the content pane's width, before it is laid out too
 
 The sidebar itself is sidebar_view.SidebarController's, which shows pages through
@@ -35,11 +36,11 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from . import keyboard, pages, related
 from .actions import ItemActions
 from .backend.errors import EngineError
-from .library import Item
+from .library import ROOT_FOLDER, Item
 from .player import playback_error_text
 from .player_bar import PlayerBar  # noqa: F401  registers $AppleMusicPlayerBar for the template
 from .widgets.now_playing import NowPlayingSheet  # noqa: F401  registers the sheet's type
-from .sections import HOME
+from .sections import ALL_PLAYLISTS, HOME
 from .sidebar import parse_key, restore_target, stale_roots
 from .sidebar_view import SidebarController
 from .sync import progress_text
@@ -506,6 +507,24 @@ class Window(Adw.ApplicationWindow):
     def select_page(self, key):
         """Select key's sidebar item (Home's when there is none) and show its page."""
         self._sidebar.select(key)
+
+    def leave(self, gone, parent=None):
+        """Leave the pages of what was just deleted: `gone` holds the (kind, id) of the
+        playlists and folders. A page pushed showing one is popped, with what is over it;
+        when the root page is one of theirs, the page of the folder that held it (`parent`, a
+        folder id) is shown instead, or All Playlists."""
+        stack = self.navigation_view.get_navigation_stack()
+        shown = [stack.get_item(position) for position in range(stack.get_n_items())]
+        for position, page in enumerate(shown[1:], 1):
+            item = getattr(page, 'item', None)
+            if isinstance(item, Item) and (item.kind, item.id) in gone:
+                self.navigation_view.pop_to_page(shown[position - 1])
+                break
+        if parse_key(self.shown) in gone:
+            key = f'folder:{parent}' if parent and parent != ROOT_FOLDER else ALL_PLAYLISTS
+            if self._sidebar.item_for(key) is None or parse_key(key) in gone:
+                key = ALL_PLAYLISTS
+            self._sidebar.select(key, pop=True)
 
     def _on_library_changed(self, _library):
         self._sidebar.update_playlists()
