@@ -606,6 +606,15 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
                    if action == 'win.item-add-to-playlist']
         self.assertEqual(targets, [('p.pl1', 'song', 'i.song1')])  # not read-only, favourites
 
+    async def test_the_submenu_lists_the_playlists_in_the_sidebars_order(self):
+        # By title, whatever the library's order (library.PlaylistTree).
+        titles = ['Zulu', '2. Two', 'alpha', '1. One']
+        self.app.library = FakeLibrary(
+            [Item({'id': f'p.o{n}', 'kind': 'playlist', 'title': title, 'groups': []})
+             for n, title in enumerate(titles)] + [self.app.favourites])
+        self.assertEqual([title for _id, title in self.actions.playlists()],
+                         ['1. One', '2. Two', 'alpha', 'Zulu'])
+
     async def test_drop_on_a_playlist(self):
         ref = TrackRef(song_id='1000000009', title='Shoreline')
         self.assertTrue(self.actions.drop(self.app.playlist, ref))

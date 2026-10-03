@@ -35,6 +35,12 @@ changes, change it here, with the date. The plan they came from is in
   and a disclosure arrow; activating one shows or hides its playlists and opens the folder's
   page (in the narrow layout's page mode it only opens the page). `AdwSidebar` cannot indent,
   so nesting shows through order, the arrow and a nested item's subtitle naming its folder.
+- **Playlists in Apple Music's order** (2026-10-03). Apple's API lists a folder's contents in
+  an order of its own; its web player sorts them, and so does the app, everywhere playlists
+  are listed (the sidebar, a folder's page, All Playlists, Add to Playlist): Favourite Songs,
+  then folders, then playlists, each by title as `localeCompare` sorts lower-cased text, so
+  "10." comes before "2." there and here. No natural number order, which would differ from
+  Apple's. All Playlists offers no other order.
 - **Keys as GNOME has them** (2026-09-28). Space presses a focused button, switch, check box or
   list row, as everywhere in GTK; it plays or pauses only on a tile, a list item, the seek
   slider or nothing. Now Playing is Ctrl+Shift+N, leaving Ctrl+N to the HIG's "New". Bare keys

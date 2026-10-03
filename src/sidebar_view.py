@@ -13,7 +13,8 @@ rows' accessible names.
     sidebar.entries_by_key()          # key -> its Destination or SidebarEntry (for sidebar.py)
     sidebar.destination(key)          # a fixed destination's Destination, or None
     sidebar.entry(key)                # a playlist's or folder's SidebarEntry, or None
-    sidebar.update_playlists()        # the Playlists section follows the library (after `changed`)
+    sidebar.update_playlists()        # the Playlists section follows the library (after
+                                      # `changed` or `playlists-changed`)
     sidebar.focus()                   # the focus on the selected row
     sidebar.forget_expanded()         # every folder closed (sign-out)
     sidebar.write_expanded()          # the expanded folders written now (the window closing)

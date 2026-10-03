@@ -106,7 +106,11 @@ class Window(Adw.ApplicationWindow):
         self.now_playing.set_player(app.player, app, self.bottom_sheet)
         self._sheet_opened_from = None  # a weak reference to the focus the sheet opened over
         self.bottom_sheet.connect('notify::open', self._on_sheet_open)
-        self._library_handler = self._library.connect('changed', self._on_library_changed)
+        # A rename placed in the tree between loads (Library.place_playlists) is followed as a
+        # load is: the sidebar retitles and moves the entry, the selection and folders kept.
+        self._library_handlers = [
+            self._library.connect(signal, self._on_library_changed)
+            for signal in ('changed', 'playlists-changed')]
         # The banners live under the visible page's header bar, whichever page that is.
         self._banner_host = None
         self.navigation_view.connect('notify::visible-page', self._dock_banners)
@@ -744,7 +748,8 @@ class Window(Adw.ApplicationWindow):
         self._quitting = True
         self._close_dialogs()
         self._save_window_state()
-        self._library.disconnect(self._library_handler)  # the library outlives the window
+        for handler in self._library_handlers:  # the library outlives the window
+            self._library.disconnect(handler)
         for handler in self._settings_handlers:
             self._settings.disconnect(handler)
         self._settings_handlers = []

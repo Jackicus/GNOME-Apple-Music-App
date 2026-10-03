@@ -70,7 +70,14 @@ them before changing either. What matters most:
   whenever the Songs store changes.
 - Playlist folders: library.json's optional `folders`; `playlist_tree()` (a new tree per load
   and reload) and `folder_items(id)` are made from it. A reload keeps a folder's store, a load
-  makes a new one: follow a folder by its id, not by holding its store.
+  makes a new one: follow a folder by its id, not by holding its store. The file keeps Apple's
+  order; the tree lists each folder's contents as Apple Music's sidebar does (its web player's
+  code): Favourite Songs, then folders, then playlists, each by `title_key()` (lower-cased,
+  `localeCompare`-like: spaces and punctuation before digits, digits a character at a time,
+  "10" before "2"), ties in the file's order. The sidebar, the folder grids, All Playlists and
+  Add to Playlist follow the tree. A title changed in place (a rename merged into its Item)
+  is placed by `place_playlists()`, which moves it in the stores and emits
+  `playlists-changed`, which the window follows as it follows `changed`.
 - Garbage collection (`paused_gc`): the collector is paused from the call of `load()` or
   `reload()` (so the parse in the library's thread runs without it) to the load's end, and
   during a Songs build. `load()` and `build_songs()` then freeze the heap (`gc.freeze()`), so

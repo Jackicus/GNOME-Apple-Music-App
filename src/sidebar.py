@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
 """The sidebar's Playlists section as a model: All Playlists and Favourite Songs, then the user's
-folders and playlists in Apple's order, and the decisions the window's sidebar controller
+folders and playlists (folders first, each group by title, as library.PlaylistTree orders
+them, at every level), and the decisions the window's sidebar controller
 (sidebar_view.py) applies, as functions of plain data so that tests need no display.
 
 The window binds the section to a Gio.ListStore of SidebarEntry (AdwSidebarSection.bind_model),

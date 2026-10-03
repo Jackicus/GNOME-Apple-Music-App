@@ -193,7 +193,8 @@ def _songs(destination, library):
 
 
 def _all_playlists(destination, library):
-    # The top level of the playlist folders: folders and the playlists in none, in Apple's order.
+    # The top level of the playlist folders: Favourite Songs, the folders, then the playlists in
+    # none, each by title, as the sidebar lists them (library.PlaylistTree).
     from .grid import GridPage
 
     return GridPage(library, destination.title, lambda: library.folder_items(ROOT_FOLDER),
@@ -234,7 +235,7 @@ def playlist(library, playlist_id, title):
 
 
 def folder(library, folder_id, title, root=True):
-    """A folder's page: its folders and playlists as tiles, in Apple's order, following the
+    """A folder's page: its folders and playlists as tiles, in the sidebar's order, following the
     library by the folder's id, with a missing state once the folder is gone. A sidebar
     folder's is a root page (the window retitles it); a folder opened from a tile is pushed
     (root=False) over the page it was in, and follows its folder Item's title (a reload keeps

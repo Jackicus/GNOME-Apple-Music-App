@@ -13,10 +13,11 @@ Besides the README's shape, library.json may hold `folders`, the user's playlist
 optional key, like `sections.videos`; the demo and the sync write it): a
 list of {id, title, parent, children}, `parent` a folder id or null and `children` a list of
 {kind: "folder" | "playlist", id} in Apple's order. The entry with id "root" lists what is in
-no folder. PlaylistTree reads it. `sections.songs`, which only older syncs wrote, holds Track
-dicts: the library's loose songs, which the Songs store takes after the albums' tracks, by id
-(the sync now leaves them under their stand-in albums only). `sections.videos` holds Items of
-kind 'video'.
+no folder. PlaylistTree reads it, and lists each folder's contents as Apple Music's sidebar
+does: Favourite Songs, the folders, the playlists, each group by title. `sections.songs`,
+which only older syncs wrote, holds Track dicts: the library's loose songs, which the Songs
+store takes after the albums' tracks, by id (the sync now leaves them under their stand-in
+albums only). `sections.videos` holds Items of kind 'video'.
 
 load() makes new objects for everything; reload() (after a sync) reads the file again and brings
 the models up to date in place: an Item or Track still in the library keeps its object, so open
@@ -638,8 +639,8 @@ class TreeNode:
 
     `item` is its Item: the playlist's own, from the playlists section, or the folder's (kind
     'folder'). `depth` is 0 at the top level (the root's is -1), `parent` the TreeNode of the
-    folder holding it (None for the root), and a folder's `children` are its nodes in Apple's
-    order, as `store` holds their Items for a grid.
+    folder holding it (None for the root), and a folder's `children` are its nodes in the
+    sidebar's order (PlaylistTree), as `store` holds their Items for a grid.
     """
 
     __slots__ = ('item', 'depth', 'parent', 'children', 'store')
@@ -674,17 +675,21 @@ class TreeNode:
 
 
 class PlaylistTree:
-    """The playlists and their folders, as Apple's sidebar nests them.
+    """The playlists and their folders, as Apple's sidebar nests and orders them.
 
     `root` is the nested tree: a TreeNode for the folder with id ROOT_FOLDER, the top level.
     `flat` is every node below it, depth first (each folder followed by its contents), each
     with its `depth`: the order a sidebar lists them in. The children lists of library.json's
-    `folders` decide the nesting and order. What they do not reach is added to the top level,
-    at the end: folders (with their contents) in the list's order, then playlists in the
-    playlists section's order; so a library without `folders` is every playlist at the top
-    level. A child naming nothing in the library is left out, and nothing is listed twice.
-    Without a root entry, the top level is the folders whose parent is null. Built by
-    Library.load() (the model: GObject only, no GTK).
+    `folders` decide the nesting. What they do not reach is added to the top level; so a
+    library without `folders` is every playlist at the top level. A child naming nothing in
+    the library is left out, and nothing is listed twice. Without a root entry, the top level
+    is the folders whose parent is null.
+
+    Each folder's contents are in the order Apple Music's sidebar shows, whatever the order of
+    the children lists (Apple's API answers in an order of its own): Favourite Songs first,
+    then the folders, then the playlists, each group by title (place_key), ties in the lists'
+    order. sort() places them again after a title changed in place. Built by Library.load()
+    (the model: GObject only, no GTK).
     """
 
     def __init__(self, folders=(), playlists=(), existing=None, stores=None):
@@ -731,13 +736,10 @@ class PlaylistTree:
             placed.add((item.kind, item.id))
             child = TreeNode(item, parent.depth + 1, parent)
             parent.children.append(child)
-            self.flat.append(child)
             if item.kind == 'folder':
                 self._folders[item.id] = child
                 fill(child, raw.get('children'))
 
-        # A folder's contents are added right after it, so `flat` fills depth first, and what
-        # nothing reached goes at the end of the top level, which is the end of `flat` too.
         placed.add(('folder', ROOT_FOLDER))
         fill(self.root, root_raw.get('children'))
         for raw in folders:
@@ -748,13 +750,39 @@ class PlaylistTree:
                 add(self.root, item)
         stores = stores or {}
         for folder_id, node in self._folders.items():
-            items = [child.item for child in node.children]
             node.store = stores.get(folder_id)
+        self._place()
+
+    def _place(self):
+        """Sort each folder's children (place_key; the sort is stable, so ties keep Apple's
+        order), list `flat` depth first again, and bring each folder's store to its children:
+        made when it has none, else with the fewest changes (apply_diff)."""
+        for node in self._folders.values():
+            node.children.sort(key=lambda child: place_key(child.item))
+        self.flat = []
+
+        def walk(node):
+            for child in node.children:
+                self.flat.append(child)
+                if child.children:
+                    walk(child)
+
+        walk(self.root)
+        for node in self._folders.values():
+            items = [child.item for child in node.children]
             if node.store is None:
                 node.store = Gio.ListStore(item_type=Item)
                 node.store.splice(0, 0, items)
             else:
                 apply_diff(node.store, items)
+
+    def sort(self):
+        """Place everything again by the titles the Items have now, after one changed in
+        place (a rename merged into its Item): the stores follow with the fewest changes.
+        True when anything moved. A load or reload makes a new tree, sorted as it is made."""
+        before = [node.item for node in self.flat]
+        self._place()
+        return any(old is not node.item for old, node in zip(before, self.flat, strict=True))
 
     def folder(self, folder_id):
         """The TreeNode of the folder with that id (ROOT_FOLDER for the top level), or None."""
@@ -857,12 +885,15 @@ class Library(GObject.Object):
     a load has read the file), and `version` that file's `version` (0 when it has none): a
     missing, unreadable or outdated library is due a sync. `syncing` is true while a sync
     runs (the sync sets it), so that a page can show an empty library as on its way.
+    `playlists-changed` says the playlist tree was placed again between loads
+    (place_playlists()).
     """
 
     __gtype_name__ = 'AppleMusicLibrary'
 
     __gsignals__ = {
         'changed': (GObject.SignalFlags.RUN_FIRST, None, ()),
+        'playlists-changed': (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def _get_syncing(self):
@@ -967,11 +998,20 @@ class Library(GObject.Object):
 
     def folder_items(self, folder_id):
         """A Gio.ListStore of the Items (folders and playlists) in the folder with that id, in
-        Apple's order, or None when there is no such folder. ROOT_FOLDER is the top level.
-        reload() keeps a folder's store, brought up to date; load() makes new stores: follow
-        the folder by its id."""
+        the sidebar's order (PlaylistTree), or None when there is no such folder. ROOT_FOLDER
+        is the top level. reload() keeps a folder's store, brought up to date; load() makes new
+        stores: follow the folder by its id."""
         node = self._tree.folder(folder_id)
         return node.store if node is not None else None
+
+    def place_playlists(self):
+        """Place the playlists and folders again by their titles, after one was retitled in
+        place (a rename merged into its Item ahead of the next sync), and emit
+        `playlists-changed`: the folders' stores move what moved with the fewest changes, and
+        the window's sidebar follows the signal as it follows `changed` (retitled, moved,
+        selection and folders kept). A load or reload places everything itself."""
+        self._tree.sort()
+        self.emit('playlists-changed')
 
     def favourite_songs(self):
         """The Favourite Songs playlist (Item.favourites), or None when the library has none."""
@@ -1455,6 +1495,50 @@ def collation_key(text):
         return locale.strxfrm(text.casefold())
     except ValueError:  # an embedded NUL
         return text.casefold()
+
+
+# ASCII punctuation and symbols in the order Unicode's default collation (CLDR's root, which a
+# browser's localeCompare follows) gives them, all before the digits. glibc's collation ignores
+# them at first, which would list "1.1 Lively 2" before "1. Lively"; Apple Music does not.
+_SYMBOL_ORDER = {char: rank for rank, char in enumerate('_-,;:!?.\'"()[]{}@*/\\&#%`^+<=>|~$')}
+_char_keys = {}  # a character (casefolded, unaccented) -> its part of title_key's first key
+
+
+def _char_key(char):
+    """A character's weight in title_key(): (class, rank within it)."""
+    key = _char_keys.get(char)
+    if key is None:
+        if char.isspace():
+            key = (0, '')
+        elif char.isdecimal():
+            key = (2, str(int(char)))
+        elif char.isalpha():
+            key = (3, collation_key(char))  # the locale's order of letters
+        else:
+            key = (1, chr(0x100 + _SYMBOL_ORDER.get(char, len(_SYMBOL_ORDER) + ord(char))))
+        _char_keys[char] = key
+    return key
+
+
+def title_key(text):
+    """A key that sorts titles as Apple Music's web player sorts its playlists (lower-cased,
+    then compared by localeCompare), character by character: white space first, then
+    punctuation and symbols, digits, letters in the locale's order; accents only part ties
+    (case none). A digit is a character, not part of a number: "10" sorts before "2", as
+    there."""
+    folded = (text or '').casefold()
+    bare = folded
+    if not bare.isascii():
+        bare = ''.join(char for char in unicodedata.normalize('NFD', bare)
+                       if not unicodedata.combining(char))
+    return [_char_keys.get(char) or _char_key(char) for char in bare], folded
+
+
+def place_key(item):
+    """Where a playlist tree's Item goes among its folder's, as Apple Music's sidebar places
+    it: Favourite Songs first, then the folders, then the playlists, each by title_key()."""
+    rank = 0 if item.favourites else 1 if item.kind == 'folder' else 2
+    return rank, title_key(item.title)
 
 
 def _dicts(value):

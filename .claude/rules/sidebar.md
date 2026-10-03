@@ -11,9 +11,11 @@ paths:
 
 # AdwSidebar (libadwaita 1.9): behaviour the window depends on
 
-The Playlists section is bound to `sidebar.py`'s entries over `library.playlist_tree()`; the
-controller (`sidebar_view.SidebarController`) keeps its selection, folder expansion,
-context menu and drop target.
+The Playlists section is bound to `sidebar.py`'s entries over `library.playlist_tree()`, in
+its order (folders first, each group by title: library.md); the controller
+(`sidebar_view.SidebarController`) keeps its selection, folder expansion, context menu and
+drop target, and follows the library's `changed` and `playlists-changed` (a rename moves an
+entry: it is spliced out and in, and the window selects it again by key).
 
 - Items are GObjects, not widgets: no children, no indentation (a folder's contents follow it;
   its arrow suffix says whether they show). `selected` is an index across all sections.
