@@ -187,6 +187,53 @@ class QuickPassTest(SyncTestCase):
             self.assertEqual(new_playlist.get('trackCount'), old_playlist.get('trackCount'))
 
 
+class PlaylistsPassTest(SyncTestCase):
+    """sync_library(playlists=True): the pass after a playlist or a folder was made,
+    renamed or deleted; and what the account deleted that Apple still lists."""
+
+    async def test_it_reads_the_playlists_and_the_folders_alone(self):
+        engine = FakeEngine(answers())
+        await app_sync.sync_library(engine, self.library)
+        with open(self.library_json, encoding='utf-8') as file:
+            before = json.load(file)
+        engine.calls.clear()
+        engine.answers[app_sync.PLAYLISTS_ENDPOINT]['data'][0]['attributes']['name'] = 'Renamed'
+        await app_sync.sync_library(engine, self.library, playlists=True)
+        paths = [path for path, _ in engine.calls]
+        self.assertIn(app_sync.PLAYLISTS_ENDPOINT, paths)
+        self.assertTrue(any(path.startswith(app_sync.FOLDERS_ENDPOINT) for path in paths))
+        for path in paths:
+            self.assertFalse(path.endswith('/tracks'), path)
+            self.assertNotIn(path, (app_sync.SONGS_ENDPOINT, app_sync.VIDEOS_ENDPOINT,
+                                    app_sync.RADIO_ENDPOINT, app_sync.RECOMMENDATIONS_ENDPOINT))
+        with open(self.library_json, encoding='utf-8') as file:
+            after = json.load(file)
+        # Everything else is last time's: the albums, artists, shelves, the playlists' tracks.
+        for name in ('albums', 'artists', 'videos', 'radio'):
+            self.assertEqual(after['sections'][name], before['sections'][name], name)
+        self.assertEqual(after['shelves'], before['shelves'])
+        self.assertEqual([playlist.get('groups') for playlist in after['sections']['playlists']],
+                         [playlist.get('groups') for playlist in before['sections']['playlists']])
+        self.assertEqual(after['sections']['playlists'][0]['title'], 'Renamed')
+        self.assertEqual(self.library.by_id('playlist', 'p.pl123').title, 'Renamed')
+
+    async def test_what_the_account_deleted_is_left_out(self):
+        # Apple goes on listing a deleted playlist or folder for a while, nameless.
+        wired = answers()
+        gone = {'canDelete': False, 'canEdit': False,
+                'lastModifiedDate': '1970-01-01T00:00:00Z'}
+        wired[app_sync.PLAYLISTS_ENDPOINT]['data'][0]['attributes'] = dict(gone)
+        root = wired[f'{app_sync.FOLDERS_ENDPOINT}/p.playlistsroot/children']
+        root['data'].append({'id': 'p.fldGone', 'type': 'library-playlist-folders',
+                             'attributes': {'canDelete': False, 'canEdit': False}})
+        await app_sync.sync_library(FakeEngine(wired), self.library)
+        with open(self.library_json, encoding='utf-8') as file:
+            data = json.load(file)
+        self.assertNotIn('p.pl123', [playlist['id'] for playlist in data['sections']['playlists']])
+        folder_ids = [child['id'] for entry in data['folders'] for child in entry['children']]
+        self.assertNotIn('p.fldGone', folder_ids)
+
+
 class LibrarySyncTest(SyncTestCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
@@ -286,7 +333,7 @@ class LibrarySyncTest(SyncTestCase):
         self.assertFalse(self.library.props.syncing)
 
     async def test_an_unexpected_failure_is_toasted_with_retry(self):
-        async def broken(engine, library, progress=None, quick=False):
+        async def broken(engine, library, progress=None, quick=False, playlists=False):
             raise OSError(28, 'No space left on device')
 
         with mock.patch.object(app_sync, 'sync_library', broken), \
@@ -422,7 +469,7 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.runs = []
         self.quick_runs = []
 
-        async def fake_sync(engine, library, progress=None, quick=False):
+        async def fake_sync(engine, library, progress=None, quick=False, playlists=False):
             self.runs.append(engine)
             self.quick_runs.append(quick)
             return self.counts
@@ -528,7 +575,7 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.app.reported, [])  # nothing offered the sign-in either
 
     async def test_a_failed_sync_waits_before_the_next(self):
-        async def failing(engine, library, progress=None, quick=False):
+        async def failing(engine, library, progress=None, quick=False, playlists=False):
             self.runs.append(engine)
             raise EngineError('api', 'invented failure')
 

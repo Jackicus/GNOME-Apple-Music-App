@@ -8,6 +8,7 @@
     await app.library_sync.cancel()          # stopped, and nothing more of it written
     counts = await sync_library(app.engine, app.library, progress)   # the sync itself
     app.library_sync.start(quick=True)       # the short pass after a library write
+    app.library_sync.start(playlists=True)   # the shorter one after a playlist write
 
 fetches, in this order, the library's songs (with their albums, which is what the Albums and
 Artists sections are built from), the playlists and each one's tracks, the playlist folders,
@@ -31,7 +32,13 @@ library write, where a full pass would re-read everything to find one song: it f
 songs, the playlist listing and the shelves, and keeps last time's playlist tracks, folders,
 videos and stations, none of which adding to the library changes. It writes library.json and
 reloads the models as a full pass does, but stamps no last-sync and says nothing when it ends:
-it is no substitute for the full one the clock waits for.
+it is no substitute for the full one the clock waits for. A `playlists` pass
+(sync_library(playlists=True), LibrarySync.start(playlists=True)) is the one after a playlist
+or a folder was made, renamed or deleted: it reads the playlist listing and the folders alone,
+and keeps everything else of last time's file, the playlists' tracks included.
+
+A playlist or folder the account deleted is still listed by Apple for a while (minutes, seen
+on 2026-10-03), nameless (api.is_deleted): the listings leave it out.
 
 A full pass reads a playlist's tracks again only when its listing says they may have changed.
 Each playlist Item records `modified`, Apple's `lastModifiedDate` as the listing had it when
@@ -87,7 +94,7 @@ gi.require_version('GdkPixbuf', '2.0')
 
 from gi.repository import GdkPixbuf, GLib, GObject  # noqa: E402
 
-from .backend import config  # noqa: E402
+from .backend import api, config  # noqa: E402
 from .backend import normalize, store  # noqa: E402
 from .backend.errors import EngineError  # noqa: E402
 from .library import EDITABLE, FAVOURITES, ROOT_FOLDER, parse  # noqa: E402
@@ -230,7 +237,7 @@ def install_scaler():
     normalize.load_art_sizes(str(config.cache_dir()))
 
 
-async def sync_library(engine, library, progress=None, quick=False):
+async def sync_library(engine, library, progress=None, quick=False, playlists=False):
     """The whole sync (see the module). Returns the counts: {albums, artists, playlists,
     loose, videos, radio, folders, shelves, art: {wanted, fetched, failed}}.
 
@@ -238,7 +245,11 @@ async def sync_library(engine, library, progress=None, quick=False):
     shelves, and leaves the rest of last time's file alone — the playlists' tracks, the
     folders, the videos and the stations, none of which adding to the library changes. A song
     added is then in Songs and in Recently Added without the per-playlist reads a full pass
-    makes. It is not a sync: the caller does not stamp last-sync for it."""
+    makes. It is not a sync: the caller does not stamp last-sync for it.
+
+    `playlists`: the pass after a playlist or a folder was made, renamed or deleted. It reads
+    the playlist listing and the folders, nothing else: the songs, albums, artists, shelves,
+    videos, stations and the playlists' tracks are last time's. Not a sync either."""
     report = progress or (lambda section, done, total: None)
     generation = store.cache_generation()  # a wipe from here on leaves this sync's files out
     status = await engine.status()
@@ -253,6 +264,18 @@ async def sync_library(engine, library, progress=None, quick=False):
     raw = {}  # Apple's answers, for the build, which lets go of them once they are used
     previous = _Previous(cache_dir)  # last time's file, read (in a thread) when first asked
 
+    if playlists:
+        report('playlists', 0, None)
+        raw['playlists'] = await _fetch_playlists(engine)
+        raw['tracks'] = {}
+        try:
+            raw['folders'] = await _fetch_folders(engine, report)
+        except EngineError as error:
+            _keep_going(error)
+            raw['folders'] = None
+        raw['songs'] = raw['videos'] = raw['stations'] = raw['shelves'] = None
+        return await _build(cache_dir, storefront, raw, library, report, generation, previous)
+
     # 1. The songs, each with its album: the Albums and Artists sections come from them.
     report('songs', 0, None)
     raw['songs'] = await engine.api_pages(
@@ -264,8 +287,7 @@ async def sync_library(engine, library, progress=None, quick=False):
     # groups and counts for a playlist whose tracks are not here: the expensive read
     # skipped, which a quick pass does for every playlist.
     report('playlists', 0, None)
-    raw['playlists'] = await engine.api_pages(PLAYLISTS_ENDPOINT, PLAYLIST_PARAMS, page=PAGE,
-                                              unique=True)
+    raw['playlists'] = await _fetch_playlists(engine)
     if quick:
         raw['tracks'] = {}
     else:
@@ -349,6 +371,14 @@ def _keep_going(error):
     log.warning('sync: %s', error)
 
 
+async def _fetch_playlists(engine):
+    """The playlist listing, without the playlists the account deleted that Apple still
+    lists (api.is_deleted)."""
+    listing = await engine.api_pages(PLAYLISTS_ENDPOINT, PLAYLIST_PARAMS, page=PAGE,
+                                     unique=True)
+    return [raw for raw in listing if not api.is_deleted(raw)]
+
+
 async def _fetch_playlist_tracks(engine, raw_playlists, report, stamps=None):
     """{playlist id: its raw tracks, or None when they could not be fetched}, a few playlists
     at a time; progress per playlist done. Apple answers 404 for a playlist with no songs:
@@ -415,7 +445,8 @@ async def _fetch_folders(engine, report):
     """library.json's `folders` from Apple's playlist folders: the root's children, then each
     folder's, breadth first, in Apple's order. Apple's root is called ROOT_FOLDER here. A
     folder answering 404 has nothing in it; one listed again (in a folder of its own) is left
-    out the second time, so the tree stays a tree."""
+    out the second time, so the tree stays a tree; a playlist or folder the account deleted
+    that Apple still lists (api.is_deleted) is left out."""
     folders = []
     seen = {APPLE_ROOT_FOLDER}
     queue = [(APPLE_ROOT_FOLDER, None, '')]
@@ -432,7 +463,7 @@ async def _fetch_folders(engine, report):
         entry = {'id': _folder_id(apple_id), 'title': title, 'parent': parent, 'children': []}
         for child in children:
             child_id = str(child.get('id') or '')
-            if not child_id:
+            if not child_id or api.is_deleted(child):
                 continue
             if child.get('type') == FOLDER_TYPE:
                 if child_id in seen:
@@ -485,10 +516,15 @@ def _build_and_write(cache_dir, storefront, raw, art_progress, cancelled, genera
     counts = {}
     art_urls = {}  # every artwork path named here, and its URL
     previous = previous if previous is not None else _Previous(cache_dir)
-    albums, artists = normalize.group_songs_into_albums_and_artists(raw['songs'], cache_dir,
-                                                                    art_urls)
-    sections = {'albums': albums, 'artists': artists}
-    counts['loose'] = loose_count(raw['songs'])
+    if raw['songs'] is None:  # a playlists pass: last time's albums and artists
+        sections = {'albums': previous.section('albums'),
+                    'artists': previous.section('artists')}
+        counts['loose'] = 0
+    else:
+        albums, artists = normalize.group_songs_into_albums_and_artists(raw['songs'],
+                                                                        cache_dir, art_urls)
+        sections = {'albums': albums, 'artists': artists}
+        counts['loose'] = loose_count(raw['songs'])
     sections['playlists'] = _playlists(raw['playlists'], raw['tracks'], cache_dir, art_urls,
                                        previous)
     if raw['videos'] is None:
@@ -591,6 +627,8 @@ def _playlists(raw_playlists, playlist_tracks, cache_dir, art_urls, previous):
 def _shelves(shelves_raw, cache_dir, art_urls, previous):
     """The Home shelves: Apple's recommendations, then the fixed shelves (SHELF_DEFS), each
     keeping last time's when it could not be fetched. The app titles them by key."""
+    if shelves_raw is None:  # a playlists pass: last time's, all of them
+        return previous.shelves()
     shelves = []
     if shelves_raw['recommendations'] is None:
         shelves.extend(shelf for shelf in previous.shelves()
@@ -842,12 +880,13 @@ class LibrarySync(GObject.Object):
 
     # -- running one -----------------------------------------------------------------------
 
-    def start(self, retry=False, quick=False):
+    def start(self, retry=False, quick=False, playlists=False):
         """Sync the library through the engine, starting it if it is down, unless a sync is
         running already or held. Returns the task, or None. Signed out, nothing starts and
         the sign-in is offered (app.report). `retry`: the one retry after thumbnails failed.
-        `quick`: the pass after a library write (sync_library), which neither stamps
-        last-sync nor says it synced, being no substitute for a full one."""
+        `quick`: the pass after a library write, `playlists` the one after a playlist write
+        (sync_library), which neither stamp last-sync nor say they synced, being no
+        substitute for a full one."""
         app = self._app
         if app.refuse_in_demo():
             return None
@@ -861,7 +900,7 @@ class LibrarySync(GObject.Object):
             log.debug('a sync is running already')
             return None
         self.running = True
-        task = self._task = app.spawn(self._run(retry, quick))
+        task = self._task = app.spawn(self._run(retry, quick, playlists))
         task.add_done_callback(self._on_done)
         return task
 
@@ -878,7 +917,7 @@ class LibrarySync(GObject.Object):
             task.cancel()
             await asyncio.wait([task])
 
-    async def _run(self, retry=False, quick=False):
+    async def _run(self, retry=False, quick=False, playlists=False):
         app = self._app
         engine = app.engine
         started = time.monotonic()
@@ -897,7 +936,8 @@ class LibrarySync(GObject.Object):
         try:
             progress('', 0, None)  # the banner, while Chrome may take seconds to come up
             await engine.start()  # a start under way is joined; a running engine is kept
-            counts = await sync_library(engine, app.library, progress, quick=quick)
+            counts = await sync_library(engine, app.library, progress, quick=quick,
+                                        playlists=playlists)
         except store.Cancelled as error:
             log.info('sync stopped: %s', error)  # the cache was cleared under it
             return
@@ -918,11 +958,11 @@ class LibrarySync(GObject.Object):
             live[0] = False
             app.library.syncing = False
         self._failed_at = None
-        if quick:
+        if quick or playlists:
             # No last-sync stamp and no toast: the write's own toast has been shown, and a
-            # quick pass must not put off the full one the clock is waiting for.
-            log.info('quick sync done in %.0f s (%s)', time.monotonic() - started,
-                     phase_text(phases, time.monotonic()))
+            # short pass must not put off the full one the clock is waiting for.
+            log.info('%s sync done in %.0f s (%s)', 'quick' if quick else 'playlists',
+                     time.monotonic() - started, phase_text(phases, time.monotonic()))
             return
         app.settings.set_string(app.account_key('last-sync'),
                                 datetime.now(UTC).isoformat(timespec='seconds'))
