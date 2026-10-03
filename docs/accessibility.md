@@ -33,7 +33,13 @@ list and the script together.
    the first track (Shift+Tab goes back to More Options), Down, and Enter plays from that
    track. Alt+Left (or Escape inside the page) goes back. On an artist: Play, More Options,
    the latest release, then (past the Top Songs arrows and See All) the top songs, where the
-   arrows move from song to song and Enter plays the top songs from the one focused.
+   arrows move from song to song and Enter plays the top songs from the one focused. On
+   Artists, Ctrl+2 puts the focus on the list's selected artist; Up and Down move through the
+   list (in the wide layout they select, which shows the artist beside it; in the narrow one
+   they only move), and Enter shows the artist's albums with the focus on Play; Tab goes to
+   Shuffle, More Options and the first album, and Enter opens it. Alt+Left from the album
+   comes back to the artist and, in the narrow layout, again to the list, the focus on the
+   artist.
 4. The player bar shows only while something plays. With nothing playing there is no bar:
    Ctrl+3 leaves the focus where it is and a screen reader hears "Not Playing", while
    Ctrl+Shift+N still opens Now Playing (Nothing Queued), and Escape closes it with the focus

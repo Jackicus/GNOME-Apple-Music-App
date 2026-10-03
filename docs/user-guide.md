@@ -35,6 +35,13 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   <kbd>Esc</kbd> clears the filter. Click a column title to sort by it, or use **Sort By**.
 - In a wide window a playlist's songs are a table, as the Songs page is: click an artist
   or an album there to open its page.
+- **Artists** lists the artists in your library beside the one you choose: their albums in
+  your library, newest first (**Sort By** for titles), with **Play** and **Shuffle** for all
+  their songs. A song you added without its album shows as its album. Clicking an artist you
+  have anywhere else (a song's artist, an album's) shows the same; their name at the top, or
+  **Go to Artist** in a menu, opens their page on Apple Music, whose **In Your Library**
+  leads back with **See All**. In a narrow window the list comes first, and choosing an
+  artist shows their albums, with a back button.
 - Right-click a song, an album or a playlist (or press and hold it, or press
   <kbd>Menu</kbd>) for its menu: play it next or later, add it to a playlist or your
   favourites, open it on music.apple.com, and, for a song, **Go to Album** and **Go to

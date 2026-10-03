@@ -95,7 +95,18 @@ Platform behaviour worth knowing is in `gtk-notes.md`; list and artwork performa
   (`show(heroes=…)`). Shelf titles are Apple's (`view_title()`, not `remote.shelf_title()`), and
   a shelf Apple has more of fetches the rest on See All (its `complete`, which
   `window.open_shelf` runs). The library's albums of the artist's come first, as In Your
-  Library, whenever there are some (alone while the catalog cannot answer).
+  Library, whenever there are some (alone while the catalog cannot answer); its See All
+  (always offered: the shelf's `library_artist`) opens the library's page of the artist.
+- An artist the library has is shown as the library holds them (docs/decisions.md):
+  `pages/library_artist.py`, one page used as the Artists destination's detail pane
+  (`set_artist()`) and pushed by `window.open_item` for a library artist's tile or link
+  (`item_actions.show_artist` for a row's or an album page's link). Go to Artist and the
+  library page's name open Apple Music's page through `window.open_artist_page`. The library
+  page has no `item` (that names the page Go to Artist opens: `related.same_page`, `shows`).
+- Artists (pages/artists.py) is a root page with an `AdwNavigationSplitView` of its own, in
+  an `Adw.BreakpointBin` that collapses it. The window asks a root page of two panes, when it
+  has them, for `can_go_back()`/`go_back()` (Back, before its own sidebar), `focus_content()`
+  (Ctrl+2) and `banner_host()` (the banners' toolbar view), and follows its `panes-changed`.
 - A tile or row offers a context menu by exposing `context_item` (its Item or Track, None when
   unbound) and having `context_menu.attach(view)` called on its view (`drag=True` for tracks).
   The item actions take their object as a `(ss)` target (kind, id), not as state. Go to Album
