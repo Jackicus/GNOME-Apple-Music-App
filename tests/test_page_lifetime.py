@@ -488,6 +488,17 @@ class PageLifetimeTest(WidgetTestCase):
             ArtistPage(self.library, Item(_artist([_album(n) for n in range(4)]))), Tile)
         await self.assert_freed(*refs)
 
+    async def test_library_artist_page(self):
+        # Its albums are made up from the artist's groups (the library here has none of them).
+        from applemusic.library import Item
+        from applemusic.pages.library_artist import LibraryArtistPage
+        from applemusic.widgets.tile import Tile
+
+        refs = await self.pushed_and_popped(
+            LibraryArtistPage(self.library, Item(_artist([_album(n) for n in range(4)]))),
+            Tile)
+        await self.assert_freed(*refs)
+
     async def test_artist_page_with_the_catalog(self):
         from applemusic.library import Item
         from applemusic.pages.artist import ArtistPage

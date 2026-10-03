@@ -33,7 +33,9 @@ touches widgets.
   `AdwSidebar` and an `AdwNavigationView`) and whose bottom bar and sheet are the player bar and
   Now Playing. Choosing a sidebar item replaces the navigation stack with that destination's
   root page; tiles and rows push album, playlist, artist and See All pages through the window's
-  `open_item()`, `open_shelf()` and `open_songs()`, and every "play this" goes through its
+  `open_item()`, `open_shelf()` and `open_songs()` (an artist the library has: the library's
+  page of them, `pages/library_artist.py`, over `discography.py`; Apple Music's page of an
+  artist through `open_artist_page()`), and every "play this" goes through its
   `play_request()`. The sidebar itself (its items following the library, the selection, the
   folders, the drops) is `sidebar_view.py`'s controller, with its decisions as `sidebar.py`'s
   functions; which playback action a key runs is `keyboard.py`'s decision. The item actions
@@ -45,7 +47,8 @@ touches widgets.
   what was deleted, and the library follows once Apple lists the change, through the sync's
   short playlists pass.
 - **Pages** (`pages/`): one module per destination or pushed page, built when first shown. The
-  library pages bind the library's stores; New, Made for You and Search ask the engine (the
+  library pages bind the library's stores (Artists is a list beside the library's page of
+  the artist chosen, an `AdwNavigationSplitView` of its own that collapses when narrow); New, Made for You and Search ask the engine (the
   first two, and Search's categories, keep its answers in the cache for a day).
 - **Library** (`library.py`): the model. GObjects in `Gio.ListStore`s, filled from the cache's
   library.json. It has no GTK, so it is tested without a display. A reload after a sync keeps

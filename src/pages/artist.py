@@ -14,7 +14,8 @@ from gi.repository import Adw, GLib, Gtk
 from ..actions import can_play
 from ..backend.api import is_library_id
 from ..backend.errors import EngineError
-from ..library import Item, ShelfModel, fold
+from ..discography import library_artist
+from ..library import Item, ShelfModel
 from ..related import credits
 from ..remote import fetch_cover, fetch_shelf_art, fetch_thumb, remote_item
 from ..widgets import artwork
@@ -134,7 +135,9 @@ class ArtistPage(Adw.NavigationPage):
     carries; a library artist the sync made up from its songs' names is found through its
     songs (Engine.catalog_artist; song_ids(), from the library's albums). The albums the
     library has of the artist's (the library artist's, or for a catalog artist the library's
-    of the same name) come first, as In Your Library, beside the catalog's shelves (the same
+    of the same name: discography.library_artist()) come first, as In Your Library, whose See
+    All, always offered, opens what the library holds of the artist (its `library_artist`,
+    window.open_shelf), beside the catalog's shelves (the same
     album may be on both: a library album carries no catalog id to tell), and alone without
     the engine or with no catalog artist found. The catalog is asked once while the page is
     shown (and again when hidden then shown); what stops it shows in the status page
@@ -234,6 +237,8 @@ class ArtistPage(Adw.NavigationPage):
     def _show(self, *_args):
         self._show_hero()
         self._library_shelf.update(self._library_shelf.title, self._library_albums())
+        # See All: what the library holds of the artist (window.open_shelf), always offered.
+        self._library_shelf.library_artist = library_artist(self._library, self.item)
         self._show_sections()
 
     def _show_hero(self):
@@ -294,7 +299,7 @@ class ArtistPage(Adw.NavigationPage):
         artist's of the same name, when there is one."""
         item = self.item
         if not item.groups and not is_library_id(item.id):
-            item = self._library_artist() or item
+            item = library_artist(self._library, item) or item
         albums = []
         for group in item.groups:
             play = group.play
@@ -306,16 +311,6 @@ class ArtistPage(Adw.NavigationPage):
             albums.append(album)
         albums.sort(key=lambda album: album.year, reverse=True)  # stable: ties keep their order
         return albums
-
-    def _library_artist(self):
-        """The library's artist named as this one is (a catalog artist's page), or None."""
-        name = fold(self.item.title)
-        artists = self._library.artists
-        for position in range(artists.get_n_items()):
-            artist = artists.get_item(position)
-            if fold(artist.title) == name:
-                return artist
-        return None
 
     def _show_sections(self):
         """The top row, the shelves and the status page, from the answer as it stands."""

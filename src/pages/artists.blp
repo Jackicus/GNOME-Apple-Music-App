@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2026 Jack Tully
+
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicArtistsPage: Adw.NavigationPage {
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Too narrow for the list beside two columns of albums: one pane at a time, the list
+    // first, an artist chosen from it pushing their albums (artists.py).
+    Adw.Breakpoint {
+      condition ("max-width: 600sp")
+
+      setters {
+        split_view.collapsed: true;
+      }
+    }
+
+    child: Stack stack {
+      StackPage {
+        name: "loading";
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.Spinner {
+            width-request: 32;
+            height-request: 32;
+            halign: center;
+            valign: center;
+          };
+        };
+      }
+
+      StackPage {
+        name: "empty";
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {}
+
+          content: Adw.StatusPage empty_page {
+            icon-name: "audio-input-microphone-symbolic";
+            title: _("No Artists");
+            description: _("Artists in your library appear here");
+          };
+        };
+      }
+
+      // The list of artists beside the one chosen (pages/library_artist.py, the content,
+      // which artists.py adds).
+      StackPage {
+        name: "artists";
+
+        child: Adw.NavigationSplitView split_view {
+          min-sidebar-width: 220;
+          max-sidebar-width: 300;
+          sidebar-width-fraction: 0.3;
+
+          sidebar: Adw.NavigationPage list_page {
+            title: _("Artists");
+            tag: "list";
+
+            child: Adw.ToolbarView list_toolbar {
+              [top]
+              Adw.HeaderBar {}
+
+              content: ScrolledWindow list_scrolled {
+                hscrollbar-policy: never;
+
+                child: ListView list_view {
+                  tab-behavior: item;
+
+                  accessibility {
+                    label: _("Artists");
+                  }
+
+                  styles [
+                    "navigation-sidebar",
+                  ]
+                };
+              };
+            };
+          };
+        };
+      }
+    };
+  };
+}

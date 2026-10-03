@@ -182,6 +182,9 @@ def classes():
         def go_to(self, obj, kind):
             self.went.append((obj, kind))
 
+        def show_artist(self, obj):
+            self.went.append((obj, 'link to artist'))
+
     class Window(Adw.Window):
         def __init__(self):
             super().__init__(default_width=1000, default_height=700)
@@ -197,6 +200,7 @@ def classes():
         def reset(self):
             self.item_actions.went = []
             self.opened = []
+            self.artist_pages = []  # open_artist_page()'s, Apple Music's pages of artists
             self.shelves_opened = []
             self.played = []
             self.started_with = []  # each play request's start_id
@@ -207,6 +211,9 @@ def classes():
 
         def open_item(self, item):
             self.opened.append(item)
+
+        def open_artist_page(self, item):
+            self.artist_pages.append(item)
 
         def open_shelf(self, shelf):
             self.shelves_opened.append(shelf)

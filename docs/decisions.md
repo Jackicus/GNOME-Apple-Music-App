@@ -255,6 +255,23 @@ changes, change it here, with the date. The plan they came from is in
   catalog artist's page while the engine is up. Videos about the artist open on music.apple.com: the engine is
   headless and has no picture to show. The demo engine answers with the artist pages the
   demo library invents (marked `demo`), and with none of Apple's (#226).
+- **An artist of the library is shown as the library holds them** (2026-10-03). Apple Music
+  has two pages of an artist: the catalog's, and its library's (Library › Artists: a list
+  of artists beside the one chosen, their albums in the library under the name, Play and
+  Shuffle). Both are here. The rule: **a click on an artist the library has** (the Artists
+  list, a library artist's tile, a row's artist link, an album page's artist link) shows
+  what the library holds of them, `pages/library_artist.py` (the Artists page's pane, or a
+  page of its own pushed by `window.open_item`); **Go to Artist** (the menus) and the
+  library page's name link open Apple Music's page of the artist (`window.open_artist_page`),
+  as before; a link to an artist the library lacks goes where Go to Artist goes. A link
+  is "the library has them" by name (`related.library_artist`), whatever page it is on: one
+  rule for every link, and the library page's name leads on to the catalog in one click.
+  The artist page's In Your Library always offers See All, which opens the library page.
+  An artist's library page shows albums only, as Apple's does: a song added without its
+  album sits under the sync's stand-in album and shows as that album's tile, so nothing the
+  library holds of the artist's own is left out; songs of theirs on someone else's album (a
+  compilation, a feature) are that album's artist's, the library's artists being its albums'
+  artists (#268).
 
 ## Open
 

@@ -130,9 +130,10 @@ class DetailPage(Adw.NavigationPage):
     row's accessible description), every bound row again as the item changes. A click on a
     track plays its group from it, as Enter does (the list's single-click-activate).
 
-    The hero: an album's artist links to their page when the library has them
-    (resolve_artist()) or the catalog can say (links_catalog_artist()), opened as Go to Artist
-    opens it (window.item_actions.go_to()), a More Options menu
+    The hero: an album's artist links to what the library holds of them when it has them
+    (resolve_artist(), window.open_item()), else to Apple Music's page of them when the
+    catalog can say (links_catalog_artist()), as Go to Artist opens it
+    (window.item_actions.go_to()); a More Options menu
     button offers the item's own menu (window.item_actions), and the notes show three lines,
     with More for the whole text. The header bar shows the title once the hero's has scrolled
     away (HeaderTitle). Tab from the hero's last button goes on into the tracks, and Shift+Tab
@@ -601,9 +602,11 @@ class DetailPage(Adw.NavigationPage):
     # The hero's links and menus.
 
     def _on_artist_clicked(self, _button):
-        # As Go to Artist does: Apple Music's artist page when the engine can say, the
-        # library's otherwise.
-        if self.item is not None:
+        # What the library holds of the artist when it has them (window.open_item); else as
+        # Go to Artist does, Apple Music's artist page.
+        if self._artist is not None:
+            self.get_root().open_item(self._artist)
+        elif self.item is not None:
             self.get_root().item_actions.go_to(self.item, 'artist')
 
     def _on_more_popup(self, button):

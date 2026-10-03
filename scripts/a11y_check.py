@@ -485,7 +485,7 @@ async def walkthrough(window):
     second = detail.item.groups[0].entries.get_item(1)
     check('Down, Enter plays the second track', requests == [(1, second.id)], requests)
     print('-- artist')
-    window.open_item(app.library.artists.get_item(0))
+    window.open_artist_page(app.library.artists.get_item(0))  # Go to Artist's page
     await asyncio.sleep(1.5)  # its page answered from the demo's invented one
     artist = window.navigation_view.get_visible_page()
     check('an artist opens with the focus on Play', inside(window.get_focus(), artist.play_button),
@@ -696,6 +696,51 @@ async def walkthrough(window):
     check('Escape closes the filter bar, the focus back in the table',
           not songs.search_bar.get_search_mode()
           and inside(window.get_focus(), songs.column_view), describe(window.get_focus()))
+    print('-- Artists')
+    window.select_page('artists')
+    window.split_view.set_show_content(True)
+    await asyncio.sleep(0.6)
+    artists = window.navigation_view.get_visible_page()
+    collapsed = artists.split_view.get_collapsed()
+    await key(window, '<primary>2', 0.6)
+    check("Ctrl+2 puts the focus on the list's selected artist",
+          inside(window.get_focus(), artists.list_view), describe(window.get_focus()))
+    selection = artists.list_view.get_model()
+    await key(window, 'Down', 0.4)
+    second = selection.get_item(1)
+    if collapsed:
+        check('Down moves to the next artist', selection.get_selected() == 1
+              and not artists.split_view.get_show_content(), selection.get_selected())
+    else:
+        check('Down selects the next artist, whose albums show beside the list',
+              artists.detail.artist is second, artists.detail.artist)
+    await key(window, 'Return', 0.8)
+    detail = artists.detail
+    check("Enter shows the artist's albums, the focus on Play",
+          detail.artist is second and detail.get_mapped()
+          and inside(window.get_focus(), detail.play_button), describe(window.get_focus()))
+    await key(window, 'Tab')
+    check('Tab: Shuffle', inside(window.get_focus(), detail.shuffle_button))
+    await key(window, 'Tab')
+    check('Tab: More Options', inside(window.get_focus(), detail.more_button))
+    await key(window, 'Tab')
+    check('Tab: the first album', inside(window.get_focus(), detail.grid_view),
+          describe(window.get_focus()))
+    await key(window, 'Return', 1.0)
+    pushed = window.navigation_view.get_visible_page()
+    check('Enter opens the album', getattr(pushed, 'item', None) is not None
+          and pushed.item.kind == 'album' and pushed.item is detail.shown_albums()[0],
+          (pushed, [album.title for album in detail.shown_albums()],
+           getattr(getattr(pushed, 'item', None), 'title', None)))
+    await key(window, '<alt>Left', 0.8)
+    check('Alt+Left goes back to the artist, the focus on the album',
+          window.navigation_view.get_visible_page() is artists
+          and inside(window.get_focus(), detail.grid_view), describe(window.get_focus()))
+    if collapsed:
+        await key(window, '<alt>Left', 0.8)
+        check('Alt+Left goes back to the list, the focus on the artist',
+              not artists.split_view.get_show_content()
+              and inside(window.get_focus(), artists.list_view), describe(window.get_focus()))
     print('-- menus')
     await key(window, 'F10', 0.6)
     menu = window.primary_menu_button.get_popover()
@@ -888,9 +933,12 @@ async def names(window):
         total += await unnamed(page)
     for kind, store in (('album', app.library.albums), ('playlist', app.library.playlists),
                         ('artist', app.library.artists)):
-        window.open_item(store.get_item(0))
+        window.open_item(store.get_item(0))  # an artist: the library's page of them
         await asyncio.sleep(1.0)
         total += await unnamed(kind)
+    window.open_artist_page(app.library.artists.get_item(0))
+    await asyncio.sleep(1.5)
+    total += await unnamed("artist's page")
     window.select_page('search')
     await asyncio.sleep(0.5)
     search = window.navigation_view.get_visible_page()

@@ -24,6 +24,9 @@ src/shortcuts.py
 src/pages/__init__.py
 src/pages/artist.py
 src/pages/artist.blp
+src/pages/artists.blp
+src/pages/library_artist.py
+src/pages/library_artist.blp
 src/pages/detail.py
 src/pages/detail.blp
 src/pages/grid.py

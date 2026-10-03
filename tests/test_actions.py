@@ -553,6 +553,7 @@ class FakeWindow:
         self.actions = {}
         self.played = []
         self.opened = []
+        self.artist_pages = []  # the artists in `opened` that open_artist_page() opened
         self.shown = None  # the Item of the page shown
         self.clipboard = FakeClipboard()
         self.left = []  # leave()'s (gone, parent)
@@ -566,6 +567,11 @@ class FakeWindow:
 
     def open_item(self, item):
         self.opened.append(item)
+
+    def open_artist_page(self, item):
+        # Apple Music's page of an artist: in `opened` too, in the order pages opened.
+        self.opened.append(item)
+        self.artist_pages.append(item)
 
     def shown_item(self):
         return self.shown
@@ -813,6 +819,26 @@ class ItemActionsTest(unittest.IsolatedAsyncioTestCase):
         await self.run_action('item-go-to-artist', 'album', 'l.alb1')
         self.assertEqual(self.window.opened, [LIBRARY_ALBUM, BAND, BAND])
         self.assertEqual(self.app.toasts, [])
+        # The artist's is Apple Music's page of them, the library's artist's too.
+        self.assertEqual(self.window.artist_pages, [BAND, BAND])
+
+    async def test_a_link_to_an_artist_is_the_librarys_page_of_them(self):
+        # A row's or an album page's link: the library's artist through open_item (the
+        # library's page of them), the engine asked nothing; else as Go to Artist goes.
+        song = Track({'id': 'i.song5', 'catalogId': '1000000030', 'title': 'Harbour Lights',
+                      'artist': 'The Invented Band', 'type': 'library-songs'})
+        self.assertIsNone(self.actions.show_artist(song))
+        self.assertEqual(self.window.opened, [BAND])
+        self.assertEqual(self.window.artist_pages, [])
+        self.assertEqual([call for call in self.app.engine.calls if call[0] == 'related'], [])
+        stranger = Track({'id': '1000000040', 'catalogId': '1000000040', 'title': 'Shoreline',
+                          'artist': 'Nobody We Know'})
+        self.app.engine.related_answers[('song', '1000000040')] = {
+            'album': None,
+            'artists': [{'id': '1000000041', 'kind': 'artist', 'title': 'Nobody We Know'}]}
+        await self.actions.show_artist(stranger)
+        self.assertEqual([(item.kind, item.id) for item in self.window.artist_pages],
+                         [('artist', '1000000041')])
 
     async def test_go_to_the_catalog_album_and_artist(self):
         # The library has neither: the engine looks the catalog song up, once per kind of
