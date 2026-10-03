@@ -1331,9 +1331,10 @@ FAVOURITES_DATA = {
 }
 
 # The playlist folders, as Apple's sidebar nests them: a folder's playlists are numbers into
-# PLAYLISTS_DATA (1 is l.pl001), its folders are titles here, and each lists its folders first,
-# as Apple Music does. The playlists no folder holds, Favourite Songs among them, are at the top
-# level, after the top-level folders, in the playlists' order.
+# PLAYLISTS_DATA (1 is l.pl001), its folders are titles here. The playlists no folder holds,
+# Favourite Songs among them, are at the top level. Each children list is in an order of its
+# own, as Apple's API answers (the playlists, then the folders, in no order of title), and the
+# app lists them as Apple Music's sidebar does: Favourite Songs, folders, playlists, by title.
 FOLDERS_DATA = [
     {'title': 'Chill & Focus', 'folders': ['Jazz Nights'], 'playlists': [1, 4, 10]},
     {'title': 'Jazz Nights', 'folders': [], 'playlists': [5, 11]},
@@ -1424,8 +1425,8 @@ def build_folders(playlist_ids):
     folders = []
     held = set()
     for data in FOLDERS_DATA:
-        children = [{'kind': 'folder', 'id': ids[title]} for title in data['folders']]
-        children += [{'kind': 'playlist', 'id': playlist_ids[n - 1]} for n in data['playlists']]
+        children = [{'kind': 'playlist', 'id': playlist_ids[n - 1]} for n in data['playlists']]
+        children += [{'kind': 'folder', 'id': ids[title]} for title in data['folders']]
         held.update(playlist_ids[n - 1] for n in data['playlists'])
         folders.append({
             'id': ids[data['title']],
@@ -1433,9 +1434,9 @@ def build_folders(playlist_ids):
             'parent': parents.get(data['title'], 'root'),
             'children': children,
         })
-    top = [{'kind': 'folder', 'id': folder['id']}
-           for folder in folders if folder['parent'] == 'root']
-    top += [{'kind': 'playlist', 'id': pid} for pid in playlist_ids if pid not in held]
+    top = [{'kind': 'playlist', 'id': pid} for pid in playlist_ids if pid not in held]
+    top += [{'kind': 'folder', 'id': folder['id']}
+            for folder in folders if folder['parent'] == 'root']
     return [{'id': 'root', 'title': 'Playlists', 'parent': None, 'children': top}] + folders
 
 

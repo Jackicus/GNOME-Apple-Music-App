@@ -82,7 +82,31 @@ class PlanUpdateTest(unittest.TestCase):
         self.assertEqual(retitles, [])
         self.assertEqual([(index, count, [e.key for e in entries])
                           for index, count, entries in splices],
-                         [(5, 0, ['playlist:p4'])])
+                         [(6, 0, ['playlist:p4'])])
+
+    def test_a_rename_that_moves_an_entry_is_a_move(self):
+        # Folder C renamed "Archive" goes before Folder A (folders sort by title): the
+        # entry leaves its place and a new one comes in at the new place, under its new title.
+        old = playlist_entries(tree())
+        folders = [
+            {'id': 'root', 'title': '', 'parent': None, 'children': [
+                {'kind': 'folder', 'id': 'a'}, {'kind': 'playlist', 'id': 'p2'},
+                {'kind': 'playlist', 'id': 'fav'}, {'kind': 'folder', 'id': 'c'}]},
+            {'id': 'a', 'title': 'Folder A', 'parent': 'root', 'children': [
+                {'kind': 'folder', 'id': 'b'}, {'kind': 'playlist', 'id': 'p1'}]},
+            {'id': 'b', 'title': 'Folder B', 'parent': 'a', 'children': [
+                {'kind': 'playlist', 'id': 'p3'}]},
+            {'id': 'c', 'title': 'Archive', 'parent': 'root', 'children': []},
+        ]
+        new = playlist_entries(tree(folders=folders))
+        self.assertEqual([e.key for e in new][:2], ['folder:c', 'folder:a'])
+        retitles, splices = plan_update(old, new)
+        self.assertEqual(retitles, [])
+        entries = list(old)
+        for index, count, inserted in splices:
+            entries[index:index + count] = inserted
+        self.assertEqual([e.shape() for e in entries], [e.shape() for e in new])
+        self.assertEqual(sum(count for _index, count, _entries in splices), 1)  # only c went
 
     def test_a_move_between_folders_is_a_splice(self):
         old = playlist_entries(tree())
@@ -102,7 +126,7 @@ class PlanUpdateTest(unittest.TestCase):
         self.assertEqual(retitles, [])
         self.assertEqual([(index, count, [e.key for e in entries])
                           for index, count, entries in splices],
-                         [(6, 0, ['playlist:p1']), (3, 1, [])])  # last first
+                         [(5, 0, ['playlist:p1']), (3, 1, [])])  # last first
         # Applied in that order, the old list becomes the new one.
         entries = list(old)
         for index, count, inserted in splices:
@@ -155,18 +179,20 @@ class DecisionsTest(unittest.TestCase):
 
 class TestEntries(unittest.TestCase):
     def test_depth_first_without_favourite_songs(self):
+        # Folders first, then playlists, each by title, at every level (library.PlaylistTree).
         entries = playlist_entries(tree())
         self.assertEqual([(e.kind, e.key, e.title, e.depth, e.ancestors) for e in entries], [
             ('folder', 'folder:a', 'Folder A', 0, ()),
             ('folder', 'folder:b', 'Folder B', 1, ('a',)),
             ('playlist', 'playlist:p3', 'P3', 2, ('a', 'b')),
             ('playlist', 'playlist:p1', 'P1', 1, ('a',)),
-            ('playlist', 'playlist:p2', 'P2', 0, ()),
             ('folder', 'folder:c', 'Folder C', 0, ()),
+            ('playlist', 'playlist:p2', 'P2', 0, ()),
         ])
         self.assertEqual([e.icon_name for e in entries],
-                         ['folder-symbolic'] * 2 + ['playlist-symbolic'] * 3 + ['folder-symbolic'])
-        self.assertEqual([e.folder_id for e in entries], ['a', 'b', None, None, None, 'c'])
+                         ['folder-symbolic'] * 2 + ['playlist-symbolic'] * 2
+                         + ['folder-symbolic', 'playlist-symbolic'])
+        self.assertEqual([e.folder_id for e in entries], ['a', 'b', None, None, 'c', None])
         self.assertEqual(entries[2].item.id, 'p3')
 
     def test_shown_when_every_folder_it_is_in_is_expanded(self):
@@ -175,9 +201,9 @@ class TestEntries(unittest.TestCase):
         def shown(expanded):
             return [e.key for e in entries if is_shown(e, set(expanded))]
 
-        self.assertEqual(shown([]), ['folder:a', 'playlist:p2', 'folder:c'])
-        self.assertEqual(shown(['a']), ['folder:a', 'folder:b', 'playlist:p1', 'playlist:p2',
-                                        'folder:c'])
+        self.assertEqual(shown([]), ['folder:a', 'folder:c', 'playlist:p2'])
+        self.assertEqual(shown(['a']), ['folder:a', 'folder:b', 'playlist:p1', 'folder:c',
+                                        'playlist:p2'])
         self.assertEqual(shown(['a', 'b']), [e.key for e in entries])
         self.assertEqual(shown(['b']), shown([]))  # b is inside collapsed a
 
