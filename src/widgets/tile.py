@@ -45,7 +45,8 @@ ART_SIZE = 160
 @Gtk.Template(resource_path='/io/github/jackicus/MusicSleeve/tile.ui')
 class Tile(Gtk.Box):
     """A 160 px square cover over a title and a dim subtitle; with artist=True, a round portrait
-    over a centred name, on two lines when it needs them.
+    over a centred name, on two lines when it needs them. With year=True the line under the
+    title is the year (an artist's own albums, where the artist goes without saying).
 
     A playlist folder (an Item of kind 'folder') has no cover: its tile shows a folder icon.
     bind(item) and unbind() are called by a list factory as tiles are recycled; the Item bound
@@ -67,8 +68,9 @@ class Tile(Gtk.Box):
     picture = Gtk.Template.Child()
     label = Gtk.Template.Child()
 
-    def __init__(self, artist=False, **kwargs):
+    def __init__(self, artist=False, year=False, **kwargs):
         super().__init__(**kwargs)
+        self._year = year
         self._artist = False
         self._folder = False
         self._marked = False  # the label holds markup's attributes (a subtitle's)
@@ -123,7 +125,8 @@ class Tile(Gtk.Box):
         self._slot.set_paths(item.thumb or item.art)
 
     def _show_label(self, item):
-        if self._artist or not item.subtitle:
+        subtitle = (str(item.year) if item.year else '') if self._year else item.subtitle
+        if self._artist or not subtitle:
             if self._marked:
                 # set_text() keeps the attributes set_markup() gave the subtitle's bytes: the
                 # new title would be drawn small and dim from where the old one ended.
@@ -133,7 +136,7 @@ class Tile(Gtk.Box):
         else:
             self.label.set_markup(GLib.markup_escape_text(item.title) + '\n'
                                   + subtitle_markup().format(
-                                      GLib.markup_escape_text(item.subtitle)))
+                                      GLib.markup_escape_text(subtitle)))
             self._marked = True
 
     def unbind(self):
@@ -147,7 +150,7 @@ class Tile(Gtk.Box):
         """Follow the Item: a reload merges new values into it, and a fetch says a thumbnail
         has arrived (notify::thumb, the path unchanged); a list does not rebind for either."""
         name = pspec.name
-        if name in ('title', 'subtitle'):
+        if name in ('title', 'subtitle', 'year'):
             self._show_label(item)
         elif name in ('thumb', 'art') and not self._slot.set_paths(item.thumb or item.art):
             self._slot.refresh()

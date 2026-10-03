@@ -108,9 +108,10 @@ class Shelf(PagedRow, Gtk.Box):
     bound with bind_shelf()) as a row of tiles under its title, with paging arrows while the
     row overflows (on a shelf wider than ARROWS_MIN_WIDTH) and a "See All" button
     (`see-all`: offered, and shown when the row does not show everything: more items than
-    ROW_LIMIT, or wider than the window), which opens the shelf as a grid
-    (window.open_shelf). Activating a tile opens its item (window.open_item);
-    a right click, a long press or the Menu key opens its context menu (context_menu.py).
+    ROW_LIMIT, or wider than the window; always for an artist page's In Your Library, which
+    has a page of its own), which opens the shelf as a grid (window.open_shelf). Activating
+    a tile opens its item (window.open_item); a right click, a long press or the Menu key
+    opens its context menu (context_menu.py).
 
     The row is a horizontal Gtk.ListView of the first ROW_LIMIT items, the scrolled window's
     own child. It builds a tile for each of them, but only the tiles on screen are mapped and
@@ -224,9 +225,12 @@ class Shelf(PagedRow, Gtk.Box):
         self._update_controls()
 
     def _truncated(self):
-        """More items than the row shows (ROW_LIMIT), or more that Apple has (`more`)."""
-        return self.shelf is not None and (self.shelf.items.get_n_items() > ROW_LIMIT
-                                           or bool(getattr(self.shelf, 'more', False)))
+        """More items than the row shows (ROW_LIMIT), more that Apple has (`more`), or a
+        page of its own to show (an artist page's In Your Library: `library_artist`)."""
+        return self.shelf is not None and (
+            self.shelf.items.get_n_items() > ROW_LIMIT
+            or bool(getattr(self.shelf, 'more', False))
+            or getattr(self.shelf, 'library_artist', None) is not None)
 
     def _on_setup(self, _factory, list_item):
         list_item.set_child(HeroTile() if self._hero else Tile())

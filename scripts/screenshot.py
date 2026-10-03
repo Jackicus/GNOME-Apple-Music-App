@@ -29,7 +29,9 @@ waits for the library to finish loading.
 --open KIND:ID opens an item once the library has loaded, as activating its
 tile does (window.open_item), over the --page (default home): KIND is album,
 artist, playlist, folder, station or video, and ID an item id or "first", the
-first of that section (for folder, the library's first playlist folder).
+first of that section (for folder, the library's first playlist folder). An
+artist opens as the library's page of them; artist-page:ID opens Apple Music's
+page of the artist instead, as Go to Artist does (window.open_artist_page).
 --page also takes a sidebar playlist or folder, as last-page names them:
 playlist:ID or folder:ID (folder:first too). --expand opens these playlist
 folders in the sidebar (the expanded-folders setting); "first" is the library's
@@ -84,7 +86,8 @@ parser.add_argument('--size', default='1100x760')
 parser.add_argument('--page')
 parser.add_argument('--demo', action='store_true', help='show the demo library in build/demo')
 parser.add_argument('--open', metavar='KIND:ID',
-                    help='open an item (ID an item id or "first") over the page')
+                    help='open an item (ID an item id or "first") over the page; '
+                         "artist-page:ID for Apple Music's page of an artist")
 parser.add_argument('--sidebar', action='store_true',
                     help='in the narrow layout, show the sidebar rather than the --page')
 parser.add_argument('--expand', metavar='ID[,ID…]', default='',
@@ -194,6 +197,9 @@ def search_library(window):
 def open_item(window):
     """--open: the item it names, opened as its tile would be."""
     kind, _sep, item_id = args.open.partition(':')
+    catalog = kind == 'artist-page'  # Apple Music's page of the artist, as Go to Artist opens
+    if catalog:
+        kind = 'artist'
     if item_id == 'first' and kind in SECTIONS:
         item = getattr(app.library, SECTIONS[kind]).get_item(0)
     elif item_id == 'first' and kind == 'folder':
@@ -202,7 +208,10 @@ def open_item(window):
         item = app.library.by_id(kind, item_id)
     if item is None:
         sys.exit(f'screenshot: no {args.open} in the library')
-    window.open_item(item)
+    if catalog:
+        window.open_artist_page(item)
+    else:
+        window.open_item(item)
 
 
 def first_context_widget(widget):

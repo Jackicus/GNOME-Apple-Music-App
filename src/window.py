@@ -7,7 +7,9 @@ player bar and the Now Playing sheet, the account button and the banners.
 The pages reach the window through get_root() and these seams, not its internals:
 
     open_item(item)                   show an album, artist, playlist, folder or category;
-                                      play a station, song or video
+                                      play a station, song or video (an artist of the
+                                      library's: what the library holds of them)
+    open_artist_page(item)            Apple Music's page of an artist (Go to Artist's)
     shown_item()                      the Item of the page shown, while no sheet covers it
     open_shelf(shelf)                 a shelf's items as a grid (See All)
     open_songs(text)                  the Songs page, filtered
@@ -31,7 +33,7 @@ import logging
 from collections import OrderedDict
 from gettext import gettext as _
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk
 
 from . import keyboard, pages, related
 from .actions import ItemActions
@@ -323,7 +325,10 @@ class Window(Adw.ApplicationWindow):
         """Show an album, artist, playlist, folder, category, station, song or video: what
         activating a tile does.
 
-        Albums and playlists push a DetailPage, artists an ArtistPage, playlist folders their
+        Albums and playlists push a DetailPage; an artist of the library's (a tile, a link,
+        the artist page's In Your Library See All) what the library holds of them, a
+        LibraryArtistPage, and any other artist Apple Music's page of them, an ArtistPage
+        (open_artist_page(), which Go to Artist opens); playlist folders their
         grid of folders and playlists (the page follows the folder Item: a rename, a
         deletion), search categories their page of shelves, over the page shown, which the
         Now Playing sheet then uncovers (its Go to Album and Go to Artist). A station,
@@ -332,6 +337,9 @@ class Window(Adw.ApplicationWindow):
         menu's Play does). A link (an interview on an artist's page) opens its page on
         music.apple.com in the browser. Anything else is named in a toast.
         """
+        if item.kind == 'artist' and self._library.by_id('artist', item.id) is not None:
+            self._open_library_artist(self._library.by_id('artist', item.id))
+            return
         visible = self.navigation_view.get_visible_page()
         if item.kind in PAGE_KINDS:
             self._close_sheet()
@@ -347,9 +355,8 @@ class Window(Adw.ApplicationWindow):
 
             page = DetailPage(self._library, item)
         elif item.kind == 'artist':
-            from .pages.artist import ArtistPage
-
-            page = ArtistPage(self._library, item)
+            self.open_artist_page(item)
+            return
         elif item.kind == 'folder':  # a folder's tile in a folder's page
             page = pages.folder(self._library, item.id, item.title, root=False)
             page.item = item
@@ -369,6 +376,31 @@ class Window(Adw.ApplicationWindow):
             return
         self.navigation_view.push(page)
 
+    def open_artist_page(self, item):
+        """Show Apple Music's page of an artist (an ArtistPage: the catalog's shelves, with
+        the library's albums of theirs as In Your Library), pushed over the page shown, for
+        an artist of the library's too: what Go to Artist opens (actions.py), and the name in
+        the library's page of the artist."""
+        self._close_sheet()
+        self.split_view.set_show_content(True)
+        visible = self.navigation_view.get_visible_page()
+        if related.same_page(getattr(visible, 'item', None), item):
+            return  # a double activation, or the page shown already
+        from .pages.artist import ArtistPage
+
+        self.navigation_view.push(ArtistPage(self._library, item))
+
+    def _open_library_artist(self, artist):
+        """Show what the library holds of one of its artists (a LibraryArtistPage), pushed
+        over the page shown, unless it is that artist's already."""
+        self._close_sheet()
+        self.split_view.set_show_content(True)
+        if getattr(self.navigation_view.get_visible_page(), 'artist', None) is artist:
+            return  # a double activation
+        from .pages.library_artist import LibraryArtistPage
+
+        self.navigation_view.push(LibraryArtistPage(self._library, artist))
+
     def shown_item(self):
         """The Item the page shown shows (an album's, a playlist's, an artist's), or None:
         also while the Now Playing sheet covers it, or the sidebar does (collapsed)."""
@@ -385,8 +417,13 @@ class Window(Adw.ApplicationWindow):
         A shelf of the library's is followed by its key, so the page shows what a later load
         puts on it; any other (a search's results, a category's) is shown as it is, and one
         that knows where the rest of it is (an artist's: `complete`, a coroutine function)
-        fetches it, the grid following as it arrives.
+        fetches it, the grid following as it arrives. An artist page's In Your Library
+        (`library_artist`, the library's artist) opens the library's page of the artist.
         """
+        artist = getattr(shelf, 'library_artist', None)
+        if artist is not None:  # an artist page's In Your Library: the library's view of them
+            self.open_item(artist)
+            return
         visible = self.navigation_view.get_visible_page()
         if getattr(visible, 'shelf', None) is shelf:
             return  # a double activation
@@ -481,7 +518,11 @@ class Window(Adw.ApplicationWindow):
         button down. Moved from page to page as the visible page changes (a page dropped
         meanwhile has let go of them already)."""
         page = self.navigation_view.get_visible_page()
-        toolbar = first_descendant(page, Adw.ToolbarView) if page is not None else None
+        host = getattr(page, 'banner_host', None)  # a page of two panes says which
+        if host is not None:
+            toolbar = host()
+        else:
+            toolbar = first_descendant(page, Adw.ToolbarView) if page is not None else None
         if toolbar is self._banner_host:
             return
         for banner in (self.sign_in_banner, self.sync_banner):
@@ -562,6 +603,9 @@ class Window(Adw.ApplicationWindow):
                     title = entry.title if entry is not None else _('Folder')
                     page = pages.folder(self._library, item_id, title)
             page.set_tag(key)
+            if GObject.signal_lookup('panes-changed', type(page)):
+                # Artists: Back and the banners follow which of its panes shows.
+                page.connect('panes-changed', self._on_panes_changed)
             self.navigation_view.add(page)
             self._roots[key] = page
         if parse_key(key) is not None:
@@ -569,6 +613,11 @@ class Window(Adw.ApplicationWindow):
             self._recent_roots.move_to_end(key)
             self._trim_roots(key)
         return page
+
+    def _on_panes_changed(self, page):
+        if page is self.navigation_view.get_visible_page():
+            self._update_actions()
+            self._dock_banners()
 
     def _trim_roots(self, keep):
         """Drop the least recently shown playlist and folder root pages past ROOT_LIMIT, but
@@ -672,7 +721,14 @@ class Window(Adw.ApplicationWindow):
 
     def _can_go_back(self):
         return (len(self.navigation_view.get_navigation_stack()) > 1
+                or self._page_can_go_back()
                 or (self.split_view.get_collapsed() and self.split_view.get_show_content()))
+
+    def _page_can_go_back(self):
+        """Whether the page shown has somewhere to go back to inside it (the Artists page,
+        collapsed, from an artist to the list)."""
+        can_go_back = getattr(self.navigation_view.get_visible_page(), 'can_go_back', None)
+        return can_go_back is not None and can_go_back()
 
     def _update_actions(self, *_args):
         """The window's actions are off while a dialog is open over it (their keys go to the
@@ -708,6 +764,10 @@ class Window(Adw.ApplicationWindow):
         page = self.navigation_view.get_visible_page()
         if page is None:
             return GLib.SOURCE_REMOVE
+        own = getattr(page, 'focus_content', None)
+        if own is not None:  # a page of two panes (Artists) knows which one is shown
+            own()
+            return GLib.SOURCE_REMOVE
         toolbar = first_descendant(page, Adw.ToolbarView)
         content = toolbar.get_content() if toolbar is not None else None
         focus = self.get_focus()
@@ -733,6 +793,8 @@ class Window(Adw.ApplicationWindow):
     def _on_back(self, *_args):
         if len(self.navigation_view.get_navigation_stack()) > 1:
             self.navigation_view.pop()
+        elif self._page_can_go_back():
+            self.navigation_view.get_visible_page().go_back()
         elif self.split_view.get_collapsed():
             self.split_view.set_show_content(False)
 

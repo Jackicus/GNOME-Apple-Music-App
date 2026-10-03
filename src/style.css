@@ -36,6 +36,19 @@ gridview.tile-grid {
   padding: calc(36px + 2.4em) 0 24px;
 }
 
+/* An artist's portrait in the Artists list (widgets/artist_row.py): round, a tinted circle
+   until the picture comes. */
+.artist-portrait {
+  border-radius: 9999px;
+  background-color: alpha(currentColor, 0.1);
+}
+
+/* A library artist's albums (pages/library_artist.blp): under a heading of their own, which
+   stays put, so no title to make room for. */
+gridview.tile-grid.under-heading {
+  padding-top: 18px;
+}
+
 /* A tile's cover and its placeholder: rounded as the cards elsewhere in the app are. */
 .tile-art {
   border-radius: 8px;

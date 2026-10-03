@@ -187,14 +187,15 @@ class DetailPageTest(PageTestCase):
     async def test_the_artist_links_to_their_page(self):
         from applemusic.library import Item
 
-        # The library's artist opens at once.
-        self.library.artists.append(Item(artist([])))
+        # The library's artist: what the library holds of them (window.open_item), at once.
+        band = Item(artist([]))
+        self.library.artists.append(band)
         page = await self.push(self.page(album(1)))
         self.assertTrue(page.artist_button.get_visible())
         self.assertFalse(page.subtitle_label.get_visible())
-        # Opened as Go to Artist opens it: Apple Music's page when the engine can say.
         page.artist_button.emit('clicked')
-        self.assertEqual(self.window.item_actions.went, [(self.item, 'artist')])
+        self.assertEqual(self.window.opened, [band])
+        self.assertEqual(self.window.item_actions.went, [])
 
     async def test_a_catalog_albums_artist_is_looked_up(self):
         # Not the library's: a catalog album's artist is linked, and found on a click.
@@ -256,6 +257,10 @@ class DetailPageTest(PageTestCase):
         self.assertTrue(track_links.open_link(page.list_view, row.album_link))
         self.assertEqual(self.window.item_actions.went,
                          [(row.context_item, 'album')])
+        # The artist's link: the library's page of them when it has them (show_artist).
+        self.assertTrue(track_links.open_link(page.list_view, row.artist_link))
+        self.assertEqual(self.window.item_actions.went[-1],
+                         (row.context_item, 'link to artist'))
 
     async def test_the_more_options_menu_is_the_items(self):
         page = await self.push(self.page(album(1)))

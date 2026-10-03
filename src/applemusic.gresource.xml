@@ -7,6 +7,8 @@
     <file preprocess="xml-stripblanks">songs.ui</file>
     <file preprocess="xml-stripblanks">detail.ui</file>
     <file preprocess="xml-stripblanks">artist.ui</file>
+    <file preprocess="xml-stripblanks">artists.ui</file>
+    <file preprocess="xml-stripblanks">library_artist.ui</file>
     <file preprocess="xml-stripblanks">home.ui</file>
     <file preprocess="xml-stripblanks">radio.ui</file>
     <file preprocess="xml-stripblanks">signin.ui</file>

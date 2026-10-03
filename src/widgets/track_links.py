@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # SPDX-FileCopyrightText: 2026 Jack Tully
 
-"""A track row's artist and album as links: a click opens the page Go to Artist or Go to
-Album would (window.item_actions.go_to, related.py).
+"""A track row's artist and album as links: a click on the album opens the page Go to Album
+would (window.item_actions.go_to, related.py); on the artist, what the library holds of them
+when it has them, else Apple Music's page, as Go to Artist (item_actions.show_artist).
 
     link = TrackLink('artist')        # in a row's cell, made once per recycled row
     link.show(track)                  # bind: the track's artist (or album), a link when it has
@@ -76,7 +77,10 @@ def open_link(view, link):
     actions = getattr(view.get_root(), 'item_actions', None)
     if found is None or actions is None:
         return False
-    actions.go_to(found[1], link.kind)
+    if link.kind == 'artist':
+        actions.show_artist(found[1])
+    else:
+        actions.go_to(found[1], link.kind)
     return True
 
 

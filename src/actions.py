@@ -8,6 +8,7 @@ actions, the menus that offer them, and what a track dragged onto a sidebar play
     menu = actions.menu_for(obj)           # a Gio.Menu for an Item or a Track, or None
     menu = actions.menu_for(track, queued=True)   # the item playing's, or Up Next's
     actions.go_to(obj, 'album')            # obj's album's page ('artist': its artist's)
+    actions.show_artist(obj)               # a link's artist: the library's page of them
     actions.fill_sidebar_menu(menu, item)  # a sidebar playlist's or folder's menu
     actions.drop(playlist, ref)            # a library.TrackRef dropped on a sidebar playlist
 
@@ -748,9 +749,24 @@ class ItemActions:
         return found is not None
 
     def _show_page(self, item):
-        """Show item's page, unless it is the page shown already."""
-        if not related.same_page(self._shown(), item):
+        """Show item's page, unless it is the page shown already: an artist's is Apple
+        Music's (window.open_artist_page), for an artist of the library's too."""
+        if related.same_page(self._shown(), item):
+            return
+        if item.kind == 'artist':
+            self.window.open_artist_page(item)
+        else:
             self.window.open_item(item)
+
+    def show_artist(self, obj):
+        """A link's artist (a row's, an album page's): what the library holds of the artist
+        obj is by when the library has them (related.library_artist, window.open_item), else
+        where Go to Artist goes."""
+        found = related.library_artist(self.library, obj)
+        if found is not None:
+            self.window.open_item(found)
+            return None
+        return self.go_to(obj, 'artist')
 
     async def _refresh_library(self):
         """Show what was just added: a quick sync (sync.py), which reads the songs and the

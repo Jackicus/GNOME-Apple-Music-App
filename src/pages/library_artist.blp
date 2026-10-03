@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-FileCopyrightText: 2026 Jack Tully
+
+using Gtk 4.0;
+using Adw 1;
+
+template $AppleMusicLibraryArtistPage: Adw.NavigationPage {
+  child: Adw.BreakpointBin {
+    width-request: 360;
+    height-request: 200;
+
+    // Too narrow for a name of some length beside the buttons: the buttons go under it.
+    Adw.Breakpoint {
+      condition ("max-width: 720sp")
+
+      setters {
+        heading_box.orientation: vertical;
+        heading_box.spacing: 12;
+        buttons_box.halign: start;
+      }
+    }
+
+    // A phone: the margins narrow to what still fits two tiles in 360 px, as the grid
+    // page's do.
+    Adw.Breakpoint {
+      condition ("max-width: 400sp")
+
+      setters {
+        heading_box.orientation: vertical;
+        heading_box.spacing: 12;
+        heading_box.margin-start: 7;
+        heading_box.margin-end: 14;
+        buttons_box.halign: start;
+        grid_view.margin-start: 14;
+        grid_view.margin-end: 14;
+      }
+    }
+
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar header_bar {
+        show-title: false;
+
+        // Its menu is library_artist.py's: the orders and the directions, as radio items of
+        // the page.sort and page.sort-order actions.
+        [end]
+        MenuButton sort_button {
+          icon-name: "view-sort-descending-symbolic";
+          tooltip-text: _("Sort By");
+
+          accessibility {
+            label: _("Sort By");
+          }
+        }
+      }
+
+      // The heading stays put over the albums, which scroll under it. On the view
+      // background, as the grids are.
+      content: Box {
+        orientation: vertical;
+
+        styles [
+          "view",
+        ]
+
+        // The name's text on the page's 24 px margin, where the first cover is (the flat
+        // button has 10 px of padding of its own).
+        Box heading_box {
+          spacing: 18;
+          margin-start: 14;
+          margin-end: 24;
+          margin-top: 12;
+          margin-bottom: 12;
+
+          // The name, a link to Apple Music's page of the artist (Go to Artist's).
+          Button name_button {
+            halign: start;
+            valign: center;
+            hexpand: true;
+            tooltip-text: _("Go to Artist");
+
+            child: Box {
+              spacing: 6;
+
+              Label name_label {
+                xalign: 0;
+                wrap: true;
+                wrap-mode: word_char;
+                lines: 2;
+                ellipsize: end;
+
+                styles [
+                  "title-1",
+                ]
+              }
+
+              Image {
+                icon-name: "go-next-symbolic";
+                accessible-role: presentation;
+              }
+            };
+
+            styles [
+              "flat",
+            ]
+          }
+
+          Box buttons_box {
+            spacing: 12;
+            halign: end;
+            valign: center;
+
+            Button play_button {
+              child: Adw.ButtonContent {
+                icon-name: "media-playback-start-symbolic";
+                label: _("Play");
+                can-shrink: true;
+              };
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            }
+
+            Button shuffle_button {
+              child: Adw.ButtonContent {
+                icon-name: "media-playlist-shuffle-symbolic";
+                label: _("Shuffle");
+                can-shrink: true;
+              };
+
+              styles [
+                "pill",
+              ]
+            }
+
+            // The artist's own menu, made as it opens.
+            MenuButton more_button {
+              icon-name: "view-more-symbolic";
+              tooltip-text: _("More Options");
+              valign: center;
+
+              styles [
+                "circular",
+              ]
+            }
+          }
+        }
+
+        Separator {}
+
+        Stack stack {
+          vexpand: true;
+
+          StackPage {
+            name: "empty";
+
+            child: Adw.StatusPage empty_page {
+              icon-name: "media-optical-cd-audio-symbolic";
+              title: _("No Albums");
+              description: _("This artist’s albums in your library appear here");
+            };
+          }
+
+          StackPage {
+            name: "items";
+
+            // A Gtk.GridView recycles its tiles only as the scrolled window's own child.
+            child: ScrolledWindow scrolled_window {
+              hscrollbar-policy: never;
+
+              child: GridView grid_view {
+                min-columns: 2;
+                max-columns: 12;
+                single-click-activate: true;
+                tab-behavior: item;
+                margin-start: 21;
+                margin-end: 21;
+
+                styles [
+                  "tile-grid",
+                  "under-heading",
+                ]
+              };
+            };
+          }
+        }
+      };
+    };
+  };
+}

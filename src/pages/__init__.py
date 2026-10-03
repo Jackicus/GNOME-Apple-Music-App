@@ -165,12 +165,9 @@ def _albums(destination, library):
 
 
 def _artists(destination, library):
-    from .grid import GridPage
+    from .artists import ArtistsPage
 
-    return GridPage(library, destination.title, lambda: library.artists, sorts=('title',),
-                    artist=True, icon_name=destination.icon_name,
-                    empty_title=_('No Artists'),
-                    empty_description=_('Artists in your library appear here'))
+    return ArtistsPage(library, destination.title, icon_name=destination.icon_name)
 
 
 def _recently_added(destination, library):
