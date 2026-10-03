@@ -48,7 +48,8 @@
     // instead, which signs the request the same way but leaves the body
     // alone, and judge the outcome by the status. `body` is a plain object:
     // the builder serializes it and sets the JSON content type, which a
-    // pre-stringified body would not get.
+    // pre-stringified body would not get. Answers {ok: true}, with `data`, the
+    // body Apple sent (a 201 Created's new resource), when there was one.
     async function apiWrite(path, params, options) {
         const mk = getMusicKit();
         if (!mk) throw new Error('MusicKit not initialized');
@@ -62,7 +63,20 @@
             body: options.body
         }).send();
         if (!res.ok) throw new Error(await describeFailure(res));
-        return { ok: true };
+        let data = null;
+        try {
+            const text = await res.text();
+            data = text ? JSON.parse(text) : null;
+        } catch {
+            // No body, or not JSON: the status said it worked.
+        }
+        return data ? { ok: true, data: data } : { ok: true };
+    }
+
+    // The id of the resource a 201 Created answered with ({data: [{id}]}), or null.
+    function createdId(answer) {
+        const data = answer && answer.data && answer.data.data;
+        return (Array.isArray(data) && data[0] && data[0].id) ? String(data[0].id) : null;
     }
 
     // "HTTP 403 Forbidden: No active subscription", or just the status line
@@ -659,6 +673,74 @@
                 method: 'POST',
                 body: { data: [{ id: songId, type: type || 'songs' }] }
             });
+        },
+
+        // The playlist writes music.apple.com's own web player makes (its
+        // requestCreateNewPlaylist, requestUpdatePlaylist, requestRemoveFromPlaylist,
+        // requestUpdatePlaylistTracks and requestDeleteFromLibrary), checked against
+        // the API on 2026-10-03 (src/backend/README.md has what each answered).
+
+        // A new library playlist: `attributes` {name, description?}, `tracks`
+        // [{id, type}] (may be empty), in the folder `parentId` when given (else at
+        // the top level). Answers {id}, the new playlist's.
+        createPlaylist: async function (attributes, tracks, parentId) {
+            const relationships = {};
+            if (tracks && tracks.length) relationships.tracks = { data: tracks };
+            if (parentId) {
+                relationships.parent = { data: [{ id: parentId, type: 'library-playlist-folders' }] };
+            }
+            const body = { attributes: attributes };
+            if (Object.keys(relationships).length) body.relationships = relationships;
+            const answer = await apiWrite('/v1/me/library/playlists', {}, { method: 'POST', body: body });
+            const id = createdId(answer);
+            if (!id) throw new Error('Apple answered the new playlist without its id');
+            return { id: id };
+        },
+
+        // A library playlist's name and description (`attributes`: either or both).
+        updatePlaylist: async function (playlistId, attributes) {
+            return await apiWrite('/v1/me/library/playlists/' + playlistId, {}, {
+                method: 'PATCH',
+                body: { attributes: attributes }
+            });
+        },
+
+        deletePlaylist: async function (playlistId) {
+            return await apiWrite('/v1/me/library/playlists/' + playlistId, {}, { method: 'DELETE' });
+        },
+
+        // Every entry of the song (`type` its resource type, 'library-songs'…) out of
+        // the playlist: `mode=all`, as the web player asks. For one of several
+        // entries of the same song, replacePlaylistTracks() instead.
+        removeFromPlaylist: async function (playlistId, type, trackId) {
+            const query = { mode: 'all' };
+            query['ids[' + (type || 'library-songs') + ']'] = trackId;
+            return await apiWrite('/v1/me/library/playlists/' + playlistId + '/tracks', query, {
+                method: 'DELETE'
+            });
+        },
+
+        // The playlist's whole list of tracks, [{id, type}] in order, in place of
+        // the one it has (the web player's reorder).
+        replacePlaylistTracks: async function (playlistId, tracks) {
+            return await apiWrite('/v1/me/library/playlists/' + playlistId + '/tracks', {}, {
+                method: 'PUT',
+                body: { data: tracks || [] }
+            });
+        },
+
+        // A playlist folder's name. Apple lists a folder with canEdit false, but
+        // takes the change all the same.
+        updateFolder: async function (folderId, attributes) {
+            return await apiWrite('/v1/me/library/playlist-folders/' + folderId, {}, {
+                method: 'PATCH',
+                body: { attributes: attributes }
+            });
+        },
+
+        // A playlist folder, and every playlist and folder in it, out of the library.
+        deleteFolder: async function (folderId) {
+            return await apiWrite('/v1/me/library/playlist-folders/' + folderId, {}, { method: 'DELETE' });
         },
 
         lyrics: async function (catalogSongId) {

@@ -37,6 +37,12 @@ UI awaits.
     await engine.add_to_library('album', catalog_id)
     await engine.catalog_url('album', library_id)   # its music.apple.com page, or None
     await engine.add_to_playlist(playlist_id, song_id)   # kind='video' for a music video
+    await engine.create_playlist(name, description, [(kind, id)…], folder_id)   # its id
+    await engine.edit_playlist(playlist_id, name=None, description=None)
+    await engine.delete_playlist(playlist_id)
+    await engine.remove_from_playlist(playlist_id, track_id, index)   # that one entry
+    await engine.rename_folder(folder_id, name); await engine.delete_folder(folder_id)
+    await engine.folder_children(folder_id)   # [{kind, id, name}] as Apple lists them now
     await engine.search(term, limit=20)    # {shelves}: a catalog search
     await engine.suggest(term, limit=10)   # {terms: [{term, display}], items}
     await engine.landing()       # {categories}: the search page's Browse Categories
@@ -143,6 +149,31 @@ GROUP_RELATIONSHIPS = {'album': 'tracks', 'playlist': 'tracks', 'artist': 'album
 
 # The kinds add_to_library() takes (a station is followed, not added).
 ADDABLE_KINDS = ('song', 'album', 'playlist', 'video', 'musicVideo', 'music-video')
+
+# What library.json calls the top level of the playlist folders (library.ROOT_FOLDER), and
+# Apple's id for it.
+ROOT_FOLDER = 'root'
+APPLE_ROOT_FOLDER = 'p.playlistsroot'
+
+
+def _library_playlist(playlist_id):
+    """A library playlist's id, as the playlist writes take it: EngineError('usage') for
+    anything else (a catalog playlist is not the account's to change)."""
+    playlist_id = str(playlist_id or '')
+    if not playlist_id.startswith('p.'):
+        raise EngineError('usage', f'{playlist_id or "nothing"} is not a library playlist')
+    return playlist_id
+
+
+def _folder(folder_id):
+    """A playlist folder's id for Apple, or None for the top level (no id, the library's
+    ROOT_FOLDER or Apple's own root). EngineError('usage') for an id that is no folder's."""
+    folder_id = str(folder_id or '')
+    if folder_id in ('', ROOT_FOLDER, APPLE_ROOT_FOLDER):
+        return None
+    if not folder_id.startswith('p.'):
+        raise EngineError('usage', f'{folder_id} is not a playlist folder')
+    return folder_id
 
 
 def _shape_item(raw, cache_dir, generation):
@@ -1350,13 +1381,159 @@ class Engine(GObject.Object):
         (POST /v1/me/library/playlists/<id>/tracks): a library id ("i.") as `library-songs`
         or `library-music-videos`, a catalog one as `songs` or `music-videos`."""
         playlist_id, song_id = str(playlist_id or ''), str(song_id or '')
-        base = api.RESOURCE_TYPES.get(kind)
-        if not is_library_id(playlist_id) or not song_id or base not in ('song', 'music-video'):
+        track_type = api.track_type(kind, song_id)
+        if not is_library_id(playlist_id) or track_type is None:
             raise EngineError('usage', 'add to playlist needs a library playlist and a song '
                                        'or a music video')
-        track_type = f'{"library-" if is_library_id(song_id) else ""}{base}s'
         client = await self._require_signed_in('add to playlists')
         await client.bridge('addToPlaylist', playlist_id, song_id, track_type)
+
+    # -- managing playlists ----------------------------------------------------------------
+    # The writes music.apple.com's web player makes to the account's playlists and folders,
+    # through the bridge (src/backend/README.md has the requests and what Apple answered).
+
+    async def create_playlist(self, name, description='', tracks=(), folder_id=None):
+        """A new library playlist named `name` (POST /v1/me/library/playlists), with the
+        songs and music videos `tracks` ((kind, id) pairs, as add_to_playlist takes them) in
+        it, in the folder `folder_id` (None or 'root': the top level). Answers its id. Apple
+        lists a new playlist only seconds later (6.5 s once: src/backend/README.md)."""
+        name = str(name or '').strip()
+        if not name:
+            raise EngineError('usage', 'a playlist needs a name')
+        entries = []
+        for kind, track_id in tracks:
+            track_type = api.track_type(kind, track_id)
+            if track_type is None:
+                raise EngineError('usage', f'cannot put {kind} {track_id} in a playlist')
+            entries.append({'id': str(track_id), 'type': track_type})
+        attributes = {'name': name}
+        if description:
+            attributes['description'] = str(description)
+        client = await self._require_signed_in('make playlists')
+        answer = await client.bridge('createPlaylist', attributes, entries,
+                                     _folder(folder_id))
+        new_id = answer.get('id') if isinstance(answer, dict) else None
+        if not new_id:
+            raise EngineError('api', 'the new playlist came back without its id')
+        return str(new_id)
+
+    async def edit_playlist(self, playlist_id, name=None, description=None):
+        """A library playlist's name, its description, or both (PATCH
+        /v1/me/library/playlists/<id>); None leaves one as it is, '' clears the
+        description. A name cannot be empty."""
+        attributes = {}
+        if name is not None:
+            attributes['name'] = str(name).strip()
+            if not attributes['name']:
+                raise EngineError('usage', 'a playlist needs a name')
+        if description is not None:
+            attributes['description'] = str(description)
+        playlist_id = _library_playlist(playlist_id)
+        if not attributes:
+            return
+        client = await self._require_signed_in('edit playlists')
+        await client.bridge('updatePlaylist', playlist_id, attributes)
+
+    async def delete_playlist(self, playlist_id):
+        """A library playlist out of the library, on every device (DELETE
+        /v1/me/library/playlists/<id>)."""
+        playlist_id = _library_playlist(playlist_id)
+        client = await self._require_signed_in('delete playlists')
+        await client.bridge('deletePlaylist', playlist_id)
+
+    async def remove_from_playlist(self, playlist_id, track_id, index=None):
+        """One entry out of a library playlist: the song (or music video) `track_id` that the
+        playlist's list has at `index` (its Track.index), or near it.
+
+        The playlist's tracks are read first, as Apple has them now. A song the playlist
+        holds once goes the way the web player removes it (DELETE …/tracks?ids[<type>]=<id>
+        &mode=all, which takes every entry of that id); a song it holds more than once is
+        taken out of the list, which is then put back whole (PUT …/tracks), so its other
+        entries stay. The entry is the one at `index` when the list there has that id still,
+        else the entry of that id nearest `index`. A song no longer in the playlist is
+        nothing to do. Answers whether anything was removed."""
+        playlist_id = _library_playlist(playlist_id)
+        track_id = str(track_id or '')
+        if not track_id:
+            raise EngineError('usage', 'remove from playlist needs a track')
+        client = await self._require_signed_in('edit playlists')
+        try:
+            entries = await self.api_pages(f'/v1/me/library/playlists/{playlist_id}/tracks')
+        except EngineError as e:
+            if e.status != 404:  # Apple's answer for a playlist without tracks
+                raise
+            entries = []
+        listed = [{'id': str(entry.get('id') or ''), 'type': str(entry.get('type') or '')}
+                  for entry in entries]
+        positions = [position for position, entry in enumerate(listed)
+                     if entry['id'] == track_id]
+        if not positions:
+            log.info('remove from playlist: the track is not in it (any more)')
+            return False
+        if len(positions) == 1:
+            entry = listed[positions[0]]
+            await client.bridge('removeFromPlaylist', playlist_id,
+                                entry['type'] or 'library-songs', track_id)
+            return True
+        wanted = index if isinstance(index, int) and not isinstance(index, bool) else 0
+        position = min(positions, key=lambda found: (abs(found - wanted), found))
+        if any(not entry['id'] or not entry['type'] for entry in listed):
+            raise EngineError('api', 'a playlist entry came without its id or type')
+        del listed[position]
+        await client.bridge('replacePlaylistTracks', playlist_id, listed)
+        return True
+
+    async def rename_folder(self, folder_id, name):
+        """A playlist folder's name (PATCH /v1/me/library/playlist-folders/<id>)."""
+        name = str(name or '').strip()
+        folder_id = _folder(folder_id)
+        if not name or folder_id is None:
+            raise EngineError('usage', 'rename a folder needs a folder and a name')
+        client = await self._require_signed_in('edit playlist folders')
+        await client.bridge('updateFolder', folder_id, {'name': name})
+
+    async def delete_folder(self, folder_id):
+        """A playlist folder out of the library, and every playlist and folder in it, on
+        every device. What is in it goes first, one by one (delete_playlist(), and the
+        folders in it the same way), then the folder, empty (DELETE
+        /v1/me/library/playlist-folders/<id>): Apple deletes a folder that still holds
+        playlists, but went on listing those playlists, nameless, long after (more than
+        half an hour on 2026-10-03), where a playlist deleted by itself left the
+        listing within minutes."""
+        folder_id = _folder(folder_id)
+        if folder_id is None:
+            raise EngineError('usage', 'delete a folder needs a folder')
+        client = await self._require_signed_in('delete playlist folders')
+        for child in await self.folder_children(folder_id):
+            if child['kind'] == 'folder':
+                await self.delete_folder(child['id'])
+            else:
+                await client.bridge('deletePlaylist', child['id'])
+        await client.bridge('deleteFolder', folder_id)
+
+    async def folder_children(self, folder_id=None):
+        """What a playlist folder holds as Apple lists it now (None or 'root': the top
+        level), in its order: [{kind: 'playlist' | 'folder', id, name}], without what the
+        account deleted that Apple still lists (api.is_deleted). A folder Apple answers 404
+        for holds nothing."""
+        apple_id = _folder(folder_id) or APPLE_ROOT_FOLDER
+        try:
+            children = await self.api_pages(
+                f'/v1/me/library/playlist-folders/{apple_id}/children', page=100, unique=True)
+        except EngineError as e:
+            if e.status != 404:
+                raise
+            return []
+        found = []
+        for child in children:
+            kind = {'library-playlists': 'playlist',
+                    'library-playlist-folders': 'folder'}.get(child.get('type'))
+            if kind is None or not child.get('id') or api.is_deleted(child):
+                continue
+            attributes = child.get('attributes') or {}
+            found.append({'kind': kind, 'id': str(child['id']),
+                          'name': str(attributes.get('name') or '')})
+        return found
 
     # -- search and browsing -------------------------------------------------------------
     # The Search page's search, suggestions, landing and categories, the New page (browse)

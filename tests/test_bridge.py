@@ -493,6 +493,58 @@ class BridgeTest(unittest.TestCase):
         ])
         self.assertIn('HTTP 403', value['refused'])
 
+    @scenario("""
+        mk.writeStatus = 201;
+        mk.writeBody = JSON.stringify({data: [{id: 'p.new1', type: 'library-playlists'}]});
+        const created = await bridge.createPlaylist(
+            {name: 'Night Drive', description: 'Late'},
+            [{id: 'i.song1', type: 'library-songs'}], 'p.fd1');
+        const empty = await bridge.createPlaylist({name: 'Empty'}, [], null);
+        mk.writeStatus = 204;
+        mk.writeBody = '';
+        const updated = await bridge.updatePlaylist('p.pl1', {name: 'Renamed'});
+        await bridge.removeFromPlaylist('p.pl1', 'library-songs', 'i.song1');
+        await bridge.replacePlaylistTracks('p.pl1', [{id: 'i.song2', type: 'library-songs'}]);
+        await bridge.deletePlaylist('p.pl1');
+        await bridge.updateFolder('p.fd1', {name: 'Evenings'});
+        await bridge.deleteFolder('p.fd1');
+        let unnamed = null;
+        mk.writeStatus = 201;
+        try { await bridge.createPlaylist({name: 'X'}, [], null); } catch (error) {
+            unnamed = String(error);
+        }
+        return {created, empty, updated, calls: mk.calls, unnamed};
+    """)
+    def test_the_playlist_writes(self, value):
+        self.assertEqual(value['created'], {'id': 'p.new1'})
+        self.assertEqual(value['empty'], {'id': 'p.new1'})
+        self.assertEqual(value['updated'], {'ok': True})
+        self.assertIn('without its id', value['unnamed'])  # a 201 with no body
+        playlists = '/v1/me/library/playlists'
+        self.assertEqual(value['calls'][:8], [
+            ['request', playlists, {'params': {}, 'method': 'POST', 'body': {
+                'attributes': {'name': 'Night Drive', 'description': 'Late'},
+                'relationships': {
+                    'tracks': {'data': [{'id': 'i.song1', 'type': 'library-songs'}]},
+                    'parent': {'data': [{'id': 'p.fd1',
+                                         'type': 'library-playlist-folders'}]}}}}],
+            ['request', playlists, {'params': {}, 'method': 'POST',
+                                    'body': {'attributes': {'name': 'Empty'}}}],
+            ['request', f'{playlists}/p.pl1', {'params': {}, 'method': 'PATCH',
+                                               'body': {'attributes': {'name': 'Renamed'}}}],
+            ['request', f'{playlists}/p.pl1/tracks', {
+                'params': {'mode': 'all', 'ids[library-songs]': 'i.song1'},
+                'method': 'DELETE'}],
+            ['request', f'{playlists}/p.pl1/tracks', {
+                'params': {}, 'method': 'PUT',
+                'body': {'data': [{'id': 'i.song2', 'type': 'library-songs'}]}}],
+            ['request', f'{playlists}/p.pl1', {'params': {}, 'method': 'DELETE'}],
+            ['request', '/v1/me/library/playlist-folders/p.fd1', {
+                'params': {}, 'method': 'PATCH', 'body': {'attributes': {'name': 'Evenings'}}}],
+            ['request', '/v1/me/library/playlist-folders/p.fd1',
+             {'params': {}, 'method': 'DELETE'}],
+        ])
+
 
 if __name__ == '__main__':
     unittest.main()
