@@ -60,6 +60,9 @@ list and the script together.
    buttons, Escape closes it. Ctrl+? lists every shortcut.
 8. With a dialog open over the window, Alt+Left, Ctrl+F, Ctrl+1 to 3, Ctrl+Shift+N and Space
    leave the page behind it alone.
+9. A playlist's Rename… (and New Playlist…) opens its dialog with the cursor in the name;
+   Tab reaches the description and the buttons, Enter renames (or creates), and Escape
+   closes it with nothing changed. Delete Playlist… asks first, with Cancel the default.
 
 ## The tools
 

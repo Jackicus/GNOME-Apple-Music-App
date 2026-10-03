@@ -9,7 +9,8 @@
                           [--banner sign-in|expired] [--signed-in [NAME]]
                           [--now-playing [lyrics|queue]] [--playing] [--search TERM]
                           [--context-menu] [--preferences [general|engine]]
-                          [--dialog about|shortcuts] [--scroll PX]
+                          [--dialog about|shortcuts|new-playlist|rename|delete]
+                          [--more-options] [--sidebar-menu KEY] [--scroll PX]
 
 Builds nothing itself: run meson install -C build (or scripts/demo.sh) first. Run it
 through scripts/headless.sh, so the window opens on a private display and never on
@@ -54,7 +55,15 @@ on Engine, and shoots it: inside the window when libadwaita put it there, else i
 own window (a fixed-size window that is neither maximized nor tiled gets one), at
 --size when that is narrower than 640 px.
 --dialog opens the About (app.about) or Keyboard Shortcuts (app.shortcuts) dialog and
-shoots it as --preferences does.
+shoots it as --preferences does; new-playlist, rename and delete open the playlists' dialogs
+(win.item-new-playlist, win.item-rename, win.item-delete) for the playlist or folder the page
+shows, else the library's first playlist of the user's (a new playlist: in the folder shown,
+else at the top level). The demo writes nothing: the dialogs only show.
+--more-options pops up the More Options menu of the page shown (an album's, a playlist's, a
+folder's) as a click on it would.
+--sidebar-menu KEY pops up the sidebar's context menu for KEY (playlist:ID, folder:ID,
+all-playlists; playlist:first and folder:first are the library's first of each), drawn from
+the menu the sidebar fills for it, beside its row (--expand the folder holding it).
 --scroll PX scrolls the page shown down by PX pixels before the shot (its first
 scrolled window that scrolls vertically): the rest of a page taller than the
 virtual monitor, which a --size cannot show.
@@ -97,8 +106,13 @@ parser.add_argument('--context-menu', action='store_true',
 parser.add_argument('--preferences', metavar='PAGE', nargs='?', const='general',
                     choices=['general', 'engine'],
                     help='open Preferences on PAGE and shoot the dialog')
-parser.add_argument('--dialog', choices=['about', 'shortcuts'],
-                    help='open the About or Keyboard Shortcuts dialog and shoot it')
+parser.add_argument('--dialog', choices=['about', 'shortcuts', 'new-playlist', 'rename',
+                                         'delete'],
+                    help='open the About, Keyboard Shortcuts or a playlist dialog; shoot it')
+parser.add_argument('--more-options', action='store_true',
+                    help='pop up the More Options menu of the page shown')
+parser.add_argument('--sidebar-menu', metavar='KEY',
+                    help="pop up the sidebar's context menu for KEY")
 parser.add_argument('--scroll', metavar='PX', type=int, default=0,
                     help='scroll the page shown down by PX pixels before the shot')
 args = parser.parse_args()
@@ -110,7 +124,7 @@ width, height = (int(n) for n in args.size.split('x'))
 
 app = harness.make_app('Screenshot', demo=args.demo, light=args.light, size=(width, height))
 
-from gi.repository import Adw, GLib, Graphene, Gtk  # noqa: E402  (after make_app)
+from gi.repository import Adw, Gdk, GLib, Graphene, Gtk  # noqa: E402  (after make_app)
 
 
 def first_folder():
@@ -230,11 +244,92 @@ def find_widget(widget, kind):
     return None
 
 
+def first_playlist():
+    """The library's first playlist of the user's (one that can be renamed), or None."""
+    return next((node.item for node in app.library.playlist_tree().flat
+                 if node.kind == 'playlist' and node.item.editable), None)
+
+
+def subject(window):
+    """The playlist or folder the page shows (a pushed one's, or the sidebar key's), else
+    the library's first playlist of the user's."""
+    item = window.shown_item()
+    if item is not None and item.kind in ('playlist', 'folder'):
+        return item
+    kind, _sep, item_id = (args.page or '').partition(':')
+    if kind == 'folder' and item_id == 'first':
+        item_id = first_folder()
+    item = app.library.by_id(kind, item_id) if kind in ('playlist', 'folder') else None
+    return item or first_playlist()
+
+
+def open_playlist_dialog(window):
+    """--dialog new-playlist, rename or delete: the item action, as its menu item runs it."""
+    item = subject(window)
+    if args.dialog == 'new-playlist':
+        folder = item.id if item is not None and item.kind == 'folder' else 'root'
+        target = ('folder', folder)
+    elif item is None:
+        sys.exit("screenshot: no playlist of the user's to show the dialog for")
+    else:
+        target = (item.kind, item.id)
+    window.activate_action(f'win.item-{args.dialog}', GLib.Variant('(ss)', target))
+
+
+def open_more_options(window):
+    """--more-options: the page's More Options menu, popped up."""
+    page = window.navigation_view.get_visible_page()
+    button = next((found for found in harness_descendants(page, Gtk.MenuButton)
+                   if found.get_tooltip_text() == 'More Options' and found.get_mapped()), None)
+    if button is None:
+        sys.exit('screenshot: the page shown has no More Options menu')
+    button.popup()
+
+
+def open_sidebar_menu(window):
+    """--sidebar-menu: the menu the sidebar fills for the key's item (sidebar_view's
+    setup-menu handler), popped up beside its row as the sidebar shows it."""
+    key = args.sidebar_menu
+    if key == 'folder:first':
+        key = f'folder:{first_folder()}'
+    elif key == 'playlist:first':
+        key = f'playlist:{first_playlist().id}'
+    sidebar = window._sidebar
+    item = sidebar.item_for(key)
+    row = sidebar.row(item.get_index()) if item is not None else None
+    if row is None:
+        sys.exit(f'screenshot: no sidebar row for {key}')
+    sidebar._on_setup_menu(None, item)
+    popover = Gtk.PopoverMenu.new_from_model(sidebar._sidebar_menu)
+    popover.set_has_arrow(False)
+    popover.set_parent(row)
+    rectangle = Gdk.Rectangle()
+    rectangle.x, rectangle.y = int(row.get_width() * 0.4), int(row.get_height() * 0.6)
+    rectangle.width = rectangle.height = 1
+    popover.set_pointing_to(rectangle)
+    popover.set_halign(Gtk.Align.START)
+    popover.popup()
+
+
+def harness_descendants(widget, kind):
+    if isinstance(widget, kind):
+        yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from harness_descendants(child, kind)
+        child = child.get_next_sibling()
+
+
 def open_dialog(window):
     """--dialog: the About or Keyboard Shortcuts dialog, as its menu item opens it (inside
-    the window, or in a window of its own); the dialog, or None when none is shown."""
-    kind = {'about': Adw.AboutDialog, 'shortcuts': Adw.ShortcutsDialog}[args.dialog]
-    app.activate_action(args.dialog)
+    the window, or in a window of its own), or a playlist dialog; the dialog, or None when
+    none is shown."""
+    if args.dialog in ('new-playlist', 'rename', 'delete'):
+        open_playlist_dialog(window)
+        kind = Adw.AlertDialog
+    else:
+        kind = {'about': Adw.AboutDialog, 'shortcuts': Adw.ShortcutsDialog}[args.dialog]
+        app.activate_action(args.dialog)
     shown = next((found for found in map(lambda toplevel: find_widget(toplevel, kind),
                                          Gtk.Window.list_toplevels()) if found is not None),
                  None)
@@ -345,6 +440,16 @@ def _shoot():
         menu_opened = True
         open_context_menu(window)
         GLib.timeout_add(800, shoot)  # the popover shown and placed
+        return GLib.SOURCE_REMOVE
+    if args.more_options and not menu_opened:
+        menu_opened = True
+        open_more_options(window)
+        GLib.timeout_add(800, shoot)  # the popover shown and placed
+        return GLib.SOURCE_REMOVE
+    if args.sidebar_menu and not menu_opened:
+        menu_opened = True
+        open_sidebar_menu(window)
+        GLib.timeout_add(800, shoot)
         return GLib.SOURCE_REMOVE
     if args.preferences and preferences is None:
         preferences = app.show_preferences(args.preferences)

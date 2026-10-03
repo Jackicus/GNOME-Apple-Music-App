@@ -25,7 +25,10 @@ What to shoot: $ARGUMENTS
    - `--sidebar` (the narrow layout: the sidebar rather than the page), `--expand first`,
      `--search TERM`, `--context-menu`, `--preferences [general|engine]`,
      `--dialog about|shortcuts`; `--scroll PX` for the rest of a page taller than the
-     window (an artist's: `--open artist:first --scroll 900`).
+     window (an artist's: `--open artist:first --scroll 900`);
+   - the playlists' menus and dialogs: `--more-options` (the page's More Options menu),
+     `--sidebar-menu playlist:first|folder:first|all-playlists`, and
+     `--dialog new-playlist|rename|delete` for the playlist or folder the page shows.
    Dark is the default; add `--light`. Sizes: the default (1100x760), `--size 400x700`, and
    `--size 360x640`, the narrowest supported. The script waits for the artwork to decode
    before it shoots.

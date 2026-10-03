@@ -40,6 +40,16 @@ do when something goes wrong, what it sends where, and where it keeps your data.
   favourites, open it on music.apple.com, and, for a song, **Go to Album** and **Go to
   Artist**. The song playing has the same menu: right-click the player bar, or use **More
   Options** in Now Playing; Up Next's songs have theirs too.
+- Your own playlists can be managed from their menus (right-click one in the sidebar or on
+  All Playlists, or use **More Options** on its page): **Rename…** changes its name and
+  description, **Delete Playlist…** deletes it from your library on all your devices, after
+  asking. A song's menu on one of your playlists has **Remove from Playlist**, which takes out
+  that one entry (the same song elsewhere in the playlist stays). **New Playlist…** is at the
+  end of **Add to Playlist** (a new playlist holding that song), in a folder's menu, and is
+  the **+** button of All Playlists and of a folder's page. A folder's menu also has
+  **Rename…** and **Delete Folder…**, which deletes the playlists in it too. Favourite Songs
+  and Apple's playlists in your library cannot be renamed or deleted. A change takes a few
+  seconds to reach the library's listing, as Apple lists it.
 - The Activities overview's search finds your albums, artists, playlists and songs (songs
   once the running app has listed them: after a visit to Songs, or a library search in
   the app): choosing one opens its page, or plays the song; the Music Sleeve heading above
@@ -54,7 +64,7 @@ do when something goes wrong, what it sends where, and where it keeps your data.
 - Google Chrome is required, and must be the real Chrome: Chromium lacks Widevine.
 - Music videos play as audio only: the engine has no window to show them in.
 - No offline listening or downloads: the app streams, as the web player does.
-- Editing playlists is limited to adding songs; creating, renaming and reordering playlists
+- Reordering a playlist's songs, making playlist folders and moving playlists between them
   happen in Apple's own apps.
 - One Apple Account per build: a release install and a development build each have their own
   Chrome profile, cache and sign-in, so each is signed in and synced on its own.
